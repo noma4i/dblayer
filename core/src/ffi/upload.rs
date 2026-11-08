@@ -12,7 +12,7 @@ use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{Fault, NewOp, OpSource, OutboxOutcome, Receipt};
-use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Source, TransferAnswer, SIGNED_ID_SENTINEL};
+use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renumber, Source, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
@@ -171,7 +171,7 @@ impl Database {
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = action.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
-        if items.len() < batch.min || items.len() > batch.max { return Err(invalid(format!("upload batch requires {}..{} items", batch.min, batch.max))); }
+        if !batch_size_admitted((batch.min, batch.max), items.len()) { return Err(invalid(format!("upload batch requires {}..{} items", batch.min, batch.max))); }
         let field = action.correlate.first().cloned().ok_or_else(|| invalid("upload batch has no correlation field"))?;
         let mut keys = std::collections::HashSet::new();
         for item in &items {
@@ -255,13 +255,12 @@ impl Database {
             Ok(LifeReply::Transfer(TransferAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(refused(fault, "upload outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
             Err(error) => return Err(error),
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
                 let value = landed.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
-                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }
+                WireOperationOutcome::Confirmed { value, answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,

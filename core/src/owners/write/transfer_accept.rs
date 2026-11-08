@@ -77,7 +77,7 @@ impl TransferState {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Interrupted } else { Fault::NoSession }));
         }
-        if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| items.len() < joint.minimum || items.len() > joint.maximum) {
+        if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
         }
         self.now = self.now.max(now);

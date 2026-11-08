@@ -11,9 +11,9 @@ use crate::owners::calls::{CallError, CallKind, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::{ErrorClass, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
-use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AUTHOR};
+use crate::owners::session::{AuthorOutcome, SessionInput, CALLS_AUTHOR};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
-use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportError};
+use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
@@ -33,15 +33,24 @@ fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response,
             let body = response.data.and_then(|data| data.get(root).filter(|value| !value.is_null()).map(Value::to_string));
             CallsInput::Response { call_id, body, errors: Vec::new(), extensions: None }
         }
-        Err(TransportError::Graphql { messages, extensions }) => CallsInput::TransportError { call_id, error: CallError::Graphql { messages, extensions } },
-        Err(TransportError::Session { code, detail }) => CallsInput::TransportError { call_id, error: CallError::Session { code, detail } },
-        Err(TransportError::Http { status, body }) => CallsInput::TransportError { call_id, error: CallError::Http { status, detail: body } },
-        Err(TransportError::Interrupted(_)) => CallsInput::TransportError { call_id, error: CallError::Interrupted },
-        Err(_) => CallsInput::TransportError { call_id, error: CallError::Network },
+        Err(error) => CallsInput::TransportError { call_id, error: call_error(crate::ffi::DbError::from(error)) },
     }
 }
 
-fn session_call_error(code: SessionCode) -> CallError { CallError::Session { code, detail: code.name().to_string() } }
+/// The one translation of a typed refusal into the answer of a call: the class and the fields stay.
+fn call_error(error: crate::ffi::DbError) -> CallError {
+    use crate::ffi::DbError;
+    match error {
+        DbError::Network { .. } => CallError::Network,
+        DbError::Graphql { messages, extensions } => CallError::Graphql { messages, extensions },
+        DbError::Session { code, detail } => CallError::Session { code, detail },
+        DbError::Http { status, detail } => CallError::Http { status, detail },
+        DbError::Unauthorized { .. } => CallError::Unauthorized,
+        DbError::Interrupted { .. } => CallError::Interrupted,
+        DbError::NoSession { .. } => CallError::NoSession,
+        typed => CallError::Failed(typed),
+    }
+}
 
 pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
@@ -51,18 +60,7 @@ pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> 
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
         AuthorOutcome::Error { class: ErrorClass::Network, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
-        AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: match error {
-            SessionError::NoSession => CallError::NoSession,
-            SessionError::Interrupted | SessionError::Closed => CallError::Interrupted,
-            SessionError::Http { status } => CallError::Http { status, detail: "the server refused the request".into() },
-            SessionError::Unauthorized => CallError::Unauthorized,
-            SessionError::Session(code) => session_call_error(code),
-            SessionError::Revoked => session_call_error(SessionCode::SessionEnded),
-            SessionError::SequenceConflict => session_call_error(SessionCode::SequenceConflict),
-            SessionError::StateLost => session_call_error(SessionCode::StateLost),
-            SessionError::NoCredential => session_call_error(SessionCode::NoCredential),
-            _ => CallError::Network,
-        } },
+        AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: call_error(crate::ffi::session_failure(error)) },
     }
 }
 

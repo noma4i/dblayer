@@ -54,6 +54,7 @@ pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcom
 pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
 pub use write::FileBytes;
 pub use encrypted::{fetch_server_config, fetch_server_config_with_clock, FetchPorts, CredentialStore, EncryptedHttp, RetryProgress, RetrySubscription};
+pub(crate) use encrypted::session_failure;
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use loading::{LoadMoreResult, LoadRequest};
@@ -172,7 +173,8 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::Decode(detail) => Self::Invalid { detail },
             TransportError::Session { code, detail } => Self::Session { code, detail },
             TransportError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
-            TransportError::Unscripted(detail) => Self::Internal { detail },
+            TransportError::Unscripted(detail) | TransportError::Internal(detail) => Self::Internal { detail },
+            TransportError::Storage(detail) => Self::Storage { detail },
         }
     }
 }

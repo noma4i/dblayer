@@ -23,6 +23,8 @@ pub enum CallError {
     InvalidResponse,
     Interrupted,
     Storage,
+    /// A refusal that a transport or the owner Session already typed: it reaches the platform as it is.
+    Failed(crate::ffi::DbError),
 }
 
 pub type CallAnswer = Result<String, CallError>;

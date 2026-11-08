@@ -88,6 +88,7 @@ impl Database {
 impl Database {
     /// Writes the row locally in the epoch of the caller and queues it for the server. The SQL commit is refused when the epoch moved or the database closed before it.
     pub async fn send(&self, request: CommandRequest) -> Result<WireOperationReceipt, DbError> {
+        self.not_closed()?;
         self.mutation_needs_transport(&request.model, "create")?;
         self.admit_command(&request)?;
         if request.upload.is_none() {

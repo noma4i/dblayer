@@ -55,6 +55,7 @@ impl OutboxState {
         let rows = vec![RowValue { row_id: row.into(), values: values.into() }];
         let op = match kind {
             LocalWriteKind::Model(effects) => StoreOp::Planned { effects: effects.clone() },
+            LocalWriteKind::Snapshot => StoreOp::Show { model: model.into(), row_id: row.into() },
             LocalWriteKind::AttachBytes { bytes, name, mime } => StoreOp::AttachFile { model: model.into(), row_id: row.into(), field: values.into(), bytes: bytes.clone(), name: name.clone(), mime: mime.clone() },
             LocalWriteKind::Detach => StoreOp::DetachFile { model: model.into(), row_id: row.into(), field: values.into() },
             LocalWriteKind::SetEphemeral { .. } => StoreOp::EphemeralRows { model: model.into(), rows },

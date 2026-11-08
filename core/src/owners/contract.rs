@@ -133,9 +133,8 @@ pub enum ErrorClass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestError {
-    pub message: String,
     pub class: ErrorClass,
-    pub source: Option<crate::transport::TransportError>,
+    pub failure: crate::ffi::DbError,
 }
 
 impl RequestError {

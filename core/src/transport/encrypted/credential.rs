@@ -1,10 +1,9 @@
-//! The secret of the session: read from the `CredentialStore` on every use, minted once, erased by one path that waits for a load in progress.
+//! The secret of the session: read from the `CredentialStore` on every use, erased by one path that waits for a load in progress.
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
 
 use super::exchange::digest_of;
-use super::jwe::random_token;
 use crate::store::session_state;
 use super::CredentialSlot;
 use crate::store::Store;
@@ -61,19 +60,16 @@ impl Secret {
         crate::blocking::blocking_unit(|| self.slot.clear())
     }
 
-    /// The stored secret, or a new one when the store has none. A secret that does not match the stored session state is lost state.
+    /// The stored secret. The owner Session mints it: a store without one is lost state of a session, and no session has no credential.
     pub(crate) fn read(&self, store: &Store) -> Result<String, TransportError> {
         let _loading = self.hold()?;
         crate::lock::assert_no_library_lock("CredentialSlot::get");
         match crate::blocking::blocking_unit(|| self.slot.get())? {
             Some(stored) => verified(store, stored),
-            None => {
-                let credential = random_token();
-                crate::lock::assert_no_library_lock("CredentialSlot::set");
-                crate::blocking::blocking_unit(|| self.slot.set(&credential))?;
-                store.write(|inner| Ok(session_state::start(&inner.connection, &digest_of(&credential))?)).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
-                Ok(credential)
-            }
+            None => Err(match stored_session(store)? {
+                Some(_) => TransportError::Session { code: SessionCode::StateLost, detail: "the stored session has no secret".into() },
+                None => TransportError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
+            }),
         }
     }
 }
@@ -88,7 +84,7 @@ fn verified(store: &Store, credential: String) -> Result<String, TransportError>
 fn storage(error: rusqlite::Error) -> TransportError {
     match error {
         rusqlite::Error::FromSqlConversionFailure(..) => TransportError::Decode(format!("session storage: {error}")),
-        _ => TransportError::Network(format!("session storage: {error}")),
+        _ => TransportError::Storage(format!("session storage: {error}")),
     }
 }
 

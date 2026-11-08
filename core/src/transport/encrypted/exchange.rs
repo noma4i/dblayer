@@ -119,10 +119,12 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Security { code, detail } => TransportError::Security { code, detail },
         Failed::Http { status } => TransportError::Http { status, body: "the request was refused".into() },
         Failed::TooLarge { size, limit } => TransportError::RequestTooLarge { size, limit },
-        Failed::Rejected(reason) => TransportError::Network(format!("the request was not stored: {reason:?}")),
+        Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => TransportError::Storage(detail),
+        Failed::Rejected(crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) => TransportError::Interrupted("the session ended while its answer was pending".into()),
+        Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => TransportError::Internal(format!("the request was refused by the store: {reason:?}")),
         Failed::Session(code) => TransportError::Session { code, detail: code.name().to_string() },
         Failed::SessionExists => TransportError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
-        Failed::Storage(detail) => TransportError::Network(detail),
+        Failed::Storage(detail) => TransportError::Storage(detail),
         Failed::Interrupted | Failed::NoSession | Failed::Closed => TransportError::Interrupted("the session ended while its answer was pending".into()),
     }
 }

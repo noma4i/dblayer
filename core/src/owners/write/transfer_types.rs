@@ -104,6 +104,8 @@ pub struct StoredTransfer {
 pub enum TransferTick {
     Retry { transfer_id: TransferId, attempt_id: AttemptId },
     PutTimeout { transfer_id: TransferId, attempt_id: AttemptId },
+    /// The write of a minted `upload_id` the Store refused is due again.
+    Minted { upload_id: String, attempt_id: AttemptId },
     Expire,
 }
 
@@ -131,7 +133,12 @@ pub struct Joint {
     pub renumber: Option<Renumber>,
 }
 
+/// Whether a batch of `count` elements is inside the domain of its declaration: the one predicate of the size of a batch.
+pub fn batch_size_admitted((minimum, maximum): (usize, usize), count: usize) -> bool { count >= minimum && count <= maximum }
+
 impl Joint {
+    pub fn admits(&self, count: usize) -> bool { batch_size_admitted((self.minimum, self.maximum), count) }
+
     /// The text kept in the base: the rule of a batch survives a restart.
     pub fn to_text(&self) -> String {
         let op = &self.mutation;
@@ -411,6 +418,16 @@ pub struct StoredGroup {
 pub type CycleOutcomes = BTreeMap<CycleId, OutboxOutcome>;
 pub type TransferOutcomes = BTreeMap<TransferId, CycleOutcomes>;
 
+/// The record of a minted `upload_id` the Store has not confirmed: the debt lives until `Committed`, and no abort leaves before it.
+#[derive(Clone, Debug)]
+pub(super) struct MintedDebt {
+    /// The live transfer whose column holds the id; none for the record of a removed transfer.
+    pub transfer: Option<TransferId>,
+    pub key: Key,
+    pub attempts: u32,
+    pub attempt_id: AttemptId,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Pending {
     pub ids: Vec<TransferId>,
@@ -439,6 +456,8 @@ pub struct TransferState {
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,
     pub(super) orphan_flight: BTreeSet<String>,
+    /// `upload_id` -> the write the Store refused.
+    pub(super) minted: BTreeMap<String, MintedDebt>,
     /// The orphans whose `Online(true)` or `RestoreReady` came while their abort was in flight.
     pub(super) orphan_owed: BTreeSet<String>,
     /// The restored groups that still have an element without its file on the server.
@@ -480,6 +499,7 @@ impl TransferState {
             declarations: BTreeSet::new(),
             orphans: BTreeMap::new(),
             orphan_flight: BTreeSet::new(),
+            minted: BTreeMap::new(),
             orphan_owed: BTreeSet::new(),
             open_groups: BTreeSet::new(),
             held: Vec::new(),

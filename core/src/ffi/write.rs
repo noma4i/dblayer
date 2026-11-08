@@ -80,6 +80,7 @@ impl Database {
     }
 
 
+    #[cfg(test)]
     pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
         self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
     }
@@ -107,8 +108,9 @@ impl Database {
                 let (revision, value) = self.written(waiter, action, &model).await?;
                 return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
             }
-            let value = self.optimistic(&model, &shown)?;
-            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
+            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Snapshot, shown.to_string(), String::new(), self.life.now());
+            let (revision, value) = self.written(waiter, action, &model).await?;
+            return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         }
         let destroyed = action == "destroy";
         let call = self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string())?;
@@ -145,6 +147,7 @@ impl Database {
     }
 
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
+        self.not_closed()?;
         self.mutation_needs_transport(&model, "update")?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
@@ -153,6 +156,7 @@ impl Database {
     }
 
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
+        self.not_closed()?;
         self.mutation_needs_transport(&model, &action)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
@@ -161,6 +165,7 @@ impl Database {
     }
 
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
+        self.not_closed()?;
         self.mutation_needs_transport(&model, "destroy")?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
@@ -255,7 +260,6 @@ impl Database {
             Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
             Err(error) => return Err(error),
         };
         Ok(match answer {

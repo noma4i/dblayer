@@ -241,7 +241,7 @@ impl Facts {
         chain.models.extend(answer.dependency_models.iter().cloned());
         match chain.phase {
             MediaPhase::MarkerCheck { up_to } => {
-                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                let Some(found) = answer.marker.clone() else { return self.fail(invalid_response()) };
                 chain.latest = found.sequence;
                 let prefix = !chain.stale && self.marker.as_ref().is_some_and(|saved| saved.values == found.values && saved.sequence == up_to);
                 if prefix && found.sequence == up_to {
@@ -266,13 +266,13 @@ impl Facts {
                 } else {
                     match &answer.cursor {
                         Some(next) if chain.cursor.as_ref() != Some(next) => chain.cursor = Some(next.clone()),
-                        _ => return self.fail("InvalidResponse", None),
+                        _ => return self.fail(invalid_response()),
                     }
                 }
                 self.chain_request(context, load, chain)
             }
             MediaPhase::Confirm { .. } => {
-                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                let Some(found) = answer.marker.clone() else { return self.fail(invalid_response()) };
                 let counted: i64 = found.values.iter().filter(|(field, _)| field.as_str() != "revision").map(|(_, count)| *count).sum();
                 if counted == chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) {
                     return self.land_chain(load, &chain, Marker { sequence: chain.latest, values: found.values }, false);
@@ -285,7 +285,7 @@ impl Facts {
                     self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class: ErrorClass::Server });
                     return Handled;
                 }
-                self.fail("InvalidResponse", None)
+                self.fail(invalid_response())
             }
         }
     }
@@ -298,13 +298,13 @@ impl Facts {
         Transition(WinState::ended())
     }
 
-    pub(super) fn fail(&mut self, message: &str, source: Option<crate::transport::TransportError>) -> Outcome<WinState> {
+    pub(super) fn fail(&mut self, failure: crate::ffi::DbError) -> Outcome<WinState> {
         self.landing_marker = None;
         self.fresh = false;
         self.reread_due = false;
         self.set_phase(self.failed_phase());
-        self.error = Some(source.clone().map_or_else(|| crate::ffi::DbError::Storage { detail: message.to_string() }, crate::ffi::DbError::from));
-        self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
+        self.error = Some(failure.clone());
+        self.answer_all(&WindowOutcome::Failed { failure });
         self.announce();
         Transition(WinState::idle())
     }
@@ -429,3 +429,5 @@ impl Facts {
         self.begin(ctx, 1, false, true)
     }
 }
+
+fn invalid_response() -> crate::ffi::DbError { crate::ffi::DbError::Invalid { detail: "the response of the window is invalid".into() } }

@@ -70,8 +70,13 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
     Ok(slot.runtime.get_or_init(|| runtime))
 }
 
+/// The task of the executor ended without an answer: a cancelled task is `Interrupted`, a task that panicked is `Runtime`.
+fn joined(error: tokio::task::JoinError) -> DbError {
+    if error.is_cancelled() { DbError::Interrupted { detail: error.to_string() } } else { DbError::Runtime { detail: error.to_string() } }
+}
+
 pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-    crate::task::spawn_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
+    crate::task::spawn_on(executor()?.handle(), work).await.map_err(joined)?.map_err(Into::into)
 }
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
@@ -79,7 +84,7 @@ pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Futur
     impl Drop for Cancel { fn drop(&mut self) { crate::lock::effect(|| self.0.abort()); } }
     let task = crate::task::spawn_on(executor()?.handle(), work);
     let _cancel = Cancel(task.abort_handle());
-    task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
+    task.await.map_err(joined)
 }
 
 pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
@@ -91,7 +96,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    crate::task::spawn_blocking_on(executor()?.handle(), None, work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    crate::task::spawn_blocking_on(executor()?.handle(), None, work).await.map_err(joined)?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -269,6 +274,7 @@ impl Database {
         Ok(found)
     }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> {
+        self.not_closed()?;
         let relation = super::loading::relation_named(&model, relation)?;
         self.read_in_epoch(epoch, "edge values", move |database| {
             let params = parse_json(&params_json)?;
@@ -293,19 +299,22 @@ impl Database {
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> {
+        self.not_closed()?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
     }
     pub async fn read(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
+        self.not_closed()?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read_file(&model, &row_id, &field)?)).await
     }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
+        self.not_closed()?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
     pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
-        if self.life.published().closed { return Err(super::command::closed()); }
+        self.not_closed()?;
         let defs: Vec<Value> = self.offload(move || parse_json(&defs_json)).await?;
         self.remote()?;
         let mut names = Vec::new();
@@ -350,6 +359,7 @@ impl Database {
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
+        self.not_closed()?;
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };
             return self.retry_transfer(epoch, model, row_id, action, source).await;
@@ -440,6 +450,7 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },
         CallError::Interrupted => super::command::ended(),
         CallError::Storage => DbError::Storage { detail: "the database could not save its state".into() },
+        CallError::Failed(error) => error,
     }
 }
 

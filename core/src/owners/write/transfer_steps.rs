@@ -140,7 +140,7 @@ impl TransferState {
     /// The multipart upload exists on the server whatever became of the attempt that created it.
     pub(super) fn upload_minted(&mut self, id: TransferId, upload_id: String, key: String, fx: &mut Fx) {
         let owned = self.transfers.get(&id).map(|transfer| (transfer.upload_id.is_some(), transfer.stage));
-        let known = self.orphans.contains_key(&upload_id) || self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(pending_id, _)| *pending_id == upload_id));
+        let known = self.orphans.contains_key(&upload_id) || self.minted.contains_key(&upload_id) || self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(pending_id, _)| *pending_id == upload_id));
         match owned {
             Some((true, _)) => {}
             _ if known => {}
@@ -207,7 +207,27 @@ impl TransferState {
         match kind {
             TransferTick::Expire => self.expire(fx),
             TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(transfer_id, attempt_id, fx),
+            TransferTick::Minted { upload_id, attempt_id } => self.tick_minted(&upload_id, attempt_id, fx),
             TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(transfer_id, attempt_id, fx),
+        }
+    }
+
+    /// `MintedPending x Tick`: the saved record goes to the Store again while its transfer still holds the id.
+    fn tick_minted(&mut self, upload_id: &str, attempt_id: AttemptId, fx: &mut Fx) {
+        let Some(debt) = self.minted.get(upload_id).filter(|debt| debt.attempt_id == attempt_id).cloned() else { return };
+        if self.ended { return; }
+        match debt.transfer {
+            Some(id) => {
+                let holds = self.transfers.get(&id).is_some_and(|transfer| transfer.upload_id.as_deref() == Some(upload_id) && !matches!(transfer.stage, TransferStage::Removing | TransferStage::Done));
+                if holds { self.store(&[id], StoreKind::UploadId, fx); } else { self.minted.remove(upload_id); }
+            }
+            None => {
+                let batch = self.commit_ops(vec![StoreOp::UploadOrphan { upload_id: upload_id.to_string(), key: debt.key.clone() }], fx);
+                if let Some(pending) = batch.and_then(|batch| self.pending.get_mut(&batch)) {
+                    pending.kind = StoreKind::LateOrphan;
+                    pending.orphan = Some((upload_id.to_string(), debt.key));
+                }
+            }
         }
     }
 

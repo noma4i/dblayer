@@ -40,7 +40,7 @@ impl RetryClass {
                 let codes: Vec<_> = extensions.iter().filter_map(|value| value.code.as_deref()).chain(messages.iter().map(String::as_str)).collect();
                 RetryClass::classify(false, Some(200), &codes)
             }
-            TransportError::RequestTooLarge { .. } | TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) => RetryClass::Fatal,
+            TransportError::RequestTooLarge { .. } | TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) | TransportError::Storage(_) | TransportError::Internal(_) => RetryClass::Fatal,
         }
     }
 

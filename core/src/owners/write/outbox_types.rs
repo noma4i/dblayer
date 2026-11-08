@@ -158,6 +158,8 @@ pub enum LocalWriteKind {
     AttachBytes { bytes: Vec<u8>, name: String, mime: String },
     /// The final rows of a call on a local model or of an action without a mutation.
     Model(IntentEffects),
+    /// A call that changes nothing: the row and the revision of one snapshot of the Store, without a new revision.
+    Snapshot,
 }
 
 #[derive(Clone, Debug)]

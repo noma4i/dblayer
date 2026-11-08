@@ -99,7 +99,7 @@ fn xfer_round_started() {
     let mut state = state(1);
     let request_id = requested(&mut state, 1, &[10]);
     let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 5, epoch: 1 });
-    assert_eq!((runs.len(), state.round), (0, Round::Running { round_id: 5, epoch: 1, next: None, ended: false }));
+    assert_eq!((runs.len(), state.round), (0, Round::Running { request_id, round_id: 5, epoch: 1, next: None, ended: false }));
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn xfer_round_needed_new_epoch() {
     running(&mut state, 1, 5);
     step(&mut state, RoundsInput::EpochStarted(EpochStarted { epoch: 2, identity: None, generation: 0 }));
     let (runs, _) = step(&mut state, RoundsInput::Needed { epoch: 2, ids: vec![20] });
-    assert_eq!((runs.len(), state.round), (0, Round::Running { round_id: 5, epoch: 1, next: Some(2), ended: false }));
+    assert_eq!((runs.len(), state.round), (0, Round::Running { request_id: 1, round_id: 5, epoch: 1, next: Some(2), ended: false }));
 }
 
 #[test]
@@ -269,7 +269,7 @@ fn xfer_round_running_epoch_ended() {
     let mut state = state(1);
     running(&mut state, 1, 5);
     step(&mut state, RoundsInput::EpochEnded(EpochEnded { epoch: 1, cause: Cause::SessionReset }));
-    assert_eq!(state.round, Round::Running { round_id: 5, epoch: 1, next: None, ended: true });
+    assert_eq!(state.round, Round::Running { request_id: 1, round_id: 5, epoch: 1, next: None, ended: true });
     step(&mut state, RoundsInput::RoundEnded { round_id: 5, epoch: 1 });
     assert_eq!(state.round, Round::None, "the platform ends the job itself");
 }
@@ -311,7 +311,7 @@ fn xfer_round_closed() {
 
 #[test]
 fn xfer_prop_round_ids() {
-    let rounds = [Round::None, Round::Requested { epoch: 1, request_id: 5 }, Round::Running { round_id: 7, epoch: 1, next: None, ended: false }, Round::Refused { epoch: 1 }, Round::Stopped { epoch: 1 }];
+    let rounds = [Round::None, Round::Requested { epoch: 1, request_id: 5 }, Round::Running { request_id: 6, round_id: 7, epoch: 1, next: None, ended: false }, Round::Refused { epoch: 1 }, Round::Stopped { epoch: 1 }];
     for round in rounds {
         let mut state = state(1);
         busy(&mut state, 1, &[10]);
@@ -327,7 +327,7 @@ fn xfer_prop_round_ids() {
 
 #[test]
 fn xfer_round_foreground_busy() {
-    for round in [Round::Requested { epoch: 1, request_id: 4 }, Round::Running { round_id: 3, epoch: 1, next: None, ended: false }] {
+    for round in [Round::Requested { epoch: 1, request_id: 4 }, Round::Running { request_id: 2, round_id: 3, epoch: 1, next: None, ended: false }] {
         let mut state = state(1);
         busy(&mut state, 1, &[10]);
         state.round = round;
@@ -352,10 +352,10 @@ fn xfer_round_epoch_ended_other() {
     let mut state = state(2);
     busy(&mut state, 2, &[10]);
     busy(&mut state, 3, &[11]);
-    state.round = Round::Running { round_id: 3, epoch: 2, next: Some(3), ended: false };
+    state.round = Round::Running { request_id: 2, round_id: 3, epoch: 2, next: Some(3), ended: false };
     let (runs, sends) = step(&mut state, RoundsInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
     assert_eq!((runs.len(), sends.len(), state.active.contains_key(&3)), (0, 0, false), "the ids of the other epoch go");
-    assert_eq!(state.round, Round::Running { round_id: 3, epoch: 2, next: None, ended: false }, "the next epoch that ended is not asked for");
+    assert_eq!(state.round, Round::Running { request_id: 2, round_id: 3, epoch: 2, next: None, ended: false }, "the next epoch that ended is not asked for");
 }
 
 #[test]

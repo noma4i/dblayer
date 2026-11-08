@@ -22,7 +22,7 @@ pub trait WindowCodec: Send + Sync + 'static {
         if response.errors.is_empty() { return None; }
         let class = if response.errors.iter().any(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR)) { ErrorClass::InvalidCursor } else { ErrorClass::Permanent };
         let source = TransportError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() };
-        Some(RequestError { message: source.to_string(), class, source: Some(source) })
+        Some(RequestError { class, failure: crate::ffi::DbError::from(source) })
     }
 }
 
@@ -68,7 +68,7 @@ impl WindowIo {
 
     fn request(&mut self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind): (u32, Epoch, RequestKind), cursor: Option<String>, back: &Back<Windows>) {
         if let Err(refused) = (self.admit)(epoch) {
-            return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { message: refused.0, class: ErrorClass::Permanent, source: None } });
+            return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Interrupted { detail: refused.0 } } });
         }
         let token = CancelToken::new();
         self.open.retain(|_, flight| !flight.is_cancelled());
@@ -85,7 +85,7 @@ impl WindowIo {
                 biased;
                 () = token.cancelled() => None,
                 outcome = async {
-                    if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }); }
+                    if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Interrupted { detail: refused.0 } }); }
                     ask((&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt)))).await
                 } => Some(outcome),
             };
@@ -136,14 +136,14 @@ impl EffectRunner<Windows> for WindowIo {
 async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds)) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor, kind) {
         Ok(request) => request.by(wire),
-        Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
+        Err(detail) => return TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Invalid { detail } }),
     };
     match gate.query(Some(epoch), request).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, kind, response) {
                 Ok(answer) => TransportOutcome::Response(answer),
-                Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
+                Err(detail) => TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Invalid { detail } }),
             },
         },
         Err(error) => failure(&error),
@@ -153,7 +153,7 @@ async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn Win
 /// `Interrupted` = the request left and no answer came; every other error has the class of its retry policy.
 pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
     if matches!(error, TransportError::Graphql { extensions: Some(extensions), .. } if extensions.code.as_deref() == Some(crate::transport::retry::INVALID_CURSOR)) {
-        return TransportOutcome::Error(RequestError { message: error.to_string(), class: ErrorClass::InvalidCursor, source: Some(error.clone()) });
+        return TransportOutcome::Error(RequestError { class: ErrorClass::InvalidCursor, failure: crate::ffi::DbError::from(error.clone()) });
     }
     let class = match RetryClass::of_error(error) {
         _ if matches!(error, TransportError::Interrupted(_)) => return TransportOutcome::Dropped,
@@ -161,7 +161,7 @@ pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
         RetryClass::Server | RetryClass::Retriable => ErrorClass::Server,
         RetryClass::Fatal => ErrorClass::Permanent,
     };
-    TransportOutcome::Error(RequestError { message: error.to_string(), class, source: Some(error.clone()) })
+    TransportOutcome::Error(RequestError { class, failure: crate::ffi::DbError::from(error.clone()) })
 }
 
 impl Drop for WindowIo {

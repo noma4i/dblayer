@@ -151,7 +151,7 @@ impl Facts {
                     self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class });
                     return Handled;
                 }
-                self.fail(&error.message, error.source.clone())
+                self.fail(error.failure.clone())
             }
             Ev::RetryDue { request: got } if *got == load.request && load.retry && self.is_online() => {
                 load.attempt = context.attempt();
@@ -219,8 +219,8 @@ impl Facts {
                     self.answer_all(&WindowOutcome::Interrupted);
                     Transition(WinState::ended())
                 }
-                RejectReason::Storage(message) => self.fail(message, None),
-                RejectReason::Invalid => self.fail("the batch has no basis for a model of its rows", None),
+                RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
+                RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
             },
             Ev::InterestPassive { id } => {
                 self.interest.insert(*id);

@@ -48,6 +48,7 @@ pub fn unowned_pending(connection: &Connection) -> rusqlite::Result<bool> {
     connection.query_row(include_str!("sql/session_state/unowned_pending.sql"), [], |row| row.get(0))
 }
 
+#[cfg(test)]
 pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
     if session(&transaction)?.is_some_and(|session| session.credential_digest == credential_digest) {

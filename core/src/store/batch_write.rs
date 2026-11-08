@@ -110,6 +110,7 @@ impl Store {
                 resets.push((model.clone(), row_id.clone(), field.clone(), *position));
                 continue;
             }
+            if matches!(op, crate::owners::store::StoreOp::Show { .. }) { continue; }
             writes_database = true;
             if let crate::owners::store::StoreOp::Swap { model, temp, real } = op {
                 results.push(super::swap::apply(&mut writer, model, temp, real, own)?);

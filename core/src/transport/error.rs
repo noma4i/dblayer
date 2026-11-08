@@ -20,6 +20,10 @@ pub enum TransportError {
     Decode(String),
     #[error("no scripted reply for {0}")]
     Unscripted(String),
+    #[error("storage: {0}")]
+    Storage(String),
+    #[error("internal: {0}")]
+    Internal(String),
 }
 
 impl TransportError {
@@ -32,5 +36,5 @@ impl TransportError {
 }
 
 impl From<crate::store::CoreError> for TransportError {
-    fn from(error: crate::store::CoreError) -> Self { TransportError::Network(format!("session end: {error}")) }
+    fn from(error: crate::store::CoreError) -> Self { TransportError::Storage(format!("session end: {error}")) }
 }

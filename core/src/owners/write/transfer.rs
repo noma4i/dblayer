@@ -242,6 +242,22 @@ impl TransferState {
         fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
     }
 
+    /// The Store refused the write of a minted `upload_id`: the debt stays and the write goes again after the backoff.
+    pub(super) fn owe_minted(&mut self, pending: &Pending, fx: &mut Fx) {
+        let owed = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
+            (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone(), None)),
+            (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone(), Some(transfer.transfer_id))),
+            (None, None) => None,
+        };
+        let Some((upload_id, key, transfer)) = owed else { return };
+        let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
+        let attempt_id = self.next_attempt;
+        self.next_attempt += 1;
+        let after = RetryPolicy::Upload.backoff().delay(attempts.saturating_sub(1));
+        fx.push(Effect::Schedule { id: ScheduleId(RETRY_TIMER + attempt_id), after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
+        self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id });
+    }
+
     pub(super) fn schedule_retry(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.waiting_retry = true;
@@ -288,6 +304,7 @@ impl TransferState {
     fn committed(&mut self, (batch, shown): (crate::owners::contract::BatchId, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+            self.minted.retain(|upload_id, debt| debt.transfer.is_none_or(|id| !pending.ids.contains(&id)) && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id));
             if let Some((upload_id, key)) = pending.orphan {
                 self.orphans.insert(upload_id, key);
                 self.send_orphans(false, fx);
@@ -336,9 +353,8 @@ impl TransferState {
     fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
-            if let (Some((upload_id, key)), RejectReason::Storage(_)) = (pending.orphan, &rejected.reason) {
-                self.orphans.insert(upload_id, key);
-                self.send_orphans(false, fx);
+            if matches!(rejected.reason, RejectReason::Storage(_)) {
+                self.owe_minted(&pending, fx);
             }
             return;
         }

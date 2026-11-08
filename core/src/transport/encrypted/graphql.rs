@@ -65,7 +65,9 @@ impl EncryptedTransport {
                 crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
                 crate::owners::session::AuthorOutcome::Dropped => Err(TransportError::Network("the answer was not received".into())),
             },
-            _ => Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
+            crate::runtime::Outcome::Internal => Err(TransportError::Internal("the answer of the session was lost".into())),
+            crate::runtime::Outcome::Value(_) => Err(TransportError::Internal("the owner Session answered with a reply the call does not wait for".into())),
+            crate::runtime::Outcome::Closing | crate::runtime::Outcome::EpochEnded(_) => Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
         }
     }
 }

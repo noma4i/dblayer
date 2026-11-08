@@ -133,7 +133,7 @@ impl Chain {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowOutcome {
     Loaded { revision: i64, has_more: bool, fetched: bool },
-    Failed { error: String, source: Option<crate::transport::TransportError> },
+    Failed { failure: crate::ffi::DbError },
     PageLimit,
     Offline { message: String },
     Interrupted,

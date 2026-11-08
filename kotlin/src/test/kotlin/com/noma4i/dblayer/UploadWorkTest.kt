@@ -47,7 +47,8 @@ class UploadWorkTest {
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        UploadNetwork.started(3u, null)
+        UploadNetwork.requested(RoundJob(1uL, 3u, 1uL))
+        UploadNetwork.started(RoundJob(1uL, 3u, 1uL), null)
         try {
             MockWebServer().use { server ->
                 repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
@@ -65,13 +66,18 @@ class UploadWorkTest {
         }
     }
 
-    /** boundary_round_orders (P-BND-08, D-176): the end and the network change of another round leave the network of the running round. */
+    /** boundary_round_orders (P-BND-08, D-194): the late start, the end and the network change of another round leave the network of the running round. */
     @Test
-    fun theEndAndTheNetworkChangeOfAnotherRoundLeaveTheRunningRound() = bounded {
-        UploadNetwork.started(4u, null)
+    fun theLateStartTheEndAndTheNetworkChangeOfAnotherRoundLeaveTheRunningRound() = bounded {
+        val running = RoundJob(2uL, 4u, 1uL)
+        val late = RoundJob(1uL, 3u, 1uL)
+        UploadNetwork.requested(late)
+        UploadNetwork.requested(running)
+        UploadNetwork.started(running, null)
         try {
+            UploadNetwork.started(late, null)
+            UploadNetwork.changed(late, null)
             UploadNetwork.ended(3u)
-            UploadNetwork.changed(3u, null)
             MockWebServer().use { server ->
                 server.start()
                 refused { OkHttpTransport().send(probeRequest(server.url("/graphql").toString(), "{}").copy(purpose = NetworkPurpose.TRANSFER)) }
@@ -83,7 +89,30 @@ class UploadWorkTest {
                 assertEquals(RawOutcome.Response(200u, null, "{}"), OkHttpTransport().send(probeRequest(server.url("/graphql").toString(), "{}").copy(purpose = NetworkPurpose.TRANSFER)))
             }
         } finally {
+            UploadNetwork.ended(3u)
             UploadNetwork.ended(4u)
+        }
+    }
+
+    /** boundary_round_orders (P-BND-08, D-194): two starts with different identities on one service both reach the owner. */
+    @Test
+    fun twoStartCommandsWithDifferentIdentitiesReachTheOwnerBoth() = bounded {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        UploadNotifications.store(context, notification)
+        val database = openSigned(Config(null, null), modelsJSON, MockTransport())
+        val ended = java.util.concurrent.CopyOnWriteArrayList<UInt>()
+        try {
+            database.setRoundJobs(object : RoundJobsSink {
+                override fun scheduleJob(job: RoundJob) {}
+                override fun endJob(roundId: UInt) { ended.add(roundId) }
+            })
+            val controller = Robolectric.buildService(UploadService::class.java).create()
+            controller.withIntent(android.content.Intent(context, UploadService::class.java).putExtra("request", 1L).putExtra("round", 1L).putExtra("epoch", 1L)).startCommand(0, 1)
+            controller.withIntent(android.content.Intent(context, UploadService::class.java).putExtra("request", 2L).putExtra("round", 2L).putExtra("epoch", 1L)).startCommand(0, 2)
+            UploadService.opened(database)
+            eventually("the owner answered both starts") { ended.toSet() == setOf(1u, 2u) }
+        } finally {
+            closeForCleanup()
         }
     }
 
@@ -95,7 +124,8 @@ class UploadWorkTest {
         val database = openSigned(Config(null, null), modelsJSON, MockTransport())
         try {
             val rounds = UploadRounds(context, database, UploadScheduler { _, _ -> null })
-            UploadNetwork.started(8u, null)
+            UploadNetwork.requested(RoundJob(2uL, 8u, 1uL))
+            UploadNetwork.started(RoundJob(2uL, 8u, 1uL), null)
             UploadJobService.schedule(context, RoundJob(2uL, 8u, 1uL))
             rounds.endJob(7u)
             assertEquals(8u, roundJobOf(scheduler.getPendingJob(UploadJobService.JOB_ID)!!.extras).roundId)

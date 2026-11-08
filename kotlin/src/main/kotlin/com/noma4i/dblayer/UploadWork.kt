@@ -74,6 +74,7 @@ internal object SystemUploadScheduler : UploadScheduler {
 /** The jobs of the rounds of the core: the core asks for a job, the system runs it, the core ends it. */
 internal class UploadRounds(private val context: Context, private val database: Database, private val scheduler: UploadScheduler = SystemUploadScheduler) : RoundJobsSink {
     override fun scheduleJob(job: RoundJob) {
+        UploadNetwork.requested(job)
         val refusal = try {
             scheduler.start(context, job)
         } catch (error: RuntimeException) {
@@ -96,17 +97,20 @@ private const val EPOCH = "epoch"
 
 internal fun roundJobOf(extras: android.os.PersistableBundle) = RoundJob(extras.getLong(REQUEST).toULong(), extras.getLong(ROUND).toUInt(), extras.getLong(EPOCH).toULong())
 
+/** The networks of the started jobs by the full identity of the round. The network of the last requested round is the one the uploads use: a late callback of another round holds its own entry and never replaces it. */
 internal object UploadNetwork {
-    private class Held(val roundId: UInt, val network: Network?)
-    private val current = java.util.concurrent.atomic.AtomicReference<Held?>(null)
+    private data class Held(val networks: Map<RoundJob, Network?> = emptyMap(), val requested: RoundJob? = null, val active: RoundJob? = null)
+    private val held = java.util.concurrent.atomic.AtomicReference(Held())
 
-    fun started(roundId: UInt, network: Network?) { current.set(Held(roundId, network)) }
-    fun changed(roundId: UInt, network: Network?) { current.updateAndGet { if (it?.roundId == roundId) Held(roundId, network) else it } }
-    fun ended(roundId: UInt) { current.updateAndGet { if (it?.roundId == roundId) null else it } }
+    fun requested(job: RoundJob) { held.updateAndGet { it.copy(requested = job) } }
+    fun started(job: RoundJob, network: Network?) { held.updateAndGet { it.copy(networks = it.networks + (job to network), active = if (job == it.requested) job else it.active) } }
+    fun changed(job: RoundJob, network: Network?) { held.updateAndGet { if (job in it.networks) it.copy(networks = it.networks + (job to network)) else it } }
+    fun ended(roundId: UInt) { held.updateAndGet { it.copy(networks = it.networks.filterKeys { job -> job.roundId != roundId }, active = it.active?.takeIf { job -> job.roundId != roundId }) } }
 
     fun route(client: OkHttpClient): OkHttpClient {
-        val held = current.get() ?: return client
-        val bound = held.network ?: throw java.io.IOException("the upload job has no network")
+        val now = held.get()
+        val job = now.active ?: return client
+        val bound = now.networks[job] ?: throw java.io.IOException("the upload job has no network")
         return client.newBuilder().socketFactory(bound.socketFactory).dns(Dns { host -> bound.getAllByName(host).toList() }).build()
     }
 }
@@ -118,13 +122,13 @@ internal class UploadJobService : JobService() {
         val database = DBlayer.openedDatabase()
         if (database == null) { jobFinished(params, false); return false }
         val job = roundJobOf(params.extras)
-        UploadNetwork.started(job.roundId, params.network)
+        UploadNetwork.started(job, params.network)
         database.roundStarted(job.requestId, job.roundId, job.epoch)
         return true
     }
 
     override fun onNetworkChanged(params: JobParameters) {
-        UploadNetwork.changed(roundJobOf(params.extras).roundId, params.network)
+        UploadNetwork.changed(roundJobOf(params.extras), params.network)
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
@@ -151,8 +155,8 @@ internal class UploadJobService : JobService() {
 }
 
 internal class UploadService : Service() {
-    @Volatile private var round: RoundJob? = null
-    @Volatile private var announced = false
+    private data class Seen(val rounds: List<RoundJob> = emptyList(), val unreported: List<RoundJob> = emptyList(), val ending: Set<UInt> = emptySet())
+    private val seen = java.util.concurrent.atomic.AtomicReference(Seen())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -164,33 +168,35 @@ internal class UploadService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        round = RoundJob(requested.getLongExtra(REQUEST, 0).toULong(), requested.getLongExtra(ROUND, 0).toUInt(), requested.getLongExtra(EPOCH, 0).toULong())
-        DBlayer.openedDatabase()?.let(::report)
+        val job = RoundJob(requested.getLongExtra(REQUEST, 0).toULong(), requested.getLongExtra(ROUND, 0).toUInt(), requested.getLongExtra(EPOCH, 0).toULong())
+        val database = DBlayer.openedDatabase()
+        seen.updateAndGet { it.copy(rounds = it.rounds + job, unreported = if (database == null) it.unreported + job else it.unreported) }
+        database?.roundStarted(job.requestId, job.roundId, job.epoch)
         return START_STICKY
     }
 
     override fun onDestroy() {
         if (live === this) live = null
-        val job = round?.takeIf { announced } ?: return
-        round = null
-        DBlayer.openedDatabase()?.roundEnded(job.roundId, job.epoch)
+        val database = DBlayer.openedDatabase() ?: return
+        val last = seen.getAndSet(Seen())
+        last.rounds.filter { it !in last.unreported }.forEach { database.roundEnded(it.roundId, it.epoch) }
     }
 
-    private fun report(database: Database) {
-        val job = round ?: return
-        if (announced) return
-        announced = true
-        database.roundStarted(job.requestId, job.roundId, job.epoch)
+    private fun reportWaiting(database: Database) {
+        seen.getAndUpdate { it.copy(unreported = emptyList()) }.unreported.forEach { database.roundStarted(it.requestId, it.roundId, it.epoch) }
+    }
+
+    private fun release(roundId: UInt) {
+        val now = seen.updateAndGet { it.copy(ending = it.ending + roundId) }
+        if (now.rounds.all { it.roundId in now.ending }) stopSelf()
     }
 
     companion object {
         @Volatile private var live: UploadService? = null
 
-        fun opened(database: Database) { live?.report(database) }
+        fun opened(database: Database) { live?.reportWaiting(database) }
 
-        fun stop(roundId: UInt) {
-            live?.takeIf { it.round?.roundId == roundId }?.stopSelf()
-        }
+        fun stop(roundId: UInt) { live?.release(roundId) }
 
         fun start(context: Context, job: RoundJob): Refusal? = try {
             context.startForegroundService(Intent(context, UploadService::class.java).putExtra(REQUEST, job.requestId.toLong()).putExtra(ROUND, job.roundId.toLong()).putExtra(EPOCH, job.epoch.toLong()))

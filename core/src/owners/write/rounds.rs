@@ -38,7 +38,7 @@ pub enum RoundsEffect {
 pub enum Round {
     None,
     Requested { epoch: Epoch, request_id: RequestId },
-    Running { round_id: RoundId, epoch: Epoch, next: Option<Epoch>, ended: bool },
+    Running { request_id: RequestId, round_id: RoundId, epoch: Epoch, next: Option<Epoch>, ended: bool },
     Refused { epoch: Epoch },
     Stopped { epoch: Epoch },
     Closed,
@@ -95,7 +95,7 @@ impl RoundsState {
             Round::None => self.request(epoch, fx),
             Round::Requested { epoch: asked, .. } if asked != epoch => self.request(epoch, fx),
             Round::Refused { .. } | Round::Stopped { .. } => self.request_again(epoch, fx),
-            Round::Running { round_id, epoch: running, ended, .. } if running != epoch => self.round = Round::Running { round_id, epoch: running, next: Some(epoch), ended },
+            Round::Running { request_id, round_id, epoch: running, ended, .. } if running != epoch => self.round = Round::Running { request_id, round_id, epoch: running, next: Some(epoch), ended },
             _ => {}
         }
     }
@@ -129,11 +129,14 @@ impl RoundsState {
     fn started(&mut self, request_id: RequestId, round_id: RoundId, epoch: Epoch, fx: &mut Fx) {
         match self.round {
             Round::Requested { epoch: asked, request_id: current } if current == request_id && asked == epoch => {
-                self.round = Round::Running { round_id, epoch, next: None, ended: false };
-                if !self.busy(epoch) {
+                if self.busy(epoch) {
+                    self.round = Round::Running { request_id, round_id, epoch, next: None, ended: false };
+                } else {
+                    self.round = Round::None;
                     fx.push(Effect::Run(RoundsEffect::EndJob { round_id }));
                 }
             }
+            Round::Running { request_id: running_request, round_id: running, epoch: running_epoch, .. } if (running_request, running, running_epoch) == (request_id, round_id, epoch) => {}
             _ => fx.push(Effect::Run(RoundsEffect::EndJob { round_id })),
         }
     }
@@ -143,9 +146,13 @@ impl RoundsState {
         if !ids.remove(&transfer_id) || !ids.is_empty() {
             return;
         }
-        if let Round::Running { round_id, epoch: running, ended: false, .. } = self.round {
+        if let Round::Running { round_id, epoch: running, next, ended: false, .. } = self.round {
             if running == epoch {
                 fx.push(Effect::Run(RoundsEffect::EndJob { round_id }));
+                self.round = Round::None;
+                if let Some(next) = next.filter(|next| self.busy(*next)) {
+                    self.request(next, fx);
+                }
             }
         }
     }
@@ -160,7 +167,7 @@ impl RoundsState {
     }
 
     fn ended(&mut self, round_id: RoundId, epoch: Epoch, fx: &mut Fx) {
-        let Round::Running { round_id: running, epoch: running_epoch, next, ended } = self.round else { return };
+        let Round::Running { round_id: running, epoch: running_epoch, next, ended, .. } = self.round else { return };
         if running != round_id || running_epoch != epoch {
             return;
         }
@@ -175,8 +182,8 @@ impl RoundsState {
         self.active.remove(&epoch);
         match self.round {
             Round::Requested { epoch: found, .. } | Round::Refused { epoch: found } | Round::Stopped { epoch: found } if found == epoch => self.round = Round::None,
-            Round::Running { round_id, epoch: found, next, .. } if found == epoch => self.round = Round::Running { round_id, epoch, next, ended: true },
-            Round::Running { round_id, epoch: found, next: Some(next), ended } if next == epoch => self.round = Round::Running { round_id, epoch: found, next: None, ended },
+            Round::Running { request_id, round_id, epoch: found, next, .. } if found == epoch => self.round = Round::Running { request_id, round_id, epoch, next, ended: true },
+            Round::Running { request_id, round_id, epoch: found, next: Some(next), ended } if next == epoch => self.round = Round::Running { request_id, round_id, epoch: found, next: None, ended },
             _ => {}
         }
     }

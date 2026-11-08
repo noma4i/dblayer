@@ -408,6 +408,7 @@ impl TransferState {
     pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
         self.ended = true;
         self.pending.clear();
+        self.minted.clear();
         for id in self.open_ids() {
             self.interrupt(id, fx);
         }

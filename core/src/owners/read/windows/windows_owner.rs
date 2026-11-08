@@ -505,7 +505,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::Response { request, attempt, page, now } => Self::by_request(state, request, Ev::Response { request, attempt, page, now }, &mut out),
             WindowsInput::Failure { request, attempt, error } => Self::by_request(state, request, Ev::Failure { request, attempt, error: error.clone() }, &mut out),
-            WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network, source: None } }, &mut out),
+            WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { class: ErrorClass::Network, failure: crate::ffi::DbError::Dropped { detail: "the request left and the answer did not come".into() } } }, &mut out),
             WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out),
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
             WindowsInput::Stale { model, keys, cause } => {
@@ -568,7 +568,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::TaskFailed { id } if id & REQUEST_TASK != 0 => {
                 let (request, attempt) = task_request(id);
-                let error = RequestError { message: "the request task failed".into(), class: ErrorClass::Permanent, source: None };
+                let error = RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Runtime { detail: "the request task failed".into() } };
                 return Self::step(state, WindowsInput::Failure { request, attempt, error });
             }
             WindowsInput::TaskFailed { id } => {

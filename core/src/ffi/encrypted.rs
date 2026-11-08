@@ -81,7 +81,7 @@ pub(super) fn wire(
     let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
     let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
     let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
-    crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+    crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(DbError::from)?;
     let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport::beside_session(transport));
     let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), rest));
     let cable = encrypted_transport.cable_lines();
@@ -136,6 +136,7 @@ fn session_body(body: &str) -> Result<String, DbError> {
 #[uniffi::export]
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
+        self.not_closed()?;
         let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
         match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => self.offload(move || session_body(&body)).await,
@@ -165,7 +166,7 @@ impl Database {
     }
 }
 
-pub(super) fn session_failure(error: crate::owners::session::SessionError) -> DbError {
+pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> DbError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
@@ -177,7 +178,10 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Security { code, detail } => DbError::Security { code, detail },
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
-        Failed::Rejected(reason) => DbError::Storage { detail: format!("the request was not stored: {reason:?}") },
+        Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => DbError::Storage { detail },
+        Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => DbError::NoSession { detail: "the session of this request ended".into() },
+        Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),
+        Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => DbError::Internal { detail: format!("the request was refused by the store: {reason:?}") },
         Failed::Session(code) => DbError::Session { code, detail: code.name().to_string() },
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },

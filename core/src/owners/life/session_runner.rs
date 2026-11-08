@@ -226,7 +226,7 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
         }
         Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
         Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, persisted_missing: false, status: 0, too_large: None, security: None, body: None },
-        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. }) => {
+        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
                 TransportError::RequestTooLarge { size, limit } => (0, Some((*size, *limit))),
