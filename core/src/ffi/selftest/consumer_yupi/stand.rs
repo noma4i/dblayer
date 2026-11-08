@@ -1,11 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::{json, Value};
 
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::tape::Rows;
-use crate::test_wait::yield_until;
 use crate::ffi::tests::session_guards_tests::WatchedHeld;
 use crate::ffi::wire::{wire_fields, Cell, WireRow};
 use crate::ffi::{Config, Database, DbError, EncryptedReply, FakeHttp, FakeTransport, ReadFetch, ReadRequest, ReadStream, ReadValue};
@@ -28,10 +27,17 @@ impl FakeTransport for Cable {
 }
 
 /// The server behind the encrypted path: it answers each operation with the data the test set, anything else with an empty `data`.
-#[derive(Default)]
 struct Server {
     answers: StdMutex<HashMap<String, Value>>,
-    asked: StdMutex<Vec<String>>,
+    asked: StdMutex<Vec<(String, Value)>>,
+    held: tokio::sync::watch::Sender<HashSet<String>>,
+    answered: tokio::sync::watch::Sender<usize>,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Server { answers: StdMutex::default(), asked: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+    }
 }
 
 #[async_trait::async_trait]
@@ -42,8 +48,12 @@ impl FakeHttp for Server {
             json!({"sessionId": request["body"]["account"]})
         } else {
             let operation = request["body"]["operationName"].as_str().unwrap().to_string();
-            self.asked.lock().unwrap().push(operation.clone());
-            self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}))
+            self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
+            let mut held = self.held.subscribe();
+            held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
+            let answer = self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}));
+            crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
+            answer
         };
         Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), answer) })
     }
@@ -54,38 +64,66 @@ pub(super) struct Stand {
     pub(super) database: Arc<Database>,
     server: Arc<Server>,
     cable: Arc<Cable>,
-    subscribed: Arc<StdMutex<Vec<String>>>,
+    subscribed: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>,
 }
 
 impl Stand {
     pub(super) async fn open() -> Stand {
+        let stand = Stand::prepare().await;
+        stand.sign_in().await;
+        stand
+    }
+
+    /// The core with its operations declared and the network up, before the session: the preload of the app starts at `sign_in`.
+    pub(super) async fn prepare() -> Stand {
         let server = Arc::new(Server::default());
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
-        let subscribed = Arc::new(StdMutex::new(Vec::new()));
-        let opened = subscribed.clone();
-        let peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { opened.lock().unwrap().push(token); } });
+        let (opened, subscribed) = tokio::sync::mpsc::unbounded_channel();
+        let peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
         let cable = Arc::new(Cable { peer });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let database = bound(Database::open_with_clock(Config { path: None, data_version: None }, SPEC.into(), ports, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(true).unwrap();
-        bound(database.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
-        Stand { database, server, cable, subscribed }
+        Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed) }
+    }
+
+    pub(super) async fn sign_in(&self) {
+        bound(self.database.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
     }
 
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }
 
     /// How many times the core asked the server for the operation.
-    pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|asked| *asked == operation).count() }
+    pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
+
+    /// How many times the core asked for the operation with the variable `name` equal to `value`.
+    pub(super) fn requests_with(&self, operation: &str, name: &str, value: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, variables)| asked == operation && variables[name] == value).count() }
+
+    /// Every request the server received, in order, with its variables.
+    pub(super) fn asked(&self) -> Vec<(String, Value)> { self.server.asked.lock().unwrap().clone() }
+
+    /// The server holds the answers of the operations until `release`.
+    pub(super) fn hold(&self, operations: &[&str]) { crate::lock::effect(|| self.server.held.send_modify(|held| held.extend(operations.iter().map(|operation| operation.to_string())))); }
+
+    pub(super) fn release(&self, operations: &[&str]) { crate::lock::effect(|| self.server.held.send_modify(|held| operations.iter().for_each(|operation| { held.remove(*operation); }))); }
+
+    /// The server has answered `count` requests in all.
+    pub(super) async fn answered(&self, count: usize) { bound(self.server.answered.subscribe().wait_for(|answered| *answered >= count)).await.unwrap(); }
+
+    /// The next subscription the cable opened: its token.
+    pub(super) async fn next_subscription(&self) -> String { let mut subscribed = self.subscribed.lock().await; bound(async { subscribed.recv().await }).await.expect("the cable is open") }
+
+    /// The socket of the subscription breaks.
+    pub(super) fn drop_cable(&self, token: &str) { assert!(self.cable.peer.close(token), "the socket is open"); }
 
     /// The events of the model: its stream opens the change feed of the app.
     pub(super) async fn events(&self, model: &str) -> (Arc<ReadStream>, String) {
         let stream = self.database.subscribe_values(self.database.session_epoch(), ReadRequest::Events { model: model.into() });
         assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
-        yield_until("the feed subscription is open", || !self.subscribed.lock().unwrap().is_empty()).await;
-        let token = self.subscribed.lock().unwrap().remove(0);
+        let token = self.next_subscription().await;
         (stream, token)
     }
 
