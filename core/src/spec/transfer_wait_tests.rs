@@ -123,20 +123,20 @@ fn xfer_wait_outcome() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
     let (reply, _) = twin.outcome(id, 1);
-    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2, result: None });
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 2, result: None })], "Confirmed at Done");
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None });
+    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None }, None)], "Confirmed at Done");
     let mut failed = Twin::new();
     let id = failed.uploading(KEY, 2);
     let (reply, _) = failed.outcome(id, 1);
     failed.step_error(id, false);
-    assert_eq!(failed.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: super::transfer_harness::refusal() })], "Failed in Failed");
+    assert_eq!(failed.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: super::transfer_harness::refusal() }, None)], "Failed in Failed");
     let mut ended = Twin::new();
     let id = ended.uploading(KEY, 2);
     let (reply, _) = ended.outcome(id, 1);
-    assert_eq!(ended.end_epoch().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)], "EpochEnded");
+    assert_eq!(ended.end_epoch().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)], "EpochEnded");
     let mut closing = Twin::new();
     let id = closing.uploading(KEY, 2);
     let (reply, _) = closing.outcome(id, 1);
-    assert_eq!(closing.close().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)], "Closing");
+    assert_eq!(closing.close().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)], "Closing");
     assert_eq!(closing.stage(id), TransferStage::Done);
 }

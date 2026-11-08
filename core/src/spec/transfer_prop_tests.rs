@@ -30,7 +30,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
     let mut interrupted = Twin::new();
     let interrupted_id = interrupted.uploading(KEY, 2);
     vec![
-        ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4, result: None }),
+        ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4, result: None, row_id: None }),
         ("discarded", discarded, discarded_id, OutboxOutcome::Discarded),
         ("failed", failed, failed_id, OutboxOutcome::Failed { error: super::transfer_harness::refusal() }),
         ("interrupted", interrupted, interrupted_id, OutboxOutcome::Interrupted),
@@ -40,7 +40,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
 fn finish(name: &str, twin: &mut Twin) -> Out {
     match name {
         "confirmed" => {
-            twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 4, result: None });
+            twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 4, result: None, row_id: None });
             twin.commit()
         }
         "discarded" => {
@@ -62,12 +62,12 @@ fn xfer_prop_outcome() {
         let (waiter, out) = twin.outcome(id, 1);
         assert!(out.replies(waiter).is_empty(), "{name}: the cycle runs");
         let out = finish(name, &mut twin);
-        assert_eq!(out.replies(waiter), vec![TransferAnswer::Outcome(expected.clone())], "{name}: one answer to the waiter");
+        assert_eq!(out.replies(waiter), vec![TransferAnswer::Outcome(expected.clone(), None)], "{name}: one answer to the waiter");
         if name == "interrupted" {
             continue;
         }
         for _ in 0..2 {
-            assert_eq!(outcome_of(&mut twin, id, 1), Some(TransferAnswer::Outcome(expected.clone())), "{name}: the stored outcome never changes");
+            assert_eq!(outcome_of(&mut twin, id, 1), Some(TransferAnswer::Outcome(expected.clone(), None)), "{name}: the stored outcome never changes");
         }
     }
 }
@@ -169,7 +169,7 @@ fn xfer_prop_round_covers() {
     twin.completed(id);
     twin.commit();
     assert_eq!(covered.remove(0), vec![id], "the round is asked for at the commit of the acceptance");
-    let idle = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None });
+    let idle = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None });
     assert!(idle.round_idle().is_empty(), "a transfer in Mutating keeps its round");
     let out = twin.commit();
     assert_eq!(out.round_idle(), vec![id], "the round is released at Done");
@@ -226,7 +226,7 @@ fn xfer_prop_idle() {
     }
     let mut done = Twin::new();
     let id = done.mutating(KEY);
-    done.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None });
+    done.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None });
     done.commit();
     assert_eq!(done.stage(id), TransferStage::Done);
     for out in [done.post(TransferInput::SlotFreed), done.online(true), done.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Expire })] {
@@ -387,7 +387,7 @@ fn xfer_prop_batch_after_all_copies() {
 #[test]
 fn xfer_prop_saved_outcome() {
     let cases: Vec<(OutboxOutcome, TransferStage)> = vec![
-        (OutboxOutcome::Confirmed { revision: 2, result: None }, TransferStage::Removing),
+        (OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None }, TransferStage::Removing),
         (OutboxOutcome::Discarded, TransferStage::Removing),
         (OutboxOutcome::Rejected { error: "e".into() }, TransferStage::PersistingFailure),
         (OutboxOutcome::Failed { error: "e".into() }, TransferStage::PersistingFailure),

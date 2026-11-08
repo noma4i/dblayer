@@ -172,7 +172,7 @@ impl TransferState {
         if ids.len() != outcomes.len() || ids.iter().any(|id| !outcomes.contains_key(id)) { return; }
         for &id in &ids {
             match &outcomes[&id] {
-                OutboxOutcome::Confirmed { revision, result } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() }, fx),
+                OutboxOutcome::Confirmed { revision, result, row_id } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone(), row_id: row_id.clone() }, fx),
                 OutboxOutcome::Discarded => self.remove_with(id, Removal::Discarded, fx),
                 OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => {
                     self.mark_failure(id, error.clone(), fx);

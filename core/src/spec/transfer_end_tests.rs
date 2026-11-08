@@ -16,7 +16,7 @@ fn refuses_calls(twin: &mut Twin, key: &str) {
     }
 }
 
-fn failed_outcome(error: &str) -> TransferAnswer { TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() }) }
+fn failed_outcome(error: &str) -> TransferAnswer { TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() }, None) }
 
 /// `Failed{missing_file}`: the row came back from the base without its file.
 fn missing_file() -> (Twin, TransferId) {
@@ -197,18 +197,18 @@ fn xfer_removing_committed_cancel() {
     assert_eq!((out.replies(reply), twin.stage(id), out.deletes(), out.shows(), out.round_idle()), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done, 1, vec![Shown::Gone], vec![id]));
     assert!(out.replies(accept_reply).is_empty(), "the call of `upload` was answered with the receipt long ago");
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
 }
 
 #[test]
 fn xfer_removing_committed_confirmed() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
-    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None });
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.deletes(), out.round_idle()), (TransferStage::Done, 1, vec![id]), "the local copy goes after the write");
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None })]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None }, None)]);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn xfer_failed_other() {
     inputs.extend([
         TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Online(Online(false)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
@@ -332,7 +332,7 @@ fn xfer_epoch_ended() {
     let out = twin.end_epoch();
     assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
     assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)]);
+    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
     assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
 }
 
@@ -363,7 +363,7 @@ fn xfer_closing() {
     let (waiting, _) = twin.outcome(uploading, 1);
     let out = twin.close();
     assert_eq!((twin.stage(uploading), out.cancel_steps(), out.drained()), (TransferStage::Done, 1, 1), "the row of the base stays for the next open");
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)]);
+    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
     assert_eq!(out.writes(), 0);
     let mut mutating = Twin::new();
     let id = mutating.mutating(OTHER);
@@ -409,7 +409,7 @@ fn xfer_done_outcome() {
     twin.cancel(KEY);
     twin.commit();
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
 }
 
 #[test]
@@ -429,7 +429,7 @@ fn xfer_outcome_wait() {
     assert!(out.replies(reply).is_empty());
     let (_, _) = twin.discard(KEY);
     let out = twin.commit();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)], "the terminal cell answers every waiter of the cycle once");
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)], "the terminal cell answers every waiter of the cycle once");
     let (unknown, out) = twin.outcome(id + 40, 1);
     assert_eq!(Twin::fault(&out, unknown), Some(Fault::NotFound));
 }

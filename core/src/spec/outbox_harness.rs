@@ -57,7 +57,7 @@ pub(super) fn kind_in(input: &str) -> CommitKind {
 }
 
 pub(super) fn outcome_named(text: &str) -> o::OutboxOutcome {
-    if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0, result: None } }
+    if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } }
     else if text.contains("Rejected") { o::OutboxOutcome::Rejected { error: String::new() } }
     else if text.contains("Failed") { o::OutboxOutcome::Failed { error: String::new() } }
     else if text.contains("Discarded") { o::OutboxOutcome::Discarded }
@@ -90,6 +90,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
             let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
             OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
         }
+        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => return None,
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes { input },
         Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
@@ -201,6 +202,8 @@ pub(super) struct Twin {
     pub(super) kept: Vec<OutboxEffect>,
     pub(super) batches: BTreeMap<OpId, BatchId>,
     pub(super) first_pair: BTreeMap<OpId, (RequestId, u64)>,
+    /// The questions of the owner to Transfer that wait for an answer.
+    asked: Vec<String>,
     pub(super) revision: i64,
     pub(super) reply: ReplyId,
     pub(super) follower: Option<OpId>,
@@ -216,7 +219,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
+        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -240,11 +243,28 @@ impl Twin {
         }
     }
 
+    /// A call without an action waits for Transfer; the Transfer of the twin holds no transfer, so it names the smallest open operation of the row or none.
     pub(super) fn post(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
+        let mut effects = self.post_input(input);
+        loop {
+            let Some(asked) = self.asked.pop() else { return effects };
+            let asked = &asked;
+            let reply = number_after(asked, "reply: ").expect("the reply of the question");
+            let kind = if asked.contains("kind: Retry") { o::SelectKind::Retry } else { o::SelectKind::Discard };
+            let smallest = self.state().ops.values().find(|operation| operation.op.row_id == "r" && operation.stage != Stage::Done).map(|operation| operation.op.action.clone());
+            effects.extend(self.post_input(match smallest {
+                Some(action) => OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: "r".into(), action, kind, reply },
+                None => OutboxInput::SelectedNone { reply },
+            }));
+        }
+    }
+
+    fn post_input(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         take_fx(&self.log, None);
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
         self.store_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
+        self.asked.extend(crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => Some(input), _ => None }));
         self.session_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
         let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
@@ -273,7 +293,7 @@ impl Twin {
         self.post(OutboxInput::Rejected(Rejected { batch, reason: reject(reason) }))
     }
 
-    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None, landing: None } }
+    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None } }
 
     pub(super) fn waiter(&mut self, id: OpId) { self.post(OutboxInput::Outcome { receipt: self.receipt(id, EPOCH), reply: WAITER }); }
 }

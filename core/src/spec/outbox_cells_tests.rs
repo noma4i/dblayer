@@ -117,7 +117,7 @@ fn out_destroy_unsent_create() {
     let done = twin.committed(created);
     assert!(answers(&done, WAITER).contains(&OutboxAnswer::Outcome(OutboxOutcome::Discarded)), "{done:?}");
     assert!(matches!(answers(&done, 22).as_slice(), [OutboxAnswer::Receipt(_)]), "{done:?}");
-    assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None }));
+    assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None, row_id: None }));
     assert_eq!(sends(&done), 0, "the network is not called for either");
 }
 

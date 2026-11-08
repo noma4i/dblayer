@@ -72,6 +72,9 @@ impl TransferState {
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                    if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
+                        ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: row_id.clone() });
+                    }
                     if let (Some(Removal::Cancel), Some(upload_id)) = (&transfer.removal, Self::orphan_of(transfer)) {
                         ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                     }
@@ -196,7 +199,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()), landing: self.transfers.get(&id).and_then(|transfer| transfer.batch_id.and_then(|group| self.groups.get(&group).and_then(|group| group.op_id)).or(transfer.op_id)) } }
+    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()) } }
 
     /// The immutable outcome of the current cycle: every waiter of the cycle gets it once.
     pub(super) fn settle(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
@@ -206,8 +209,9 @@ impl TransferState {
         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _)| *waits == cycle);
         transfer.outcome_waiters = rest;
         let outcome = transfer.outcomes[&cycle].clone();
+        let row = self.landed_rows.get(&(id, cycle)).cloned();
         for (_, waiter) in mine {
-            reply(fx, waiter, TransferAnswer::Outcome(outcome.clone()));
+            reply(fx, waiter, TransferAnswer::Outcome(outcome.clone(), row.clone()));
         }
     }
 
@@ -287,9 +291,10 @@ impl TransferState {
             return self.maybe_drained(fx);
         }
         if pending.kind == StoreKind::MixedOutcomes {
+            let mut rows = self.shown_rows(&pending.ids, &shown);
             for &id in &pending.ids {
                 match self.stage_of(id) {
-                    Some(TransferStage::Removing) => self.removing_committed(&[id], fx),
+                    Some(TransferStage::Removing) => self.removing_committed(&[id], rows.remove(&id).into_iter().map(|row| (id, row)).collect(), fx),
                     Some(TransferStage::PersistingFailure) => self.failure_committed(id, fx),
                     _ => {}
                 }
@@ -299,8 +304,8 @@ impl TransferState {
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         if stage == Some(TransferStage::Accepting) {
-            for (id, row) in pending.ids.iter().zip(shown) {
-                if let Some(transfer) = self.transfers.get_mut(id) { transfer.optimistic = row; }
+            for (id, row) in pending.ids.iter().zip(&shown) {
+                if let Some(transfer) = self.transfers.get_mut(id) { transfer.optimistic = row.clone(); }
             }
         }
         match stage {
@@ -318,7 +323,7 @@ impl TransferState {
                     self.failure_committed(id, fx);
                 }
             }
-            Some(TransferStage::Removing) => self.removing_committed(&pending.ids, fx),
+            Some(TransferStage::Removing) => self.removing_committed(&pending.ids, self.shown_rows(&pending.ids, &shown), fx),
             _ => {}
         }
         self.maybe_drained(fx);
@@ -394,7 +399,7 @@ impl TransferState {
     }
 
     fn handle(&mut self, input: TransferInput, fx: &mut Fx) {
-        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -424,6 +429,7 @@ impl TransferState {
             TransferInput::Rejected(rejected) => self.rejected(rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(&key, reply, true, fx),
             TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),
+            TransferInput::SelectRow { model, rows, outbox_min, kind, reply } => self.select_row((model, rows), outbox_min, kind, reply, fx),
             TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
             TransferInput::SlotFreed => self.start_in_order(fx),
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),
@@ -455,7 +461,7 @@ impl TransferState {
                 self.replay_held(fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -494,8 +500,8 @@ impl TransferState {
     pub(super) fn answer_held(&mut self, fx: &mut Fx) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
-                TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted)),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
+                TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)),
                 _ => {}
             }
         }

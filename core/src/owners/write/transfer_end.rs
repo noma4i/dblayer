@@ -1,5 +1,6 @@
 //! Owner `Transfer`: the ends of a transfer: `cancel`, `discard`, `retry`, `Failed`, `Removing`, the expiry, the outcomes, the streams of status, the end of the epoch and the close.
 
+use std::collections::BTreeMap;
 use super::outbox::{Fault, OutboxInput, OutboxOutcome, Receipt};
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
@@ -75,6 +76,26 @@ impl TransferState {
         if !std::mem::replace(&mut transfer.discard_sent, true) {
             let (model, row_id, action) = (transfer.mutation.model.clone(), transfer.mutation.row_id.clone(), transfer.mutation.action.clone());
             fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Discard { model, row_id, action: Some(action), reply: NO_REPLY })));
+        }
+    }
+
+    /// The smallest `op_id` among the open transfers of the row decides: a transfer that precedes the operation of Outbox answers the call itself.
+    pub(super) fn select_row(&mut self, (model, rows): (String, Vec<String>), outbox_min: Option<(super::outbox::OpId, String)>, kind: super::outbox_types::SelectKind, rep: ReplyId, fx: &mut Fx) {
+        let named = |key: &str| rows.iter().any(|row| key.strip_prefix(&format!("{model}:{row}:")).is_some());
+        let first = self.scan().filter(|transfer| transfer.stage != TransferStage::Done && named(&transfer.key)).filter_map(|transfer| {
+            let op_id = transfer.op_id.or_else(|| self.group_entry(transfer.transfer_id).and_then(|group| self.groups.get(&group)?.op_id))?;
+            Some((op_id, transfer.key.clone()))
+        }).min();
+        match (first, outbox_min) {
+            (Some((op_id, key)), min) if min.as_ref().is_none_or(|(smallest, _)| op_id < *smallest) => match kind {
+                super::outbox_types::SelectKind::Discard => self.cancel(&key, rep, false, fx),
+                super::outbox_types::SelectKind::Retry => self.retry(&key, None, rep, fx),
+            },
+            (_, Some((_, action))) => {
+                let row_id = rows.into_iter().next().unwrap_or_default();
+                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedOutbox { model, row_id, action, kind, reply: rep })));
+            }
+            (_, None) => fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedNone { reply: rep }))),
         }
     }
 
@@ -235,7 +256,17 @@ impl TransferState {
         }
     }
 
-    pub(super) fn removing_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
+    /// The rows the batch of a removal showed, one per transfer that asked for a `Show`.
+    pub(super) fn shown_rows(&self, ids: &[TransferId], shown: &[Option<crate::store::Row>]) -> BTreeMap<TransferId, crate::store::Row> {
+        let asking = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(Self::shows_landed_row));
+        asking.zip(shown).filter_map(|(id, row)| row.clone().map(|row| (id, row))).collect()
+    }
+
+    pub(super) fn shows_landed_row(transfer: &super::transfer_types::Transfer) -> bool {
+        transfer.stage == TransferStage::Removing && matches!(transfer.removal, Some(Removal::Confirmed { row_id: Some(_), .. }))
+    }
+
+    pub(super) fn removing_committed(&mut self, ids: &[TransferId], mut rows: BTreeMap<TransferId, crate::store::Row>, fx: &mut Fx) {
         for &id in ids {
             let Some(removal) = self.transfers.get_mut(&id).and_then(|transfer| transfer.removal.take()) else { continue };
             self.removal_replies(id, &removal, fx);
@@ -246,7 +277,10 @@ impl TransferState {
             }
             match removal.clone() {
                 Removal::Cancel | Removal::Discarded => self.settle(id, OutboxOutcome::Discarded, fx),
-                Removal::Confirmed { revision, result } => self.settle(id, OutboxOutcome::Confirmed { revision, result }, fx),
+                Removal::Confirmed { revision, result, row_id } => {
+                    if let (Some(row), Some(cycle)) = (rows.remove(&id), self.transfers.get(&id).map(|transfer| transfer.cycle_id)) { self.landed_rows.insert((id, cycle), row); }
+                    self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx)
+                }
                 Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
             if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) {
@@ -319,11 +353,11 @@ impl TransferState {
 
     pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, fx: &mut Fx) {
         if let Some(outcome) = self.completed.get(&receipt.op_id).and_then(|cycles| cycles.get(&receipt.cycle_id)) {
-            return reply(fx, rep, TransferAnswer::Outcome(outcome.clone()));
+            return reply(fx, rep, TransferAnswer::Outcome(outcome.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
         let Some(transfer) = self.transfers.get_mut(&receipt.op_id) else { return Self::refuse(fx, rep, Fault::NotFound) };
         if let Some(found) = transfer.outcomes.get(&receipt.cycle_id) {
-            return reply(fx, rep, TransferAnswer::Outcome(found.clone()));
+            return reply(fx, rep, TransferAnswer::Outcome(found.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
         if receipt.cycle_id == transfer.cycle_id && transfer.stage != TransferStage::Done {
             transfer.outcome_waiters.push((receipt.cycle_id, rep));

@@ -124,11 +124,6 @@ impl Store {
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
         let candidates = writer.candidates;
-        let mut shown = Vec::new();
-        for op in &batch.ops {
-            let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } } | crate::owners::store::StoreOp::Show { model, row_id }) = op else { continue };
-            shown.push(self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str()));
-        }
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row(include_str!("sql/batch_write/write_batch_prepared_select_file.sql"), [&file.record.id], |row| row.get(0))?;
@@ -141,6 +136,11 @@ impl Store {
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
         let target_revision = if writes_database { revision } else { base_revision };
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
+        let mut shown = Vec::new();
+        for op in &batch.ops {
+            let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } } | crate::owners::store::StoreOp::Show { model, row_id }) = op else { continue };
+            shown.push(self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str()));
+        }
         let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
         let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay, u64::try_from(inner.now_ms()).unwrap_or(0))?;

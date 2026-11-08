@@ -60,7 +60,7 @@ fn transfer_outcome_is_written_with_intent_removal() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![
-        StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: OutboxOutcome::Confirmed { revision: 0, result: None } },
+        StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } },
         StoreOp::RemoveIntent { op_id: 5 },
     ]);
     let (count, revision): (i64, i64) = db.read_locked(|connection| {

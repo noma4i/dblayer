@@ -86,7 +86,7 @@ fn xfer_retry_mutation_rejected() {
     assert_eq!((twin.stage(id), twin.t(id).cycle_id), (TransferStage::Failed, 1));
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Invalid));
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "boom".into() })], "the old cycle keeps its outcome");
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "boom".into() }, None)], "the old cycle keeps its outcome");
 }
 
 #[test]

@@ -60,7 +60,7 @@ fn xfer_open_batch_intent() {
     twin.online(true);
     let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert!(out.writes() == 0 && out.submits() == 0 && out.steps().is_empty(), "Outbox restores the intent itself: {out:?}");
-    let outcomes = [(1, OutboxOutcome::Confirmed { revision: 3, result: None }), (2, OutboxOutcome::Failed { error: "boom".into() })].into();
+    let outcomes = [(1, OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None }), (2, OutboxOutcome::Failed { error: "boom".into() })].into();
     let out = twin.post(TransferInput::MutationOutcomes { batch_id: 7, outcomes, intent_removed: false });
     assert_eq!((twin.stage(1), twin.stage(2)), (TransferStage::Removing, TransferStage::PersistingFailure), "each element gets its own outcome");
     assert_eq!(out.writes(), 1);

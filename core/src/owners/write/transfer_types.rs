@@ -210,6 +210,8 @@ pub enum TransferInput {
     Cancel { key: Key, reply: ReplyId },
     Retry { key: Key, source: Option<Source>, reply: ReplyId },
     Discard { key: Key, reply: ReplyId },
+    /// A `retry` or `discard` without an action: `rows` are the names of the row, `outbox_min` the smallest open operation of the row in Outbox.
+    SelectRow { model: String, rows: Vec<String>, outbox_min: Option<(OpId, String)>, kind: super::outbox_types::SelectKind, reply: ReplyId },
     SlotFreed,
     Online(Online),
     PowerSaving(bool),
@@ -236,7 +238,7 @@ pub enum Shown {
 pub enum TransferAnswer {
     Receipt(Receipt),
     Receipts(Vec<Receipt>),
-    Outcome(OutboxOutcome),
+    Outcome(OutboxOutcome, Option<crate::store::Row>),
     Ok,
     Cancelled(bool),
     Err(Fault),
@@ -313,7 +315,7 @@ pub enum TransferStage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Removal {
     Cancel,
-    Confirmed { revision: i64, result: Option<String> },
+    Confirmed { revision: i64, result: Option<String>, row_id: Option<String> },
     Discarded,
     CopyFailed { error: String },
     Storage,
@@ -430,6 +432,8 @@ pub struct TransferState {
     pub phase: Phase,
     pub transfers: BTreeMap<TransferId, Transfer>,
     pub completed: std::collections::HashMap<TransferId, CycleOutcomes>,
+    /// The row a confirmed cycle showed in the batch of its removal.
+    pub(super) landed_rows: std::collections::HashMap<(TransferId, u64), crate::store::Row>,
     pub(super) groups: BTreeMap<u64, Group>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) subscribers: BTreeMap<TransferId, BTreeSet<StreamId>>,
@@ -471,6 +475,7 @@ impl TransferState {
             phase: Phase::Restoring,
             transfers: BTreeMap::new(),
             completed: std::collections::HashMap::new(),
+            landed_rows: std::collections::HashMap::new(),
             groups: BTreeMap::new(),
             pending: BTreeMap::new(),
             subscribers: BTreeMap::new(),

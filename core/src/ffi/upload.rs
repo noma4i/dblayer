@@ -135,7 +135,7 @@ impl Database {
         }
     }
 
-    fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>, row: &str) -> WireOperationReceipt {
+    pub(super) fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>, row: &str) -> WireOperationReceipt {
         receipt_of_transfer(epoch, model, held, value, row.to_string(), self.life.clone())
     }
 }
@@ -239,8 +239,8 @@ impl Database {
 
     /// The outcome of the receipt of a transfer.
     pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<WireOperationOutcome, DbError> {
-        let answer = match self.await_life(self.life.upload_outcome(receipt.epoch, held.clone())).await {
-            Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome))) => outcome,
+        let (answer, landed) = match self.await_life(self.life.upload_outcome(receipt.epoch, held.clone())).await {
+            Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
             Ok(LifeReply::Transfer(TransferAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(refused(fault, "upload outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
@@ -249,14 +249,7 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let value = match held.landing {
-                    Some(op_id) => match self.landed_value(receipt.epoch, &receipt.model, (op_id, Some(held.op_id))).await {
-                        Ok(value) => value,
-                        Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
-                        Err(error) => return Err(error),
-                    },
-                    None => None,
-                };
+                let value = landed.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
                 WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) },

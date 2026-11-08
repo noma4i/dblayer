@@ -404,7 +404,7 @@ impl Twin {
 
     pub fn outcome(&mut self, id: TransferId, cycle_id: u64) -> (ReplyId, Out) {
         let reply = self.reply();
-        let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0, optimistic: None, landing: None };
+        let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0, optimistic: None };
         (reply, self.post(TransferInput::Outcome { receipt, reply }))
     }
 

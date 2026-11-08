@@ -167,7 +167,7 @@ fn xfer_batch_singles_next() {
     let out = file_done(&mut twin, ids[1]);
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
     assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[0])], "the first element goes alone");
-    let pending = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None });
+    let pending = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None });
     assert_eq!((twin.stage(ids[1]), pending.writes()), (TransferStage::PersistingBatchIntent, 2));
     assert!(pending.submit_ops().is_empty());
     assert!(twin.commit().submit_ops().is_empty());
@@ -250,7 +250,7 @@ fn xfer_batch_ready_other() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
-    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], outcome: OutboxOutcome::Confirmed { revision: 1, result: None } }]);
+    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } }]);
     twin.ignores(ids[0], inputs);
 }
 
@@ -259,12 +259,12 @@ fn xfer_batch_confirmed() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     file_done(&mut twin, ids[1]);
-    let out = twin.mutation_outcome("batch:1", OutboxOutcome::Confirmed { revision: 9, result: None });
+    let out = twin.mutation_outcome("batch:1", OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None });
     assert_eq!((out.removed(), out.writes()), (vec![KEY.to_string(), OTHER.to_string()], 1), "every element leaves in one write");
     twin.commit();
     for id in ids {
         let (reply, out) = twin.outcome(id, 1);
-        assert_eq!((out.replies(reply), twin.stage(id)), (vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 9, result: None })], TransferStage::Done));
+        assert_eq!((out.replies(reply), twin.stage(id)), (vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None }, None)], TransferStage::Done));
     }
 }
 
@@ -355,7 +355,7 @@ fn xfer_prop_batch_one_mutation() {
     file_done(&mut alone, ids[1]);
     let first = file_done(&mut alone, ids[2]);
     assert_eq!(first.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[1])], "the first remaining element goes first");
-    let pending = alone.mutation_outcome(OTHER, OutboxOutcome::Confirmed { revision: 3, result: None });
+    let pending = alone.mutation_outcome(OTHER, OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None });
     assert_eq!((alone.stage(ids[2]), pending.writes()), (TransferStage::PersistingBatchIntent, 2));
     assert!(pending.submit_ops().is_empty());
     assert!(alone.commit().submit_ops().is_empty());
@@ -388,7 +388,7 @@ fn xfer_batch_element_without_a_row_fails_before_the_batch_confirms() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     file_done(&mut twin, ids[1]);
-    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 9, result: None }), (ids[1], OutboxOutcome::Failed { error: "protocol".into() })].into();
+    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None }), (ids[1], OutboxOutcome::Failed { error: "protocol".into() })].into();
     twin.post(TransferInput::MutationOutcomes { batch_id: 1, outcomes, intent_removed: true });
     assert_eq!(twin.stage(ids[1]), TransferStage::PersistingFailure, "the element the answer lacks keeps its failure, the confirmation of the batch skips it");
     assert_ne!(twin.stage(ids[0]), TransferStage::PersistingFailure, "the others are confirmed");

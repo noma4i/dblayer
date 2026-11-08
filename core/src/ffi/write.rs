@@ -11,6 +11,7 @@ use super::receipt::{receipt_of, Ticket, WireOperationOutcome, WireOperationRece
 use super::{Database, DbError};
 use crate::store::Planned;
 use crate::owners::life::LifeReply;
+use crate::owners::write::transfer::TransferAnswer;
 use crate::owners::write::outbox::{Fault, LocalWriteKind, NewOp, OpSource, OutboxAnswer, OutboxOutcome, Receipt};
 use crate::runtime::Time;
 use crate::transport::GraphQLRequest;
@@ -234,9 +235,11 @@ impl Database {
             return self.discard_transfer(epoch, &model, &row_id, declared).await;
         }
         let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
-        match self.outbox_answer(waiter, "discard").await? {
-            OutboxAnswer::Transfer { action } => self.discard_transfer(epoch, &model, &row_id, &action).await,
-            _ => Ok(()),
+        match self.await_life(waiter).await? {
+            LifeReply::Transfer(TransferAnswer::Err(fault)) | LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, "discard")),
+            LifeReply::Outbox(OutboxAnswer::Transfer { action }) => self.discard_transfer(epoch, &model, &row_id, &action).await,
+            LifeReply::Outbox(_) | LifeReply::Transfer(_) => Ok(()),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 }
@@ -260,7 +263,7 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let value = match self.landed_value(receipt.epoch, &receipt.model, (ticket.op_id, None)).await {
+                let value = match self.landed_value(receipt.epoch, &receipt.model, ticket.op_id).await {
                     Ok(value) => value,
                     Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
                     Err(error) => return Err(error),
@@ -273,7 +276,7 @@ impl Database {
     }
 
     /// The row the landing batch of an operation showed, from the owner Outbox.
-    pub(super) async fn landed_value(&self, epoch: u64, model: &str, landing: (u64, Option<u64>)) -> Result<Option<super::wire::WireRow>, DbError> {
+    pub(super) async fn landed_value(&self, epoch: u64, model: &str, landing: u64) -> Result<Option<super::wire::WireRow>, DbError> {
         match self.outbox_answer(self.life.landed_row(epoch, landing), "operation outcome").await? {
             OutboxAnswer::Written { shown, .. } => shown.map(|row| self.wire_of_row(model, &row)).transpose(),
             _ => Err(super::database::foreign_reply()),
@@ -284,9 +287,15 @@ impl Database {
     pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<Retried, DbError> {
         self.account_call(epoch)?;
         let waiter = self.life.retry_operation(epoch, (model.clone(), row_id.clone()), action);
-        let held = match self.outbox_answer(waiter, "retry").await? {
-            OutboxAnswer::Receipt(held) => held,
-            OutboxAnswer::Transfer { action } => return Ok(Retried::Transfer(action)),
+        let held = match self.await_life(waiter).await? {
+            LifeReply::Outbox(OutboxAnswer::Receipt(held)) => held,
+            LifeReply::Outbox(OutboxAnswer::Transfer { action }) => return Ok(Retried::Transfer(action)),
+            LifeReply::Transfer(TransferAnswer::Receipt(held)) => {
+                let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
+                let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+                return Ok(Retried::Receipt(self.transfer_receipt(epoch, model, held, value, row.as_str())));
+            }
+            LifeReply::Outbox(OutboxAnswer::Err(fault)) | LifeReply::Transfer(TransferAnswer::Err(fault)) => return Err(refused(fault, "retry")),
             _ => return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }),
         };
         let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;

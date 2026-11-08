@@ -102,7 +102,7 @@ fn xfer_persisting_failure_invalid() {
     let out = twin.reject(RejectReason::Invalid);
     assert_eq!(twin.stage(id), TransferStage::Failed);
     assert!(matches!(out.shows().as_slice(), [Shown::Failed { .. }]), "{:?}", out.shows());
-    assert!(matches!(out.replies(waiter).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. })]));
+    assert!(matches!(out.replies(waiter).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, None)]));
     assert_eq!((out.writes(), out.round_idle()), (0, vec![id]), "the mark stays in memory");
 }
 
@@ -112,7 +112,7 @@ fn xfer_mutation_confirmed_discard_waiting() {
     let id = twin.mutating(KEY);
     let (reply, out) = twin.discard(KEY);
     assert_eq!((out.outbox_discards(), out.replies(reply).len()), (1, 0));
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 3, result: None });
+    let out = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None });
     assert_eq!(twin.stage(id), TransferStage::Removing);
     assert_eq!(Twin::fault(&out, reply), Some(Fault::NotFound), "the mutation was confirmed before the discard");
     let late = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });

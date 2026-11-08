@@ -302,15 +302,15 @@ fn xfer_singleton_row_upload() {
     let key = "Profile:main:avatar";
     let mut twin = Twin::new();
     let id = twin.mutating(key);
-    twin.mutation_outcome(key, OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()) });
+    twin.mutation_outcome(key, OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()), row_id: None });
     twin.commit();
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()) })], "the outcome carries the returns of the final mutation");
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()), row_id: None }, None)], "the outcome carries the returns of the final mutation");
     let failed_key = "Profile:main:cover";
     let failed = twin.mutating(failed_key);
     let error = r#"{"kind":"Rejected","message":"no","extensions":{"code":"BAD"}}"#;
     twin.mutation_outcome(failed_key, OutboxOutcome::Rejected { error: error.into() });
     twin.commit();
     let (reply, out) = twin.outcome(failed, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() })], "the error and its extensions reach the outcome");
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() }, None)], "the error and its extensions reach the outcome");
 }

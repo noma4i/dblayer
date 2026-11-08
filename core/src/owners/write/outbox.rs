@@ -180,7 +180,6 @@ impl OutboxState {
                 stale: Vec::new(),
                 landed: None,
                 shown: None,
-                members_shown: Vec::new(),
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
@@ -244,7 +243,7 @@ impl OutboxState {
             CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
         };
         let terminal = match kind {
-            CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone() }),
+            CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone(), row_id: None }),
             CommitKind::Rollback => Some(if operation.stage == Stage::RollingBack(Why::Discarded) { OutboxOutcome::Discarded } else { OutboxOutcome::Rejected { error: operation.reject_error.clone().unwrap_or_else(|| "refused".into()) } }),
             CommitKind::ErrorMark => Some(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) }),
             _ => None,
@@ -299,7 +298,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: self.ops.get(&op_id).and_then(|operation| operation.shown.clone()), landing: None } }
+    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: self.ops.get(&op_id).and_then(|operation| operation.shown.clone()) } }
 
     pub(super) fn retry_transfer_answer(&self, cycles: Vec<(u64, u64)>, result: Result<i64, Fault>, fx: &mut Effects<Outbox>) {
         if let Some(transfer) = self.peers.transfer {
@@ -330,6 +329,9 @@ impl OutboxState {
             OpSource::TransferGroup { members, .. } => members.iter().map(|member| {
                 let outcome = if matches!(outcome, OutboxOutcome::Confirmed { .. }) && operation.missing.contains(&member.row_id) {
                     OutboxOutcome::Failed { error: super::failure::protocol("the answer has no row for the element") }
+                } else if let OutboxOutcome::Confirmed { revision, result, .. } = outcome {
+                    let row_id = operation.swaps.iter().find(|(temp, _)| *temp == member.row_id).map_or_else(|| member.row_id.clone(), |(_, real)| real.clone());
+                    OutboxOutcome::Confirmed { revision: *revision, result: result.clone(), row_id: Some(row_id) }
                 } else { outcome.clone() };
                 (member.transfer_id, member.cycle_id, outcome)
             }).collect(),
@@ -442,11 +444,29 @@ impl OutboxState {
         self.ops.values().find(|operation| operation.op.model == model && operation.op.row_id == row && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).map(|operation| operation.op_id)
     }
 
-    /// A call without an action addresses the first open operation of the row: when that operation is a transfer, the action of its Transfer.
-    fn transfer_selected(&self, model: &str, row: &str, action: Option<&str>) -> Option<String> {
-        if action.is_some() { return None; }
-        let operation = &self.ops[&self.open_on_row(model, row, None)?];
-        matches!(operation.op.origin, OpSource::Transfer { .. }).then(|| operation.op.action.clone())
+    /// A call without an action asks Transfer, which holds the transfers that have no operation yet: the smallest open operation of the row here is the bound.
+    fn select_row(&mut self, (model, row_id): (String, String), kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        let resolved = self.aliases.get(&(model.clone(), row_id.clone())).cloned();
+        let outbox_min = self.open_on_row(&model, &row_id, None).map(|op_id| (op_id, self.ops[&op_id].op.action.clone()));
+        let Some(transfer) = self.peers.transfer else {
+            return match outbox_min {
+                Some((_, action)) => self.selected((model, row_id), action, kind, reply, fx),
+                None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
+            };
+        };
+        let rows = std::iter::once(row_id).chain(resolved).collect();
+        fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply })));
+    }
+
+    /// Transfer named the smallest open operation of the row here: an operation of a transfer goes on through its Transfer, any other by its own cell.
+    fn selected(&mut self, (model, row_id): (String, String), action: String, kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        if self.open_on_row(&model, &row_id, Some(&action)).is_some_and(|op_id| matches!(self.ops[&op_id].op.origin, OpSource::Transfer { .. })) {
+            return Self::reply(fx, reply, OutboxAnswer::Transfer { action });
+        }
+        match kind {
+            SelectKind::Retry => self.retry(&model, &row_id, Some(&action), reply, fx),
+            SelectKind::Discard => self.discard(&model, &row_id, Some(&action), reply, fx),
+        }
     }
 
     pub(super) fn answer_waiters(&mut self, op_id: OpId, answer: &OutboxAnswer, fx: &mut Effects<Outbox>) {
@@ -514,15 +534,13 @@ impl OutboxState {
                     self.transport_failed(op_id, temporary, fx);
                 }
             }
-            OutboxInput::Retry { model, row_id, action, reply } => match self.transfer_selected(&model, &row_id, action.as_deref()) {
-                Some(transfer) => Self::reply(fx, reply, OutboxAnswer::Transfer { action: transfer }),
-                None => self.retry(&model, &row_id, action.as_deref(), reply, fx),
-            },
+            OutboxInput::Retry { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Retry, reply, fx),
+            OutboxInput::Retry { model, row_id, action, reply } => self.retry(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
-            OutboxInput::Discard { model, row_id, action, reply } => match self.transfer_selected(&model, &row_id, action.as_deref()) {
-                Some(transfer) => Self::reply(fx, reply, OutboxAnswer::Transfer { action: transfer }),
-                None => self.discard(&model, &row_id, action.as_deref(), reply, fx),
-            },
+            OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
+            OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
+            OutboxInput::SelectedOutbox { model, row_id, action, kind, reply } => self.selected((model, row_id), action, kind, reply, fx),
+            OutboxInput::SelectedNone { reply } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
@@ -573,9 +591,9 @@ impl StateOwner for Outbox {
         if let OutboxInput::Tick(now) = &input {
             state.now = state.now.max(now.0);
         }
-        if let OutboxInput::Landed { op_id, member, reply } = input {
+        if let OutboxInput::Landed { op_id, reply } = input {
             let answer = state.ops.get(&op_id).map_or(OutboxAnswer::Err(Fault::NotFound), |operation| match &operation.outcome {
-                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown_of(member), files_removed: 0 },
+                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown.clone(), files_removed: 0 },
                 _ => OutboxAnswer::Err(Fault::NotFound),
             });
             OutboxState::reply(&mut fx, reply, answer);

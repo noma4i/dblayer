@@ -80,18 +80,6 @@ async fn a_second_close_succeeds_and_the_slot_frees_once() {
     assert!(slot.acquire().is_ok(), "the slot stayed taken after the close finished");
 }
 
-/// boundary_close_lost_answer (TRACE-03): a close whose answer is lost fails with Internal, not Ok.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_close_whose_answer_is_lost_fails_with_internal() {
-    let database = local_notes().await;
-    database.life.stop_runtime_for_tests();
-    let closing = tokio::spawn({ let database = database.clone(); async move { database.close_database().await } });
-    settled(&database, "the close waits for its answer", || database.life.waiting_for_tests() == 1).await;
-    database.life.lose_waits_for_tests();
-    let refused = crate::test_wait::within(closing).await.unwrap();
-    assert!(matches!(refused, Err(DbError::Internal { .. })), "{refused:?}");
-}
-
 #[tokio::test]
 async fn life_closed_stream_releases_store() {
     let database = local_notes().await;

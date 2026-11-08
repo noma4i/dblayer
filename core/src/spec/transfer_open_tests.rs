@@ -359,7 +359,7 @@ fn xfer_waiting_declaration_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::MutationOutcome { transfer_id: 1, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: 1, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
     twin.ignores(1, inputs);
@@ -372,7 +372,7 @@ fn xfer_open_restore_failed() {
     let (mut twin, out) = Twin::opened(vec![broken], Default::default());
     assert_eq!((twin.stage(1), out.shows(), out.timers), (TransferStage::Failed, vec![Shown::Failed { error: "RestoreFailed".into() }], 1));
     let (reply, out) = twin.outcome(1, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "RestoreFailed".into() })], "the outcome is Failed, not NotFound");
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "RestoreFailed".into() }, None)], "the outcome is Failed, not NotFound");
 }
 
 #[test]
@@ -424,11 +424,11 @@ fn xfer_open_completing() {
 
 #[test]
 fn xfer_open_saved_outcome() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5, result: None }));
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }));
     assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     twin.commit();
     let (reply, out) = twin.outcome(1, 1);
-    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None })]));
+    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }, None)]));
 }
 
 #[test]
@@ -437,7 +437,7 @@ fn xfer_open_saved_outcome_discarded() {
     assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     twin.commit();
     let (reply, out) = twin.outcome(1, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
 }
 
 #[test]

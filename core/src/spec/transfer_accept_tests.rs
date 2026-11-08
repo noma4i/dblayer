@@ -254,7 +254,7 @@ fn xfer_copy_ready_other() {
     twin.copy_done(ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
     inputs.extend([
-        TransferInput::MutationOutcome { transfer_id: ids[0], outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: ids[0], outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
@@ -284,7 +284,7 @@ fn xfer_copy_other() {
     let id = twin.copying(KEY, 2);
     let mut inputs = twin.stray_results(id);
     inputs.extend([
-        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,

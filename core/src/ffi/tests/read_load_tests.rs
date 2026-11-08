@@ -245,6 +245,19 @@ async fn a_blob_stream_follows_the_transfer_of_its_model_row_and_action() {
     }
 }
 
+/// D-172 (P-BND-04): a row the stream cannot look up shows `failed` with the error of the lookup, not an empty status.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blob_stream_of_a_row_that_cannot_be_looked_up_shows_failed_with_the_error() {
+    let (db, _) = open(false).await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: " ".into(), action: "upload".into() });
+    loop {
+        match crate::test_wait::within(stream.pull()).await.expect("a value") {
+            ReadValue::Status { state, error, .. } => { assert_eq!(state, "failed"); assert!(error.is_some_and(|error| !error.is_empty())); break; }
+            _ => {}
+        }
+    }
+}
+
 /// P-NET-08: the owner of the window decides a call that needs the network, the `Connectivity` value of the Store decides nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn life_closed_stream_releases_store() {

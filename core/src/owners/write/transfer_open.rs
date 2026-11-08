@@ -141,8 +141,8 @@ impl TransferState {
 
     fn restore_completed(&mut self, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {
         match saved {
-            Some(OutboxOutcome::Confirmed { revision, result }) => {
-                self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() }, fx);
+            Some(OutboxOutcome::Confirmed { revision, result, row_id }) => {
+                self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone(), row_id: row_id.clone() }, fx);
                 self.store(&[id], StoreKind::Removed, fx);
             }
             Some(OutboxOutcome::Discarded) => {

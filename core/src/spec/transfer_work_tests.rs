@@ -13,14 +13,14 @@ fn work_after(finished: usize) -> (u64, usize) {
     for round in 0..finished {
         let key = format!("Moment:done{round}:upload");
         twin.mutating(&key);
-        twin.mutation_outcome(&key, OutboxOutcome::Confirmed { revision: 1, result: None });
+        twin.mutation_outcome(&key, OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None });
         twin.commit();
     }
     let open = twin.state().transfers.len();
     let before = examined(&twin);
     let key = "Moment:fresh:upload";
     let id = twin.mutating(key);
-    twin.mutation_outcome(key, OutboxOutcome::Confirmed { revision: 2, result: None });
+    twin.mutation_outcome(key, OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None });
     twin.commit();
     assert_eq!(twin.stage(id), crate::owners::write::transfer::TransferStage::Done);
     (examined(&twin) - before, open)

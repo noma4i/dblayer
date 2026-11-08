@@ -34,6 +34,12 @@ pub struct OutboxPeers {
 pub type OpId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectKind {
+    Retry,
+    Discard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReserveTarget {
     Transfer(u64),
     Group(u64),
@@ -98,13 +104,11 @@ pub struct Receipt {
     pub revision: i64,
     /// The row of the call as its intent batch wrote it.
     pub optimistic: Option<crate::store::Row>,
-    /// The operation of the Outbox whose landing batch shows the confirmed row, when one operation lands this receipt alone.
-    pub landing: Option<OpId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboxOutcome {
-    Confirmed { revision: i64, result: Option<String> },
+    Confirmed { revision: i64, result: Option<String>, row_id: Option<String> },
     Rejected { error: String },
     Failed { error: String },
     Discarded,
@@ -185,12 +189,15 @@ pub enum OutboxInput {
     Retry { model: String, row_id: String, action: Option<String>, reply: ReplyId },
     RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
     Discard { model: String, row_id: String, action: Option<String>, reply: ReplyId },
+    /// Transfer found no open transfer of the row that precedes `outbox_min`: the call continues here with the action of that operation.
+    SelectedOutbox { model: String, row_id: String, action: String, kind: SelectKind, reply: ReplyId },
+    SelectedNone { reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },
     /// The root row the answer of the operation landed.
     /// The row the landing batch of `op_id` showed; `member` names the transfer of a group whose row is asked for.
-    Landed { op_id: OpId, member: Option<u64>, reply: ReplyId },
+    Landed { op_id: OpId, reply: ReplyId },
     /// The id a temporary id has after its `create` landed (the same id before).
     Resolve { model: String, row: String, reply: ReplyId },
     Online(Online),
@@ -303,8 +310,6 @@ pub struct QueuedOperation {
     pub landed: Option<String>,
     /// The row the landing batch shows: the value of the confirmed outcome, fixed by that batch.
     pub shown: Option<crate::store::Row>,
-    /// The row of each member of a group, as the landing batch showed it.
-    pub members_shown: Vec<Option<crate::store::Row>>,
     pub outcome: Option<OutboxOutcome>,
     /// The error of the batch `MarkFailed` that is in flight, and the error shown on the row.
     pub error: Option<String>,
@@ -317,15 +322,4 @@ pub struct QueuedOperation {
     pub restore_element: Option<(String, String)>,
     /// A saved answer was restored: the operation is `Landing` and waits for the rows the codec reads from the saved body.
     pub rows_pending: bool,
-}
-
-impl QueuedOperation {
-    /// The row a landed operation showed: the one of the member `member` of a group, otherwise the row of the operation.
-    pub fn shown_of(&self, member: Option<u64>) -> Option<crate::store::Row> {
-        let position = match (&self.op.origin, member) {
-            (OpSource::TransferGroup { members, .. }, Some(id)) => members.iter().position(|candidate| candidate.transfer_id == id),
-            _ => None,
-        };
-        position.map_or_else(|| self.shown.clone(), |at| self.members_shown.get(at).cloned().flatten())
-    }
 }

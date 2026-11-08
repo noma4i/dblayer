@@ -294,14 +294,14 @@ impl TransferState {
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
         let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
-            OutboxOutcome::Confirmed { revision, result } => {
+            OutboxOutcome::Confirmed { revision, result, row_id } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
                     let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
                     for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
                         reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
                     }
                 }
-                self.remove_with_batch(id, Removal::Confirmed { revision, result }, fx)
+                self.remove_with_batch(id, Removal::Confirmed { revision, result, row_id }, fx)
             }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),

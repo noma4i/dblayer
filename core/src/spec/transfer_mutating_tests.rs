@@ -8,7 +8,7 @@ use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, Transfer
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn confirmed(revision: i64) -> OutboxOutcome { OutboxOutcome::Confirmed { revision, result: None } }
+fn confirmed(revision: i64) -> OutboxOutcome { OutboxOutcome::Confirmed { revision, result: None, row_id: None } }
 
 fn failed(error: &str) -> OutboxOutcome { OutboxOutcome::Failed { error: error.into() } }
 
@@ -21,7 +21,7 @@ fn xfer_mutation_confirmed() {
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.deletes(), out.shows(), out.round_idle()), (TransferStage::Done, 1, vec![Shown::Gone], vec![id]));
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(confirmed(3))]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(confirmed(3), None)]);
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn xfer_mutation_failed() {
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.shows()), (TransferStage::Failed, vec![Shown::Failed { error: "e".into() }]));
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(failed("e"))]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(failed("e"), None)]);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn xfer_mutation_discarded() {
     let out = twin.commit();
     assert_eq!((out.replies(reply), twin.stage(id)), (vec![TransferAnswer::Ok], TransferStage::Done));
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn xfer_mutation_interrupted() {
     let out = twin.mutation_outcome(KEY, OutboxOutcome::Interrupted);
     assert_eq!((twin.stage(id), out.writes(), out.shows()), (TransferStage::Done, 0, vec![Shown::Gone]), "the row stays in the base until the account is cleared or the next open");
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
 }
 
 #[test]

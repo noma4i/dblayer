@@ -125,7 +125,7 @@ impl Store {
             let id = u64::try_from(id).map_err(|_| CoreError::Internal("invalid transfer outcome id".into()))?;
             let cycle = u64::try_from(cycle).map_err(|_| CoreError::Internal("invalid transfer outcome cycle".into()))?;
             let outcome = match (kind.as_str(), revision, value) {
-                ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result },
+                ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result, row_id: None },
                 ("rejected", None, Some(error)) => OutboxOutcome::Rejected { error },
                 ("failed", None, Some(error)) => OutboxOutcome::Failed { error },
                 ("discarded", None, None) => OutboxOutcome::Discarded,

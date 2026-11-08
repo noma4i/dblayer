@@ -68,8 +68,9 @@ impl OutboxState {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.last().cloned().flatten(); operation.members_shown = shown; }
-                self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
+                let row_id = self.ops.get(&op_id).map(|operation| operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()));
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.last().cloned().flatten(); }
+                self.finish(op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
@@ -122,7 +123,7 @@ impl OutboxState {
                 let receipt = self.receipt(op_id, revision);
                 Self::reply(fx, reply, OutboxAnswer::Receipt(receipt));
             }
-            self.finish(op_id, OutboxOutcome::Confirmed { revision, result: None }, false, fx);
+            self.finish(op_id, OutboxOutcome::Confirmed { revision, result: None, row_id: None }, false, fx);
         }
     }
 

@@ -248,7 +248,7 @@ fn out_prop_confirmed_lands() {
 
 #[test]
 fn out_prop_rollback_clean() {
-    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 200 }]], |_| {
+    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: "r".into(), action: "update".into(), kind: o::SelectKind::Discard, reply: 200 }]], |_| {
         let effects = effects_now();
         let rollbacks = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Store { kind: CommitKind::Rollback, .. })).count();
         let ended = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Reply { answer: OutboxAnswer::Outcome(o::OutboxOutcome::Rejected { .. } | o::OutboxOutcome::Discarded), .. })).count();

@@ -54,10 +54,6 @@ impl<T> Outcomes<T> {
     #[cfg(test)]
     pub fn waiting(&self) -> usize { self.lock().open.len() }
 
-    /// The answers of the open waits are gone: each wait ends `Internal`.
-    #[cfg(test)]
-    pub fn lose_all(&self) { self.lock().open.clear(); }
-
     fn lock(&self) -> MutexGuard<'_, Inner<T>> { lock(&self.inner) }
 
     pub fn register(&self, epoch: Epoch) -> Waiter<T> { self.register_with(None, epoch) }

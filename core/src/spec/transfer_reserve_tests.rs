@@ -183,7 +183,7 @@ fn xfer_prop_optimistic_row_once() {
 
     let mut confirmed = Twin::new();
     confirmed.completing_with_effects();
-    let out = confirmed.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None });
+    let out = confirmed.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None });
     assert!(rolled_back(&out).is_empty(), "a confirmed mutation keeps its row");
 
     let mut sent = Twin::new();

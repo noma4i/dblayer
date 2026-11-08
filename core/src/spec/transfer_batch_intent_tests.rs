@@ -36,7 +36,7 @@ fn xfer_batch_intent_ended() {
         let out = twin.reject(reason);
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
         }
         assert_eq!((out.submits(), out.writes(), out.steps().len(), out.completes()), (0, 0, 0, 0));
     }
@@ -61,7 +61,7 @@ fn xfer_batch_intent_close() {
         let out = if closing { twin.close() } else { twin.end_epoch() };
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
         }
         assert_eq!(out.drained(), usize::from(closing));
         assert_eq!((out.submits(), out.removed().len(), out.deletes()), (0, 0, 0), "the stored group stays for the next open");
@@ -87,7 +87,7 @@ fn xfer_batch_intent_retry_storage() {
 fn xfer_batch_intent_other() {
     let (mut twin, ids) = persisting_joint();
     let mut inputs = twin.stray_results(ids[0]);
-    inputs.push(TransferInput::MutationOutcome { transfer_id: ids[0], outcome: OutboxOutcome::Confirmed { revision: 1, result: None } });
+    inputs.push(TransferInput::MutationOutcome { transfer_id: ids[0], outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } });
     twin.ignores(ids[0], inputs);
     let out = twin.online(false);
     assert!(Twin::quiet(&out), "{out:?}");
@@ -104,7 +104,7 @@ fn xfer_batch_mixed_outcomes() {
     let (mut twin, ids) = persisting_joint();
     twin.commit();
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
-    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 5, result: None }), (ids[1], OutboxOutcome::Failed { error: "boom".into() })].into();
+    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }), (ids[1], OutboxOutcome::Failed { error: "boom".into() })].into();
     let out = twin.post(TransferInput::MutationOutcomes { batch_id: 1, outcomes, intent_removed: false });
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Removing, TransferStage::PersistingFailure));
     assert_eq!(out.writes(), 1, "one transaction");
@@ -115,7 +115,7 @@ fn xfer_batch_mixed_outcomes() {
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Done, TransferStage::Failed));
     assert!(!out.shows().is_empty());
     let (reply, out) = twin.outcome(ids[0], 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None })]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }, None)]);
     let (reply, out) = twin.outcome(ids[1], 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "boom".into() })]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "boom".into() }, None)]);
 }
