@@ -23,7 +23,9 @@ public func withRawCalls(_ source: String, _ names: [String] = ["SessionProfile"
 }
 
 private func definitions(of operations: String) -> [OperationDefinition] {
-  let listed = (try? JSONSerialization.jsonObject(with: Data(operations.utf8))) as? [[String: Any]] ?? []
+  let parsed: Any
+  do { parsed = try JSONSerialization.jsonObject(with: Data(operations.utf8)) } catch { preconditionFailure("the operations of the stand are not JSON: \(error)") }
+  let listed = parsed as? [[String: Any]] ?? []
   return listed.compactMap { entry in
     guard let name = entry["name"] as? String, let document = entry["document"] as? String else { return nil }
     return OperationDefinition(name: name, document: document)
@@ -93,7 +95,7 @@ public func bridgeToTransport(_ transport: any ScriptedTransport, operations: St
     if path == "/api/logout" { return ["revoked": true] }
     let operation = body["operationName"] as? String ?? ""
     if operation == "SessionProfile" { return ["data": ["sessionProfile": ["id": "stand"]]] }
-    let variables = (body["variables"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    let variables = try (body["variables"] as? [String: Any]).map { String(decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) } ?? "{}"
     let document = body["query"] as? String ?? ""
     let request = TransportRequest(document: document, operationName: operation, variablesJson: variables, purpose: SealedServer.purpose, author: ScriptedWire.ids.author, requestId: ScriptedWire.ids.requestId, attempt: ScriptedWire.ids.attempt)
     let text: String
