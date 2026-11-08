@@ -41,4 +41,4 @@ impl SealConfig {
 
 #[cfg(test)]
 #[path = "session_seal_tests.rs"]
-mod tests;
+mod session_seal_tests;

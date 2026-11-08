@@ -144,4 +144,4 @@ impl Database {
 
 #[cfg(test)]
 #[path = "opening_tests.rs"]
-mod tests;
+mod opening_tests;

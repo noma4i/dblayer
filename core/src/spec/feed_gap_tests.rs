@@ -370,5 +370,7 @@ fn live() -> Twin { live_with(Twin::new()) }
 
 fn live_immediate() -> Twin { live_with(Twin::immediate()) }
 
+#[cfg(test)]
 mod feed_cells_tests;
+#[cfg(test)]
 mod feed_props_tests;

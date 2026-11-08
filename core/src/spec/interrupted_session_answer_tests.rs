@@ -159,6 +159,7 @@ fn sess_prop_resume_once() {
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
+#[cfg(test)]
 mod session_restored_login_tests;
 
 /// Waits of Session, `interrupted_session_answer`: every column of the row, the first consumer gets the outcome and the next one gets `Ok(None)`.

@@ -436,11 +436,18 @@ fn opened(input: Input) -> Twin {
     twin
 }
 
+#[cfg(test)]
 mod session_owner_calls_tests;
+#[cfg(test)]
 mod session_owner_http_tests;
+#[cfg(test)]
 mod session_owner_restore_tests;
 use session_owner_restore_tests::*;
+#[cfg(test)]
 mod session_owner_props_tests;
+#[cfg(test)]
 mod session_owner_early_release_tests;
+#[cfg(test)]
 mod session_owner_release_tests;
+#[cfg(test)]
 mod session_owner_detached_tests;

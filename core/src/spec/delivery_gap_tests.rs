@@ -13,12 +13,16 @@ use crate::owners::read::windows::{WindowKey, Windows};
 use crate::spec::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
 use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
 
+#[cfg(test)]
 #[path = "delivery_changes_tests.rs"]
 mod delivery_changes_tests;
+#[cfg(test)]
 #[path = "delivery_operations_tests.rs"]
 mod delivery_operations_tests;
+#[cfg(test)]
 #[path = "delivery_more_tests.rs"]
 mod delivery_more_tests;
+#[cfg(test)]
 #[path = "delivery_read_tests.rs"]
 mod delivery_read_tests;
 #[path = "delivery_revision_cells.rs"]
@@ -580,7 +584,9 @@ fn dlv_opening_window() {
     assert_eq!(values, [Val::Delta { base: 1, revision: 5, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(5) }]);
 }
 
+#[cfg(test)]
 #[path = "delivery_cells_tests.rs"]
 mod delivery_cells_tests;
+#[cfg(test)]
 #[path = "delivery_properties_tests.rs"]
 mod delivery_properties_tests;

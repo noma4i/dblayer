@@ -424,14 +424,25 @@ for path in files:
         if "connectivity" in line.lower():
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
-for path in sorted(root.rglob("mod.rs")):
+test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
+for path in sorted(root.rglob("*.rs")):
     if "target" in path.parts:
         continue
-    previous = None
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        if line.strip() == "#[cfg(test)]" and previous == "#[cfg(test)]":
-            findings.append(f"Z31 one #[cfg(test)] per test module declaration: {path.relative_to(root)}:{number}")
-        previous = line.strip()
+    lines = path.read_text().splitlines()
+    for number, line in enumerate(lines, 1):
+        match = test_decl.match(line)
+        if not match:
+            continue
+        name = match.group(3)
+        if name == "tests":
+            findings.append(f"Z32 a test module is named <name>_tests: {path.relative_to(root)}:{number}")
+        if not name.endswith("_tests"):
+            continue
+        above = [l.strip() for l in lines[max(0, number - 3):number - 1]]
+        if above and above[-1].startswith("#[path"):
+            above = above[:-1]
+        if not above or above[-1] != "#[cfg(test)]" or (len(above) > 1 and above[-2] == "#[cfg(test)]"):
+            findings.append(f"Z32 a test module is declared as #[cfg(test)] (+ #[path]) + mod <name>_tests: {path.relative_to(root)}:{number}")
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")

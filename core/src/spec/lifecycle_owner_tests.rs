@@ -425,7 +425,9 @@ fn life_ending_credential_after_failure() {
     assert_eq!(twin.published().identity, Some(2), "the committed credential is not lost");
 }
 
+#[cfg(test)]
 mod lifecycle_ending_tests;
+#[cfg(test)]
 mod lifecycle_closing_tests;
 
 fn orders(items: &[RefOwner]) -> Vec<Vec<RefOwner>> {

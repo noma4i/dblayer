@@ -331,4 +331,5 @@ fn second_apply_failure_poisons_reads_until_reset() {
     }
 }
 
+#[cfg(test)]
 mod apply_operations_tests;

@@ -18,4 +18,4 @@ impl OpenSlot {
 
 #[cfg(test)]
 #[path = "open_slot_tests.rs"]
-mod tests;
+mod open_slot_tests;

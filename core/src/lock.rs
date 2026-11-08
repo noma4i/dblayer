@@ -119,4 +119,4 @@ pub(crate) fn wait<'a, T>(condition: &Condvar, guard: Guard<'a, T>) -> Guard<'a,
 pub(crate) fn assert_no_library_lock(_: &str) {}
 #[cfg(test)]
 #[path = "lock_tests.rs"]
-mod tests;
+mod lock_tests;

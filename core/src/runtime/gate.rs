@@ -98,4 +98,4 @@ pub struct GateClosed;
 
 #[cfg(test)]
 #[path = "gate_tests.rs"]
-mod tests;
+mod gate_tests;
