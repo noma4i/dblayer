@@ -378,13 +378,13 @@ impl Database {
 
 impl Database {
     /// The copy URL and the processing `uploads[action]` of the row shows, read from the row like the row streams read it.
-    fn row_upload(&self, model: &str, id: &str, action: &str) -> (Option<String>, Option<WireProcessing>) {
-        let Ok(id) = crate::identity::RowId::new(id) else { return (None, None) };
+    fn row_upload(&self, model: &str, id: &str, action: &str) -> Result<(Option<String>, Option<WireProcessing>), String> {
+        let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
         #[cfg(test)]
         self.shows.note_read();
-        let row = crate::blocking::blocking_unit(|| self.db.find(model, &id));
-        let upload = row.ok().flatten().and_then(|row| row.sync.uploads.get(action).map(super::wire::upload));
-        upload.map_or((None, None), |upload| (upload.local_url, upload.processing))
+        let row = crate::blocking::blocking_unit(|| self.db.find(model, &id)).map_err(|error| error.to_string())?;
+        let upload = row.and_then(|row| row.sync.uploads.get(action).map(super::wire::upload));
+        Ok(upload.map_or((None, None), |upload| (upload.local_url, upload.processing)))
     }
 
     /// Hands the status of the transfer of a row and action to the stream at each change of the transfer and each commit of its row.
@@ -396,7 +396,7 @@ impl Database {
         let task = crate::task::spawn_on(super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
             let mut row_count = None;
-            let mut upload = (None, None);
+            let mut upload = Ok((None, None));
             loop {
                 changes.borrow_and_update();
                 let count = *row_commits.borrow_and_update();
@@ -405,7 +405,10 @@ impl Database {
                 if row_moved {
                     upload = database.row_upload(&model, &id, &action);
                 }
-                let next = BlobStatus { local_url: upload.0.clone(), processing: upload.1.clone(), ..shows.status(&key).blob_status() };
+                let next = match &upload {
+                    Ok((local_url, processing)) => BlobStatus { local_url: local_url.clone(), processing: processing.clone(), ..shows.status(&key).blob_status() },
+                    Err(error) => BlobStatus { state: "failed".into(), progress: 0, error: Some(error.clone()), local_url: None, processing: None },
+                };
                 if last.as_ref() != Some(&next) {
                     life.push_status(stream, next.clone());
                     last = Some(next);

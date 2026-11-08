@@ -240,10 +240,10 @@ impl StoreState {
                 let Some(written) = self.writing.take() else { return };
                 match result {
                     Err(reason) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(reason) }),
-                    Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown }) => {
+                    Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown, files_removed }) => {
                         self.revision = revision;
                         if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written.epoch, batch, payloads: observed }); }
-                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown } });
+                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown, files_removed } });
                         for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written.epoch, reset }); }
                         if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written.epoch, ops: removed_operations }); }
                         for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written.epoch, model, row_id }); }

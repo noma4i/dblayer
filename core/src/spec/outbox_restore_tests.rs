@@ -41,7 +41,7 @@ fn call_inputs() -> Vec<OutboxInput> {
     vec![
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 },
         OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 },
-        OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None }, reply: 43 },
+        OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None, landing: None }, reply: 43 },
     ]
 }
 
@@ -105,7 +105,7 @@ fn out_restoring_foreign() {
     let mut twin = Twin::bare();
     let inputs = vec![
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
-        OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }),
+        OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
         OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 1, temporary: true },
@@ -267,7 +267,7 @@ fn out_open_restores_dropped() {
     restore(&mut twin, vec![StoredOp { restore_failed: Some("layout".into()), ..stored(7, "r") }]);
     ready(&mut twin);
     assert_eq!(twin.stage(7), Some(St::Failed));
-    let effects = twin.post(OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 7, cycle_id: 1, revision: 0, optimistic: None }, reply: 50 });
+    let effects = twin.post(OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 7, cycle_id: 1, revision: 0, optimistic: None, landing: None }, reply: 50 });
     assert!(matches!(answers(&effects, 50).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { error })] if error == "RestoreFailed"), "{effects:?}");
 }
 

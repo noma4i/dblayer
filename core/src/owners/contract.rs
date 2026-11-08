@@ -68,15 +68,17 @@ pub struct Committed {
     pub stale_parents: Vec<String>,
     /// The version of the overlay of ephemeral values at `revision`.
     pub position: u64,
-    /// The row the call showed, read in the transaction of its intent.
-    pub shown: Option<crate::store::Row>,
+    /// The rows the batch showed, one per `Show` and per intent that names a row, read in the transaction of the batch.
+    pub shown: Vec<Option<crate::store::Row>>,
+    /// The files the batch deleted.
+    pub files_removed: usize,
 }
 
 impl CommittedBroadcast {
     /// The input of `Deliveries`: `All` touches every stream, a `Set` touches the streams of `tables` and `rows`.
     pub fn for_deliveries(self) -> Committed {
         let models = if self.models == Models::All { Models::All } else { Models::default() };
-        Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position, shown: None }
+        Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position, shown: Vec::new(), files_removed: 0 }
     }
 }
 

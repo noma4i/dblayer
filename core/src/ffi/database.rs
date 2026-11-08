@@ -357,14 +357,12 @@ impl Database {
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
+            let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };
             return self.retry_transfer(epoch, model, row_id, action, source).await;
         }
-        match self.retry_operation(epoch, model.clone(), row_id.clone(), action.clone()).await {
-            Err(DbError::NotFound { .. }) if action.is_none() => match self.sole_upload(&model)? {
-                Some(only) => self.retry_transfer(epoch, model, row_id, Some(only), None).await,
-                None => Err(DbError::NotFound { detail: "retry: there is no such operation".into() }),
-            },
-            answered => answered,
+        match self.retry_operation(epoch, model.clone(), row_id.clone(), action).await? {
+            super::write::Retried::Receipt(receipt) => Ok(receipt),
+            super::write::Retried::Transfer(selected) => self.retry_transfer(epoch, model, row_id, selected, None).await,
         }
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.apply_online(online) }

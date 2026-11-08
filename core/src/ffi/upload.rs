@@ -127,12 +127,6 @@ impl Database {
         Ok(Joint { minimum: batch.min, maximum: batch.max, items_key, mutation: template, renumber })
     }
 
-    /// The row a call accepted: its own id first, and the row it landed as when the transfer finished before this read.
-    pub(super) async fn accepted_row(&self, epoch: u64, model: &str, row: &crate::identity::RowId) -> Result<super::wire::WireRow, DbError> {
-        if let Some(shown) = self.optimistic(model, row)? { return Ok(shown); }
-        self.transfer_value(epoch, model, row.as_str()).await?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {row} of {model} is not stored") })
-    }
-
     async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
         match self.await_life(waiter).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) => Err(refused(fault, what)),
@@ -143,20 +137,6 @@ impl Database {
 
     fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>, row: &str) -> WireOperationReceipt {
         receipt_of_transfer(epoch, model, held, value, row.to_string(), self.life.clone())
-    }
-
-    /// The upload action of a model that declares exactly one: a call without an action names the transfer by it.
-    pub(super) fn sole_upload(&self, model: &str) -> Result<Option<String>, DbError> {
-        if self.uploads.is_none() { return Ok(None); }
-        let spec = self.db.spec(model)?;
-        let mut declared = spec.actions.iter().filter(|declared| declared.upload).map(|declared| declared.name.clone());
-        Ok(declared.next().filter(|_| declared.next().is_none()))
-    }
-
-    /// The row of a transfer after its mutation: a temporary id gives the real one.
-    pub(super) async fn transfer_value(&self, epoch: u64, model: &str, row: &str) -> Result<Option<super::wire::WireRow>, DbError> {
-        let current = self.resolved(epoch, model, id(row)?).await?;
-        self.optimistic(model, &current)
     }
 }
 
@@ -171,7 +151,7 @@ impl Database {
         let item = self.single_upload(&model, row.as_str(), &action, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
-        let value = self.optimistic(&model, &row)?;
+        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
     }
 
@@ -201,7 +181,7 @@ impl Database {
         let mut items = Vec::new();
         for ((item, planned, _), held) in planned.into_iter().zip(held) {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
-            let value = self.accepted_row(epoch, &model, &planned.row_id).await?;
+            let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {model} is not shown", planned.row_id) })?;
             items.push(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value), planned.row_id.as_str()) });
         }
         Ok(WireBatchReceipt { epoch, items })
@@ -230,15 +210,14 @@ impl Database {
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
-        let value = self.accepted_row(epoch, &request.model, &planned.row_id).await?;
+        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&request.model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {} is not shown", planned.row_id, request.model) })?;
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value), planned.row_id.as_str()))
     }
 
     /// `retry` of a transfer with a new source of a file that is gone.
-    pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
+    pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: String, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let Some(action) = action.or(self.sole_upload(&model)?) else { return Err(invalid(format!("{model} {row} has more than one upload, name its action"))) };
         let source = match source {
             Some(request) => {
                 let path = request.into_file()?.path;
@@ -248,7 +227,7 @@ impl Database {
         };
         let waiter = self.life.retry_upload(epoch, key_of(&model, row.as_str(), &action), source);
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
-        let value = self.optimistic(&model, &row)?;
+        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
     }
 
@@ -270,8 +249,12 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let value = match receipt.ticket.row.as_deref() {
-                    Some(row) => self.transfer_value(receipt.epoch, &receipt.model, row).await?,
+                let value = match held.landing {
+                    Some(op_id) => match self.landed_value(receipt.epoch, &receipt.model, (op_id, Some(held.op_id))).await {
+                        Ok(value) => value,
+                        Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
+                        Err(error) => return Err(error),
+                    },
                     None => None,
                 };
                 WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }

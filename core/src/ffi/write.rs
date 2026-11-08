@@ -58,7 +58,7 @@ impl Database {
     /// A local write is final when its batch commits: the revision and the row are those of that batch.
     async fn written(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str, model: &str) -> Result<(i64, Option<super::wire::WireRow>), DbError> {
         match self.outbox_answer(waiter, what).await? {
-            OutboxAnswer::Written { revision, shown } => Ok((revision, shown.map(|row| self.wire_of_row(model, &row)).transpose()?)),
+            OutboxAnswer::Written { revision, shown, .. } => Ok((revision, shown.map(|row| self.wire_of_row(model, &row)).transpose()?)),
             _ => Err(super::database::foreign_reply()),
         }
     }
@@ -85,7 +85,7 @@ impl Database {
         self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
     }
 
-    fn wire_of_row(&self, model: &str, row: &crate::store::Row) -> Result<super::wire::WireRow, DbError> { self.wire(model).map(|wire| wire.row(row)) }
+    pub(super) fn wire_of_row(&self, model: &str, row: &crate::store::Row) -> Result<super::wire::WireRow, DbError> { self.wire(model).map(|wire| wire.row(row)) }
 
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.
     fn mutation_request(&self, call: &crate::store::MutationCall) -> Result<(String, String), DbError> {
@@ -193,26 +193,22 @@ impl Database {
         let FileBytes { bytes, name, mime } = file;
         self.account_call(epoch)?;
         let row = id(&row_id)?;
-        let (checked_model, checked_field) = (model.clone(), field.clone());
-        let checked = row.clone();
-        self.read_in_epoch(epoch, "attach", move |database| Ok(database.db.file(&checked_model, &checked, &checked_field)?.is_some())).await?;
-        let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.now());
-        self.outbox_answer(waiter, "attach").await?;
-        self.read_in_epoch(epoch, "attach", move |database| {
-            let attached = database.db.file(&model, &row, &field)?.ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
-            Ok(attached.into())
-        })
-        .await
+        let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
+        self.read_in_epoch(epoch, "attach", move |database| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from)).await?;
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.now());
+        let OutboxAnswer::Written { shown: Some(shown), .. } = self.outbox_answer(waiter, "attach").await? else { return Err(DbError::Internal { detail: "the attach was answered with no row".into() }) };
+        let attached = shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value).ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
+        Ok(attached.into())
     }
 
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         self.account_call(epoch)?;
         let row = id(&row_id)?;
         let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
-        let had = self.read_in_epoch(epoch, "detach", move |database| Ok(database.db.file(&checked_model, &checked, &checked_field)?.is_some())).await?;
+        self.read_in_epoch(epoch, "detach", move |database| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from)).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.now());
-        self.outbox_answer(waiter, "detach").await?;
-        Ok(had)
+        let OutboxAnswer::Written { files_removed, .. } = self.outbox_answer(waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
+        Ok(files_removed > 0)
     }
 
     pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
@@ -237,13 +233,10 @@ impl Database {
         if let Some(declared) = action.as_deref().filter(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             return self.discard_transfer(epoch, &model, &row_id, declared).await;
         }
-        let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action.clone());
-        match self.outbox_answer(waiter, "discard").await {
-            Err(DbError::NotFound { .. }) if action.is_none() => match self.sole_upload(&model)? {
-                Some(only) => self.discard_transfer(epoch, &model, &row_id, &only).await,
-                None => Err(DbError::NotFound { detail: "discard: there is no such operation".into() }),
-            },
-            answered => answered.map(drop),
+        let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
+        match self.outbox_answer(waiter, "discard").await? {
+            OutboxAnswer::Transfer { action } => self.discard_transfer(epoch, &model, &row_id, &action).await,
+            _ => Ok(()),
         }
     }
 }
@@ -267,14 +260,11 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let shown = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
-                    Ok(LifeReply::Outbox(OutboxAnswer::Written { shown, .. })) => shown,
-                    Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
-                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
-                    Ok(_) => return Err(super::database::foreign_reply()),
+                let value = match self.landed_value(receipt.epoch, &receipt.model, (ticket.op_id, None)).await {
+                    Ok(value) => value,
+                    Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
                     Err(error) => return Err(error),
                 };
-                let value = shown.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
                 WireOperationOutcome::Confirmed { value, answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
@@ -282,12 +272,30 @@ impl Database {
         })
     }
 
+    /// The row the landing batch of an operation showed, from the owner Outbox.
+    pub(super) async fn landed_value(&self, epoch: u64, model: &str, landing: (u64, Option<u64>)) -> Result<Option<super::wire::WireRow>, DbError> {
+        match self.outbox_answer(self.life.landed_row(epoch, landing), "operation outcome").await? {
+            OutboxAnswer::Written { shown, .. } => shown.map(|row| self.wire_of_row(model, &row)).transpose(),
+            _ => Err(super::database::foreign_reply()),
+        }
+    }
+
     /// `retry` of a failed mutation: the owner gives the receipt of the new cycle.
-    pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<WireOperationReceipt, DbError> {
+    pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<Retried, DbError> {
         self.account_call(epoch)?;
         let waiter = self.life.retry_operation(epoch, (model.clone(), row_id.clone()), action);
-        let OutboxAnswer::Receipt(held): OutboxAnswer = self.outbox_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
-        let value = self.optimistic(&model, &id(&row_id)?)?;
-        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
+        let held = match self.outbox_answer(waiter, "retry").await? {
+            OutboxAnswer::Receipt(held) => held,
+            OutboxAnswer::Transfer { action } => return Ok(Retried::Transfer(action)),
+            _ => return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }),
+        };
+        let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
+        Ok(Retried::Receipt(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone())))
     }
+}
+
+/// What `retry` of the first open operation of a row gave: the receipt of a new cycle, or the action of the transfer that owns the operation.
+pub(super) enum Retried {
+    Receipt(WireOperationReceipt),
+    Transfer(String),
 }

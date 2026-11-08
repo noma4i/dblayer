@@ -310,7 +310,7 @@ impl Twin {
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
-    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })) }
+    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
 
     pub fn has_pending(&self) -> bool { !self.unanswered.is_empty() }
 
@@ -404,7 +404,7 @@ impl Twin {
 
     pub fn outcome(&mut self, id: TransferId, cycle_id: u64) -> (ReplyId, Out) {
         let reply = self.reply();
-        let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0, optimistic: None };
+        let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0, optimistic: None, landing: None };
         (reply, self.post(TransferInput::Outcome { receipt, reply }))
     }
 

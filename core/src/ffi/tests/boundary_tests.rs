@@ -28,6 +28,25 @@ async fn concurrent_local_writes_answer_with_the_row_of_their_own_batch() {
     assert_eq!(second.optimistic_value.as_ref().unwrap().revision, second.revision);
 }
 
+/// boundary_local_result_orders (TRACE-01, P-BND-03): the answer of an attach shows the file of its own batch, and of two detaches exactly one had the file.
+#[tokio::test(flavor = "multi_thread")]
+async fn attach_and_detach_answer_with_their_own_batch() {
+    let mut model = ModelSpec::new("Files", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::file("photo").nullable()]);
+    model.storage = Storage::Local;
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let epoch = database.session_epoch();
+    let id = database.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
+    let attached = database.attach(epoch, "Files".into(), id.clone(), "photo".into(), crate::ffi::FileBytes { bytes: vec![1, 2, 3], name: "first".into(), mime: "image/png".into() }).await.unwrap();
+    assert_eq!((attached.name.as_deref(), attached.size), (Some("first"), 3));
+    let (first, second) = tokio::join!(
+        database.detach(epoch, "Files".into(), id.clone(), "photo".into()),
+        database.detach(epoch, "Files".into(), id, "photo".into()),
+    );
+    let mut had = [first.unwrap(), second.unwrap()];
+    had.sort();
+    assert_eq!(had, [false, true]);
+}
+
 /// xfer_accept_row_missing (D-168): an upload to a row that is not stored fails with NotFound before the file is read.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upload_to_a_missing_row_is_not_found() {

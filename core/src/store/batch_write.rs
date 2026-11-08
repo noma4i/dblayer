@@ -19,7 +19,7 @@ struct WrittenBatch<'a> {
     expiry: ExpiryParts,
     resets: ResetParts,
     candidates: usize,
-    shown: Option<super::Row>,
+    shown: Vec<Option<super::Row>>,
 }
 
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
@@ -35,7 +35,10 @@ pub(crate) struct BatchWritten {
     pub removed_operations: Vec<u64>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
-    pub shown: Option<super::Row>,
+    /// The row of each `Show` of the batch, in the order of the ops.
+    pub shown: Vec<Option<super::Row>>,
+    /// The files the batch deleted: a detach of an attached file deletes one.
+    pub files_removed: usize,
 }
 
 impl Store {
@@ -57,13 +60,14 @@ impl Store {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
                     if let Err(error) = removed { faults.push(format!("file {}: {error}", file.record.id)); }
                 }
+                let files_removed = discarded.len();
                 for id in discarded {
                     if let Err(error) = files.discard(std::slice::from_ref(&id)) { faults.push(format!("remove file {id}: {error}")); }
                 }
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown, files_removed })
             }
         }
     }
@@ -120,10 +124,10 @@ impl Store {
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
         let candidates = writer.candidates;
-        let mut shown = None;
+        let mut shown = Vec::new();
         for op in &batch.ops {
             let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } } | crate::owners::store::StoreOp::Show { model, row_id }) = op else { continue };
-            shown = self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str());
+            shown.push(self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str()));
         }
         let mut live_files = std::collections::HashSet::new();
         for file in files {

@@ -131,10 +131,7 @@ async fn a_send_that_landed_before_the_accepted_row_is_read_gives_the_landed_row
     stand.script.data("CreateMoment", ROW);
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let temporary = crate::ffi::database::id(&sent.optimistic_value.clone().unwrap().id).unwrap();
-    assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-
-    let landed = bound(database.accepted_row(epoch, "Moment", &temporary)).await.unwrap();
+    let WireOperationOutcome::Confirmed { value: Some(landed), .. } = bound(database.outcome(sent)).await.unwrap() else { panic!("the transfer is confirmed with its row") };
     assert_eq!((landed.id, landed.sync.state), ("m1".to_string(), WireSyncState::Synced));
     database.close_now();
 }

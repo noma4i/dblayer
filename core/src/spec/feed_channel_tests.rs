@@ -215,7 +215,7 @@ fn feed_live_rejected_invalid() {
     let first = rig.batches[0];
     let second = rig.batches[1];
     assert_eq!(rig.post(FeedInput::Rejected(Rejected { batch: second, reason: RejectReason::Invalid })), ["stale:Chat"]);
-    let emitted = rig.post(FeedInput::Committed(Committed { batch: first, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
+    let emitted = rig.post(FeedInput::Committed(Committed { batch: first, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert_eq!(emitted, ["modelevent:1", "modellost:1"]);
     assert_eq!(rig.state().mode(), f::Mode::Live);
 }
@@ -462,7 +462,7 @@ fn feed_prop_chan_one_ledger() {
         assert_eq!(batches.len(), 3);
         let mut delivered = Vec::new();
         for batch in batches.iter().rev() {
-            let words = rig.post(FeedInput::Committed(Committed { batch: *batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
+            let words = rig.post(FeedInput::Committed(Committed { batch: *batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
             delivered.extend(words.into_iter().filter(|word| word.starts_with("modelevent")));
         }
         assert_eq!(delivered.len(), 3, "every event reaches the stream once, in one numbering");

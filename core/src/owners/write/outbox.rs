@@ -180,6 +180,7 @@ impl OutboxState {
                 stale: Vec::new(),
                 landed: None,
                 shown: None,
+                members_shown: Vec::new(),
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
@@ -230,7 +231,7 @@ impl OutboxState {
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
-                .chain([StoreOp::Show { model: operation.op.model.clone(), row_id: operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()) }])
+                .chain(Self::landing_shows_of(operation))
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => [StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]
@@ -289,7 +290,16 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: None } }
+    /// The rows the landing batch shows: one per member of a group under its real id, otherwise the row that landed.
+    pub(super) fn landing_shows_of(operation: &QueuedOperation) -> Vec<StoreOp> {
+        let model = operation.op.model.clone();
+        match &operation.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().map(|member| StoreOp::Show { model: model.clone(), row_id: operation.swaps.iter().find(|(temp, _)| *temp == member.row_id).map_or_else(|| member.row_id.clone(), |(_, real)| real.clone()) }).collect(),
+            _ => vec![StoreOp::Show { model, row_id: operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()) }],
+        }
+    }
+
+    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: self.ops.get(&op_id).and_then(|operation| operation.shown.clone()), landing: None } }
 
     pub(super) fn retry_transfer_answer(&self, cycles: Vec<(u64, u64)>, result: Result<i64, Fault>, fx: &mut Effects<Outbox>) {
         if let Some(transfer) = self.peers.transfer {
@@ -432,6 +442,13 @@ impl OutboxState {
         self.ops.values().find(|operation| operation.op.model == model && operation.op.row_id == row && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).map(|operation| operation.op_id)
     }
 
+    /// A call without an action addresses the first open operation of the row: when that operation is a transfer, the action of its Transfer.
+    fn transfer_selected(&self, model: &str, row: &str, action: Option<&str>) -> Option<String> {
+        if action.is_some() { return None; }
+        let operation = &self.ops[&self.open_on_row(model, row, None)?];
+        matches!(operation.op.origin, OpSource::Transfer { .. }).then(|| operation.op.action.clone())
+    }
+
     pub(super) fn answer_waiters(&mut self, op_id: OpId, answer: &OutboxAnswer, fx: &mut Effects<Outbox>) {
         if let Some(reply) = self.submit_replies.remove(&op_id) {
             Self::reply(fx, reply, answer.clone());
@@ -497,9 +514,15 @@ impl OutboxState {
                     self.transport_failed(op_id, temporary, fx);
                 }
             }
-            OutboxInput::Retry { model, row_id, action, reply } => self.retry(&model, &row_id, action.as_deref(), reply, fx),
+            OutboxInput::Retry { model, row_id, action, reply } => match self.transfer_selected(&model, &row_id, action.as_deref()) {
+                Some(transfer) => Self::reply(fx, reply, OutboxAnswer::Transfer { action: transfer }),
+                None => self.retry(&model, &row_id, action.as_deref(), reply, fx),
+            },
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
-            OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
+            OutboxInput::Discard { model, row_id, action, reply } => match self.transfer_selected(&model, &row_id, action.as_deref()) {
+                Some(transfer) => Self::reply(fx, reply, OutboxAnswer::Transfer { action: transfer }),
+                None => self.discard(&model, &row_id, action.as_deref(), reply, fx),
+            },
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
@@ -550,9 +573,9 @@ impl StateOwner for Outbox {
         if let OutboxInput::Tick(now) = &input {
             state.now = state.now.max(now.0);
         }
-        if let OutboxInput::Landed { op_id, reply } = input {
+        if let OutboxInput::Landed { op_id, member, reply } = input {
             let answer = state.ops.get(&op_id).map_or(OutboxAnswer::Err(Fault::NotFound), |operation| match &operation.outcome {
-                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown.clone() },
+                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown_of(member), files_removed: 0 },
                 _ => OutboxAnswer::Err(Fault::NotFound),
             });
             OutboxState::reply(&mut fx, reply, answer);

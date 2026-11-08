@@ -265,7 +265,7 @@ impl Twin {
     pub(super) fn committed(&mut self, id: OpId) -> Vec<OutboxEffect> {
         self.revision += 1;
         let batch = self.batches[&id];
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }))
+        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
     }
 
     pub(super) fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> {
@@ -273,7 +273,7 @@ impl Twin {
         self.post(OutboxInput::Rejected(Rejected { batch, reason: reject(reason) }))
     }
 
-    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None } }
+    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None, landing: None } }
 
     pub(super) fn waiter(&mut self, id: OpId) { self.post(OutboxInput::Outcome { receipt: self.receipt(id, EPOCH), reply: WAITER }); }
 }
@@ -390,7 +390,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
                     OutboxAnswer::Outcome(outcome) if outcome_call => { let _ = outcome; obs.push(Obs::OutcomeNow) }
                     OutboxAnswer::Outcome(outcome) => obs.push(Obs::Outcome(out_of(&outcome))),
                     OutboxAnswer::Ok => obs.push(Obs::DiscardOk),
-                    OutboxAnswer::Resolved(_) | OutboxAnswer::Written { .. } => {}
+                    OutboxAnswer::Resolved(_) | OutboxAnswer::Written { .. } | OutboxAnswer::Transfer { .. } => {}
                     OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
                 }
             }

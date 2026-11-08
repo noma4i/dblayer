@@ -268,7 +268,7 @@ impl OutboxState {
             return;
         }
         self.add_operation(op_id, op, Stage::Submitting);
-        self.operation_committed(op_id, CommitKind::Intent, (0, None), fx);
+        self.operation_committed(op_id, CommitKind::Intent, (0, Vec::new()), fx);
     }
 
     pub(super) fn online_changed(&mut self, on: bool, fx: &mut Effects<Outbox>) {

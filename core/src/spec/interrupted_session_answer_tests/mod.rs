@@ -40,7 +40,7 @@ impl Rig {
     fn refuse(&mut self, attempt_id: u64) -> Vec<SessionEffect> {
         let effects = self.send(SessionInput::HttpError { request_id: 11, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: Some((262145, 262144)), security: None, body: None });
         let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-        self.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }))
+        self.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
     }
 }
 
@@ -111,7 +111,7 @@ fn sess_resume_login_epoch_started() {
     rig.send(ask_answer(1));
     let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
+    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionStarted })).is_empty());
     assert_eq!(rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false })), [SessionEffect::SnapshotRequest { epoch: 4 }, answer(1, Ok(Some("{}".into())))]);
 }
@@ -151,7 +151,7 @@ fn sess_prop_resume_once() {
     let attempt = rig.start();
     let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None });
     let batch = response.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, sequence: Some(1), .. } => Some(*batch), _ => None }).unwrap();
-    let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
+    let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(!committed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
     let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
     assert!(!published.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
@@ -173,7 +173,7 @@ fn sess_wait_resume() {
     rig.send(ask_answer(2));
     let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None });
     let batch = response.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
     let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
     assert_eq!(committed.into_iter().chain(published).filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [answer(1, Ok(Some("{\"ok\":true}".into()))), answer(2, Ok(None))], "the first consumer gets the body");
 

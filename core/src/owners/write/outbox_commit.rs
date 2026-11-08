@@ -17,7 +17,7 @@ impl OutboxState {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
             Batch::Write { reply, call, expire } => {
-                Self::reply(fx, reply, OutboxAnswer::Written { revision: committed.revision, shown: committed.shown });
+                Self::reply(fx, reply, OutboxAnswer::Written { revision: committed.revision, shown: committed.shown.into_iter().last().flatten(), files_removed: committed.files_removed });
                 if let Some(due) = expire {
                     let LocalCall { model, row, .. } = *call;
                     self.ephemeral.insert(row.clone(), due);
@@ -31,10 +31,12 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Option<crate::store::Row>), fx: &mut Effects<Outbox>) {
+    pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         match (kind, stage) {
             (CommitKind::Intent, Stage::Submitting) => {
+                let shown = shown.into_iter().last().flatten();
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown.clone_from(&shown); }
                 let receipt = OutboxAnswer::Receipt(Receipt { optimistic: shown, ..self.receipt(op_id, revision) });
                 if let Some(reply) = self.submit_replies.remove(&op_id) {
                     Self::reply(fx, reply, receipt.clone());
@@ -66,7 +68,7 @@ impl OutboxState {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown; }
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.last().cloned().flatten(); operation.members_shown = shown; }
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {

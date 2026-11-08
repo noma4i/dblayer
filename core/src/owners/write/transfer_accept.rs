@@ -58,6 +58,7 @@ impl TransferState {
             outcomes: Default::default(),
             outcome_waiters: Vec::new(),
             accept_reply: None,
+            optimistic: None,
             cancel_reply: None,
             retry_reply: None,
             discard_waiters: Vec::new(),

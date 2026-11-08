@@ -61,7 +61,11 @@ impl OutboxState {
             LocalWriteKind::SetLocalPending => StoreOp::LocalPending { model: model.into(), rows },
             _ => StoreOp::LocalRows { model: model.into(), rows },
         };
-        self.commit(batch, BTreeMap::from([(model.into(), generation)]), vec![op], 0, fx);
+        let ops = match kind {
+            LocalWriteKind::AttachBytes { .. } => vec![op, StoreOp::Show { model: model.into(), row_id: row.into() }],
+            _ => vec![op],
+        };
+        self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
     }
 
     pub(super) fn copy_done(&mut self, id: u64, fx: &mut Effects<Outbox>) {

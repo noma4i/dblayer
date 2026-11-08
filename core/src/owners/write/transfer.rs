@@ -109,6 +109,9 @@ impl TransferState {
                             ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
                         }
                     }
+                    if kind == StoreKind::SyncUpload && transfer.stage == TransferStage::Accepting {
+                        ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
+                    }
                     if let (Some(op_id), StoreKind::Completed, None, Some(signed)) = (own, kind, transfer.batch_id, transfer.signed_id.as_ref()) {
                         ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id } });
                     }
@@ -193,7 +196,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: None } }
+    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()), landing: self.transfers.get(&id).and_then(|transfer| transfer.batch_id.and_then(|group| self.groups.get(&group).and_then(|group| group.op_id)).or(transfer.op_id)) } }
 
     /// The immutable outcome of the current cycle: every waiter of the cycle gets it once.
     pub(super) fn settle(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
@@ -274,7 +277,7 @@ impl TransferState {
         }
     }
 
-    fn committed(&mut self, batch: crate::owners::contract::BatchId, fx: &mut Fx) {
+    fn committed(&mut self, (batch, shown): (crate::owners::contract::BatchId, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             if let Some((upload_id, key)) = pending.orphan {
@@ -295,6 +298,11 @@ impl TransferState {
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
+        if stage == Some(TransferStage::Accepting) {
+            for (id, row) in pending.ids.iter().zip(shown) {
+                if let Some(transfer) = self.transfers.get_mut(id) { transfer.optimistic = row; }
+            }
+        }
         match stage {
             Some(TransferStage::Accepting) => self.accepting_committed(&pending.ids, fx),
             Some(TransferStage::PersistingCopy) => self.copy_committed(&pending.ids, fx),
@@ -412,7 +420,7 @@ impl TransferState {
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             TransferInput::InterestPlus { transfer_id, stream_id } => self.interest_plus(transfer_id, stream_id, fx),
             TransferInput::InterestMinus { transfer_id, stream_id } => self.interest_minus(transfer_id, stream_id),
-            TransferInput::Committed(committed) => self.committed(committed.batch, fx),
+            TransferInput::Committed(committed) => self.committed((committed.batch, committed.shown), fx),
             TransferInput::Rejected(rejected) => self.rejected(rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(&key, reply, true, fx),
             TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),

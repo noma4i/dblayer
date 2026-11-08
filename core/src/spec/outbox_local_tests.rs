@@ -21,7 +21,7 @@ fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
 }
 
 fn commit_first(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }))
+    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
 }
 
 fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
@@ -54,7 +54,7 @@ fn out_local_attach_copied() {
     let id = copy.iter().find_map(|effect| match effect { OutboxEffect::Copy { id, .. } => Some(*id), _ => None }).expect("the copy");
     let copied = twin.post(OutboxInput::CopyDone { id });
     assert_eq!(kinds(&copied), vec![CommitKind::LocalWrite]);
-    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None }]);
+    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn out_local_set_ephemeral() {
     twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     assert!(twin.store_text.contains("EphemeralRows"), "{}", twin.store_text);
     let committed = commit_first(&mut twin);
-    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None }]);
+    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the reset timer: {committed:?}");
 }
 
@@ -109,7 +109,7 @@ fn out_local_set_local_pending() {
     let mut twin = Twin::new();
     twin.post(write(LocalWriteKind::SetLocalPending));
     assert!(twin.store_text.contains("LocalPending"), "{}", twin.store_text);
-    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None }]);
+    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn out_local_write_closing_waits() {
     let closing = close(&mut twin);
     assert!(answers(&closing, WRITE).is_empty() && drained(&closing) == 0, "{closing:?}");
     let committed = commit_first(&mut twin);
-    assert_eq!((answers(&committed, WRITE), drained(&committed)), (vec![OutboxAnswer::Written { revision: 11, shown: None }], 1));
+    assert_eq!((answers(&committed, WRITE), drained(&committed)), (vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }], 1));
 }
 
 #[test]
@@ -222,8 +222,8 @@ fn out_local_write_memory_same() {
     commit_first(&mut twin);
     let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1, now: Time(200) });
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
-    assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Written { revision: 12, shown: None }]);
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Written { revision: 12, shown: None, files_removed: 0 }]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
     let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });
     assert!(stale.is_empty(), "the timer of the first write does not remove the row: {stale:?}");
@@ -249,7 +249,7 @@ fn out_prop_landing_no_stale() {
 fn store_outcome(twin: &mut Twin, batch: u64, outcome: Option<RejectReason>) -> Vec<OutboxEffect> {
     take_fx(&twin.log, None);
     let input = match outcome {
-        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
+        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
         Some(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
     };
     twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Control, input);
@@ -290,7 +290,7 @@ fn out_prop_local_write_orders() {
             let label = format!("{order:?} x {outcome:?}");
             let closed_first = order.iter().position(|e| *e == Closing) < order.iter().position(|e| *e == Write);
             let ended_first = order.iter().position(|e| *e == EpochEnded) < order.iter().position(|e| *e == Write);
-            let want: Vec<OutboxAnswer> = if ended_first { Vec::new() } else if closed_first { vec![OutboxAnswer::Err(Fault::Closed)] } else { vec![outcome.last().and_then(|(_, result)| result.clone()).map_or(OutboxAnswer::Written { revision: 11, shown: None }, |reason| OutboxAnswer::Err(Fault::Rejected(reason)))] };
+            let want: Vec<OutboxAnswer> = if ended_first { Vec::new() } else if closed_first { vec![OutboxAnswer::Err(Fault::Closed)] } else { vec![outcome.last().and_then(|(_, result)| result.clone()).map_or(OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }, |reason| OutboxAnswer::Err(Fault::Rejected(reason)))] };
             assert_eq!(answers(&effects, WRITE), want, "{label}: exactly one answer, none from the owner for a write of an ended epoch (the runtime answers the caller Interrupted)");
             assert_eq!(kinds(&effects).len(), if closed_first || ended_first { 0 } else { 1 + outcome.iter().filter(|(_, result)| matches!(result, Some(RejectReason::StaleGeneration { .. }))).count() }, "{label}: one batch per attempt of the Store, none after Closing");
             assert_eq!(drained(&effects), 1, "{label}: Drained once");

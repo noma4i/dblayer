@@ -222,7 +222,7 @@ pub struct OpenMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreReply {
-    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows, shown: Option<crate::store::Row> },
+    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows, shown: Vec<Option<crate::store::Row>>, files_removed: usize },
     Rejected(RejectReason),
 }
 
@@ -259,7 +259,8 @@ pub struct WriteDone {
     pub removed_operations: Vec<u64>,
     pub resets: Vec<EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
-    pub shown: Option<crate::store::Row>,
+    pub shown: Vec<Option<crate::store::Row>>,
+    pub files_removed: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

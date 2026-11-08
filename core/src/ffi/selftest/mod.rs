@@ -36,6 +36,7 @@ mod moment_flow_tests;
 mod profile_flow_tests;
 mod upload_fixtures;
 mod upload_flow_tests;
+mod upload_selector_tests;
 mod upload_stand;
 mod upload_stand_tests;
 mod upload_answer_tests;

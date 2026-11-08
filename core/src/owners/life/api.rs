@@ -135,7 +135,7 @@ impl Life {
     pub fn resolve_row(&self, epoch: Epoch, model: String, row: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Resolve { model, row, reply }) }
 
     /// The root row the answer of an operation landed.
-    pub fn landed_row(&self, epoch: Epoch, op_id: u64) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Landed { op_id, reply }) }
+    pub fn landed_row(&self, epoch: Epoch, (op_id, member): (u64, Option<u64>)) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Landed { op_id, member, reply }) }
 
     /// Answers when no operation of the owner Outbox is on its way.
     pub fn operations_quiet(&self, epoch: Epoch) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::WhenQuiet { reply }) }

@@ -108,8 +108,7 @@ async fn a_batch_member_that_landed_before_the_accepted_row_is_read_gives_the_la
     database.set_online(true).unwrap();
     assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
 
-    let temporary = crate::ffi::database::id(&receipt.items[0].optimistic_value.id).unwrap();
-    let landed = bound(database.accepted_row(database.session_epoch(), "Asset", &temporary)).await.unwrap();
+    let WireOperationOutcome::Confirmed { value: Some(landed), .. } = bound(database.outcome(receipt.items[0].receipt.clone())).await.unwrap() else { panic!("the item is confirmed with its row") };
     assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
     database.close_now();
 }

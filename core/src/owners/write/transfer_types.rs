@@ -377,6 +377,8 @@ pub struct Transfer {
     pub outcomes: CycleOutcomes,
     pub outcome_waiters: Vec<(CycleId, ReplyId)>,
     pub accept_reply: Option<ReplyId>,
+    /// The row of the transfer as the batch of its acceptance showed it.
+    pub optimistic: Option<crate::store::Row>,
     pub cancel_reply: Option<(ReplyId, bool)>,
     pub retry_reply: Option<ReplyId>,
     pub discard_waiters: Vec<ReplyId>,

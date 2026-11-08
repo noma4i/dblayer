@@ -204,11 +204,11 @@ impl Twin {
             Input::HandshakeDeadline { to } => vec![FeedInput::HandshakeDeadline { connection_id: self.connection(*to) }],
             Input::Committed => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })]
             }
             Input::CommittedAt(nth) => {
                 let batch = self.batch_at(*nth);
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
             }
             Input::RejectedAt(nth, reason) => {
                 let batch = self.batch_at(*nth);
@@ -220,17 +220,17 @@ impl Twin {
             }
             Input::StrayRepeat => {
                 let batch = self.used.last().copied().unwrap_or(9_999);
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
             }
             Input::CommittedStale(parents) => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: None })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: Vec::new(), files_removed: 0 })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
                 vec![FeedInput::Rejected(Rejected { batch, reason: Self::reject_reason(reason) })]
             }
-            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })],
+            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],
