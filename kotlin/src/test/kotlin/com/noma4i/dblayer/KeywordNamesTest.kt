@@ -10,7 +10,7 @@ import org.junit.Test
 class KeywordNamesTest {
     @Test
     fun keywordNamesPreserveStoredKeysAndNestedValues() = bounded {
-        reopen(Config(null, null), modelsJSON, null)
+        openSigned(Config(null, null), modelsJSON, null)
         val input = """{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"""
         val nested = dbJson.decodeFromString(KeywordValue.serializer(), input)
         val created = KeywordRecord.create(default = "row", `class` = "selected", value = nested).optimisticValue!!
@@ -22,7 +22,7 @@ class KeywordNamesTest {
         val expected = """{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"""
         assertEquals(parseJson(expected), dbJson.encodeToJsonElement(KeywordValue.serializer(), nested))
         val transport = MockTransport()
-        reopen(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null, null), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"KeywordCall","document":"query KeywordCall(${'$'}class: String!) { keywordCall(class: ${'$'}class) { default when container r } }"}]""")
         transport.enqueue("KeywordCall", """{"data":{"keywordCall":{"default":"answer","when":"now","container":"box","r":"reader"}}}""")
         val answer = Operations.`when`(`class` = "request")

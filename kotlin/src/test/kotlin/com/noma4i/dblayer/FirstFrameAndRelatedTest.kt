@@ -22,7 +22,7 @@ class FirstFrameAndRelatedTest {
     /** Requirement: a stream opened over cached rows delivers them in its very first value, which the reader takes off the calling thread. Observable: the kind, the rows and the revision of the first value, and the thread that took it. */
     @Test
     fun theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() = bounded {
-        reopen(Config(null, null), modelsJSON, MockTransport())
+        openSigned(Config(null, null), modelsJSON, MockTransport())
         val ann = User.create(name = "Ann").optimisticValue!!
         val seats = listOf(Presence.create(userId = ann.id, room = "r").optimisticValue!!, Presence.create(userId = ann.id, room = "r").optimisticValue!!)
         val stream = AccountScope.current().stream(Presence.where(Condition.equal("room", jsonValue("r"))))
@@ -43,7 +43,7 @@ class FirstFrameAndRelatedTest {
     @Test
     fun aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
+        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val scope = AccountScope.current()

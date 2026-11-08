@@ -1,3 +1,4 @@
+import DBlayerTesting
 import Foundation
 import Testing
 @testable import DBlayer
@@ -5,7 +6,7 @@ import Testing
 extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func inv_files_typed_aFileIsAttachedReadLocatedAndDetachedThroughTheRecord() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
     let user = try await User.create(name: "ann").optimisticValue!
     #expect(try await user.file(.avatar) == nil)
 

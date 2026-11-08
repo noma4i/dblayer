@@ -41,7 +41,7 @@ class SessionRestoreTest {
         try {
             closeForCleanup()
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
-            reopen(Config(null, null), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
+            openSigned(Config(null, null), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
             val oldScope = AccountScope.current()
             val old = async { runCatching { User.profile.load(oldScope) } }
             transport.arrived.await()
@@ -67,7 +67,7 @@ class SessionRestoreTest {
             for (name in listOf("A", "B")) {
                 transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"$name"}}}""")
             }
-            reopen(Config(null, null), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
+            openSigned(Config(null, null), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
             User.profile.load(AccountScope.current())
             val old = User.profile.read(AccountScope.current()).single()
             old.set(typing = true, account = AccountScope.current())
@@ -95,7 +95,7 @@ class SessionRestoreTest {
                 transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"$user","name":"$user"}}}""")
                 transport.enqueue("CurrentRegionQuery", """{"data":{"region":{"id":"$region","name":"$region"}}}""")
             }
-            reopen(Config(null, null), modelsJSON, transport, """[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]""")
+            openSigned(Config(null, null), modelsJSON, transport, """[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]""")
             CurrentUser.current.load(AccountScope.current())
             CurrentRegion.current.load(AccountScope.current())
             assertEquals(listOf("u1"), CurrentUser.current.read(AccountScope.current()).map { it.id })

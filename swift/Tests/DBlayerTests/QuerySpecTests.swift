@@ -1,3 +1,4 @@
+import DBlayerTesting
 import Testing
 @testable import DBlayer
 
@@ -27,7 +28,7 @@ extension BridgeProbeTests {
   }
 
   @Test @MainActor func aStreamWithoutARelationRefusesToLoad() async throws {
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     let stream = try DB.account().stream(Query<Moment>())
     await #expect(throws: DbError.self) { try await stream.refresh() }
     await #expect(throws: DbError.self) { _ = try await stream.loadMore() }

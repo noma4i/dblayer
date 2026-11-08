@@ -103,7 +103,7 @@ extension BridgeProbeTests {
     let path = directory.appendingPathComponent("old.sqlite").path
     let config = Config(path: path, dataVersion: nil)
     let models = try clubModels(keepLetter: keep)
-    try await reopenSigned(config: config, modelsJson: models, operations: clubDefs)
+    try await openSignedOffline(config: config, modelsJson: models, operations: clubDefs)
     let receipt = try await Letter.create(chatId: "c1", text: "held", at: 1, in: DB.account())
     let id = try #require(receipt.optimisticValue?.id)
     await DB.closeForCleanup()
@@ -114,7 +114,7 @@ extension BridgeProbeTests {
     try #require(changed == SQLITE_OK)
     let transport = MockTransport()
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused"))
-    try await reopen(config: config, modelsJson: models, transport: transport, operations: clubDefs)
+    try await openSigned(config: config, modelsJson: models, transport: transport, operations: clubDefs)
     await eventually("the pending send reaches the server") { transport.calls.filter { $0.operationName == "SendLetter" }.count == 1 }
     #expect(transport.calls.filter { $0.operationName == "SendLetter" }.count == 1)
     #expect(try await Letter.ids([id]).read().isEmpty)
@@ -405,7 +405,7 @@ extension BridgeProbeTests {
   @MainActor
   static func openClubSession(_ transport: any Transport, models: String = modelsJSON, subscription: String? = nil) async throws {
     let defs = subscription.map { String(clubDefs.dropLast()) + ",\($0)]" } ?? clubDefs
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: models, transport: transport, operations: defs)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: models, transport: transport, operations: defs)
   }
 
   /// K04 (B4): a create the server answers returns the confirmed row.

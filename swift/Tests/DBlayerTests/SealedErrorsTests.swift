@@ -12,14 +12,14 @@ private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed(
 
 extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     let row = try await Moment.create(text: "saved", in: DB.account()).optimisticValue!
     try await DB.close()
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
   }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: operations)
   }
 

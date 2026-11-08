@@ -11,7 +11,7 @@ extension BridgeProbeTests {
     try Data("video".utf8).write(to: source)
     defer { try? FileManager.default.removeItem(at: source) }
     let transport = MockTransport()
-    let database = try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"#)
+    let database = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"#)
     try database.setOnline(online: false)
     let local = try await Moment.create(text: "intro", in: DB.account()).optimisticValue!
     _ = try await local.uploadClip(UploadRequest(path: source.path), in: DB.account())
@@ -31,7 +31,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let row = #""__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""#
     transport.enqueue("CreateMoment", reply: "{\"data\":{\"createMoment\":{\(row)}}}")
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"#)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"#)
     let id = try await Moment.create(text: "intro", in: DB.account()).confirmed().id
     let moment = try #require(try await Moment.find(id).current())
     for (turn, expected) in (["Intro received", nil] as [String?]).enumerated() {

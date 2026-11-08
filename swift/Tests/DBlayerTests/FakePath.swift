@@ -29,10 +29,3 @@ final class FakePath: PathSource, @unchecked Sendable {
 
   var observerCount: Int { lock.withLock { observers.count } }
 }
-
-extension DB {
-  /// Test cleanup: a database a test already closed is closed.
-  @MainActor static func closeForCleanup() async {
-    do { try await close() } catch DbError.Closed(_) {} catch DbError.NotOpen(_) {} catch { Issue.record("close failed: \(error)") }
-  }
-}

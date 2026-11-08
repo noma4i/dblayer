@@ -19,7 +19,7 @@ class ModelEventsTest {
 
     private suspend fun openNoticeRig(): MockTransport {
         val transport = MockTransport()
-        reopen(Config(null, null), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
+        openSigned(Config(null, null), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
         return transport
     }
 

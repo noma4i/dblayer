@@ -12,7 +12,7 @@ import org.junit.Test
 
 class SessionBridgeTest {
     @Test fun aSessionCallSendsTheEncodedBodyAndDecodesTheAnswerAfterAResetOfTheSession() = bounded {
-        reopenSigned(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null, null), modelsJSON)
         DBlayer.sessionReset()
         DBlayer.database.setOnline(true)
         val answer: SessionAnswer = DBlayer.sessionCall("login_link", AccountBody("stand"))
@@ -22,7 +22,7 @@ class SessionBridgeTest {
     }
 
     @Test fun retryByIdReachesTheCoreAndItsErrorComesBack() = bounded {
-        reopenSigned(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null, null), modelsJSON)
         DBlayer.close()
         assertTrue(runCatching { Moment.retry("42", "like") }.exceptionOrNull() is DbException.Closed)
         assertTrue(runCatching { Moment.retry("43", null) }.exceptionOrNull() is DbException.Closed)

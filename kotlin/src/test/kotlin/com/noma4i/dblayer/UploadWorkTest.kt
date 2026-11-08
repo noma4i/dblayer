@@ -75,7 +75,7 @@ class UploadWorkTest {
         val directory = Files.createTempDirectory("accepted").toFile()
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val database = reopen(Config(null, null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
+            val database = openSigned(Config(null, null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
             database.setOnline(false)
             database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> Refusal(RoundRefusal.JOB_REFUSED, "") }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }

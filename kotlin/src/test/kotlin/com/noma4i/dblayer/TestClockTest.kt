@@ -21,7 +21,7 @@ class TestClockTest {
             closeForCleanup()
             val transport = MockTransport()
             val hold = transport.hold("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-            reopenClocked(modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+            openSignedClocked(modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             val first = Moment.feed.beginLoad()
             try {
                 awaitWithin("the shared load starts") { hold.entered() }
@@ -58,7 +58,7 @@ class TestClockTest {
             transport.enqueue("MomentsFeed", page(row2, false, "fresh"))
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
             val definitions = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id uuid likedByMe media createdAt } }"}]"""
-            reopenClocked(modelsJSON, transport, definitions)
+            openSignedClocked(modelsJSON, transport, definitions)
             Moment.feed.load()
             val row = Moment.feed.read().single()
             val loading = async { Moment.feed.loadAll(force = true) }
@@ -95,7 +95,7 @@ class TestClockTest {
             }
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
             val definitions = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id uuid likedByMe media createdAt } }"}]"""
-            reopenClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
+            openSignedClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
             Moment.feed.load()
             val row = Moment.feed.read().single()
             assertEquals("1", row.id)
@@ -103,7 +103,7 @@ class TestClockTest {
             assertTrue(awaitWithin("the mutation is confirmed") { receipt.outcome() } is OperationOutcome.Confirmed)
             assertEquals(1, transport.calls.count { it.operationName == "MomentsFeed" })
             closeForCleanup()
-            reopenClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
+            openSignedClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
             Moment.feed.load()
             assertEquals(listOf("2"), Moment.feed.read().map { it.id })
             assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
@@ -124,7 +124,7 @@ class TestClockTest {
             transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"A"}}}""")
             transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"B"}}}""")
             val definitions = """[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"""
-            reopenClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
+            openSignedClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)
             CurrentUser.current.refresh()
             val first = Projected(AccountScope.current().stream(CurrentUser.current), CurrentUser, scope)
             awaitWithin("the initial profile") { first.projection.first { it.rows.isNotEmpty() } }
@@ -132,7 +132,7 @@ class TestClockTest {
             first.close()
             closeForCleanup()
 
-            reopenClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000L)
+            openSignedClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000L)
             CurrentUser.current.refresh()
             val second = Projected(AccountScope.current().stream(CurrentUser.current), CurrentUser, scope)
             awaitWithin("the reopened profile") { second.projection.first { it.rows.isNotEmpty() } }
@@ -154,7 +154,7 @@ class TestClockTest {
             repeat(2) { transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""") }
             val down = transport.hold("MomentsFeed", failure = DbException.Network("down"))
             closeForCleanup()
-            val clock = reopenClocked(modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+            val clock = openSignedClocked(modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             Moment.feed.load()
             val held = Projected(AccountScope.current().stream(Moment.feed), Moment, scope)
             held.loaded()

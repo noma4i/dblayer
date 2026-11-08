@@ -121,7 +121,7 @@ class ClubTest {
             val config = Config(directory.resolve("old.sqlite").absolutePath, null)
             val models = clubModels(keepLetter = keep)
             try {
-                reopenSigned(config, models, CLUB_DEFS)
+                openSignedOffline(config, models, CLUB_DEFS)
                 val receipt = Letter.create(chatId = "c1", text = "held", at = 1, account = AccountScope.current())
                 val id = requireNotNull(receipt.optimisticValue).id
                 closeForCleanup()
@@ -133,7 +133,7 @@ class ClubTest {
                 check(changed == 0)
                 val transport = MockTransport()
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused"))
-                reopen(config, models, transport, CLUB_DEFS)
+                openSigned(config, models, transport, CLUB_DEFS)
                 eventually("the pending send reaches the server") { transport.calls.count { it.operationName == "SendLetter" } == 1 }
                 assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
@@ -395,7 +395,7 @@ class ClubTest {
 
     private suspend fun openClubSession(transport: Transport, models: String = modelsJSON, subscription: String? = null) {
         val defs = if (subscription == null) CLUB_DEFS else CLUB_DEFS.dropLast(1) + "," + subscription + "]"
-        reopen(Config(null, null), models, transport, defs)
+        openSigned(Config(null, null), models, transport, defs)
     }
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!

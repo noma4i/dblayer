@@ -42,7 +42,7 @@ extension BridgeProbeTests {
     transport.enqueue("ChatMedia", reply: page("v2"))
     transport.enqueue("LikeMoment", reply: #"{"data":{"likeMoment":{"__typename":"MediaMessage","id":"v1","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}}"#)
     let definitions = #"[{"name":"MediaMarker","document":"query MediaMarker($chatId: ID!, $upToSequence: Int!) { node(id: $chatId) { mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail($chatId: ID!, $afterSequence: Int!, $first: Int, $after: String) { node(id: $chatId) { messages(afterSequence: $afterSequence, first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: specs(modelJSON), transport: transport, operations: String(definitions.dropLast()) + #",{"name":"ChatMedia","document":"\#(ChatMediaOperation.document)"}]"#)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: specs(modelJSON), transport: transport, operations: String(definitions.dropLast()) + #",{"name":"ChatMedia","document":"\#(ChatMediaOperation.document)"}]"#)
     let query = try MediaMessage.visualMedia("c1")
     let (signals, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(signals)
@@ -78,7 +78,7 @@ extension BridgeProbeTests {
     let preload = transport.hold("PresenceOnline", reply: #"{"data":{"presenceOnline":[]}}"#)
     defer { preload.release() }
     let operations: [any GraphQLOperation.Type] = [MediaPresenceOnline.self, ChatMediaOperation.self]
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: JSONValue.array(operations.map { .object(["name": .string($0.operationName), "document": .string($0.document)]) }).text)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: JSONValue.array(operations.map { .object(["name": .string($0.operationName), "document": .string($0.document)]) }).text)
     let (signals, signal) = AsyncStream<Void>.makeStream()
     let entered = Task { await preload.entered(); signal.yield(()) }
     defer { entered.cancel(); signal.finish() }

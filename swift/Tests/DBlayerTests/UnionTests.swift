@@ -18,7 +18,7 @@ extension BridgeProbeTests {
   }
 
   private func open(_ transport: MockTransport? = nil) async throws -> Database {
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     return try DB.database
   }
 

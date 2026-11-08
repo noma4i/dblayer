@@ -42,7 +42,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aTypedScopeParamReachesTheServerAsANumberAndAKeyOfItsOwnWindow() async throws {
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("tailSince"), "document": .string(Self.tailDocument)])]).text)
     transport.enqueue("tailSince", reply: #"{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}"#)
 

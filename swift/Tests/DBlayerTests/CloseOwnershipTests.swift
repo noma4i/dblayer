@@ -8,7 +8,7 @@ extension BridgeProbeTests {
     let path = FakePath()
     defer { Task { @MainActor in try? await DB.close() } }
     await DB.closeForCleanup()
-    try await reopenClocked(modelsJson: modelsJSON, transport: MockTransport(), observers: SystemObservers(path: path))
+    try await openSignedClocked(modelsJson: modelsJSON, transport: MockTransport(), observers: SystemObservers(path: path))
     try DB.database.setOnline(online: false)
     #expect(path.observerCount == 1)
     let cursor = Cursor(try await Moment.recent.live.stream())

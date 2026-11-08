@@ -8,11 +8,6 @@ extension TestClock {
   }
 }
 
-private final class OnlineAtOnce: PlatformObserver {
-  func start(sink: OnlineSink) { sink.setOnline(online: true) }
-  func stop() {}
-}
-
 extension DB {
   /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping. The platform reports online at once unless the test passes its own `observers`.
   @discardableResult
@@ -20,7 +15,7 @@ extension DB {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
     let definitions = operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
     do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {}
-    let database = try await DB.opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOnce())
+    let database = try await DB.opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOpen())
     await ChangePump.start(database)
     return clock
   }

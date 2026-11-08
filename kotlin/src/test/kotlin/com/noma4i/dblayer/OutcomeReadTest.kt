@@ -14,7 +14,7 @@ class OutcomeReadTest {
     fun parallelOutcomeReadsOfOneReceiptAllGetTheServerId() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        reopen(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null, null), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
         val ids = coroutineScope { (1..8).map { async { withTimeout(5000) { sent.confirmed().id } } }.awaitAll() }

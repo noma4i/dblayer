@@ -22,7 +22,7 @@ class DestroyRereadTest {
                 transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"$id","uuid":"$uuid","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
             }
             transport.enqueue("DeleteMoment", """{"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]}""")
-            reopenClocked(modelsJSON, transport)
+            openSignedClocked(modelsJSON, transport)
             DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
             val held = Projected(AccountScope.current().stream(Moment.feed), Moment, scope)
             held.loaded()

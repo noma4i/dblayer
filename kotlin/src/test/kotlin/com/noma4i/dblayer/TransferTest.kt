@@ -114,7 +114,7 @@ class TransferTest {
             }
             transport.mock.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"../../../outside","size":2,"position":0},{"id":"a1","clientKey":"other","size":2,"position":1}]}}}""")
             val operations = """[{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(directory.resolve("db.sqlite").path, null), modelsJSON, transport, operations)
+            openSigned(Config(directory.resolve("db.sqlite").path, null), modelsJSON, transport, operations)
             val items = listOf("../../../outside", "other").mapIndexed { index, key -> UploadItem(values = buildJsonObject { put("clientKey", key); put("size", 2); put("position", index) }, path = source.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             assertEquals(listOf("a0", "a1"), confirmedIds(receipt))
@@ -230,10 +230,10 @@ class TransferTest {
             val path = directory.resolve("db.sqlite").path
             closeForCleanup()
             val transport = MockTransport()
-            reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L)
+            openSignedClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L)
             val row = refusedUpload(transport, source)
             closeForCleanup()
-            val reopened = reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000 + 1)
+            val reopened = openSignedClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000 + 1)
             Moment.ids(listOf(row.id)).rowsReach("the expired upload is discarded at the open") { it.isEmpty() }
             closeForCleanup()
         } finally { closeForCleanup(); directory.deleteRecursively() }
@@ -248,7 +248,7 @@ class TransferTest {
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
             transport.enqueue("CreateMoment", DbException.Http(422u, "rejected"))
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"""
-            reopen(Config(null, null), modelsJSON, transport, operations)
+            openSigned(Config(null, null), modelsJSON, transport, operations)
             val receipt = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(receipt.optimisticValue)
             assertTrue(receipt.outcome() is OperationOutcome.Rejected)
@@ -274,7 +274,7 @@ class TransferTest {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
-            val db = reopen(config, modelsJSON, transport, operations, onlineAtOpen)
+            val db = openSigned(config, modelsJSON, transport, operations, onlineAtOpen)
             val queued = requireNotNull(AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).optimisticValue)
             held.entered()
             db.setOnline(false)
@@ -282,7 +282,7 @@ class TransferTest {
             assertNull(Moment.find(queued.id).current())
             held.release()
             closeForCleanup()
-            reopen(config, modelsJSON, transport, operations, onlineAtOpen)
+            openSigned(config, modelsJSON, transport, operations, onlineAtOpen)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
             eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }
@@ -302,7 +302,7 @@ class TransferTest {
             repeat(2) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAsset", """{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
+            openSigned(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -328,7 +328,7 @@ class TransferTest {
             repeat(4) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
+            openSigned(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -359,7 +359,7 @@ class TransferTest {
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null), modelsJSON, transport, operations)
+            openSigned(Config(null, null), modelsJSON, transport, operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -388,7 +388,7 @@ class TransferTest {
         try {
             closeForCleanup()
             val transport = MockTransport()
-            val clock = reopenClocked(modelsJSON, transport, expiryOperations)
+            val clock = openSignedClocked(modelsJSON, transport, expiryOperations)
             val row = refusedUpload(transport, source)
             DBlayer.database.setOnline(false)
             clock.advance(7L * 24 * 60 * 60 * 1000 + 1)
@@ -412,7 +412,7 @@ class TransferTest {
             transport.mock.enqueue("CompleteMultipart", """{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}""")
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             transport.mock.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            reopen(Config(null, null), modelsJSON, transport, operations)
+            openSigned(Config(null, null), modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             Moment.ids(listOf(row.id)).rowsReach("the refused complete fails the upload") { it.firstOrNull()?.sync?.state == SyncState.Failed }
@@ -437,7 +437,7 @@ class TransferTest {
             val members = """[{"name":"ContainerMembers","document":"query ContainerMembers(${'$'}containerId: ID!, ${'$'}first: Int, ${'$'}after: Cursor) { node(id: ${'$'}containerId) { ... on Container { membersCount members(first: ${'$'}first, after: ${'$'}after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }"}]"""
             val transport = MockTransport()
             transport.enqueue("ContainerMembers", """{"data":{"node":{"membersCount":2,"members":{"edges":[{"cursor":"u1","node":{"id":"u1","name":"first"}},{"cursor":"u2","node":{"id":"u2","name":"second"}}],"pageInfo":{"hasNextPage":false,"endCursor":"u2"}}}}}""")
-            reopen(config, modelsJSON, transport, members)
+            openSigned(config, modelsJSON, transport, members)
             User.containerMembers("c1").loadAll()
             val first = requireNotNull(User.find("u1").current())
             val second = requireNotNull(User.find("u2").current())
@@ -451,7 +451,7 @@ class TransferTest {
             val firstId = first.id
             val secondId = second.id
             closeForCleanup()
-            reopen(config, modelsJSON, MockTransport(), members)
+            openSigned(config, modelsJSON, MockTransport(), members)
             val restoredFirst = requireNotNull(User.find(firstId).current())
             val restoredSecond = requireNotNull(User.find(secondId).current())
             assertNull(restoredFirst.read(User.avatar))
@@ -477,7 +477,7 @@ class TransferTest {
             val config = Config(directory.resolve("db.sqlite").path, null)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            val db = reopen(config, modelsJSON, transport, operations)
+            val db = openSigned(config, modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             awaitWithin("the first step request reached the transport") { held.entered() }
@@ -491,7 +491,7 @@ class TransferTest {
             assertTrue(source.exists())
             held.release()
             closeForCleanup()
-            reopen(config, modelsJSON, transport, operations)
+            openSigned(config, modelsJSON, transport, operations)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
             eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }

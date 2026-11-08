@@ -17,7 +17,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun aClosedDatabaseRefusesEveryCallWithClosedFromTheCore() = bounded {
-        reopenSigned(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null, null), modelsJSON)
         DBlayer.close()
         val errors = listOf(
             refusal { DBlayer.sessionReset() },
@@ -31,7 +31,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun twoConcurrentClosesBothSucceedAndThenTheCoreAnswersClosed() = bounded {
-        reopenSigned(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null, null), modelsJSON)
         val closes = List(2) { async(Dispatchers.Default) { runCatching { DBlayer.close() } } }
         val results = awaitWithin("both closes to return") { closes.awaitAll() }
         for (result in results) {
@@ -64,7 +64,7 @@ class ClosedDatabaseTest {
         }
         closeForCleanup()
         assertTrue(refusal { OpenDatabase().opened() } is DbException.NotOpen)
-        reopenSigned(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null, null), modelsJSON)
         DBlayer.close()
         val afterClose = entries()
         assertEquals(List(7) { "closed" }, (0..6).map { afterClose[it] })
@@ -73,7 +73,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun aQueryWithoutARelationIsInvalidFromTheCore() = bounded {
-        reopen(Config(null, null), modelsJSON, MockTransport())
+        openSigned(Config(null, null), modelsJSON, MockTransport())
         assertTrue(refusal { Query("Moment", Moment).refresh() } is DbException.Invalid)
         assertTrue(refusal { Query("Moment", Moment).load() } is DbException.Invalid)
         closeForCleanup()

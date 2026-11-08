@@ -9,7 +9,7 @@ extension BridgeProbeTests {
   func advancingTheTestClockExpiresAMemoryRowWithoutWaiting() async throws {
     await DB.closeForCleanup()
     let transport = MockTransport()
-    let clock = try await reopenClocked(modelsJson: schema(onlySubscription: "BulletinAdded"), transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
+    let clock = try await openSignedClocked(modelsJson: schema(onlySubscription: "BulletinAdded"), transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let notices = Cursor(try await Notice.recent.live.stream())
     #expect(await notices.next()?.isEmpty == true)
     await eventually("the notice subscription opens") { transport.calls.contains { $0.operationName == "BulletinAdded" } }
@@ -25,7 +25,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func writingEqualValuesRenewsAMemoryRowAndStaysSilent() async throws {
     await DB.closeForCleanup()
-    let clock = try await reopenClocked(modelsJson: modelsJSON, transport: MockTransport())
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: MockTransport())
     let lobby = Cursor(try await Presence.where(Presence.room == "lobby").live.stream())
     #expect(await lobby.next()?.isEmpty == true)
     let presence = try await Presence.create(userId: "u1", room: "lobby").optimisticValue!

@@ -117,7 +117,7 @@ extension BridgeProbeTests {
     }
     transport.mock.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"../../../outside","size":2,"position":0},{"id":"a1","clientKey":"other","size":2,"position":1}]}}}"#)
     let operations = #"[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: directory.appending(path: "db.sqlite").path, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
+    try await openSigned(config: Config(path: directory.appending(path: "db.sqlite").path, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let items = ["../../../outside", "other"].enumerated().map { index, key in UploadItem(values: ["clientKey": .string(key), "size": .integer(2), "position": .integer(Int64(index))], path: source.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     #expect(try await confirmedIds(receipt) == ["a0", "a1"])
@@ -213,7 +213,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
     transport.enqueue("CreateMoment", failure: .Http(status: 422, detail: "rejected"))
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let receipt = try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(receipt.optimisticValue)
     guard case .rejected = try await receipt.outcome() else { throw DbError.Invalid(detail: "the refused photo reported success") }
@@ -243,7 +243,7 @@ extension BridgeProbeTests {
     let held = transport.hold("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
     let abort = transport.hold("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
     transport.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#)
-    let db = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, onlineAtOpen: onlineAtOpen)
+    let db = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, onlineAtOpen: onlineAtOpen)
     let queued = try #require(try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).optimisticValue)
     await held.entered()
     try db.setOnline(online: false)
@@ -252,7 +252,7 @@ extension BridgeProbeTests {
     #expect(try await Moment.find(queued.id).current() == nil)
     held.release()
     await DB.closeForCleanup()
-    _ = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, onlineAtOpen: onlineAtOpen)
+    _ = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, onlineAtOpen: onlineAtOpen)
     await abort.entered()
     abort.release()
     await eventually("the saved pair of the held step is sent once more") { transport.calls.filter { $0.operationName == "PresignParts" }.count == 2 }
@@ -275,7 +275,7 @@ extension BridgeProbeTests {
     for index in 0..<2 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
     transport.enqueue("CreateAsset", reply: #"{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(2), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
@@ -307,7 +307,7 @@ extension BridgeProbeTests {
     for index in 0..<4 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
@@ -347,7 +347,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}"#)
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
@@ -386,7 +386,7 @@ extension BridgeProbeTests {
     transport.mock.enqueue("CompleteMultipart", reply: #"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#)
     transport.mock.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("video")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(sent.optimisticValue)
     try await rowsReach("the refused complete fails the upload", Moment.ids([row.id])) { $0.first?.sync.state == .failed }
@@ -413,7 +413,7 @@ extension BridgeProbeTests {
     let members = #"[{"name":"ContainerMembers","document":"query ContainerMembers($containerId: ID!, $first: Int, $after: Cursor) { node(id: $containerId) { ... on Container { membersCount members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }"}]"#
     let transport = MockTransport()
     transport.enqueue("ContainerMembers", reply: #"{"data":{"node":{"membersCount":2,"members":{"edges":[{"cursor":"u1","node":{"id":"u1","name":"first"}},{"cursor":"u2","node":{"id":"u2","name":"second"}}],"pageInfo":{"hasNextPage":false,"endCursor":"u2"}}}}}"#)
-    try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: members)
+    try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: members)
     try await User.containerMembers("c1").loadAll()
     let first = try #require(try await User.find("u1").current())
     let second = try #require(try await User.find("u2").current())
@@ -427,7 +427,7 @@ extension BridgeProbeTests {
     #expect(try await first.detach(.avatar))
     let (firstId, secondId) = (first.id, second.id)
     await DB.closeForCleanup()
-    try await reopen(config: config, modelsJson: modelsJSON, transport: MockTransport(), operations: members)
+    try await openSigned(config: config, modelsJson: modelsJSON, transport: MockTransport(), operations: members)
     let restoredFirst = try #require(try await User.find(firstId).current())
     let restoredSecond = try #require(try await User.find(secondId).current())
     #expect(try await restoredFirst.read(.avatar) == nil)
@@ -451,7 +451,7 @@ extension BridgeProbeTests {
     let held = transport.hold("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
     let abort = transport.hold("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
     transport.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#)
-    let db = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
+    let db = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("video")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(sent.optimisticValue)
     await held.entered()
@@ -468,7 +468,7 @@ extension BridgeProbeTests {
     #expect(FileManager.default.fileExists(atPath: source.path))
     held.release()
     await DB.closeForCleanup()
-    _ = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
+    _ = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
     await abort.entered()
     abort.release()
     #expect(transport.calls.filter { $0.operationName == "PresignParts" }.count == 2, "the saved pair of the held step is sent once more")
@@ -501,10 +501,10 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     let transport = MockTransport()
     let start = Date(timeIntervalSince1970: 1_000)
-    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start)
+    try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start)
     let row = try await Self.refusedUpload(transport, source: source)
     await DB.closeForCleanup()
-    let reopened = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60 + 1))
+    let reopened = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60 + 1))
     try await rowsReach("the expired upload is discarded at the open", Moment.ids([row.id])) { $0.isEmpty }
     let kept = try await Moment.find(row.id).current()
     #expect(kept == nil, "kept row: \(String(describing: kept)) calls: \(transport.calls.map(\.operationName))")
@@ -518,7 +518,7 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: source) }
     await DB.closeForCleanup()
     let transport = MockTransport()
-    let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations)
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations)
     let row = try await Self.refusedUpload(transport, source: source)
     try DB.database.setOnline(online: false)
     clock.advance(by: 7 * 24 * 60 * 60 + 1)

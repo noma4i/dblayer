@@ -20,7 +20,7 @@ class ReadmeExamplesTest {
         closeForCleanup()
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","userId":"u1","text":"hello","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        reopen(Config(null, null), modelsJSON, transport, SEND_MOMENT)
+        openSigned(Config(null, null), modelsJSON, transport, SEND_MOMENT)
         val scope = AccountScope.current()
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
