@@ -197,6 +197,7 @@ pub(in super::super) struct Window {
     pub(in super::super) unread: bool,
     pub(in super::super) held: Vec<Input>,
     pub(in super::super) next_request: u64,
+    pub(in super::super) step: u64,
     pub(in super::super) next_attempt: u32,
     pub(in super::super) media: bool,
     pub(in super::super) marker: Option<Marker3>,

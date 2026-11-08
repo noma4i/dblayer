@@ -158,9 +158,49 @@ fn win_media_confirm_retry() {
     let effects = answer_marker(&mut twin, marker(9, 1, 5));
     assert!(matches!(&effects[..], [Effect::ScheduleRetry { .. }]), "{effects:?}");
     assert_eq!(twin.phase(), Phase::Loading);
-    let request = twin.ref_request().0;
+    let request = twin.ref_load();
     let effects = twin.step(Input::Retry { request });
-    assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the same confirm is asked again: {effects:?}");
+    assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the confirm is asked again: {effects:?}");
+}
+
+fn wire_ids(effects: &[Effect]) -> (u64, u32) {
+    let ids: Vec<(u64, u32)> = effects.iter().filter_map(|effect| match effect {
+        Effect::Marker { request, attempt, .. } | Effect::Tail { request, attempt, .. } | Effect::Request { request, attempt, .. } => Some((*request, *attempt)),
+        _ => None,
+    }).collect();
+    assert_eq!(ids.len(), 1, "one request leaves: {effects:?}");
+    ids[0]
+}
+
+#[test]
+fn win_media_chain_request_ids() {
+    let mut twin = Twin::media();
+    let marker_step = wire_ids(&twin.watch());
+    let load = twin.ref_load();
+    assert_eq!(marker_step.0, load, "the first step is the request of the load");
+    let (_, attempt) = twin.ref_request();
+    let page_step = wire_ids(&answer_marker(&mut twin, marker(9, 1, 0)));
+    let (_, page_attempt) = twin.ref_request();
+    let stray = twin.step(Input::MarkerAnswer { request: marker_step.0, attempt: marker_step.1, marker: marker(9, 1, 0) });
+    assert_eq!(stray, Vec::<Effect>::new(), "the answer of the finished marker step is stray");
+    assert_eq!((twin.ref_request(), twin.stage(), twin.phase()), ((page_step.0, page_attempt), Some(WindowStage::Loading), Phase::Loading), "the page step is still in flight");
+    let confirm_step = wire_ids(&twin.respond(None));
+    assert!(marker_step.0 != page_step.0 && page_step.0 != confirm_step.0 && marker_step.0 != confirm_step.0, "3 steps, 3 request ids: {marker_step:?} {page_step:?} {confirm_step:?}");
+    assert!(attempt != page_attempt, "a step starts a new attempt");
+    assert_eq!(twin.ref_load(), load, "the pin and the batch stay with the load");
+    let refused = answer_marker(&mut twin, marker(9, 1, 5));
+    assert!(matches!(&refused[..], [Effect::ScheduleRetry { request }] if *request == load), "{refused:?}");
+    let asked_again = wire_ids(&twin.step(Input::Retry { request: load }));
+    assert!(![marker_step.0, page_step.0, confirm_step.0].contains(&asked_again.0), "a confirm asked again after a counted answer is a new question with a new request id: {asked_again:?}");
+    let stray_confirm = twin.step(Input::MarkerAnswer { request: confirm_step.0, attempt: confirm_step.1, marker: marker(9, 1, 1) });
+    assert_eq!(stray_confirm, Vec::<Effect>::new(), "the answer of the first confirm is stray");
+    let lost = twin.fail(Failure::Network);
+    assert!(matches!(&lost[..], [Effect::ScheduleRetry { request }] if *request == load), "{lost:?}");
+    let repeated = wire_ids(&twin.step(Input::Retry { request: load }));
+    assert_eq!(repeated.0, asked_again.0, "the repeat of a request whose answer was lost keeps its request id");
+    assert!(repeated.1 != asked_again.1, "the repeat of a request whose answer was lost is a new attempt");
+    let landing = answer_marker(&mut twin, marker(9, 1, 1));
+    assert!(landing.contains(&Effect::Commit { request: load, replace_all: false }), "the batch carries the id of the load: {landing:?}");
 }
 
 #[test]
@@ -168,7 +208,7 @@ fn win_media_confirm_failed() {
     let mut twin = media_full();
     twin.respond(None);
     answer_marker(&mut twin, marker(9, 1, 5));
-    let request = twin.ref_request().0;
+    let request = twin.ref_load();
     twin.step(Input::Retry { request });
     let effects = answer_marker(&mut twin, marker(9, 1, 5));
     assert_eq!(commits(&effects), 0, "a chain that did not confirm lands nothing");

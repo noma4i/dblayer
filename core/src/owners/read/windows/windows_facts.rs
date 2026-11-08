@@ -204,12 +204,12 @@ impl Facts {
             Some(chain) => (chain.cursor.clone(), chain.kind()),
             None => (self.page_cursor(load.page), RequestKind::Page),
         };
-        WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind }
+        WindowEffect::Request { request: load.step, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind }
     }
 
-    /// The next request of the chain: a new attempt of the same load.
+    /// The next step of the chain: its own request id, the Store pin and the batch stay with the load. A confirm asked again after a counted answer is a new step too.
     pub(super) fn chain_request(&mut self, context: &mut Ctx<'_>, load: &mut Load, chain: Chain) -> Outcome<WinState> {
-        load.attempt = context.attempt();
+        (load.step, load.attempt) = context.request();
         load.attempts = 0;
         load.chain = Some(chain);
         let effect = self.request_effect(load);
@@ -280,6 +280,7 @@ impl Facts {
                 if load.attempts + 1 < attempt_limit(ErrorClass::Server) {
                     load.attempts += 1;
                     load.retry = true;
+                    load.step = context.request().0;
                     load.chain = Some(chain);
                     self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class: ErrorClass::Server });
                     return Handled;

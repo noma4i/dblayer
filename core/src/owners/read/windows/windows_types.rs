@@ -308,15 +308,33 @@ pub(super) fn attempt_limit(class: ErrorClass) -> u32 {
     }
 }
 
+/// The request ids of the windows: the counter of the process, so no two lives of a database in 1 process share an id. A test of the owner counts its own ids from 1.
+#[derive(Clone, Copy, Debug)]
+pub enum RequestIds {
+    Process,
+    Local(RequestId),
+}
+
+impl RequestIds {
+    pub(super) fn next(&mut self) -> RequestId {
+        match self {
+            Self::Process => crate::owners::contract::next_request_id(),
+            Self::Local(next) => {
+                *next += 1;
+                *next - 1
+            }
+        }
+    }
+}
+
 pub(super) struct Ctx<'a> {
-    pub(super) next_request: &'a mut RequestId,
+    pub(super) request_ids: &'a mut RequestIds,
     pub(super) next_attempt: &'a mut u32,
 }
 
 impl Ctx<'_> {
     pub(super) fn request(&mut self) -> (RequestId, u32) {
-        let request = *self.next_request;
-        *self.next_request += 1;
+        let request = self.request_ids.next();
         (request, self.attempt())
     }
 
@@ -341,6 +359,7 @@ pub struct Landing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Load {
     pub request: RequestId,
+    pub step: RequestId,
     pub attempt: u32,
     pub retry: bool,
     pub pinning: bool,
@@ -355,7 +374,7 @@ pub struct Load {
 impl Load {
     /// A request that waits for its pin.
     pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, basis: GenerationsAtIssue) -> Self {
-        Self { request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0 }
+        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0 }
     }
 }
 

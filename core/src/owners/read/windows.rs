@@ -80,7 +80,7 @@ impl Facts {
     #[state]
     fn loading(&mut self, context: &mut Ctx<'_>, load: &mut Load, event: &Ev) -> Outcome<WinState> {
         self.env(event);
-        let mine = |got: &RequestId, got_attempt: &u32| *got == load.request && *got_attempt == load.attempt && !load.retry;
+        let mine = |got: &RequestId, got_attempt: &u32| *got == load.step && *got_attempt == load.attempt && !load.retry;
         match event {
             Ev::Pinned { request: got, base_revision } if *got == load.request && load.pinning => {
                 self.request_base.set(i64::try_from(*base_revision).unwrap_or(i64::MAX));
@@ -103,7 +103,7 @@ impl Facts {
                 self.join_load(*id, Goal::First, load.page);
                 let (request, attempt) = context.request();
                 if !load.retry {
-                    self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
+                    self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.emit(Emit::Pin { epoch: self.epoch, request });
@@ -123,7 +123,7 @@ impl Facts {
                 }
                 self.fresh = false;
                 self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
-                self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
+                self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
             }
@@ -162,7 +162,7 @@ impl Facts {
             }
             Ev::Online { online: false, .. } => {
                 if !load.retry {
-                    self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
+                    self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::waiting(load.force, load.page))
@@ -178,10 +178,11 @@ impl Facts {
             }
             Ev::ModelsReset { models, .. } if self.depends_on(models) => {
                 let (new_request, new_attempt) = context.request();
-                self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
+                self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
                 load.request = new_request;
+                load.step = new_request;
                 load.attempt = new_attempt;
                 load.retry = false;
                 load.pinning = true;
@@ -191,7 +192,7 @@ impl Facts {
             }
             Ev::EpochEnded | Ev::Closing => {
                 self.emit(Emit::CancelRetry { request: load.request });
-                self.finish((!load.retry).then_some((load.request, load.attempt)))
+                self.finish((!load.retry).then_some((load.step, load.attempt)))
             }
             _ => Handled,
         }

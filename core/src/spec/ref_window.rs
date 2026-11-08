@@ -38,6 +38,7 @@ impl Window {
             unread: true,
             held: Vec::new(),
             next_request: 1,
+            step: 0,
             next_attempt: 1,
             media: false,
             marker: None,
@@ -78,6 +79,7 @@ impl Window {
     fn request_ids(&mut self) -> (u64, u32) {
         let request = self.next_request;
         self.next_request += 1;
+        self.step = request;
         self.load_seq = self.online_seq;
         (request, self.attempt_id())
     }
@@ -328,7 +330,8 @@ impl Window {
     }
 
     fn loading(&mut self, (request, attempt, retry): (u64, u32, bool), (page, force, attempts): (u32, bool, u32), input: Input) -> Vec<Effect> {
-        let mine = |got_request: u64, got_attempt: u32| got_request == request && got_attempt == attempt && !retry;
+        let step = self.step;
+        let mine = |got_request: u64, got_attempt: u32| got_request == step && got_attempt == attempt && !retry;
         match input {
             Input::InterestPlus { id } => {
                 self.interest.insert(id);
@@ -338,7 +341,7 @@ impl Window {
                 self.join_load(id, Goal::First, page);
                 let (new_request, new_attempt) = self.request_ids();
                 self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page: 1, force: true, attempts: 0 };
-                let mut effects = if retry { Vec::new() } else { vec![Effect::Cancel { request, attempt }] };
+                let mut effects = if retry { Vec::new() } else { vec![Effect::Cancel { request: step, attempt }] };
                 effects.extend([self.issue_effect(new_request, new_attempt, 1), Effect::WindowState]);
                 effects
             }
@@ -359,7 +362,7 @@ impl Window {
                     self.state = State::Idle;
                     self.fresh = false;
                     self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
-                    vec![Effect::Cancel { request, attempt }]
+                    vec![Effect::Cancel { request: step, attempt }]
                 }
             }
             Input::MarkerAnswer { request: got, attempt: got_attempt, marker } if mine(got, got_attempt) && self.chain.is_some() => self.media_marker(request, attempt, (force, attempts), marker),
@@ -376,11 +379,11 @@ impl Window {
             Input::Retry { request: got } if got == request && retry && self.is_online() => {
                 let attempt = self.attempt_id();
                 self.state = State::Loading { request, attempt, retry: false, page, force, attempts };
-                vec![self.current_effect(request, attempt, page)]
+                vec![self.current_effect(step, attempt, page)]
             }
             Input::Online(false) => {
                 self.state = State::Waiting { force, page };
-                if retry { Vec::new() } else { vec![Effect::Cancel { request, attempt }] }
+                if retry { Vec::new() } else { vec![Effect::Cancel { request: step, attempt }] }
             }
             Input::Stale { in_keys: true } => {
                 self.reread_due = true;
@@ -389,7 +392,7 @@ impl Window {
             Input::ModelsReset { own_model: true } => {
                 let (new_request, new_attempt) = self.request_ids();
                 self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page, force, attempts: 0 };
-                vec![Effect::Cancel { request, attempt }, Effect::Request { request: new_request, attempt: new_attempt, page }]
+                vec![Effect::Cancel { request: step, attempt }, Effect::Request { request: new_request, attempt: new_attempt, page }]
             }
             _ => Vec::new(),
         }
@@ -457,7 +460,7 @@ impl Window {
         self.state = State::Ended;
         self.answer_all(Result3::Interrupted);
         let mut effects = Vec::new();
-        if let State::Loading { request, attempt, retry: false, .. } = was { effects.push(Effect::Cancel { request, attempt }); }
+        if let State::Loading { attempt, retry: false, .. } = was { effects.push(Effect::Cancel { request: self.step, attempt }); }
         if closing { effects.push(Effect::Drained); }
         effects
     }

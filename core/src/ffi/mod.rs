@@ -237,6 +237,8 @@ mod session_restore_tests;
 #[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
+mod request_ids_tests;
+#[cfg(test)]
 #[cfg(test)]
 mod local_open_tests;
 #[cfg(test)]

@@ -175,13 +175,13 @@ impl Twin {
     fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self { Self::assemble(online, max, (preload, sources), (members_complete, false)) }
 
     fn assemble(online: Option<bool>, max: u32, (preload, sources): (Vec<WindowKey>, Vec<WindowKey>), (members_complete, media): (bool, bool)) -> Self {
-        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_media(Arc::new(move |_| media)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
+        let state = w::WindowsState::new(EPOCH, online, peers()).with_local_request_ids().with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_media(Arc::new(move |_| media)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
         Self::launch(state, online, max, (members_complete, media))
     }
 
     /// A twin whose preload keys wait for `RegisterOperations`, as the owner is installed.
     fn awaiting_operations() -> Self {
-        let state = w::WindowsState::new(EPOCH, None, peers()).with_preload(vec![key()]).with_operations_awaited().with_lifetimes(Arc::new(|_| (300_000, 60_000)));
+        let state = w::WindowsState::new(EPOCH, None, peers()).with_local_request_ids().with_preload(vec![key()]).with_operations_awaited().with_lifetimes(Arc::new(|_| (300_000, 60_000)));
         Self::launch(state, None, u32::MAX, (false, false))
     }
 
@@ -220,8 +220,15 @@ impl Twin {
 
     fn ref_request(&self) -> (u64, u32) {
         match self.reference.state {
-            State::Loading { request, attempt, .. } => (request, attempt),
+            State::Loading { attempt, .. } => (self.reference.step, attempt),
             other => panic!("no request in flight in {other:?}"),
+        }
+    }
+
+    fn ref_load(&self) -> u64 {
+        match self.reference.state {
+            State::Loading { request, .. } => request,
+            other => panic!("no load in {other:?}"),
         }
     }
 

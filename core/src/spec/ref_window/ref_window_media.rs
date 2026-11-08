@@ -25,10 +25,12 @@ impl Window {
     }
 
     pub(super) fn chain_next(&mut self, request: u64, force: bool, chain: Chain3) -> Vec<Effect> {
+        self.step = self.next_request;
+        self.next_request += 1;
         let attempt = self.attempt_id();
         self.chain = Some(chain);
         self.state = State::Loading { request, attempt, retry: false, page: 1, force, attempts: 0 };
-        vec![self.current_effect(request, attempt, 1)]
+        vec![self.current_effect(self.step, attempt, 1)]
     }
 
     /// The chain ended: its rows and its marker land in 1 batch, or only the marker when the rows stay.
@@ -64,6 +66,9 @@ impl Window {
                     return self.land_chain(request, chain, Marker3 { sequence: chain.latest, ..marker }, false);
                 }
                 if attempts + 1 < Failure::Server.retry_limit() {
+                    self.step = self.next_request;
+                    self.next_request += 1;
+                    self.attempt_id();
                     self.chain = Some(chain);
                     self.state = State::Loading { request, attempt, retry: true, page: 1, force, attempts: attempts + 1 };
                     return vec![Effect::ScheduleRetry { request }];
