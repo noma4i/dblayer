@@ -60,9 +60,8 @@ fn model_apply(model: &mut Model, act: Act) {
             }
         }
         Act::Close => {
-            for op in model.ops.iter_mut().filter(|op| op.resolved.is_none()) {
-                let step = want(op.state, &ctx, In::Closing);
-                op.state = step.next;
+            for op in model.ops.iter_mut() {
+                op.state = want(op.state, &ctx, In::Closing).next;
                 op.requesting = false;
                 op.resolved = Some(Out::Interrupted);
             }
