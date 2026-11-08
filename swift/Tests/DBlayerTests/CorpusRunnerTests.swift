@@ -31,7 +31,7 @@ private final class Pulled: @unchecked Sendable {
 
   deinit { task?.cancel() }
 
-  var hasNext: Bool { lock.withLock { !queue.isEmpty } }
+  func peek() -> [ReadValue] { lock.withLock { queue } }
 
   func drain() -> [ReadValue] {
     lock.withLock {
@@ -286,6 +286,7 @@ private final class DatabaseRunner {
   var previousStart: UInt64 = 0
   var currentStart: UInt64 = 0
   var wantedFirst: String?
+  var wantedOut: [[String: Any]] = []
   var at = ""
   var fence: () async -> Void { { _ = try? await self.database?.subscriptionCensus() } }
 
@@ -576,7 +577,8 @@ private final class DatabaseRunner {
     case "pull":
       guard let label = args["stream"] as? String else { return failure("arguments") }
       guard let pulled = streams[label] else { return failure("unknown_stream") }
-      if wantedFirst != "empty" { await eventually("a value of the stream \(label) at \(at)") { pulled.hasNext } }
+      let wantedHere = wantedOut.filter { ($0["v"] as? [String: Any])?["stream"] as? String == label && $0["o"] as? String != "empty" }.count
+      if wantedHere > 0 { await eventually("\(wantedHere) values of the stream \(label) at \(at)") { folded(label, pulled.peek()).count >= wantedHere } }
       let unread = pulled.drain()
       observed = unread.isEmpty ? [observation("empty", ["stream": label])] : folded(label, unread)
     case "cancel":
@@ -607,6 +609,7 @@ private func runCorpus(_ file: URL) async throws -> String? {
     guard let step = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { throw CorpusStepInvalid() }
     runner.at = "\(file.lastPathComponent) step \(index + 1) input \(canonical(step["in"] ?? ""))"
     runner.wanted = (step["out"] as? [Any])?.count ?? 0
+    runner.wantedOut = step["out"] as? [[String: Any]] ?? []
     runner.wantedFirst = ((step["out"] as? [[String: Any]])?.first)?["o"] as? String
     let got = "[" + (await runner.apply(step)).joined(separator: ",") + "]"
     let expected = canonical(step["out"] ?? [])

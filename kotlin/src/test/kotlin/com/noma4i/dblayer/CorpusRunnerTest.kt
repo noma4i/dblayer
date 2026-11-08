@@ -38,7 +38,7 @@ private class Pulled(val stream: ValueStream, heard: Heard, scope: CoroutineScop
         }
     }
 
-    fun hasNext(): Boolean = !queue.isEmpty()
+    fun peek(): List<ReadValue> = queue.toList()
 
     fun drain(): List<ReadValue> = generateSequence { queue.poll() }.toList()
 
@@ -146,6 +146,7 @@ private class DatabaseRunner {
     private var previousStart = 0uL
     private var currentStart = 0uL
     var wantedFirst: String? = null
+    var wantedHere: (String) -> Int = { 0 }
     var at = ""
     private val fence: suspend () -> Unit = { runCatching { database?.subscriptionCensus() } }
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -466,7 +467,8 @@ private class DatabaseRunner {
             "pull" -> {
                 val key = args.text("stream") ?: return failure("arguments")
                 val pulled = streams[key] ?: return failure("unknown_stream")
-                if (wantedFirst != "empty") eventually("a value of the stream $key at $at") { pulled.hasNext() }
+                val wantedValues = wantedHere(key)
+                if (wantedValues > 0) eventually("$wantedValues values of the stream $key at $at") { folded(key, pulled.peek()).size >= wantedValues }
                 val unread = pulled.drain()
                 observed.addAll(if (unread.isEmpty()) listOf(obs("empty", "stream" to key)) else folded(key, unread))
             }
@@ -493,6 +495,7 @@ private suspend fun runCorpus(file: java.io.File): String? {
         val expected: JsonElement = step["out"] ?: JsonArray(emptyList())
         runner.at = "${file.name} step ${index + 1} input ${step["in"]}"
         runner.wanted = (expected as? JsonArray)?.size ?: 0
+        runner.wantedHere = { key -> (expected as? JsonArray).orEmpty().count { entry -> val item = entry as? JsonObject; (item?.get("v") as? JsonObject)?.get("stream")?.let { (it as? JsonPrimitive)?.contentOrNull } == key && (item?.get("o") as? JsonPrimitive)?.contentOrNull != "empty" } }
         runner.wantedFirst = ((expected as? JsonArray)?.firstOrNull() as? JsonObject)?.get("o")?.let { (it as? JsonPrimitive)?.contentOrNull }
         val got = JsonArray(runner.apply(step))
         if (expected != got) { red = "${file.name} step ${index + 1} input ${step["in"]} expected $expected got $got"; break }
