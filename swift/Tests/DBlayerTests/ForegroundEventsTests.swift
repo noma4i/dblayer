@@ -51,11 +51,12 @@ extension BridgeProbeTests {
   func aDeliveryOfTheLiveRegistrationReloadsTheFailedWindow() async throws {
     let transport = MockTransport()
     let os = FakeOs(name: Notification.Name("DBlayerTestForeground"))
-    _ = try await openFailedFeed(transport, os)
+    let list = try await openFailedFeed(transport, os)
     let before = transport.calls.count
 
     NotificationCenter.default.post(name: os.name, object: nil)
     await eventually("the delivery reloads the failed window") { transport.calls.count > before }
+    withExtendedLifetime(list) {}
   }
 
   /// boundary_observer_stop_orders, stop before delivery: after `close` acknowledged the stop, a notification and a delivery with the old token reach nothing.
@@ -64,7 +65,8 @@ extension BridgeProbeTests {
   func noDeliveryReachesTheCoreAfterTheStopOfTheObserversIsAcknowledged() async throws {
     let transport = MockTransport()
     let os = FakeOs(name: Notification.Name("DBlayerTestForegroundStop"))
-    _ = try await openFailedFeed(transport, os)
+    let list = try await openFailedFeed(transport, os)
+    defer { withExtendedLifetime(list) {} }
     let held = try #require(os.registration)
     let before = transport.calls.count
 
