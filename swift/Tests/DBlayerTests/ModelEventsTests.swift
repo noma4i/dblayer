@@ -67,6 +67,27 @@ extension BridgeProbeTests {
     #expect(!lost.isEmpty, "a reader that read nothing during the burst lost no position")
   }
 
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func dlv_reader_cancel_ends_swift() async throws {
+    _ = try await Self.openNoticeRig()
+    let waiting = Done()
+    let reader = Task { () throws -> Int in
+      var events = 0
+      for try await item in try DB.account().events(ChatActivityNotice.self) {
+        switch item {
+        case .ready: waiting.set()
+        case .event: events += 1
+        default: break
+        }
+      }
+      return events
+    }
+    await eventually("the reader waits for the next event") { waiting.value }
+    reader.cancel()
+    #expect(try await valueBeforeDeadline(reader, release: {}) == 0, "the cancelled reader heard an event")
+  }
+
   /// Requirement: a session reset ends the old events stream and nothing of the old session follows. A stream of the next session needs a real session with a model-event subscription, which the wrapper rigs cannot start: the core covers it at Sync level. Observable: the end of the old stream.
   @MainActor
   @Test(.timeLimit(.minutes(1)))

@@ -1,9 +1,11 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,13 +13,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
 /** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `ReadValue.Ended` last. */
 class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream) {
     val values: Flow<ReadValue> = flow {
-        while (true) emit(reader.pull() ?: break)
+        try {
+            while (true) emit(reader.pull() ?: break)
+        } catch (cancelled: CancellationException) {
+            if (!currentCoroutineContext().isActive) reader.close()
+            throw cancelled
+        }
     }
 
     /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation. */

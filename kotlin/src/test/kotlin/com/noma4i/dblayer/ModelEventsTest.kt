@@ -64,6 +64,23 @@ class ModelEventsTest {
         }
     }
 
+    @Test
+    fun dlv_reader_cancel_ends_kotlin() = bounded {
+        openNoticeRig()
+        val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val items = Channel<ModelEventItem<ChatActivityNotice>>(Channel.UNLIMITED)
+            val reader = screen.launch { AccountScope.current().events(ChatActivityNotice).events(ChatActivityNotice).collect { items.trySend(it) } }
+            assertEquals(ModelEventItem.Ready, awaitWithin("the source of the reader opens") { items.receive() })
+            reader.cancel()
+            awaitWithin("the cancelled reader ends") { reader.join() }
+            assertTrue("the cancelled reader heard an item", items.tryReceive().isFailure)
+        } finally {
+            screen.cancel()
+            closeForCleanup()
+        }
+    }
+
     /** S209: a collector that reads nothing while 400 events arrive takes the events the journal kept and lost ranges that add up to the 400 sent. Observed: the items of the collector. Breaks when the journal drops an event without keeping its position. */
     @Test
     fun aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent() = bounded {

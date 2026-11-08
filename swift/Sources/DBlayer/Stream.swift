@@ -12,7 +12,10 @@ public struct ValueStream: AsyncSequence, Sendable {
   public struct AsyncIterator: AsyncIteratorProtocol {
     let reader: ReadStream
 
-    public mutating func next() async -> ReadValue? { await reader.pull() }
+    public mutating func next() async -> ReadValue? {
+      let reader = reader
+      return await withTaskCancellationHandler { await reader.pull() } onCancel: { Task { await reader.cancel() } }
+    }
   }
 
   /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation.
