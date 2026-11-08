@@ -118,7 +118,7 @@ fn win_loading_error_keeps_the_type_of_the_failure() {
     use crate::owners::contract::{ErrorClass, RequestError};
     let key = WindowKey { model: "Item".into(), name: "items".into() };
     for failure in [DbError::Invalid { detail: "bad".into() }, DbError::Storage { detail: "disk".into() }, DbError::Dropped { detail: "gone".into() }, DbError::Runtime { detail: "task".into() }, DbError::Interrupted { detail: "epoch".into() }] {
-        let mut state = state();
+        let mut state = state().with_local_request_ids();
         no_wait(&mut state);
         let _ = Windows::step(&mut state, WindowsInput::WindowRead { key: key.clone(), read_id: 1, result: Ok(None) });
         let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 12 });

@@ -134,7 +134,7 @@ fn credential_callback_asking_for_the_credential_is_refused() {
     let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap());
     *slot.0.lock().unwrap() = Arc::downgrade(&client);
 
-    join_within(load_on_thread(&client)).unwrap();
+    assert_eq!(join_within(load_on_thread(&client)), Err(no_credential()));
 
     assert!(matches!(slot.1.lock().unwrap().take(), Some(Err(TransportError::Network(_)))));
 }
