@@ -117,6 +117,15 @@ expect_red 'async fn waits() { while !ready() { tokio::task::yield_now().await; 
 expect_red 'async fn waits() { yield_until("shown", || shown()).await; }'
 expect_red 'fn waits() { spin_until("shown", limit, || shown()); }'
 expect_red 'fn waits() { loop { if ready() { break; } std::thread::sleep(step); } }'
+mkdir -p "$work/core/src/ffi/selftest"
+printf 'fn land() { let envelope = BatchPlan::new(generation); }\n' > "$work/core/src/ffi/selftest/stand_tests.rs"
+: > "$probe"
+run || { echo "check_zoo_test: a clean public stand failed" >&2; exit 1; }
+for bypass in 'let envelope = BatchPlan::from_server(generation);' 'life.commit_for_tests(batch);' 'life.stale_for_tests("Moment");' 'wiring.to_store(StoreInput::Commit(batch));'; do
+  printf 'fn land() { %s }\n' "$bypass" > "$work/core/src/ffi/selftest/stand_tests.rs"
+  if run; then echo "check_zoo_test: Z35 did not catch: $bypass" >&2; exit 1; fi
+done
+/bin/rm -f "$work/core/src/ffi/selftest/stand_tests.rs"
 mkdir -p "$work/core/src/spec"
 printf '#[cfg(test)]\nmod spec;\n' > "$work/core/src/lib.rs"
 printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/spec/harness.rs"

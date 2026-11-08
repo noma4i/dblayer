@@ -31,10 +31,11 @@ pub(crate) struct Seen {
     pub(crate) phase: Option<ReadPhase>,
     pub(crate) error: Option<DbError>,
     pub(crate) loaded: Option<i64>,
+    pub(crate) count: Option<u64>,
 }
 
 fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<ReadEnd>> {
-    let blank = |revision: i64, state: ReadState, size: u32| Seen { rows: Vec::new(), size, revision, seq, removed: Vec::new(), phase: Some(state.phase), error: state.error, loaded: state.loaded };
+    let blank = |revision: i64, state: ReadState, size: u32| Seen { rows: Vec::new(), size, revision, seq, removed: Vec::new(), phase: Some(state.phase), error: state.error, loaded: state.loaded, count: None };
     Ok(match value {
         ReadValue::Snapshot { revision, rows, state, .. } => {
             *size = u32::try_from(rows.len()).unwrap_or(u32::MAX);
@@ -46,7 +47,7 @@ fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<Re
             *size = *size + u32::try_from(inserted).unwrap_or(0) - u32::try_from(removed.len()).unwrap_or(0);
             Seen { rows: RowEdit::carried(&edits), removed, ..blank(revision, state, *size) }
         }
-        ReadValue::Count { revision, state, .. } => blank(revision, state, *size),
+        ReadValue::Count { revision, count, state } => Seen { count: Some(count), ..blank(revision, state, *size) },
         ReadValue::State { revision, state } => blank(revision, state, *size),
         ReadValue::Ended { cause } => return Err(Some(cause)),
         _ => return Err(None),

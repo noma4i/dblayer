@@ -26,6 +26,24 @@ class MockTransportStrictTest {
         assertEquals(listOf("Ping"), transport.calls.map { it.operationName })
     }
 
+    private class IdleProgress : ByteProgress(NoHandle) {
+        override fun isCancelled(): Boolean = false
+        override fun sent(bytes: ULong) = Unit
+    }
+
+    private suspend fun put(transport: MockTransport, url: String): PutReply = transport.scriptedPut(url, emptyMap(), PutFile("unused", 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), IdleProgress())
+
+    @Test
+    fun bridge_prop_strict_scripts_eachPutConsumesOneScriptAndAnUnscriptedPutFails() = bounded {
+        val transport = MockTransport(Unanswered.NetworkError)
+        transport.enqueuePut("u", DbException.Http(503.toUShort(), "down"))
+        transport.enqueuePut("u", "ok")
+        assertTrue(runCatching { put(transport, "u") }.exceptionOrNull() is DbException.Http)
+        assertEquals("ok", put(transport, "u").etag)
+        assertTrue(runCatching { put(transport, "u") }.exceptionOrNull() is DbException.Network)
+        assertEquals(listOf("u", "u", "u"), transport.putCalls)
+    }
+
     class UnansweredLoad {
         fun loadsWithoutAReply() = bounded {
             val transport = MockTransport()

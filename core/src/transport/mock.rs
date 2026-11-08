@@ -240,13 +240,12 @@ impl MockTransport {
             state.puts_running += 1;
             state.puts_peak = state.puts_peak.max(state.puts_running);
             self.wake.notify_waiters();
-            match state.puts.get_mut(&request.url) {
-                Some(queue) if queue.len() > 1 => queue.pop_front(),
-                Some(queue) => queue.front().cloned(),
-                None => None,
-            }
+            state.puts.get_mut(&request.url).and_then(VecDeque::pop_front)
         };
-        let reply = reply.unwrap_or_else(|| PutScript::etag(&format!("etag:{}", request.url)));
+        let Some(reply) = reply else {
+            self.lock().puts_running -= 1;
+            return Err(TransportError::Unscripted(request.url));
+        };
         let progress = self.lock().put_progress.clone();
         let run = async {
             for step in 1..=PUT_STEPS {

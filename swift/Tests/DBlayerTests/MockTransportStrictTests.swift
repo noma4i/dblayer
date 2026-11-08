@@ -3,7 +3,29 @@ import Foundation
 import Testing
 @testable import DBlayer
 
+private final class PutBytes: ByteProgress, @unchecked Sendable {
+  override func isCancelled() -> Bool { false }
+  override func sent(bytes: UInt64) {}
+}
+
 struct MockTransportStrictTests {
+  private func put(_ transport: MockTransport, _ url: String) async throws -> PutReply {
+    try await transport.scriptedPut(url: url, headers: [:], file: PutFile(path: "unused", offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func bridge_prop_strict_scripts_eachPutConsumesOneScriptAndAnUnscriptedPutFails() async throws {
+    await withKnownIssue {
+      let transport = MockTransport()
+      transport.enqueuePut("u", failure: .Http(status: 503, detail: "down"))
+      transport.enqueuePut("u", etag: "ok")
+      do { _ = try await put(transport, "u"); Issue.record("the failing script returned") } catch DbError.Http {} catch { Issue.record("wrong error \(error)") }
+      #expect(try await put(transport, "u").etag == "ok")
+      do { _ = try await put(transport, "u"); Issue.record("a third PUT returned") } catch let DbError.Invalid(detail) { #expect(detail.contains("no PUT queued for u")) } catch { Issue.record("wrong error \(error)") }
+      #expect(transport.putCalls == ["u", "u", "u"])
+    } matching: { "\($0.comments)".contains("no PUT queued for u") }
+  }
+
   private let request = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, purpose: .standard, author: .window, requestId: 1)
 
   @Test(.timeLimit(.minutes(1)))

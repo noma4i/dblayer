@@ -3,12 +3,10 @@ use std::sync::{Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// The directory of this package, read when the test runs: a test binary that embeds the path of the tree is not reusable from the cache. Cargo and corgi start a test in the package directory.
 pub(crate) fn package_dir() -> std::path::PathBuf {
     std::env::current_dir().expect("the test has a working directory")
 }
 
-/// Seconds a single test may run. The runner starts one process per test (`--exact`): a test that is still running after this long is a hang, the process names it and aborts.
 const TEST_DEADLINE: u64 = 20;
 
 static WAITING: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
@@ -134,7 +132,6 @@ pub(crate) async fn within_named<T>(seconds: u64, what: &str, work: impl std::fu
     }
 }
 
-/// A handle whose owners can be waited for: `quiet` returns once every input and every effect task that can run has ended. Tasks that wait for the outside (a held answer of the mock) do not count.
 pub(crate) trait Quiet {
     async fn quiet(&self);
 }
@@ -166,7 +163,6 @@ impl Quiet for std::sync::Arc<crate::owners::life::Life> {
     }
 }
 
-/// Kind A: the state after the inputs the test gave. Waits for the barrier of the owners, then checks once: a state that is not there by then is final and the test is red.
 #[track_caller]
 pub(crate) fn settled<'a>(handle: &'a impl Quiet, what: &'a str, ready: impl FnOnce() -> bool + 'a) -> impl std::future::Future<Output = ()> + 'a {
     settled_showing(handle, what, String::new, ready)
@@ -181,7 +177,6 @@ pub(crate) fn settled_showing<'a>(handle: &'a impl Quiet, what: &'a str, state: 
     }
 }
 
-/// A one-way event: `set` once, wait on it from a thread (`wait_blocking`) or from a task (`wait`). The wait ends on the event, never by polling.
 #[derive(Default)]
 pub(crate) struct Flag {
     set: Mutex<bool>,
@@ -212,7 +207,6 @@ impl Flag {
     pub(crate) async fn wait(&self, what: &str) { signalled(&self.signal, what, || self.is_set()).await }
 }
 
-/// Kind B: an event of the outside (a request reached the mock, a held answer came in). Waits for the signal of the party, never polls: the notification is enabled before the condition is read, so a signal between the two is not lost.
 pub(crate) async fn signalled(signal: &tokio::sync::Notify, what: &str, mut ready: impl FnMut() -> bool) {
     within_named(TEST_DEADLINE, what, async {
         loop {
@@ -241,7 +235,6 @@ impl Drop for Leave {
     fn drop(&mut self) { WORLD.with(|world| world.borrow_mut().take()); }
 }
 
-/// Runs an async test on its own runtime with a limit: a test that does not end is red, and a blocking task that does not end cannot hold the run (`shutdown_timeout`).
 #[track_caller]
 pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = ()>) {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("test runtime");

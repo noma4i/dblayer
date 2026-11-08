@@ -31,7 +31,7 @@ fn put_records_the_range_headers_and_reports_progress_in_steps() { crate::test_w
 }) }
 
 #[test]
-fn queued_replies_play_in_order_then_repeat_the_last_and_default_answers_with_an_etag() { crate::test_wait::paused(async {
+fn bridge_prop_strict_scripts_each_put_consumes_one_script_and_an_unscripted_put_fails() { crate::test_wait::paused(async {
     let mock = MockTransport::new();
     let ticks = Arc::default();
     mock.enqueue_put("u", PutScript::status(503));
@@ -39,9 +39,10 @@ fn queued_replies_play_in_order_then_repeat_the_last_and_default_answers_with_an
     let cancel = CancelToken::new();
     assert!(matches!(mock.put(request("u", b"a", &cancel, &ticks)).await, Err(TransportError::Http { status: 503, .. })));
     assert_eq!(mock.put(request("u", b"a", &cancel, &ticks)).await.unwrap().etag.as_deref(), Some("ok"));
-    assert_eq!(mock.put(request("u", b"a", &cancel, &ticks)).await.unwrap().etag.as_deref(), Some("ok"));
-    assert_eq!(mock.put(request("other", b"a", &cancel, &ticks)).await.unwrap().etag.as_deref(), Some("etag:other"));
+    assert!(matches!(mock.put(request("u", b"a", &cancel, &ticks)).await, Err(TransportError::Unscripted(url)) if url == "u"));
+    assert!(matches!(mock.put(request("other", b"a", &cancel, &ticks)).await, Err(TransportError::Unscripted(url)) if url == "other"));
     assert_eq!(mock.put_count("u"), 3);
+    assert_eq!(mock.put_count("other"), 1);
 }) }
 
 #[test]
@@ -49,6 +50,7 @@ fn cancel_interrupts_a_slow_put_and_parallel_puts_are_counted() { crate::test_wa
     let mock = MockTransport::new();
     let ticks = Arc::default();
     mock.enqueue_put("slow", PutScript::etag("x").after(Duration::from_secs(60)));
+    mock.enqueue_put("slow", PutScript::etag("y").after(Duration::from_secs(60)));
     let cancel = CancelToken::new();
     let first = tokio::spawn({
         let (mock, request) = (mock.clone(), request("slow", b"abcd", &cancel, &ticks));
@@ -61,6 +63,6 @@ fn cancel_interrupts_a_slow_put_and_parallel_puts_are_counted() { crate::test_wa
     crate::test_wait::signalled(mock.signal(), "both puts started", || mock.parallel_puts_peak() == 2).await;
     cancel.cancel();
     assert!(matches!(first.await.unwrap(), Err(TransportError::Interrupted(_))));
-    assert!(second.await.unwrap().is_err());
+    assert!(matches!(second.await.unwrap(), Err(TransportError::Interrupted(_))));
     assert_eq!(mock.parallel_puts_peak(), 2);
 }) }

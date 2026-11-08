@@ -6,7 +6,6 @@ use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
-/// l.104: `REACTION` on a message carries the `message` payload, its row lands and the server is not asked.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_message_reaction_lands_the_payload_row() {
     let stand = Stand::open().await;
@@ -18,7 +17,6 @@ async fn consumer_yupi_message_reaction_lands_the_payload_row() {
     assert_eq!(stand.requests("MessageNode"), 0);
 }
 
-/// l.105: `REACTION` on a message without the `message` object loses the position and asks the server for nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_message_reaction_without_payload_is_lost() {
     let stand = Stand::open().await;
@@ -30,7 +28,6 @@ async fn consumer_yupi_message_reaction_without_payload_is_lost() {
     assert_eq!(stand.requests("MessageNode"), 0);
 }
 
-/// l.127: `REACTION` on a moment is `via: :node` without payload, the node with a reader is read again and the row changes.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
     let stand = Stand::open().await;
@@ -47,7 +44,6 @@ async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
     assert!(matches!(&event, Some(ReadValue::Event { area, kind, id, .. }) if area == "REACTION" && kind == "UPDATED" && id == "mo1"), "{event:?}");
 }
 
-/// l.127 + delivery.md l.10: without a window (no reader, or `fetch: never`) the same event asks for no node.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_moment_reaction_without_a_window_asks_for_nothing() {
     let stand = Stand::open().await;

@@ -11,7 +11,6 @@ fn media_event(url: &str, progress: i64) -> Value {
     json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "message": row})
 }
 
-/// P-APP-14: events `{"",40}`, `{cdn/a,80}`, `{"",30}` leave `fileUrl` and `transcodeProgress` of the row at the best seen value.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_message_media_keeps_url_and_progress() {
     let stand = Stand::open().await;

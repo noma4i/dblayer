@@ -20,7 +20,6 @@ fn reactions(stand: &Stand, row: &WireRow) -> Vec<(String, String)> {
     items.iter().map(|item| { let Cell::Seq { items } = item else { panic!("{item:?}") }; (text(&items[at("userId")]), text(&items[at("body")])) }).collect()
 }
 
-/// The stream of the message until it shows the revision of the receipt.
 async fn shown_at(stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64) {
     loop {
         let value = bound(stream.pull()).await.expect("the stream is open");
@@ -33,7 +32,6 @@ async fn shown_at(stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64) 
     }
 }
 
-/// P-OUT-23: a missing `userId` is appended, the same `userId` is replaced in place, the element of another `userId` stays.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_message_reaction_keyed_by_user() {
     let stand = Stand::open().await;

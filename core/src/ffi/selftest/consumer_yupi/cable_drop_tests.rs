@@ -6,7 +6,6 @@ use crate::ffi::ReadFetch;
 
 fn page() -> serde_json::Value { json!({"user": {"moments": {"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}) }
 
-/// l.22 + l.194 + window.md l.128 (`win_idle_stale_covered`: a gap with the network still up reloads nothing, so the drop comes with a network flap): after a drop and the confirmed channel the observed window asks once, the window without a reader asks nothing, and `REACTION` reads only its own node.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_cable_drop_resubscribes_and_reloads_only_observed() {
     let stand = Stand::open().await;

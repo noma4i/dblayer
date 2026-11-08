@@ -94,6 +94,24 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
     private val responders = ConcurrentHashMap<String, (TransportRequest) -> String?>()
 
+    private class PutScript(val etag: String?, val failure: DbException?)
+
+    private val puts = ConcurrentHashMap<String, java.util.ArrayDeque<PutScript>>()
+    private val recordedPuts = CopyOnWriteArrayList<String>()
+
+    /** The URLs of the PUTs the library sent, in order. */
+    val putCalls: List<String> get() { failTestThread(); return recordedPuts.toList() }
+
+    /** Queues the answer to the next PUT of `url`: each PUT takes one, a PUT without one is refused like a call without a reply. */
+    fun enqueuePut(url: String, etag: String? = null) = pushPut(url, PutScript(etag, null))
+
+    fun enqueuePut(url: String, failure: DbException) = pushPut(url, PutScript(null, failure))
+
+    private fun pushPut(url: String, script: PutScript) {
+        failTestThread()
+        synchronized(puts) { puts.getOrPut(url) { java.util.ArrayDeque() }.add(script) }
+    }
+
     val calls: List<TransportRequest> get() { failTestThread(); return recorded.toList() }
 
     fun enqueue(operation: String, reply: String) = push(operation, Reply(reply, null))
@@ -128,8 +146,22 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     override suspend fun mutate(request: TransportRequest): String = answer(request)
 
     override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+        recordedPuts.add(url)
+        TestPulse.pulse()
+        val script = synchronized(puts) { puts[url]?.pollFirst() } ?: refusePut(url)
         progress.sent(file.length)
-        return PutReply(200u, null)
+        script.failure?.let { throw it }
+        return PutReply(200u, script.etag)
+    }
+
+    private fun refusePut(url: String): Nothing = when (unanswered) {
+        Unanswered.NetworkError -> throw DbException.Network("no PUT queued for $url")
+        Unanswered.Strict -> {
+            val detail = "MockTransport has no PUT queued for $url"
+            missed.add(Missed(this, "$detail (mock created at $createdAt)"))
+            TestPulse.pulse()
+            throw DbException.Invalid(detail)
+        }
     }
 
     /** The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one. */

@@ -15,7 +15,6 @@ enum Command {
     Deliver(EpochStamp, Box<dyn Message>),
     Control(Control),
     Failed(Vec<EffectId>),
-    /// The clock moved: the owner reads the time again.
     Wake,
     Stop,
 }
@@ -73,7 +72,6 @@ struct Router {
     gates: Mutex<Vec<std::sync::Weak<Gate>>>,
 }
 
-/// Counts the owner threads of one `Runtime` that run now.
 struct Alive(Arc<AtomicUsize>);
 
 impl Drop for Alive {
@@ -95,7 +93,6 @@ impl Router {
     fn broadcast(&self, control: Control) { (0..self.boxes.len()).for_each(|to| self.push(to, Command::Control(control))); }
 }
 
-/// The time of the owners: ms of the clock of the database, the same scale as the saved times.
 pub(super) struct Timeline {
     clock: Arc<dyn crate::runtime::Clock>,
 }
@@ -117,7 +114,6 @@ pub struct RuntimeBuilder {
     clock: Arc<dyn crate::runtime::Clock>,
 }
 
-/// A clonable address book of the running owners. An effect runner takes it before `start` and uses it after.
 #[derive(Clone, Default)]
 pub struct Handle {
     router: Arc<OnceLock<Arc<Router>>>,
@@ -144,14 +140,12 @@ impl Handle {
         if let Some(router) = self.router() { router.broadcast(Control::Closing); }
     }
 
-    /// Returns once nothing is in flight, also after the owner threads ended, or false after `limit`.
     #[cfg(test)]
     pub fn barrier(&self) { if let Some(router) = self.router() { router.inflight.wait_idle(); } }
 
     #[cfg(test)]
     pub fn pending(&self) -> usize { self.router().map_or(0, |router| *lock(&router.inflight.count)) }
 
-    /// Counts an effect task as in flight from its spawn until its first poll, so the barrier covers the request it is about to make.
     pub fn launch(&self) -> Launch {
         Launch { router: self.router().cloned().inspect(|router| router.inflight.add()) }
     }
@@ -161,7 +155,6 @@ pub struct Launch {
     router: Option<Arc<Router>>,
 }
 
-/// The counts a polled call holds while work started for it runs off its thread. The wake of the call lets them go.
 #[derive(Default)]
 pub struct Holds(Mutex<Vec<Launch>>);
 
@@ -177,7 +170,6 @@ thread_local! {
     static POLLED: std::cell::RefCell<Option<Arc<Holds>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Counts blocking work started by the counted task that polls now, until the work ends. Outside a counted task it is None.
 pub fn running_launch() -> Option<Launch> {
     RUNNING.with(|running| running.borrow().clone()).map(|router| {
         router.inflight.add();
@@ -185,7 +177,6 @@ pub fn running_launch() -> Option<Launch> {
     })
 }
 
-/// Runs one poll of a call whose started work counts in `holds`.
 pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
     let previous = POLLED.replace(Some(holds.clone()));
     let result = poll();
@@ -193,12 +184,10 @@ pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
     result
 }
 
-/// The awaited work of the polled call ended: the counts it held end with it, also when no wake came.
 pub fn release_holds() {
     if let Some(holds) = POLLED.with(|polled| polled.borrow().clone()) { holds.release(); }
 }
 
-/// Counts work started by the polled call until the call wakes. Outside a polled call the launch comes back and the caller keeps it.
 pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
     match POLLED.with(|polled| polled.borrow().clone()) {
         Some(holds) => {
@@ -257,14 +246,12 @@ impl std::task::Wake for GateWake {
     }
 }
 
-/// A task that the barrier of the owners waits for whenever it can run: from its spawn to its first wait and again from each wake to the next wait.
 pub struct Counted<F> {
     work: std::pin::Pin<Box<F>>,
     gate: Option<Arc<Gate>>,
     _ended: Retire,
 }
 
-/// Ends the count of the task after its future is gone: a wake that its drop or a late answer still sends finds the gate retired.
 struct Retire(Option<Arc<Gate>>);
 
 impl Drop for Retire {
@@ -292,7 +279,6 @@ impl<F: std::future::Future> std::future::Future for Counted<F> {
     }
 }
 
-/// Wraps `work` so the barrier counts it whenever it can run. The launch taken before the spawn covers the time until the first poll.
 #[track_caller]
 pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Counted<F> {
     #[cfg(test)]
@@ -327,7 +313,6 @@ pub struct Runtime {
 }
 
 impl RuntimeBuilder {
-    /// The timers of the owners follow this clock.
     pub fn new(clock: Arc<dyn crate::runtime::Clock>) -> Self {
         Self { boxes: Vec::new(), bodies: Vec::new(), types: Vec::new(), history: Vec::new(), failure: None, record: false, handle: Handle::default(), clock }
     }
@@ -420,17 +405,14 @@ impl Runtime {
 
     pub fn close(&self) { self.router.broadcast(Control::Closing); }
 
-    /// Stops the owner threads and joins them. A concurrent call waits for the first to finish.
     pub fn stop(&self) { stop(&self.router, &mut lock(&self.joins)); }
 
-    /// The number of owner threads of this runtime that have not ended.
     pub fn alive(&self) -> Arc<AtomicUsize> { self.alive.clone() }
 
     pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups() }
 
     pub fn barrier(&self) { self.router.inflight.wait_idle(); }
 
-    /// Inputs in mailboxes and started effect tasks that did not reply yet.
     #[cfg(test)]
     pub fn pending(&self) -> usize { *lock(&self.router.inflight.count) }
 

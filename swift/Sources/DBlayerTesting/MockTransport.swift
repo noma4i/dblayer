@@ -26,6 +26,13 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   private var replies: [String: [Reply]] = [:]
   private var recorded: [TransportRequest] = []
   private var responders: [String: @Sendable (TransportRequest) -> String?] = [:]
+  private var puts: [String: [PutScript]] = [:]
+  private var recordedPuts: [String] = []
+
+  private struct PutScript {
+    let etag: String?
+    let failure: DbError?
+  }
 
   private let unanswered: Unanswered
   private var missed: [TransportRequest] = []
@@ -78,6 +85,18 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     lock.withLock { replies[operation, default: []].append(Reply(body: nil, failure: failure)) }
   }
 
+  /// Queues the answer to the next PUT of `url`: each PUT takes one, a PUT without one is refused like a call without a reply.
+  public func enqueuePut(_ url: String, etag: String? = nil) {
+    lock.withLock { puts[url, default: []].append(PutScript(etag: etag, failure: nil)) }
+  }
+
+  public func enqueuePut(_ url: String, failure: DbError) {
+    lock.withLock { puts[url, default: []].append(PutScript(etag: nil, failure: failure)) }
+  }
+
+  /// The URLs of the PUTs the library sent, in order.
+  public var putCalls: [String] { lock.withLock { recordedPuts } }
+
   /// Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`.
   public func hold(_ operation: String, reply: String = "{}", failure: DbError? = nil) -> Hold {
     let hold = Hold()
@@ -98,8 +117,18 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   public func mutate(request: TransportRequest) async throws -> String { try await answer(request) }
 
   public func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    let script = lock.withLock { () -> PutScript? in
+      recordedPuts.append(url)
+      guard var queue = puts[url], !queue.isEmpty else { return nil }
+      let next = queue.removeFirst()
+      puts[url] = queue
+      return next
+    }
+    TestPulse.shared.pulse()
+    guard let script else { throw await refusePut(url) }
     progress.sent(bytes: file.length)
-    return PutReply(status: 200, etag: nil)
+    if let failure = script.failure { throw failure }
+    return PutReply(status: 200, etag: script.etag)
   }
 
   /// The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one.
@@ -135,6 +164,19 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     switch failure {
     case .Network?, .Offline?, .Interrupted?, .Dropped?: return true
     default: return false
+    }
+  }
+
+  private func refusePut(_ url: String) async -> DbError {
+    switch unanswered {
+    case .networkError:
+      return .Network(detail: "no PUT queued for \(url)")
+    case .strict:
+      let detail = "MockTransport has no PUT queued for \(url)"
+      await withCheckedContinuation { done in
+        if case .terminated = reports.yield(Report(message: detail, done: done)) { done.resume() }
+      }
+      return .Invalid(detail: detail)
     }
   }
 

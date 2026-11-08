@@ -5,7 +5,6 @@ use super::stand::Stand;
 
 fn connection() -> Value { json!({"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": 0}) }
 
-/// (model, relation, params, operation, the variable that tells the key apart)
 const KEYS: [(&str, &str, &str, &str, &str); 12] = [
     ("Campaign", "active", "{}", "activeCampaigns", ""),
     ("Moment", "owned", "{}", "myMoments", ""),
@@ -49,7 +48,6 @@ fn expected() -> Vec<String> {
     keys
 }
 
-/// D-166: 12 preload requests, `load()` of the 12 windows, still 12 requests and every `load()` is Loaded. Landing orders: all landed before `load()`, all held, the first six held, an alternate set held. Each runs with the loads in key order and reversed.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_preload_load_sends_no_second_request() {
     const ALL: [&str; 10] = ["activeCampaigns", "myMoments", "chats", "gifts", "meCompass", "vibesList", "feed", "transactions", "blockedUsers", "friendUsers"];

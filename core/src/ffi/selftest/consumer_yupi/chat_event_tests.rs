@@ -6,7 +6,6 @@ use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
-/// l.104 + l.100/130: `CHAT` with a `chat` payload lands its row first, then the `observed` form rereads the node with a reader.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_chat_updated_lands_payload_then_rereads_the_watched_node() {
     let stand = Stand::open().await;
@@ -23,7 +22,6 @@ async fn consumer_yupi_chat_updated_lands_payload_then_rereads_the_watched_node(
     settled(&stand, "the reread answer replaces the payload", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("reread")).await;
 }
 
-/// l.104 + l.130: the same event with no reader lands the payload row and asks the server for nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_chat_updated_without_a_reader_asks_for_nothing() {
     let stand = Stand::open().await;
@@ -35,7 +33,6 @@ async fn consumer_yupi_chat_updated_without_a_reader_asks_for_nothing() {
     assert_eq!(stand.requests("ChatNode"), 0);
 }
 
-/// l.123: an entry whose area `Chat` does not declare gives `events(Chat)` no value, the next declared entry is position 1.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_events_of_chat_give_nothing_for_an_area_it_does_not_declare() {
     let stand = Stand::open().await;

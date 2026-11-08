@@ -62,8 +62,8 @@ impl<T: FakeTransport> Transport for T {
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
         let body: Value = serde_json::from_str(&request.body).expect("GraphQL body");
         let scripted = TransportRequest {
-            document: body["query"].as_str().unwrap_or_default().to_string(),
-            operation_name: body["operationName"].as_str().unwrap_or_default().to_string(),
+            document: body["query"].as_str().expect("GraphQL body has a query").to_string(),
+            operation_name: body["operationName"].as_str().expect("GraphQL body has an operationName").to_string(),
             variables_json: body["variables"].to_string(),
             purpose: request.purpose,
         };

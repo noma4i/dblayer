@@ -56,6 +56,17 @@ async fn dlv_prop_resync_ends() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dlv_prop_count_stream_tape_reads_the_count() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    let tape = Arc::new(super::tape::Tape::default());
+    let _count = db.watch(ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) }, tape.clone());
+    crate::test_wait::settled(&db, "the count stream shows 0", || tape.last().is_some_and(|seen| seen.count == Some(0))).await;
+    db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
+    crate::test_wait::settled(&db, "the count stream shows 1", || tape.last().is_some_and(|seen| seen.count == Some(1))).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dlv_prop_one_change_every_view() {
     let db = open().await;
     let epoch = db.session_epoch();

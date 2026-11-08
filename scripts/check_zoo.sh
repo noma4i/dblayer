@@ -468,6 +468,13 @@ for path in sorted((root / "core" / "src").rglob("*.rs")):
         if (poll_words.search(line) or re.search(r"\b(while|loop)\b.*\bsleep\s*\(", line)) and f"z33:{path.relative_to(root / 'core' / 'src')}" not in allowed:
             findings.append(f"Z33 a wait polls: wait for the barrier (settled) or the signal of the party (signalled), not a loop: {path.relative_to(root)}:{number}")
 
+stand_write = re.compile(r"\bBatchPlan::from_server\b|\b\w+_for_tests\s*\(|\bStoreInput::|\.to_store\(|\.to_windows\(|\bto_feed\(")
+for stand in ("ffi/selftest", "ffi/tests"):
+    for path in sorted((source / stand).rglob("*.rs")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if stand_write.search(line) and f"z35:{path.relative_to(source)}" not in allowed:
+                findings.append(f"Z35 the public test stand lands server rows and stale marks through the senders (cable, answer, mutation), it imports no Store write or owner send: {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:
