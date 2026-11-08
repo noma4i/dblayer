@@ -9,6 +9,7 @@ mod det_tests;
 mod explore_tests;
 mod outcomes_tests;
 mod threaded_tests;
+mod counted_tests;
 mod props_tests;
 mod overload_tests;
 mod mailbox_tests;

@@ -43,6 +43,8 @@ pub use explore::{explore, Limits, Report, Violation};
 pub use tests::property_tests::{Exhaustive, Manifest, Property};
 pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
 pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId};
+#[cfg(test)]
+pub use threaded::barrier_report;
 pub use threaded::{counted, hold_until_woken, polling, release_holds, running_launch, Handle, Holds, Launch, Runtime, RuntimeBuilder};
 
 #[cfg(test)]

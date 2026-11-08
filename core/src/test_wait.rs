@@ -11,6 +11,28 @@ pub(crate) fn package_dir() -> std::path::PathBuf {
 /// Seconds a single test may run. The runner starts one process per test (`--exact`): a test that is still running after this long is a hang, the process names it and aborts.
 const TEST_DEADLINE: u64 = 20;
 
+static WAITING: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+static WAIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+struct Waiting(u64);
+
+impl Waiting {
+    fn enter(what: &str) -> Self {
+        let id = WAIT_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((id, what.to_string()));
+        Self(id)
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) { WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(id, _)| *id != self.0); }
+}
+
+pub(crate) fn hang_report() -> String {
+    let waits: Vec<String> = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|(_, what)| what.clone()).collect();
+    format!("waiting for [{}]; {}", waits.join(" | "), crate::runtime::barrier_report())
+}
+
 #[used]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 #[cfg_attr(not(target_os = "macos"), link_section = ".init_array")]
@@ -23,7 +45,7 @@ extern "C" fn arm_test_deadline() {
     std::thread::spawn(move || {
         let (_alive, never) = std::sync::mpsc::channel::<()>();
         let _ = never.recv_timeout(Duration::from_secs(TEST_DEADLINE));
-        eprintln!("TIMEOUT {TEST_DEADLINE}s {name}: the test hangs, a blocked thread cannot be caught by a bounded wait");
+        eprintln!("TIMEOUT {TEST_DEADLINE}s {name}: the test hangs, a blocked thread cannot be caught by a bounded wait; {}", hang_report());
         std::process::abort();
     });
 }
@@ -97,6 +119,7 @@ pub(crate) async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
 pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<Output = T>) -> T { within_named(seconds, "bounded wait expired", work).await }
 
 pub(crate) async fn within_named<T>(seconds: u64, what: &str, work: impl std::future::Future<Output = T>) -> T {
+    let _waiting = Waiting::enter(what);
     let (expired, expiry) = tokio::sync::oneshot::channel::<()>();
     let (finished, watching) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
@@ -107,7 +130,7 @@ pub(crate) async fn within_named<T>(seconds: u64, what: &str, work: impl std::fu
     let _finished = finished;
     tokio::select! {
         output = work => output,
-        _ = expiry => panic!("{what}: the event did not come in {seconds} s"),
+        _ = expiry => panic!("{what}: the event did not come in {seconds} s; {}", hang_report()),
     }
 }
 
@@ -123,7 +146,7 @@ impl<T: Quiet + ?Sized> Quiet for &T {
 impl Quiet for crate::runtime::Handle {
     async fn quiet(&self) {
         let owners = self.clone();
-        within_secs(TEST_DEADLINE, async move { tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap() }).await;
+        within_named(TEST_DEADLINE, "the owners did not get quiet", async move { tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap() }).await;
     }
 }
 
@@ -139,7 +162,7 @@ impl Quiet for crate::owners::life::Life {
 impl Quiet for std::sync::Arc<crate::owners::life::Life> {
     async fn quiet(&self) {
         let life = self.clone();
-        within_secs(TEST_DEADLINE, async move { tokio::task::spawn_blocking(move || life.barrier()).await.unwrap() }).await;
+        within_named(TEST_DEADLINE, "the owners did not get quiet", async move { tokio::task::spawn_blocking(move || life.barrier()).await.unwrap() }).await;
     }
 }
 

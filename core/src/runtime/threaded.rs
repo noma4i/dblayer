@@ -48,12 +48,29 @@ impl Inflight {
     }
 }
 
+#[cfg(test)]
+static ROUTERS: std::sync::Mutex<Vec<std::sync::Weak<Router>>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub fn barrier_report() -> String {
+    let routers: Vec<_> = ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    let busy: Vec<String> = routers.iter().filter_map(|router| {
+        let count = *lock(&router.inflight.count);
+        if count == 0 { return None; }
+        let held: Vec<String> = lock(&router.gates).iter().filter_map(std::sync::Weak::upgrade).filter(|gate| gate.state.load(Ordering::SeqCst) == HELD).map(|gate| gate.place.to_string()).collect();
+        Some(format!("in flight {count}, counted tasks held at [{}], the rest are queued commands and launches", held.join(", ")))
+    }).collect();
+    if busy.is_empty() { "the barrier of every runtime is idle".into() } else { busy.join("; ") }
+}
+
 struct Router {
     boxes: Vec<Arc<Mailbox<Command>>>,
     inflight: Inflight,
     failure: Option<FailureRoute>,
     history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
     record: bool,
+    #[cfg(test)]
+    gates: Mutex<Vec<std::sync::Weak<Gate>>>,
 }
 
 /// Counts the owner threads of one `Runtime` that run now.
@@ -192,22 +209,34 @@ pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
     }
 }
 
-/// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside.
+const IDLE: u8 = 0;
+const HELD: u8 = 1;
+const RETIRED: u8 = 2;
+
+/// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside, never taken again once the task is gone.
 struct Gate {
     router: Arc<Router>,
-    held: std::sync::atomic::AtomicBool,
+    state: std::sync::atomic::AtomicU8,
     woken: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    place: &'static std::panic::Location<'static>,
 }
 
 impl Gate {
     fn arm(&self) {
-        if !self.held.swap(true, Ordering::SeqCst) {
+        if self.state.compare_exchange(IDLE, HELD, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
             self.router.inflight.add();
         }
     }
 
     fn disarm(&self) {
-        if self.held.swap(false, Ordering::SeqCst) {
+        if self.state.compare_exchange(HELD, IDLE, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            self.router.inflight.done(1);
+        }
+    }
+
+    fn retire(&self) {
+        if self.state.swap(RETIRED, Ordering::SeqCst) == HELD {
             self.router.inflight.done(1);
         }
     }
@@ -232,6 +261,16 @@ impl std::task::Wake for GateWake {
 pub struct Counted<F> {
     work: std::pin::Pin<Box<F>>,
     gate: Option<Arc<Gate>>,
+    _ended: Retire,
+}
+
+/// Ends the count of the task after its future is gone: a wake that its drop or a late answer still sends finds the gate retired.
+struct Retire(Option<Arc<Gate>>);
+
+impl Drop for Retire {
+    fn drop(&mut self) {
+        if let Some(gate) = &self.0 { gate.retire(); }
+    }
 }
 
 impl<F: std::future::Future> std::future::Future for Counted<F> {
@@ -253,18 +292,24 @@ impl<F: std::future::Future> std::future::Future for Counted<F> {
     }
 }
 
-impl<F> Drop for Counted<F> {
-    fn drop(&mut self) {
-        if let Some(gate) = &self.gate { gate.disarm(); }
-    }
-}
-
 /// Wraps `work` so the barrier counts it whenever it can run. The launch taken before the spawn covers the time until the first poll.
+#[track_caller]
 pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Counted<F> {
+    #[cfg(test)]
+    let place = std::panic::Location::caller();
     let gate = launch.and_then(|mut launch| launch.router.take()).map(|router| {
-        Arc::new(Gate { router, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
+        let gate = Arc::new(Gate {
+            router,
+            state: std::sync::atomic::AtomicU8::new(HELD),
+            woken: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            place,
+        });
+        #[cfg(test)]
+        lock(&gate.router.gates).push(Arc::downgrade(&gate));
+        gate
     });
-    Counted { work: Box::pin(work), gate }
+    Counted { work: Box::pin(work), _ended: Retire(gate.clone()), gate }
 }
 
 impl Drop for Launch {
@@ -329,7 +374,9 @@ impl RuntimeBuilder {
         if self.bodies.iter().any(Option::is_none) {
             return Err(std::io::Error::other("owner reservation is not installed"));
         }
-        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()) });
+        #[cfg(test)]
+        ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(Arc::downgrade(&router));
         self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
         let clock = self.clock;
         let timeline = Arc::new(Timeline { clock: clock.clone() });
