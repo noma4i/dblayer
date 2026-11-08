@@ -499,7 +499,7 @@ impl StateOwner for Deliveries {
                 }
             }
             DeliveryInput::ClaimReader { stream, reader, reply } => {
-                let claimed = state.streams.get_mut(&stream).is_some_and(|machine| machine.claim(reader));
+                let claimed = state.streams.get_mut(&stream).map_or(true, |machine| machine.claim(reader));
                 out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::ReaderClaimed { reply, claimed } }));
             }
             DeliveryInput::Release { stream, reader } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),

@@ -287,7 +287,7 @@ impl ReadStream {
         static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let life = self.life().ok_or_else(super::command::closed)?;
         let reader = READERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if life.claim_reader(self.stream, reader).await { Ok(reader) } else { Err(DbError::Invalid { detail: "the stream has a reader".into() }) }
+        if life.claim_reader(self.stream, reader).await { Ok(reader) } else if life.is_shut() { Err(super::command::closed()) } else { Err(DbError::Invalid { detail: "the stream has a reader".into() }) }
     }
 
     /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.

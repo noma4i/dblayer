@@ -40,7 +40,8 @@ async fn boundary_reader_early_exit_a_reader_that_leaves_ends_the_stream_while_t
     stream.release_reader(reader);
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: ReadEnd::Closed })));
     assert!(within(stream.pull(reader)).await.is_none());
-    assert!(matches!(within(stream.claim_reader()).await, Err(DbError::Invalid { .. })));
+    let again = within(stream.claim_reader()).await.expect("a stream that is gone accepts a claim");
+    assert!(within(stream.pull(again)).await.is_none());
     within(db.close_database()).await.unwrap();
 }
 
@@ -51,5 +52,16 @@ async fn boundary_reader_orders_a_pull_of_another_reader_is_invalid_and_leaves_t
     let first = within(stream.claim_reader()).await.unwrap();
     assert!(matches!(within(stream.pull(first + 1)).await, Some(ReadValue::Ended { cause: ReadEnd::Invalid })));
     assert!(matches!(within(stream.pull(first)).await, Some(ReadValue::Snapshot { .. })));
+    within(db.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn boundary_reader_orders_a_claim_after_the_stream_ended_and_left_gets_ended_not_invalid() {
+    let db = open().await;
+    let stream = notes(&db);
+    within(db.session_reset()).await.unwrap();
+    within(stream.cancel()).await;
+    let reader = within(stream.claim_reader()).await.expect("a claim of a stream that is gone is accepted");
+    assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { .. })));
     within(db.close_database()).await.unwrap();
 }
