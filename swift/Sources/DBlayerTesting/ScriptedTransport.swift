@@ -65,7 +65,6 @@ extension RawOutcome {
     case let .Http(status, detail): return .response(status: status, etag: nil, body: detail)
     case let .Network(detail), let .Offline(detail): return .failed(failure: RawFailure.scripted(.unreachable, detail))
     case let .Interrupted(detail): return .failed(failure: RawFailure.scripted(.cancelled, detail))
-    case let .RequestTooLarge(size, limit): return .failed(failure: RawFailure(domain: "dblayer.RequestTooLarge", code: nil, message: "\(size):\(limit)"))
     case .Security(.tlsTrust, let detail): return .failed(failure: RawFailure.scripted(.tls, detail))
     case let .Graphql(messages, _):
       let errors = messages.map { ["message": $0, "extensions": ["code": $0]] as [String: Any] }

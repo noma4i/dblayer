@@ -308,33 +308,6 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sess_stand_scripted_too_large_fails_once_without_retry() {
-    use crate::test_wait::within;
-
-    struct Refusing(std::sync::atomic::AtomicUsize);
-
-    #[async_trait]
-    impl FakeHttp for Refusing {
-        async fn post(&self, _: String, _: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(DbError::RequestTooLarge { size: 300_000, limit: 262_144 })
-        }
-    }
-
-    let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() };
-    encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless })].into();
-    let http = Arc::new(Refusing(std::sync::atomic::AtomicUsize::new(0)));
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), http: Some(http.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-    database.set_online(true).unwrap();
-
-    let outcome = within(database.session_call("ticket".into(), r#"{"message":"hi"}"#.into())).await;
-
-    assert!(matches!(outcome, Err(DbError::RequestTooLarge { size: 300_000, limit: 262_144 })), "{outcome:?}");
-    assert_eq!(http.0.load(std::sync::atomic::Ordering::SeqCst), 1);
-    within(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn sess_prop_too_large_keeps_sequence() {
     use crate::test_wait::within;
     let (database, server, _) = rig(public_key_der_b64(), pin()).await;

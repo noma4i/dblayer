@@ -33,8 +33,6 @@ const UNREACHABLE_CLASSES: [&str; 3] = ["java.net.UnknownHostException", "java.n
 const TIMEOUT_CLASSES: [&str; 2] = ["java.net.SocketTimeoutException", "java.io.InterruptedIOException"];
 const CALL_CANCELLED_CLASS: &str = "java.io.IOException";
 const CALL_CANCELLED_TEXT: &str = "Canceled";
-/// The raw failure of a platform stand that answers with the size refusal of the transport: the message is `size:limit` in bytes.
-pub const TOO_LARGE_DOMAIN: &str = "dblayer.RequestTooLarge";
 
 impl RawFailure {
     /// The one table of known platform errors. An error it does not know is `Io`.
@@ -56,16 +54,6 @@ impl RawFailure {
         else if TIMEOUT_CLASSES.contains(&class) { RawFailureKind::Timeout }
         else { RawFailureKind::Io }
     }
-
-    /// The size and the limit of a request the transport refused, when this failure is that refusal.
-    pub fn too_large(&self) -> Option<(u64, u64)> {
-        if self.domain != TOO_LARGE_DOMAIN { return None; }
-        let (size, limit) = self.message.split_once(':')?;
-        Some((size.parse().ok()?, limit.parse().ok()?))
-    }
-
-    #[cfg(test)]
-    pub fn of_too_large(size: u64, limit: u64) -> Self { Self { domain: TOO_LARGE_DOMAIN.into(), code: None, message: format!("{size}:{limit}") } }
 
     #[cfg(test)]
     pub fn of_kind(kind: RawFailureKind, message: impl Into<String>) -> Self {
@@ -150,7 +138,6 @@ pub enum ExchangeKind {
 
 /// The one place where a raw platform failure gets its class. A mutation that may have reached the server is `Interrupted`, a call that never left the device is `Network`.
 pub fn classify(failure: &RawFailure, kind: ExchangeKind) -> TransportError {
-    if let Some((size, limit)) = failure.too_large() { return TransportError::RequestTooLarge { size, limit }; }
     let detail = failure.message.clone();
     match failure.kind() {
         RawFailureKind::Cancelled => TransportError::Interrupted(detail),
