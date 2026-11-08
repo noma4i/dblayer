@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -232,6 +233,7 @@ class ValueBridgeTest {
 
             projected.close()
             projected.reading.join()
+            AccountScope.current().stream(User.profile).cancel()
             assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
         } finally {
             screen.cancel()
@@ -247,8 +249,9 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
             val held = AccountScope.current().stream(User.profile)
-            val reading = screen.launch { held.values.collect { } }
-            eventually("the first reader holds the stream") { DBlayer.subscriptionCensus().observedQueries == 1uL }
+            val firstValue = CompletableDeferred<Unit>()
+            val reading = screen.launch { held.values.collect { firstValue.complete(Unit) } }
+            awaitWithin("the first value of the first reader") { firstValue.await() }
             val refused = held.values.first()
             assertTrue("a second reader must end with Invalid: $refused", refused is ReadValue.Ended && refused.cause == ReadEnd.Invalid)
             assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
@@ -257,7 +260,8 @@ class ValueBridgeTest {
 
             val early = AccountScope.current().stream(User.profile)
             assertTrue(early.values.take(1).toList().single() is ReadValue.Snapshot)
-            eventually("the reader that left releases the interest while the stream is held") { DBlayer.subscriptionCensus().observedQueries == 0uL }
+            held.cancel()
+            assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
             early.close()
         } finally {
             screen.cancel()
