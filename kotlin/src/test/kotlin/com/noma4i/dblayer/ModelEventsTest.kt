@@ -81,6 +81,29 @@ class ModelEventsTest {
         }
     }
 
+    @Test
+    fun dlv_reader_cancel_keeps_other_collector_kotlin() = bounded {
+        val transport = openNoticeRig()
+        val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, error -> failures.add(error) })
+        try {
+            val stream = AccountScope.current().events(ChatActivityNotice)
+            val first = screen.launch { stream.events(ChatActivityNotice).collect { } }
+            val second = screen.hear(stream)
+            eventually("the signal subscription opens") { transport.calls.size == 1 }
+            first.cancel()
+            awaitWithin("the cancelled collector ends") { first.join() }
+            transport.emit("ChatActionSignal", screenshot("c1"))
+            var next = awaitWithin("the second collector hears something") { second.receive() }
+            while (next === ModelEventItem.Ready) next = awaitWithin("the second collector hears the event or the end") { second.receive() }
+            assertTrue("the second collector heard $next", next === Ended || next is ModelEventItem.Ended || chat(next) == "c1")
+            assertEquals("the second collector failed", emptyList<Throwable>(), failures.toList())
+        } finally {
+            screen.cancel()
+            closeForCleanup()
+        }
+    }
+
     /** S209: a collector that reads nothing while 400 events arrive takes the events the journal kept and lost ranges that add up to the 400 sent. Observed: the items of the collector. Breaks when the journal drops an event without keeping its position. */
     @Test
     fun aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent() = bounded {

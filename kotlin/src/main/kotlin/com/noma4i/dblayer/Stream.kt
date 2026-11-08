@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,13 +19,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
-/** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `ReadValue.Ended` last. */
+/** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that is cancelled cancels the stream in the core and leaves the object alive. A stream that ends by itself delivers one `ReadValue.Ended` last. */
 class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream) {
     val values: Flow<ReadValue> = flow {
         try {
             while (true) emit(reader.pull() ?: break)
         } catch (cancelled: CancellationException) {
-            if (!currentCoroutineContext().isActive) reader.close()
+            if (!currentCoroutineContext().isActive) withContext(NonCancellable) { reader.cancel() }
             throw cancelled
         }
     }
