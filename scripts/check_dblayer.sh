@@ -26,6 +26,8 @@ steps=(
   "cheap|check-logs-selftest|120|*|bash scripts/check_logs_test.sh"
   "cheap|silent|120|*|bash scripts/check_silent.sh"
   "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
+  "cheap|gen-decisions|120|*|bash scripts/check_gen_decisions.sh"
+  "cheap|gen-decisions-selftest|120|*|bash scripts/check_gen_decisions_test.sh"
   "cheap|coverage-selftest|120|*|python3 -I scripts/check_coverage_test.py"
   "cheap|reclaim-selftest|120|*|bash scripts/reclaim_target_test.sh"
   "cheap|docs-selftest|120|*|python3 -I scripts/check_docs_test.py"

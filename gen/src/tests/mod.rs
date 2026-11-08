@@ -36,3 +36,5 @@ mod patch_tests;
 mod file_field_tests;
 mod upload_steps_tests;
 mod removed_by_tests;
+mod default_decisions_tests;
+mod refusal_tests;

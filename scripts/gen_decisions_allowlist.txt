@@ -1,0 +1,166 @@
+gen/src/build/mod.rs	Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),	M56
+gen/src/build/mod.rs	TypeRef::Enum => FieldSpec::enumeration(name, &attribute.values.iter().flatten().map(String::as_str).collect::<Vec<_>>()),	M56
+gen/src/build/mod.rs	action.correlate = operation.match_by.iter().flatten().map(|found| found.item.clone()).collect();	M56
+gen/src/build/mod.rs	action.local = operation.local.clone().unwrap_or_default();	M56
+gen/src/build/mod.rs	action.on_failure = operation.on_failure.as_ref().map(|found| found.item).unwrap_or_default();	M49
+gen/src/build/mod.rs	action.result = operation.returns.iter().flatten().map(|attribute| match &attribute.ty {	M49
+gen/src/build/mod.rs	action.variables = operation.variables.iter().flatten().map(|binding| match &binding.value {	M49
+gen/src/build/mod.rs	association.class_name.clone().unwrap_or_else(|| {	M46
+gen/src/build/mod.rs	association.foreign_key.clone().unwrap_or_else(|| match association.kind {	M46
+gen/src/build/mod.rs	chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M56
+gen/src/build/mod.rs	chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M56
+gen/src/build/mod.rs	decl::AssociationKind::HasMany | decl::AssociationKind::References => association.name.strip_suffix('s').unwrap_or(&association.name),	M46
+gen/src/build/mod.rs	for binding in scope.variables.iter().flatten() {	M49
+gen/src/build/mod.rs	let (model, relation) = source.item.split_once('.').unwrap_or((&source.item, ""));	M56
+gen/src/build/mod.rs	let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());	M56
+gen/src/build/mod.rs	let column = |name: &str| scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == name).map_or_else(|| name.to_string(), |(column, _)| column.item.clone());	M56
+gen/src/build/mod.rs	let fields = variant.fields.iter().flatten().map(|child| build_field(child, &variant.type_name)).collect();	M56
+gen/src/build/mod.rs	let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(name)));	M56
+gen/src/build/mod.rs	let variables = scope.variables.iter().flatten().map(|binding| {	M49
+gen/src/build/mod.rs	list.values = attribute.values.clone().unwrap_or_default();	M56
+gen/src/build/mod.rs	removes_on: change.removes_on.clone().unwrap_or_default(),	M56
+gen/src/build/mod.rs	scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())	M56
+gen/src/build/mod.rs	stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),	M56
+gen/src/check/attributes.rs	collect_types(variant.fields.as_deref().unwrap_or_default(), file, out);	M55
+gen/src/check/enums.rs	errors.push(at(node.file, site_pos(node, site).unwrap_or(node.pos), message));	M55
+gen/src/check/enums.rs	return if deeper.is_empty() { Some(variant.pos) } else { locate(&variant.fields.iter().flatten().collect::<Vec<_>>(), deeper) };	M55
+gen/src/check/mod.rs	None => report(refetch.pos, format!("`refetch` names unknown model `{}`", refetch.model.as_deref().unwrap_or_default())),	M55
+gen/src/check/mod.rs	let (file, pos) = nodes.iter().find(|node| node.name == fault.model.as_str()).map_or((0, Pos::default()), |node| (node.file, node.pos));	M55
+gen/src/check/mod.rs	let first = path.split('.').next().unwrap_or_default();	M55
+gen/src/check/mod.rs	let first = processing.field.split('.').next().unwrap_or_default();	M55
+gen/src/check/mod.rs	let in_variables = operation.variables.iter().flatten().any(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));	M55
+gen/src/check/mod.rs	let target = refetch.model.as_deref().map_or(Some(node), |model| all.iter().find(|candidate| candidate.name == model));	M55
+gen/src/check/nested.rs	let cycle = target.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Union)).filter_map(|field| field.app_type.as_deref()).any(|child| object_cycle(child, types, seen));	M55
+gen/src/check/nested.rs	let recursive = || object_cycle(field.app_type.as_deref().unwrap_or_default(), types, &mut Vec::new());	M55
+gen/src/check/nested.rs	target.fields.iter().all(|child| values.get(child.from.as_deref().unwrap_or(&child.name)).map_or(child.nullable || child.optional || child.default.is_some(), |value| fits(child, value, types)))	M55
+gen/src/check/scope.rs	let distinct: HashSet<_> = scope.row_rules.iter().filter_map(|(rule, _)| if let RowTest::GreaterThan { parameter } = &rule.test { Some(parameter) } else { None }).collect();	M55
+gen/src/check/scope.rs	report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));	M55
+gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, nested_site, owner)).collect());	M55
+gen/src/decl/lower/fields.rs	decl.null = null_given.and_then(|pair| boolean(cx, &pair.value, "`null`")).unwrap_or(inferred_null && null_given.is_none());	M48
+gen/src/decl/lower/fields.rs	decl.optional = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`")).unwrap_or(false);	M48
+gen/src/decl/lower/fields.rs	let fields = child.block.as_ref().map(|block| block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, &Owner(owner.0.as_ref().map(|_| type_name.clone())))).collect());	M55
+gen/src/decl/lower/fields.rs	let fields: Vec<AttributeDecl> = block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, owner)).collect();	M55
+gen/src/decl/lower/fields.rs	let local = line.opt(cx, "local").and_then(|pair| boolean(cx, &pair.value, "`local`")).unwrap_or(false);	M48
+gen/src/decl/lower/fields.rs	let mut ty = Ty { kind: TyKind::Named(owner.0.clone().unwrap_or_default()), nullable: false, has_default: false };	M48
+gen/src/decl/lower/mod.rs	Value::Float(number) => Number::from_f64(*number).map_or(Json::Null, Json::Number),	M55
+gen/src/decl/lower/mod.rs	decl.search.extend(call.args.iter().filter_map(|arg| symbol(cx, arg, "search name").map(|name| Spanned::new(name, at(arg)))));	M55
+gen/src/decl/lower/mod.rs	let attributes = children.iter().filter_map(|child| attribute(cx, child, Site::Ephemeral, &Owner(None))).collect();	M55
+gen/src/decl/lower/mod.rs	let columns: Vec<String> = call.args.iter().filter_map(|arg| symbol(cx, arg, "index column")).collect();	M55
+gen/src/decl/lower/mod.rs	let storage = options.opt(cx, "storage").map_or(Storage::Disk, |pair| match &pair.value.item {	M55
+gen/src/decl/lower/mod.rs	let uses = models.iter().flat_map(|model| model.operations.iter().filter_map(move |operation| operation.upload.map(|pos| (model.file, pos, operation.name.clone()))));	M55
+gen/src/decl/lower/operations.rs	Value::Array(items) => items.iter().filter_map(|item| string(cx, item, "an order")).collect(),	M55
+gen/src/decl/lower/operations.rs	decl.match_by = Some(call.args.iter().filter_map(|arg| path(cx, arg, "a `match_by` path")).collect());	M55
+gen/src/decl/lower/operations.rs	let element = element?.iter().filter_map(|field| match &field.value.item {	M55
+gen/src/decl/lower/operations.rs	let first = decl.local_sites.iter().find(|(field, _)| field == name).map_or(line.pos, |(_, pos)| *pos);	M48
+gen/src/decl/lower/operations.rs	let found: Vec<AttributeDecl> = children.iter().filter_map(|child| attribute(cx, child, Site::Returns, &owner)).collect();	M55
+gen/src/decl/lower/operations.rs	let input = line.opt(cx, "input").map(|pair| symbol_pairs(cx, Some(pair), "`input`")).unwrap_or_default();	M55
+gen/src/decl/lower/operations.rs	let names: Vec<String> = call.args.iter().filter_map(|arg| symbol(cx, arg, "`local` name")).collect();	M48
+gen/src/decl/lower/operations.rs	let set = line.opt(cx, "set").map(|pair| copy_set(cx, pair)).unwrap_or_default();	M55
+gen/src/decl/lower/scopes.rs	Some(PaginateDecl { pos: line.pos, size, direction: direction.unwrap_or(PageDirectionDecl::Forward), max_pages, cursor })	M55
+gen/src/decl/lower/scopes.rs	Value::Array(items) if !items.is_empty() => items.iter().filter_map(|item| path(cx, item, "`id`")).collect(),	M55
+gen/src/decl/lower/scopes.rs	Value::Array(nodes) => PreloadChoice::Listed(nodes.iter().filter_map(|node| match &node.item {	M55
+gen/src/decl/lower/scopes.rs	Value::Int(number) if *number > 0 => usize::try_from(*number).ok(),	M55
+gen/src/decl/lower/scopes.rs	decl.edges = children.iter().filter_map(|child| attribute(cx, child, Site::Edge, &owner)).collect();	M55
+gen/src/decl/lower/scopes.rs	decl.touch = line.opt(cx, "touch").and_then(|pair| boolean(cx, &pair.value, "`touch`")).unwrap_or(false);	M48
+gen/src/decl/lower/scopes.rs	let fields = call.options.iter().filter_map(|pair| sort_direction(cx, &pair.value).map(|direction| (pair.key.clone(), direction, pair_pos(pair)))).collect();	M55
+gen/src/decl/lower/scopes.rs	let members_complete = line.opt(cx, "members_complete").and_then(|pair| boolean(cx, &pair.value, "`members_complete`")).unwrap_or(false);	M48
+gen/src/decl/lower/scopes.rs	let null = line.opt(cx, "null").and_then(|pair| boolean(cx, &pair.value, "`null`")).unwrap_or(false);	M48
+gen/src/decl/lower/scopes.rs	let values = items.iter().filter_map(|item| string(cx, item, "a `matches` list item")).collect();	M55
+gen/src/decl/lower/scopes.rs	pairs.iter().filter_map(|inner| symbol(cx, &inner.value, what).map(|value| (inner.key.clone(), value))).collect()	M55
+gen/src/decl/lower/scopes.rs	}).unwrap_or_default();	M55
+gen/src/decl/mod.rs	let (base, null) = kind.strip_suffix('?').map_or((kind, false), |base| (base, true));	M48
+gen/src/decl/mod.rs	let (inner, null_items) = inner.strip_suffix('?').map_or((inner, false), |inner| (inner, true));	M48
+gen/src/emit/edges.rs	chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M30
+gen/src/emit/edges.rs	let columns = relation.by_columns.iter().map(|key| (key.as_str(), model.field(key).map(|field| field_type(field, swift)).unwrap_or("String".into())));	M30
+gen/src/emit/edges.rs	let enum_type = field.app_type.as_deref().unwrap_or_default();	M30
+gen/src/emit/inputs.rs	letters.next().map(|first| first.to_uppercase().chain(letters).collect()).unwrap_or_default()	M51
+gen/src/emit/mod.rs	FieldKind::Array | FieldKind::UnionArray => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),	M30
+gen/src/emit/mod.rs	FieldKind::Object | FieldKind::Union => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),	M30
+gen/src/emit/mod.rs	chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M30
+gen/src/emit/mod.rs	field.from.as_deref().unwrap_or(&field.name)	M30
+gen/src/emit/mod.rs	format!("{class}{}{}Result", chars.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default(), chars.as_str())	M30
+gen/src/emit/mod.rs	format!("{printed}: {kind}{}", default.unwrap_or_default())	M30
+gen/src/emit/mod.rs	found.extend(operations.iter().filter_map(|operation| operation.result.as_ref()).flat_map(declared_in_field));	M30
+gen/src/emit/mod.rs	let (attribute, declaration) = trimmed.strip_prefix("@concurrent ").map_or(("", trimmed), |rest| ("@concurrent ", rest));	M30
+gen/src/emit/mod.rs	let default = swift_default(field).map(|value| format!(" = {value}")).unwrap_or_default();	M30
+gen/src/emit/mod.rs	let first = words.next().unwrap_or_default().to_string();	M30
+gen/src/emit/mod.rs	let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");	M30
+gen/src/emit/mod.rs	let item = field.app_type.as_deref().filter(|_| !field.values.is_empty()).unwrap_or_else(|| scalar(*element, swift));	M30
+gen/src/emit/mod.rs	let params = relation.by_columns.iter().map(|key| format!("_ {}: {}", identifier(key, true), model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, true))).collect::<Vec<_>>().join(", ");	M30
+gen/src/emit/mod.rs	let params = relation.by_columns.iter().map(|key| format!("{}: {}", identifier(key, false), model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, false))).collect::<Vec<_>>().join(", ");	M30
+gen/src/emit/mod.rs	let returns = operation.result.clone().unwrap_or_else(|| FieldSpec::raw(&operation.name));	M30
+gen/src/emit/mod.rs	model.actions.iter().find(|declared| declared.name == action).map(|declared| declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect()).unwrap_or_default()	M30
+gen/src/emit/names.rs	found.push(Site { subject: declaration.app_type.clone().unwrap_or_default(), site: format!("type `{}`", declaration.app_type.as_deref().unwrap_or_default()), kind: "field", names: field_names(&declaration.fields), fixed: Vec::new(), rename: RENAME });	M30
+gen/src/emit/names.rs	let declared = declared_types(models).into_iter().chain(declared_in_results(operations)).filter_map(|declaration| declaration.app_type.clone());	M30
+gen/src/emit/names.rs	let enums = enum_decls(models, operations, inputs).unwrap_or_default().into_iter().map(|declaration| declaration.name);	M30
+gen/src/emit/names.rs	operations.iter().filter_map(|operation| operation.result.as_ref()).for_each(|root| typed_fields(root, &mut out));	M30
+gen/src/emit/nested.rs	(FieldKind::Scalar { kind: ScalarKind::Id }, _) => string_literal(value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()).as_str(), swift),	M30
+gen/src/emit/nested.rs	let args = target.fields.iter().filter_map(|child| values.get(key_of(child)).map(|value| format!("{}{}{}", if swift { child.name.clone() } else { identifier(&child.name, false) }, if swift { ": " } else { " = " }, literal(child, value, swift, types)))).collect::<Vec<_>>().join(", ");	M30
+gen/src/emit/operations.rs	let sent = operation.wrap.as_ref().map_or("JsonObject(variables_)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables_)))"));	M30
+gen/src/emit/operations.rs	let sent = operation.wrap.as_ref().map_or("variables_".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables_)]"));	M30
+gen/src/emit/operations.rs	operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()	M30
+gen/src/emit/unions.rs	declaration.fields.iter().zip(rendered).map(|(variant, case)| (case, variant.app_type.clone().unwrap_or_default(), variant.name.as_str())).collect()	M54
+gen/src/emit/unions.rs	let rendered = EnumDecl::new(declaration.app_type.as_deref().unwrap_or_default(), &names).cases(swift);	M54
+gen/src/emit/wire.rs	resolved.iter().find(|candidate| candidate.key == model.key).map(dblayer::ffi::wire::wire_layout).unwrap_or_default()	M30
+gen/src/enums.rs	characters.next().map(|first| first.to_lowercase().collect::<String>() + characters.as_str()).unwrap_or_default()	M54
+gen/src/enums.rs	characters.next().map(|first| first.to_uppercase().collect::<String>() + characters.as_str()).unwrap_or_default()	M54
+gen/src/enums.rs	collect(inner, if variants { inner.app_type.as_deref().unwrap_or(&inner.name) } else { &inner.name }, path, found);	M54
+gen/src/lib.rs	.unwrap_or_default()	M55
+gen/src/lib.rs	action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));	M55
+gen/src/lib.rs	declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);	M55
+gen/src/lib.rs	for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).filter_map(|scope| scope.media.as_mut()) {	M55
+gen/src/lib.rs	let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];	M55
+gen/src/lib.rs	let printed_by = model.map(|model| members::declared_names(model, &again.member)).unwrap_or_default();	M55
+gen/src/lib.rs	let subject = model.map_or_else(|| again.outer.clone(), |model| model.key.as_str().to_string());	M55
+gen/src/main.rs	options.operations.extend(beside.into_iter().flatten().filter(|beside| beside.is_dir()));	M55
+gen/src/members.rs	Platform::Swift => format!("{}:{declared}", head.split_whitespace().next().unwrap_or_default()),	M55
+gen/src/members.rs	Some(named.map_or_else(|| (word.to_string(), true), |name| (name, false)))	M55
+gen/src/members.rs	let end = after.find(|character: char| !(character.is_alphanumeric() || character == '_' || character == ':')).unwrap_or(after.len());	M55
+gen/src/members.rs	let tail = if function && tail.starts_with('<') { tail[balanced_end(tail, 0).map_or(0, |close| close + 1)..].trim_start() } else { tail };	M55
+gen/src/members.rs	let word = rest.split_whitespace().next().unwrap_or_default();	M55
+gen/src/members.rs	raw.rsplit('.').next().unwrap_or_default().trim_matches('`').to_string()	M55
+gen/src/members.rs	rest = rest[balanced_end(rest, 0).map_or(rest.len(), |close| close + 1)..].trim_start();	M55
+gen/src/members.rs	text.find(|character: char| !(character.is_alphanumeric() || character == '_' || character == '`' || character == '.')).unwrap_or(text.len())	M55
+gen/src/operation/mod.rs	operations.iter_mut().filter_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))	M53
+gen/src/parser/mod.rs	self.tokens.last().map_or((1, 1), |token| (token.line, token.column))	M55
+gen/src/schema_check/fields.rs	Some(TypeKind::Fields(_)) if interface => self.schema.implementers.get(union).cloned().unwrap_or_default(),	M32
+gen/src/schema_check/fields.rs	Some(attribute.from.as_ref().map_or(name, |found| found.item.as_str()).split('.').map(str::to_string).collect())	M32
+gen/src/schema_check/fields.rs	let base = association.and_then(|association| association.from.as_deref()).unwrap_or(parent);	M32
+gen/src/schema_check/fields.rs	let key = field.from.as_ref().map_or(field.name.as_str(), |found| found.item.as_str()).split('.').next().unwrap_or_default();	M32
+gen/src/schema_check/fields.rs	let name = selects.iter().find_map(|select| self.operations.fields_in(select, key, &apart).first().map(|found| found.name.as_str())).unwrap_or(key);	M32
+gen/src/schema_check/fields.rs	let path = root_path(remote).unwrap_or(&root.key);	M32
+gen/src/schema_check/fields.rs	let pos = variants.first().map_or(attribute.pos, |variant| variant.pos);	M32
+gen/src/schema_check/fields.rs	let segment = selected.first().map_or(*key, |field| field.name.as_str());	M32
+gen/src/schema_check/fields.rs	let word = if word == "list" { of.unwrap_or("string") } else { word };	M32
+gen/src/schema_check/fields.rs	operations.follow(&[&operation.select], &keys).ok()?.selects.first().copied()	M32
+gen/src/schema_check/fields.rs	self.fail(file, attribute.pos, format!("attribute `{name}`: the selection of `{}` must select `__typename`", attribute.from.as_ref().map_or(name, |found| found.item.as_str())));	M32
+gen/src/schema_check/graphql.rs	Selection::Field(field) => found.fields.push(SelectedField { key: field.alias.clone().unwrap_or_else(|| field.name.clone()), name: field.name.clone(), select: select_of(&field.selection_set) }),	M32
+gen/src/schema_check/graphql.rs	let key = field.alias.clone().unwrap_or_else(|| field.name.clone());	M32
+gen/src/schema_check/media.rs	let mapped = scope.variables.iter().flatten().find(|binding| binding.name == *variable).map(|binding| &binding.value);	M32
+gen/src/schema_check/media.rs	let path = root_path(scope).unwrap_or(&root.key);	M32
+gen/src/schema_check/mod.rs	.flat_map(|(name, operation)| operation.variables.iter().filter_map(move |(variable, ty)| {	M32
+gen/src/schema_check/mod.rs	let mut inside: Vec<PathBuf> = entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).filter(|entry| entry.extension().is_some_and(|extension| extension == "graphql")).collect();	M32
+gen/src/schema_check/mod.rs	scope.query.as_ref().map(|query| query.operation.as_str()).unwrap_or_default()	M32
+gen/src/schema_check/operation.rs	(Some(edges), _) if by_edges => self.schema.field(edges.name(), "node").ok().map(|edge| edge.name().to_string()),	M32
+gen/src/schema_check/operation.rs	(Some(variables), _) => variables.iter().filter_map(|binding| match &binding.value {	M32
+gen/src/schema_check/operation.rs	Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),	M32
+gen/src/schema_check/operation.rs	let at = remote.response.as_ref().and_then(|read| read.from.as_ref()).map_or(query.pos, |found| found.pos);	M32
+gen/src/schema_check/operation.rs	let edges = self.schema.field(connection.name(), "edges").ok();	M32
+gen/src/schema_check/operation.rs	let nodes = self.schema.field(connection.name(), "nodes").ok().filter(Ty::is_list);	M32
+gen/src/schema_check/operation.rs	let path = root_path(remote).unwrap_or(&root.key).to_string();	M32
+gen/src/schema_check/operation.rs	let pos = remote.paginate.as_ref().map(|paginate| paginate.pos).or_else(|| remote.response.as_ref().map(|read| read.pos)).unwrap_or(query.pos);	M32
+gen/src/schema_check/paths.rs	let path = change.payload.as_deref().unwrap_or_default();	M32
+gen/src/schema_check/paths.rs	let path = root.map_or(first, |found| found.item.as_str());	M32
+gen/src/schema_check/paths.rs	let payload = root.map(|found| found.item.split('.').next().unwrap_or_default()).or_else(|| declared.root.as_ref().map(|found| found.key.as_str()));	M32
+gen/src/schema_check/paths.rs	let root = root_path(remote).or_else(|| declared.root.as_ref().map(|found| found.key.as_str())).unwrap_or_default();	M32
+gen/src/schema_check/selection.rs	let key = field.from.as_ref().map_or(name, |found| found.item.as_str());	M32
+gen/src/schema_check/selection.rs	let real = selected.as_ref().and_then(|found| found.first().map(|field| field.name.clone())).unwrap_or_else(|| segments[0].to_string());	M32
+gen/src/schema_check/selection.rs	let renamed = remote.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if source == param));	M32
+gen/src/schema_check/selection.rs	let renamed = scope.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));	M32
+gen/src/schema_check/selection.rs	let selects: Vec<&'a Select> = node.scopes.iter().filter(|scope| scope.is_remote()).filter_map(|scope| self.element_select(scope)).collect();	M32
+gen/src/schema_check/selection.rs	renamed.map_or(param.to_string(), |binding| binding.name.clone())	M32
+gen/src/schema_check/selection.rs	renamed.map_or(parameter.name.as_str(), |binding| binding.name.as_str()) == variable	M32
+gen/src/unions.rs	characters.next().map(|first| first.to_lowercase().collect::<String>() + characters.as_str()).unwrap_or_default()	M54
+gen/src/unions.rs	let limit = lists.iter().map(Vec::len).min().unwrap_or(0);	M54
+gen/src/unions.rs	let shortest = lists.iter().map(Vec::len).min().unwrap_or(0);	M54
+gen/src/unions.rs	variants.iter().zip(derived).map(|(variant, case)| variant.case.clone().unwrap_or(case)).collect()	M54

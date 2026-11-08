@@ -66,15 +66,18 @@ pub fn check(nodes: &[ModelDecl]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     if faults.is_empty() {
         return Ok(models);
     }
-    let found = faults
+    Err(fault_errors(nodes, &faults))
+}
+
+fn fault_errors(nodes: &[ModelDecl], faults: &[dblayer::schema::ModelFault]) -> Vec<Found> {
+    faults
         .iter()
-        .filter_map(|fault| {
-            let node = nodes.iter().find(|node| node.name == fault.model.as_str())?;
+        .map(|fault| {
+            let (file, pos) = nodes.iter().find(|node| node.name == fault.model.as_str()).map_or((0, Pos::default()), |node| (node.file, node.pos));
             let hint = if matches!(fault.error, dblayer::schema::DeclarationError::TooManyColumns { .. }) { ". A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model" } else { "" };
-            Some(at(node.file, node.pos, format!("model {}: {}{hint}", node.name, fault.error)))
+            at(file, pos, format!("model {}: {}{hint}", fault.model.as_str(), fault.error))
         })
-        .collect();
-    Err(found)
+        .collect()
 }
 
 fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {

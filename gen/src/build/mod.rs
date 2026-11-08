@@ -356,9 +356,9 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     action.local = operation.local.clone().unwrap_or_default();
     action.local_from = operation.local_from.iter().map(|(name, source, _)| (name.clone(), build_source(source))).collect();
     action.correlate = operation.match_by.iter().flatten().map(|found| found.item.clone()).collect();
-    action.variables = operation.variables.iter().flatten().filter_map(|binding| match &binding.value {
-        VariableValue::Parameter(source) => Some((binding.name.clone(), source.clone())),
-        VariableValue::Constant(_) => None,
+    action.variables = operation.variables.iter().flatten().map(|binding| match &binding.value {
+        VariableValue::Parameter(source) => (binding.name.clone(), source.clone()),
+        VariableValue::Constant(_) => unreachable!("lowering rejects a literal in the variables of an action (M50)"),
     }).collect();
     action.args = operation.parameters.iter().map(|parameter| (parameter.name.clone(), parameter.ty.kind_text(parameter.null))).collect();
     action.refetch = operation.refetch.iter().map(|refetch| match &refetch.model {
@@ -366,9 +366,9 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         _ => refetch.scope.clone(),
     }).collect();
     action.lands = operation.upserts.iter().map(|upsert| ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect();
-    action.result = operation.returns.iter().flatten().filter_map(|attribute| match &attribute.ty {
-        TypeRef::Scalar(kind) => Some((attribute.name.clone(), scalar_word(*kind).to_string())),
-        _ => None,
+    action.result = operation.returns.iter().flatten().map(|attribute| match &attribute.ty {
+        TypeRef::Scalar(kind) => (attribute.name.clone(), scalar_word(*kind).to_string()),
+        _ => unreachable!("lowering rejects a returns attribute of an action that is not a scalar"),
     }).collect();
     if let (Some(batch), Some(length)) = (&operation.batch, &operation.length) {
         action.batch = Some(dblayer::schema::UploadBatchDeclaration {
