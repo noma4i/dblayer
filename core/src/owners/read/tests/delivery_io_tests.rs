@@ -108,9 +108,8 @@ fn delivery_io_read_sees_commit() {
     commit(&rig.writer, "p2", 2);
     open(&mut rig, 2);
     let mut waiter = pull(&mut rig);
-    let owner = rig.owner;
     let mut taken = None;
-    pump(&mut rig.det, owner, |_| {
+    pump(&mut rig.det, |_| {
         taken = taken.take().or_else(|| waiter.try_take());
         taken.is_some()
     });
@@ -128,7 +127,7 @@ fn delivery_io_read_older_snapshot() {
     commit(&rig.writer, "p1", 1);
     open(&mut rig, 2);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
+    pump(&mut rig.det, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let journal = rig.det.state(owner).unwrap().journal(STREAM);
     let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a failed first read gives a Snapshot without rows: {journal:?}") };
     assert!(rows.is_empty(), "no rows of a snapshot older than the revision");
@@ -151,7 +150,7 @@ fn rt_prop_task_panic_fails() {
     let mut rig = rig_with(|_| Arc::new(Panicking));
     open(&mut rig, 1);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).count() == 2 && det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
+    pump(&mut rig.det, |det| det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).count() == 2 && det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
     let inputs: Vec<&str> = rig.det.trace().iter().map(|entry| entry.input.as_str()).collect();
     let mut failed = failed;

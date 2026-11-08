@@ -40,8 +40,7 @@ impl DeliveryIo {
         let ReadRequest { read_id, revision, after, view, mode } = request;
         let (snapshots, back) = (self.snapshots.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        spawn_blocking_on(&self.handle, move || {
-            let _launch = launch;
+        spawn_blocking_on(&self.handle, launch, move || {
             let _watch = back.watch(read_task(stream, read_id));
             let answer = match snapshots.read(&view, revision, after, mode) {
                 Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },

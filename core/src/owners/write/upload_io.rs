@@ -69,10 +69,13 @@ fn check_cancelled(cancel: &CancelToken) -> io::Result<()> {
 
 async fn read_source<T: Send + 'static>(path: &Path, cancel: &CancelToken, read: impl FnOnce(&Path, &CancelToken) -> io::Result<T> + Send + 'static) -> io::Result<T> {
     let (path, cancel) = (path.to_path_buf(), cancel.clone());
-    crate::task::spawn_blocking(move || {
+    let awaiting = crate::runtime::running_launch();
+    let read = crate::task::spawn_blocking(crate::runtime::running_launch(), move || {
         check_cancelled(&cancel)?;
         let value = read(&path, &cancel)?;
         check_cancelled(&cancel)?;
         Ok(value)
-    }).await.map_err(io::Error::other)?
+    }).await.map_err(io::Error::other)?;
+    drop(awaiting);
+    read
 }

@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event};
+use super::flow_fixtures::{add_chat, cell, chat_row, int, land_owned};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
@@ -15,7 +15,7 @@ const BY_ACTIVITY: &str = r#"{"model":"Chat","relation":"all","params":{},"order
 
 async fn rig_with_chats(chats: &[Value]) -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
-    for chat in chats { land_event(&rig, "Chat", chat.clone()); }
+    for chat in chats { land_owned(&rig, "Chat", chat.clone()).await; }
     rig
 }
 
@@ -63,7 +63,7 @@ async fn flow_chat_pin_mute() {
         rig.settle().await;
         assert_eq!((marked.len(), field(&rig, &all, "c1", name)), (1, Some(on.clone())), "{action}: the answer kept the flag");
 
-        land_event(&rig, "Chat", json!({"id": "c1", name: false}));
+        land_owned(&rig, "Chat", json!({"id": "c1", name: false})).await;
         settled(&rig, "the event clears the flag in both lists", || marked.emptied() && field(&rig, &all, "c1", name) == Some(Cell::Bool { value: false })).await;
 
         let refused = rig.world.hold_then(if action == "pin" { "ChatPin" } else { "ChatMute" }, Fault::Business);
@@ -96,7 +96,7 @@ async fn flow_chat_unread_counters() {
     rig.settle().await;
     assert_eq!(field(&rig, &all, "c1", "unreadCount"), Some(int(0)));
 
-    land_event(&rig, "Chat", json!({"id": "c1", "unreadCount": 3}));
+    land_owned(&rig, "Chat", json!({"id": "c1", "unreadCount": 3})).await;
     settled(&rig, "the counters event sets the badge", || field(&rig, &all, "c1", "unreadCount") == Some(int(3))).await;
     rig.database.close_now();
 }
@@ -120,7 +120,7 @@ async fn flow_chat_list_order() {
     rig.settle().await;
     assert_eq!(order(&rows), ["c1", "c2"]);
 
-    land_event(&rig, "Message", json!({"id": "m9", "chatId": "c2", "text": "event", "at": 40}));
+    land_owned(&rig, "Message", json!({"id": "m9", "chatId": "c2", "text": "event", "at": 40})).await;
     settled(&rig, "c2 leads the list again", || order(&rows) == ["c2", "c1"]).await;
     rig.database.close_now();
 }

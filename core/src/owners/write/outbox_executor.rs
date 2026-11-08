@@ -55,8 +55,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 };
                 let back = back.clone();
                 let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-                drop(crate::task::spawn_blocking_on(&handle, move || {
-                    let _launch = launch;
+                drop(crate::task::spawn_blocking_on(&handle, launch, move || {
                     let input = match decode(&job) {
                         Decoded::Land { rows, swaps, stale, result, missing } => OutboxInput::Response { op_id: job.op_id, rows, swaps, stale, result, missing, errors: None },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },

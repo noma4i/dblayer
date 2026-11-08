@@ -105,8 +105,7 @@ impl WindowIo {
         let Some(reader) = self.reader.clone() else { return Some((key, read_id)) };
         let back = back.clone();
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        crate::task::spawn_blocking_on(&self.handle, move || {
-            let _launch = launch;
+        crate::task::spawn_blocking_on(&self.handle, launch, move || {
             let _watch = back.watch(read_task(read_id));
             let result = reader(&key);
             back.reply(stamp, WindowsInput::WindowRead { key, read_id, result });

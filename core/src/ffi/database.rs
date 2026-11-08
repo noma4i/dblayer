@@ -91,7 +91,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    crate::task::spawn_blocking_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    crate::task::spawn_blocking_on(executor()?.handle(), None, work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
-use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_owned, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -30,7 +30,7 @@ async fn flow_wallet_gift() {
     let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_wallet(models); }).await;
     rig.world.set_profile(json!({"balance": 100}));
     rig.login_ios("A").await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
     let profile = watch(&rig, r#"{"model":"User","relation":"profile","params":{}}"#).await;
     let history = watch(&rig, r#"{"model":"WalletTransaction","relation":"history","params":{}}"#).await;
     let thread = watch(&rig, r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#).await;
@@ -56,7 +56,7 @@ async fn flow_wallet_gift() {
 async fn flow_search_follows_rows() {
     let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_search(models); }).await;
     rig.login_ios("A").await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
     rig.world.answer_with("ChatSearch", json!({"data":{"chatSearch":[{"__typename":"Chat","id":"c1","name":"c1","pinned":false}]}}));
     let epoch = rig.database.session_epoch();
     let params = json!({"query": "c"});
@@ -65,7 +65,7 @@ async fn flow_search_follows_rows() {
     bound(rig.database.refresh(epoch, "Chat".into(), Some("search".into()), params.to_string())).await.unwrap();
     settled(&rig, "the search finds c1", || found.len() == 1 && inbox.len() == 1).await;
 
-    land_event(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false}));
+    land_owned(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false})).await;
     settled(&rig, "both lists show the event", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "name") == Some(text("renamed")))).await;
     let revisions: Vec<_> = [&inbox, &found].iter().map(|rows| first_seen_at(&rig, "Chat", rows, "c1", "name", text("renamed"))).collect();
     assert!(revisions.iter().all(|revision| *revision >= 0), "a list never showed the event\ninbox: {}\nfound: {}", inbox.trace(), found.trace());

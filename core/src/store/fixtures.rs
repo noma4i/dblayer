@@ -190,11 +190,8 @@ pub fn poison<T: Send>(mutex: &Mutex<T>) {
 }
 
 pub fn put(db: &Store, model: &str, value: Value) {
-    let fields = row(value);
-    let key = id(fields["id"].as_str().unwrap());
-    let mut envelope = BatchPlan::from_server(db.generation());
-    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: key, row: fields });
-    db.commit(envelope).unwrap();
+    let event = serde_json::json!({"op": "upsert", "id": value["id"], "row": value}).to_string();
+    db.land_events_with_pin(&[(model.to_string(), event)], None).unwrap();
 }
 
 impl Store {

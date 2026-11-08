@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Rig, World};
 use super::rig_held::Held;
-use super::flow_fixtures::{add_chat, chat_row, land_event};
+use super::flow_fixtures::{add_chat, chat_row, land_owned};
 use crate::ffi::tape::Rows;
 use crate::ffi::ReadEnd;
 use crate::test_wait::settled;
@@ -29,7 +29,7 @@ async fn flow_user_everywhere() {
     held.lists_show(&rig, "A2").await;
     settled(&rig, "all four places show the answer", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A2").is_some())).await;
 
-    land_event(&rig, "User", json!({"id": "user", "name": "A3"}));
+    land_owned(&rig, "User", json!({"id": "user", "name": "A3"})).await;
     held.shows(&rig, "A3").await;
     held.lists_show(&rig, "A3").await;
     settled(&rig, "all four places show the event", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A3").is_some())).await;
@@ -40,8 +40,8 @@ async fn flow_user_everywhere() {
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_account_switch_clean() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
-    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "secret", "at": 3}));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "secret", "at": 3})).await;
     let chats = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, chats.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();

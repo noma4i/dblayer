@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use super::flow_fixtures::{add_chat, add_moment, add_profile, add_reactor_user, cell, land_event, texts};
+use super::flow_fixtures::{add_chat, add_moment, add_profile, add_reactor_user, cell, land_owned, texts};
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::rig_models::add_reactions;
 use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValue, WireOperationOutcome};
@@ -319,7 +319,7 @@ async fn assert_quiet(db: &Database, streams: &[&Arc<ReadStream>]) {
 async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_moment(models); }).await;
     rig.login_ios("A").await;
-    land_event(&rig, "Moment", json!({"id":"m1", "userId":"u1", "visitsCount":2, "reacted":false}));
+    land_owned(&rig, "Moment", json!({"id":"m1", "userId":"u1", "visitsCount":2, "reacted":false})).await;
     let db = &rig.database;
     let floor = db.db.revision_seq().unwrap();
     let epoch = db.session_epoch();
@@ -388,8 +388,8 @@ async fn dlv_prop_one_change_every_view_feed() {
 #[tokio::test(flavor = "multi_thread")]
 async fn dlv_prop_one_change_every_view_related_row() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_profile(models); add_reactions(models); add_reactor_user(models); }).await;
-    land_event(&rig, "User", json!({"id":"u2","name":"Bob"}));
-    land_event(&rig, "Message", json!({"id":"m1","chatId":"c1","text":"hello","at":1,"reactions":[{"body":"B","userId":"u2","user":{"name":"Old"}}]}));
+    land_owned(&rig, "User", json!({"id":"u2","name":"Bob"})).await;
+    land_owned(&rig, "Message", json!({"id":"m1","chatId":"c1","text":"hello","at":1,"reactions":[{"body":"B","userId":"u2","user":{"name":"Old"}}]})).await;
     let db = &rig.database;
     let epoch = db.session_epoch();
     let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });

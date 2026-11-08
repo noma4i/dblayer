@@ -191,6 +191,7 @@ impl MockTransport {
     }
 
     fn record(&self, kind: RecordedKind, request: &GraphQLRequest) {
+        crate::runtime::wake_pumps();
         self.lock().calls.push(RecordedCall {
             kind,
             operation_name: request.operation_name.clone(),

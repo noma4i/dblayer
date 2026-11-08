@@ -47,6 +47,7 @@ impl Drop for InFlight {
         if self.0.0.count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
             crate::lock::effect(|| self.0.0.none.notify_waiters());
         }
+        crate::runtime::wake_pumps();
     }
 }
 

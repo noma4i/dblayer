@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Rig, World};
-use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, land_event, text, texts};
+use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, land_owned, text, texts};
 use super::upload_fixtures::add_message_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::upload_wire::WireUploadRequest;
@@ -19,7 +19,7 @@ const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chat
 
 async fn rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_media(models); add_message_file(models); }).await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
     rig
 }
 
@@ -85,7 +85,7 @@ async fn flow_message_media_upload() {
     assert_eq!(status(&rows, "m1"), None, "the upload ended with the answer");
 
     for (url, progress, shown_url, shown_progress) in [("", 40, "", 40), ("https://cdn/a", 80, "https://cdn/a", 80), ("", 30, "https://cdn/a", 80)] {
-        land_event(&rig, "Message", event("m1", json!({"media": media(url, progress)})));
+        land_owned(&rig, "Message", event("m1", json!({"media": media(url, progress)}))).await;
         settled(&rig, "the event reached both places", || [&rows, &last].iter().all(|place| field(&rig, "Message", place, "m1", "media").is_some_and(|media| {
             let words = texts(&media);
             words.contains(&shown_url.to_string()) && words.len() >= usize::from(!shown_url.is_empty())
@@ -103,7 +103,7 @@ async fn flow_message_media_upload() {
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_message_gift() {
     let rig = rig().await;
-    land_event(&rig, "Message", event("g1", json!({"gift": {"status": "WRAPPED"}})));
+    land_owned(&rig, "Message", event("g1", json!({"gift": {"status": "WRAPPED"}}))).await;
     let (rows, last) = (thread(&rig).await, entity(&rig, "Message", "g1"));
     settled(&rig, "both places show the gift", || rows.len() == 1 && last.len() == 1).await;
     let epoch = rig.database.session_epoch();
@@ -111,7 +111,7 @@ async fn flow_message_gift() {
     bound(rig.database.set_local(epoch, "Message".into(), "g1".into(), "giftOpened".into(), "true".into())).await.unwrap();
     settled(&rig, "both places show the opened flag", || [&rows, &last].iter().all(|place| field(&rig, "Message", place, "g1", "giftOpened") == Some(Cell::Bool { value: true }))).await;
 
-    land_event(&rig, "Message", event("g1", json!({"gift": {"status": "OPENED"}})));
+    land_owned(&rig, "Message", event("g1", json!({"gift": {"status": "OPENED"}}))).await;
     settled(&rig, "the event opens the gift in both places", || [&rows, &last].iter().all(|place| field(&rig, "Message", place, "g1", "gift").is_some_and(|gift| texts(&gift).contains(&"OPENED".to_string())))).await;
     assert!([&rows, &last].iter().all(|place| field(&rig, "Message", place, "g1", "giftOpened") == Some(Cell::Bool { value: true })), "the event cleared the local flag");
     rig.database.close_now();
@@ -132,7 +132,7 @@ async fn flow_chat_media_library() {
     }
     settled(&rig, "the counters show", || field(&rig, "Chat", &chats, "c1", "mediaSequence") == Some(int(5)) && field(&rig, "Chat", &chats, "c1", "mediaPhotoCount") == Some(int(3))).await;
 
-    land_event(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 1, "pinned": false, "muted": false}));
+    land_owned(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 1, "pinned": false, "muted": false})).await;
     settled(&rig, "the event renames the chat", || field(&rig, "Chat", &chats, "c1", "name") == Some(text("renamed"))).await;
     assert_eq!((field(&rig, "Chat", &chats, "c1", "mediaSequence"), field(&rig, "Chat", &chats, "c1", "mediaPhotoCount")), (Some(int(5)), Some(int(3))), "an event cleared the local counters");
     rig.database.close_now();

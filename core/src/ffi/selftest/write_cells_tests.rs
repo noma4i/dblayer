@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::flow_fixtures::{add_chat, add_media, chat_row, land_event};
+use super::flow_fixtures::{add_chat, add_media, chat_row, land_owned};
 use super::rig_tests::{bound, Rig, World};
 use super::upload_fixtures::add_message_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
@@ -18,7 +18,7 @@ const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chat
 
 async fn rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_media(models); add_message_file(models); }).await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
     rig
 }
 
@@ -76,7 +76,7 @@ async fn out_send_unknown_upload_action() {
 async fn out_local_set_local_not_local() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1}));
+    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1})).await;
     let error = bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "text".into(), json!("x").to_string())).await.unwrap_err();
     assert!(is_invalid(&error), "{error:?}");
     rig.database.close_now();
@@ -87,7 +87,7 @@ async fn out_local_set_local_not_local() {
 async fn out_local_set_local_same() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1}));
+    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1})).await;
     let rows = thread(&rig).await;
     settled(&rig, "the row stands", || rows.len() == 1).await;
     bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "localPreviewUrl".into(), json!("file:///a").to_string())).await.unwrap();

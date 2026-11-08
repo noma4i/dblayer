@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_owned, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
@@ -16,9 +16,9 @@ async fn rig_with_source() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
     let epoch = rig.database.session_epoch();
     bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
-    for chat in ["c1", "c2"] { land_event(&rig, "Chat", chat_row(chat, 0)); }
+    for chat in ["c1", "c2"] { land_owned(&rig, "Chat", chat_row(chat, 0)).await; }
     rig.world.seed_authored_message("A", "m1", "hello", 5, "u7");
-    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 5, "authorId": "u7"}));
+    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 5, "authorId": "u7"})).await;
     rig
 }
 
@@ -78,7 +78,7 @@ async fn flow_message_forward() {
     assert!(forwarded_by_me(&rig, &thread, "forwarded-1"));
     settled(&rig, "the target chat points at the answer", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text("forwarded-1"))).await;
 
-    land_event(&rig, "Message", json!({"id": "f2", "chatId": "c2", "text": "again", "at": 9, "authorId": "user", "isForwarded": true, "forwardedFromUserId": "u7"}));
+    land_owned(&rig, "Message", json!({"id": "f2", "chatId": "c2", "text": "again", "at": 9, "authorId": "user", "isForwarded": true, "forwardedFromUserId": "u7"})).await;
     settled(&rig, "the event bubble stands in the thread", || ids(&thread).len() == 2 && forwarded_by_me(&rig, &thread, "f2")).await;
     rig.database.close_now();
 }

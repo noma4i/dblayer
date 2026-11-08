@@ -29,8 +29,7 @@ impl Tasks for TokioTasks {
 
     fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
         let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
-        let handle = crate::task::spawn_blocking_on(&self.0, move || {
-            let _launch = launch;
+        let handle = crate::task::spawn_blocking_on(&self.0, launch, move || {
             job()
         });
         Running::new(move || crate::lock::effect(|| handle.abort()))

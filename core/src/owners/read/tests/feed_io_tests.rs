@@ -41,6 +41,13 @@ impl FeedCodec for Models {
     }
 }
 
+/// The end of a read of the line (a frame, a close or an abort of the task) frees its lock: the pumps look again.
+struct WakeOnDrop;
+
+impl Drop for WakeOnDrop {
+    fn drop(&mut self) { crate::runtime::wake_pumps(); }
+}
+
 struct Line {
     incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<Incoming>>,
     sent: Arc<Mutex<Vec<(u64, Value)>>>,
@@ -52,14 +59,18 @@ struct Line {
 impl CableLine for Line {
     async fn send(&self, counter: u64, body: Value) -> Result<(), TransportError> {
         self.sent.lock().unwrap_or_else(PoisonError::into_inner).push((counter, body));
+        crate::runtime::wake_pumps();
         Ok(())
     }
 
-    async fn next(&self) -> Incoming { crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() }) }
+    async fn next(&self) -> Incoming {
+        let _wake = WakeOnDrop;
+        crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() })
+    }
 
-    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); }
+    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
 
-    async fn cancel(&self) { self.cancels.fetch_add(1, Ordering::SeqCst); }
+    async fn cancel(&self) { self.cancels.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
 }
 
 struct Lines(Mutex<VecDeque<Arc<Line>>>);
@@ -112,11 +123,11 @@ fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (Det
 fn feed_io_frames_commit() {
     let (line, peer) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![line]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(confirmed(1)).unwrap();
     peer.frames.send(next(2, "hello")).unwrap();
     let (seen, sent_frames) = (batches.clone(), peer.sent.clone());
-    pump(&mut det, feed, |_| !seen.all().is_empty() && !sent_frames.lock().unwrap_or_else(PoisonError::into_inner).is_empty());
+    pump(&mut det, |_| !seen.all().is_empty() && !sent_frames.lock().unwrap_or_else(PoisonError::into_inner).is_empty());
     let landed = batches.all();
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].rows, [("Chat".to_string(), "hello".to_string())]);
@@ -131,11 +142,11 @@ fn feed_io_frames_commit() {
 fn feed_io_close_drains_then_cancels_once() {
     let (line, peer) = line();
     let (mut det, feed, _batches, _runtime) = rig(vec![line]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(confirmed(1)).unwrap();
     det.close();
     let closed = peer.closed.clone();
-    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) == 1);
+    pump(&mut det, |_| closed.load(Ordering::SeqCst) == 1);
     assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "the queue is sent and the line is closed, the drain runs");
     let half = crate::owners::read::CLOSE_DRAIN.as_millis() as u64 / 2;
     det.tick(crate::runtime::Time(half));
@@ -143,7 +154,7 @@ fn feed_io_close_drains_then_cancels_once() {
     assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "half of the drain: no cancel");
     det.tick(crate::runtime::Time(2 * half));
     let cancels = peer.cancels.clone();
-    pump(&mut det, feed, |_| cancels.load(Ordering::SeqCst) == 1);
+    pump(&mut det, |_| cancels.load(Ordering::SeqCst) == 1);
     assert_eq!((peer.closed.load(Ordering::SeqCst), saw_input(&det, "Drain"), det.state(feed).map(|state| state.mode())), (1, 1, Some(Mode::Ended)), "one close, one drain tick, one cancel");
 }
 
@@ -151,16 +162,16 @@ fn feed_io_close_drains_then_cancels_once() {
 fn feed_io_unsubscribe_closes() {
     let (line, peer) = line();
     let (mut det, feed, _batches, _runtime) = rig(vec![line.clone()]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
     let closed = peer.closed.clone();
-    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
+    pump(&mut det, |_| closed.load(Ordering::SeqCst) >= 1);
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.iter().map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or(""))).collect::<Vec<_>>(), [(0, "subscribe"), (1, "unsubscribe")]);
     let before = saw_input(&det, "FrameOpened");
-    pump(&mut det, feed, |_| line.incoming.try_lock().is_ok());
+    pump(&mut det, |_| line.incoming.try_lock().is_ok());
     let _ = peer.frames.send(next(1, "late"));
-    pump(&mut det, feed, |_| true);
+    pump(&mut det, |_| true);
     assert_eq!(saw_input(&det, "FrameOpened"), before, "no frame reaches the owner after the line closed");
 }
 
@@ -169,15 +180,15 @@ fn feed_io_counter_mismatch_closes() {
     let (first, peer) = line();
     let (second, _other) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(next(5, "skipped")).unwrap();
     let closed = peer.closed.clone();
-    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
+    pump(&mut det, |_| closed.load(Ordering::SeqCst) >= 1);
     assert!(det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Draining { then: f::Resume::Reopen, .. })), "the broken connection drains before another opens");
     det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     let cancels = peer.cancels.clone();
-    pump(&mut det, feed, |_| cancels.load(Ordering::SeqCst) == 1);
+    pump(&mut det, |_| cancels.load(Ordering::SeqCst) == 1);
     assert_eq!((peer.closed.load(Ordering::SeqCst), peer.cancels.load(Ordering::SeqCst)), (1, 1), "the drain ended with one close and one cancel");
     assert!(batches.all().is_empty(), "the frame with a skipped counter does not reach the Store");
 }
@@ -187,9 +198,9 @@ fn feed_io_broken_next_drops() {
     let (first, peer) = line();
     let (second, _other) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":{}}) }).unwrap();
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     assert!(batches.all().is_empty());
     assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
 }
@@ -205,16 +216,16 @@ fn feed_io_graphql_errors_drop() {
         let (first, peer) = line();
         let (second, _other) = line();
         let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
-        pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+        pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
         peer.frames.send(confirmed(1)).unwrap();
         peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
         if drops {
-            pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+            pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
             assert!(saw_input(&det, "ProtocolError") == 1, "{name}: the error frame is an explicit protocol error");
             assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
         } else {
             let seen = batches.clone();
-            pump(&mut det, feed, |_| !seen.all().is_empty());
+            pump(&mut det, |_| !seen.all().is_empty());
             assert_eq!(saw_input(&det, "ProtocolError"), 0, "{name}: a clean frame is no error");
         }
     }
@@ -226,8 +237,10 @@ struct Hanging(Arc<AtomicUsize>, Arc<AtomicUsize>);
 impl CableLines for Hanging {
     async fn connect(&self, cancel: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
         self.1.fetch_add(1, Ordering::SeqCst);
+        crate::runtime::wake_pumps();
         cancel.cancelled().await;
         self.0.fetch_add(1, Ordering::SeqCst);
+        crate::runtime::wake_pumps();
         Err(TransportError::Interrupted("cancelled".into()))
     }
 }
@@ -248,25 +261,25 @@ fn feed_io_close_cancels_handshake() {
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
     let began = started.clone();
-    pump(&mut det, feed, |_| began.load(Ordering::SeqCst) >= 1);
+    pump(&mut det, |_| began.load(Ordering::SeqCst) >= 1);
     assert_eq!(dropped.load(Ordering::SeqCst), 0, "the open waits");
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
     let seen = dropped.clone();
-    pump(&mut det, feed, |_| seen.load(Ordering::SeqCst) >= 1);
+    pump(&mut det, |_| seen.load(Ordering::SeqCst) >= 1);
 }
 
 #[test]
 fn feed_io_foreign_subscription_is_ignored() {
     let (line, peer) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![line]);
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(confirmed(1)).unwrap();
     peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"error", "id":"2", "code":"BAD", "retryable":false}) }).unwrap();
     peer.frames.send(Incoming::Frame { counter: 3, body: json!({"t":"next", "id":"2", "result":{"data":{"model":"Chat", "payload":"theirs"}}}) }).unwrap();
     peer.frames.send(Incoming::Frame { counter: 4, body: json!({"t":"complete", "id":"2"}) }).unwrap();
     peer.frames.send(next(5, "mine")).unwrap();
     let seen = batches.clone();
-    pump(&mut det, feed, |_| !seen.all().is_empty());
+    pump(&mut det, |_| !seen.all().is_empty());
     assert_eq!(batches.all()[0].rows, [("Chat".to_string(), "mine".to_string())]);
     assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of a channel this connection never subscribed neither end nor break it");
 }
@@ -289,7 +302,7 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     gate.close(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
-    pump(&mut det, feed, |det| saw_input(det, "Dropped") >= 1);
+    pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
     assert_eq!(started.load(Ordering::SeqCst), 0, "a connect reached the old lines after the close");
 }
 
@@ -300,10 +313,10 @@ fn rt_prop_close_against_send_no_old_connection_feed() {
     let gate = super::rig::open_gate(1);
     let (mut det, feed, _batches, _runtime) = rig_over(vec![line], gate.clone());
     let sent = peer.sent.clone();
-    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live) && sent.lock().unwrap_or_else(PoisonError::into_inner).len() == 1);
+    pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live) && sent.lock().unwrap_or_else(PoisonError::into_inner).len() == 1);
     gate.close(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
-    pump(&mut det, feed, |det| saw_input(det, "Dropped") >= 1);
+    pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
     let late: Vec<_> = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).iter().skip(1).map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or("").to_string())).collect();
     assert!(late.is_empty(), "late frames reached the old connection after the close: {late:?}");
 }

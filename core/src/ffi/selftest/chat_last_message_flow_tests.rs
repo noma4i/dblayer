@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Rig, World};
-use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event, text};
+use super::flow_fixtures::{add_chat, cell, chat_row, int, land_owned, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -17,7 +17,7 @@ fn chat_cell(rig: &Rig, rows: &Rows, field: &str) -> Option<Cell> {
 
 async fn rig_with_chat() -> (Rig, Arc<Rows>) {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
-    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
     let rows = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
@@ -61,7 +61,7 @@ async fn flow_chat_last_message_ignores_an_older_message_event() {
     settled(&rig, "the chat points at m1", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
     let mark = rows.1.lock().unwrap().len();
 
-    land_event(&rig, "Message", json!({"id":"m7","chatId":"c1","text":"late","at":60}));
+    land_owned(&rig, "Message", json!({"id":"m7","chatId":"c1","text":"late","at":60})).await;
     rig.settle().await;
 
     assert_eq!(chat_cell(&rig, &rows, "lastMessageId"), Some(text("m1")));
@@ -75,7 +75,7 @@ async fn flow_chat_last_message_ignores_an_older_message_event() {
 async fn flow_chat_last_message_follows_a_message_event() {
     let (rig, rows) = rig_with_chat().await;
 
-    land_event(&rig, "Message", json!({"id":"m9","chatId":"c1","text":"event","at":200}));
+    land_owned(&rig, "Message", json!({"id":"m9","chatId":"c1","text":"event","at":200})).await;
 
     settled(&rig, "the chat shows the event message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m9"))).await;
     assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(200)));

@@ -1,5 +1,5 @@
 //! Helpers of the runner tests: a Tokio runtime, a Store peer that keeps batches, a pump for the scheduler.
-//! `DetScheduler` takes the inputs that other threads reply only after a step, so the pump posts a `Tick` between checks.
+//! `DetScheduler` takes the replies of other threads at its next step, so the pump waits for the signal of the next reply.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use super::Admit;
 use crate::owners::store::{StoreBatch, StoreInput};
 use crate::spec::support::NoEffect;
-use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
+use crate::runtime::{Cause, DetScheduler, Effects, Epoch, StateOwner, Time};
 
 pub const LIMIT: Duration = Duration::from_secs(10);
 
@@ -61,20 +61,20 @@ impl StateOwner for BatchPeer {
 pub fn collector<E: Send + 'static>() -> (Arc<Mutex<Vec<E>>>, super::Rest<E>) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = seen.clone();
-    (seen, Box::new(move |_, effect| sink.lock().unwrap_or_else(PoisonError::into_inner).push(effect)))
+    (seen, Box::new(move |_, effect| { sink.lock().unwrap_or_else(PoisonError::into_inner).push(effect); crate::runtime::wake_pumps(); }))
 }
 
-/// Steps the scheduler until `done` holds. Fails after `LIMIT`.
-pub fn pump<O: StateOwner>(det: &mut DetScheduler, owner: Address<O>, mut done: impl FnMut(&DetScheduler) -> bool) {
+/// Steps the scheduler until `done` holds, then waits for the next reply of another thread. Fails after `LIMIT`.
+pub fn pump(det: &mut DetScheduler, mut done: impl FnMut(&DetScheduler) -> bool) {
     let deadline = Instant::now() + LIMIT;
     loop {
+        let seen = det.arrivals();
         det.run_until_quiet(10_000).expect("the scheduler goes quiet");
         if done(det) {
             return;
         }
-        assert!(Instant::now() < deadline, "the condition did not hold in time, trace: {:?}", det.trace());
-        det.post(owner, EpochStamp::Control, O::tick(Time(0)));
-        std::thread::yield_now();
+        let left = deadline.saturating_duration_since(Instant::now());
+        assert!(det.wait_arrival(seen, left), "the condition did not hold in time, trace: {:?}", det.trace());
     }
 }
 

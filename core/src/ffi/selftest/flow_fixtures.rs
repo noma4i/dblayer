@@ -65,26 +65,18 @@ pub(super) fn add_chat(models: &mut Value) {
     message["associations"].as_array_mut().unwrap().push(serde_json::to_value(chat).unwrap());
 }
 
-/// A row of the server arrives as an event: it lands the way a change of the feed does.
-pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
-    use crate::store::{BatchPlan, EntityOp};
-    use crate::identity::{ModelKey, RowId};
-    let db = &rig.database.db;
-    let row = row.as_object().unwrap().clone();
-    let id = RowId::new(row["id"].as_str().unwrap()).unwrap();
-    let mut envelope = BatchPlan::from_server(db.generation());
-    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-    db.commit(envelope).unwrap();
+/// A row of the server arrives as an event of the owner Feed through the owner Store, and the owners settle.
+pub(super) async fn land_owned(rig: &Rig, model: &str, row: Value) {
+    land_feed(rig, model, serde_json::json!({"op": "upsert", "id": row["id"], "row": row}).to_string()).await;
 }
 
-/// Lands a row through the owner Store, as a batch of the owners does: the expiry of a memory row arms.
-pub(super) fn land_owned(rig: &Rig, model: &str, row: Value) {
+async fn land_feed(rig: &Rig, model: &str, event: String) {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::StoreBatch;
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
-    let event = serde_json::json!({"op": "upsert", "id": row["id"], "row": row}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), epoch: rig.database.session_epoch(), basis: [(model.to_string(), 0)].into(), rows: vec![(model.to_string(), event)], intents: 0, credential: None, ops: Vec::new() };
     rig.database.life_handle().commit_for_tests(batch);
+    rig.settle().await;
 }
 
 /// The cell of a field of a row of `model`.
@@ -100,14 +92,9 @@ pub(super) fn int(value: i64) -> Cell { Cell::Int { value } }
 
 pub(super) fn chat_row(id: &str, last_message_at: i64) -> Value { json!({"id": id, "name": id, "lastMessageId": null, "lastMessageAt": last_message_at, "lastActivityAt": last_message_at, "unreadCount": 0, "pinned": false, "muted": false}) }
 
-/// A row of the server is deleted by an event.
-pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
-    use crate::store::{BatchPlan, DestroyReason, EntityOp};
-    use crate::identity::{ModelKey, RowId};
-    let db = &rig.database.db;
-    let mut envelope = BatchPlan::from_server(db.generation());
-    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
-    db.commit(envelope).unwrap();
+/// A row of the server is deleted by an event of the owner Feed, and the owners settle.
+pub(super) async fn land_delete(rig: &Rig, model: &str, id: &str) {
+    land_feed(rig, model, serde_json::json!({"op": "delete", "id": id}).to_string()).await;
 }
 
 /// The reactor of a reaction is the row of a user: the nested `user` links to `User` by `userId`.

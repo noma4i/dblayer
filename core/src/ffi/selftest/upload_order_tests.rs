@@ -52,7 +52,7 @@ async fn an_orphan_abort_goes_out_once(order: OpenOrder) {
 
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened = stand.open_ordered(Some(&path), &operations, None, order).await;
-    settled(&database, &format!("{order:?}: the abort reached the transport"), || stand.script.count("AbortMultipart") == 1).await;
+    settled(&reopened, &format!("{order:?}: the abort reached the transport"), || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
     bound(crate::ffi::settled(&reopened)).await.unwrap();

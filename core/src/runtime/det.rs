@@ -1,7 +1,8 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::Duration;
 
 use super::cell::{Cell, Emitted, EffectRunner, Ran};
 use super::owner::{Address, Back, Cause, Control, EffectId, Epoch, EpochStamp, Message, StateOwner, Time};
@@ -120,6 +121,25 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
 
 type FailureTarget = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)>>;
 
+/// Counts the replies that other threads hand to the scheduler, and wakes the thread that waits for the next one.
+#[derive(Default)]
+struct Arrivals {
+    count: Mutex<u64>,
+    changed: Condvar,
+}
+
+static ARRIVALS: Arrivals = Arrivals { count: Mutex::new(0), changed: Condvar::new() };
+
+/// A mock or a peer of a test changed the state a pump waits on. Any pump rechecks.
+pub fn wake_pumps() { ARRIVALS.note(); }
+
+impl Arrivals {
+    fn note(&self) {
+        *self.count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.changed.notify_all();
+    }
+}
+
 pub struct DetScheduler {
     slots: Vec<Box<dyn ErasedSlot>>,
     lanes: BTreeMap<Lane, VecDeque<Pending>>,
@@ -135,9 +155,8 @@ impl DetScheduler {
 
     pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
         let inbox: Inbox<O> = Arc::default();
-        let arrivals = inbox.clone();
-        let failures = inbox.clone();
-        let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Input(stamp, input)), move |pending| failures.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Failed(pending)));
+        let (arrivals, failures) = (inbox.clone(), inbox.clone());
+        let back = Back::new(move |stamp, input| { arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Input(stamp, input)); wake_pumps(); }, move |pending| { failures.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Failed(pending)); wake_pumps(); });
         let mut cell = Cell::new(state);
         cell.set_now(self.now);
         let (seed, slot) = (self.jitter.clone(), self.slots.len() as u64);
@@ -259,6 +278,16 @@ impl DetScheduler {
         }
         let pick = (self.next_random() % choices.len() as u64) as usize;
         self.apply(choices[pick])
+    }
+
+    /// The number of replies that other threads handed to the scheduler so far.
+    pub fn arrivals(&self) -> u64 { *ARRIVALS.count.lock().unwrap_or_else(PoisonError::into_inner) }
+
+    /// Returns once a reply arrived after the count `seen`, or false after `limit`.
+    pub fn wait_arrival(&self, seen: u64, limit: Duration) -> bool {
+        let count = ARRIVALS.count.lock().unwrap_or_else(PoisonError::into_inner);
+        let (count, _) = crate::blocking::blocking_unit(|| ARRIVALS.changed.wait_timeout_while(count, limit, |count| *count == seen).unwrap_or_else(PoisonError::into_inner));
+        *count != seen
     }
 
     pub fn run_until_quiet(&mut self, limit: usize) -> Result<usize, usize> {

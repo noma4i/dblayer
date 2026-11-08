@@ -171,10 +171,9 @@ impl SessionRunner {
         let back = back.clone();
         let watch = back.watch(id);
         let launch = self.wiring.handle.launch();
-        drop(crate::task::spawn_blocking_on(&self.executor, move || {
+        drop(crate::task::spawn_blocking_on(&self.executor, Some(launch), move || {
             let _watch = watch;
             back.reply(EpochStamp::Control, work());
-            drop(launch);
         }));
     }
 

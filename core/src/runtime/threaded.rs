@@ -156,7 +156,16 @@ impl Holds {
 }
 
 thread_local! {
+    static RUNNING: std::cell::RefCell<Option<Arc<Router>>> = const { std::cell::RefCell::new(None) };
     static POLLED: std::cell::RefCell<Option<Arc<Holds>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Counts blocking work started by the counted task that polls now, until the work ends. Outside a counted task it is None.
+pub fn running_launch() -> Option<Launch> {
+    RUNNING.with(|running| running.borrow().clone()).map(|router| {
+        router.inflight.add();
+        Launch { router: Some(router) }
+    })
 }
 
 /// Runs one poll of a call whose started work counts in `holds`.
@@ -233,7 +242,9 @@ impl<F: std::future::Future> std::future::Future for Counted<F> {
         gate.woken.store(false, Ordering::SeqCst);
         gate.arm();
         let waker = std::task::Waker::from(Arc::new(GateWake { gate: gate.clone(), waker: cx.waker().clone() }));
+        let previous = RUNNING.replace(Some(gate.router.clone()));
         let polled = self.work.as_mut().poll(&mut std::task::Context::from_waker(&waker));
+        RUNNING.set(previous);
         if polled.is_ready() || !gate.woken.load(Ordering::SeqCst) {
             gate.disarm();
             if polled.is_pending() && gate.woken.load(Ordering::SeqCst) { gate.arm(); }

@@ -111,7 +111,7 @@ fn win_io_request_lands() {
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1", "r2"], "cursor": null })));
     rig.watch(1);
     let batches = rig.batches.clone();
-    pump(&mut rig.det, rig.windows, |_| !batches.all().is_empty());
+    pump(&mut rig.det, |_| !batches.all().is_empty());
     let landed = rig.batches.all();
     assert_eq!(landed.len(), 1);
     let batch = &landed[0];
@@ -135,7 +135,7 @@ fn win_io_error_classes() {
         rig.mock.enqueue("Page", Reply::fail(error.clone()));
         rig.watch(1);
         let rest = rig.rest.clone();
-        pump(&mut rig.det, rig.windows, |det| holds(&rest.lock().unwrap(), det));
+        pump(&mut rig.det, |det| holds(&rest.lock().unwrap(), det));
         assert!(rig.batches.all().is_empty(), "{error:?} lands no page");
     }
 }
@@ -145,11 +145,11 @@ fn win_io_cancel_no_answer() {
     let mut rig = rig();
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::MAX));
     rig.watch(1);
-    pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
+    pump(&mut rig.det, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
-    pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
+    pump(&mut rig.det, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
     let flights = rig.flights.clone();
-    pump(&mut rig.det, rig.windows, |_| flights.load(std::sync::atomic::Ordering::SeqCst) == 0);
+    pump(&mut rig.det, |_| flights.load(std::sync::atomic::Ordering::SeqCst) == 0);
     assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }
@@ -192,7 +192,7 @@ pub(in super::super) fn panicked_request() -> Vec<String> {
     let mut rig = rig_with(MockTransport::new(), Arc::new(Panicking), None);
     rig.watch(1);
     let rest = rig.rest.clone();
-    pump(&mut rig.det, rig.windows, |_| rest.lock().unwrap().iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. })));
+    pump(&mut rig.det, |_| rest.lock().unwrap().iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. })));
     task_failed(&rig.det)
 }
 
@@ -200,7 +200,7 @@ pub(in super::super) fn panicked_read() -> Vec<String> {
     let reader: WindowReader = Arc::new(|_| panic!("the read failed"));
     let mut rig = rig_with(MockTransport::new(), Arc::new(MockTransport::new()), Some(reader));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
-    pump(&mut rig.det, rig.windows, |det| saw_input(det, "Pin") > 0 && saw_input(det, "TaskFailed") > 0);
+    pump(&mut rig.det, |det| saw_input(det, "Pin") > 0 && saw_input(det, "TaskFailed") > 0);
     task_failed(&rig.det)
 }
 
@@ -215,12 +215,12 @@ fn rt_prop_close_against_query_no_old_transport_window() {
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::MAX));
     rig.watch(1);
     let mock = rig.mock.clone();
-    pump(&mut rig.det, rig.windows, |_| mock.calls().len() == 1);
+    pump(&mut rig.det, |_| mock.calls().len() == 1);
     rig.gate.close(EPOCH);
     let other = WindowKey { model: "Moment".into(), name: "other".into() };
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: other, read_id: 2, result: Ok(None) });
-    pump(&mut rig.det, rig.windows, |det| saw_input(det, "Dropped") == 1);
+    pump(&mut rig.det, |det| saw_input(det, "Dropped") == 1);
     let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();
     assert!(late.is_empty(), "late calls reached the old transport after the close: {late:?}");
 }

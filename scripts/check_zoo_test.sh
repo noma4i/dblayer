@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self test of check_zoo.sh rules Z18, Z20 and Z21: each bypass makes it exit 1, the allowed forms exit 0.
+# Self test of check_zoo.sh rules Z18, Z19, Z20 and Z21: each bypass makes it exit 1, the allowed forms exit 0.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -31,6 +31,10 @@ expect_red() {
 expect_green 'fn read(inner: &Inner) { let count = inner.connection.query_row("SELECT 1"); }
 fn guarded(store: &Store) { store.write(&epoch, |connection| { connection.execute("DELETE FROM t", []) }); }
 fn waits(rx: &mut Rx) { let event = rx.recv().await; let unit = blocking_unit(|| condition.wait(guard)); }'
+
+expect_green 'fn read(launch: Option<Launch>) { let job = crate::task::spawn_blocking_on(&handle, launch, move || work()); let own = crate::task::spawn_blocking(crate::runtime::running_launch(), move || work()); }'
+expect_red 'fn read() { let job = crate::task::spawn_blocking(None, move || work()); }'
+expect_red 'fn read() { let job = crate::task::spawn_blocking_on(&handle, None, move || work()); }'
 
 expect_green '#[uniffi::export(with_foreign)]
 pub trait Sink {}

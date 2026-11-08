@@ -115,7 +115,7 @@ impl RetryProgress {
                 loop {
                     let snapshot = changes.borrow_and_update().clone();
                     let (listener, calls) = (listener.clone(), calls.clone());
-                    let _ = crate::task::spawn_blocking_on(&handle, move || {
+                    let _ = crate::task::spawn_blocking_on(&handle, None, move || {
                         crate::lock::assert_no_library_lock("RetryProgressListener::changed");
                         calls.call(|| listener.changed(snapshot))
                     }).await;

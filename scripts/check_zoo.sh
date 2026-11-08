@@ -165,6 +165,16 @@ for path in files:
             number = text.count("\n", 0, match.start()) + 1
             findings.append(f"Z19 a task boundary goes through crate::task, which carries the epoch: {path.relative_to(root)}:{number}: {match.group().strip()}")
 
+uncounted_blocking = re.compile(r"\btask::spawn_blocking(?:_on)?\s*\(\s*(?:[^,()]*(?:\([^()]*\))?[^,()]*,\s*)?None\b")
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative == "task.rs" or f"z19:{relative}" in allowed:
+        continue
+    code = code_only(contents[path])
+    for match in uncounted_blocking.finditer(code):
+        number = code.count("\n", 0, match.start()) + 1
+        findings.append(f"Z19 a blocking job is counted in the Inflight of the owners until it ends (a launch goes to crate::task::spawn_blocking*): {path.relative_to(root)}:{number}")
+
 write_methods = r"(?:execute|execute_batch|unchecked_transaction|transaction)\b"
 connection_write = re.compile(r"\.connection\s*\.\s*" + write_methods + r"|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
 connection_alias = re.compile(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*&(?:mut\s+)?[\w.]*\.connection\b")

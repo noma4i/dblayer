@@ -32,7 +32,7 @@ pub use freshness::selected_policy;
 pub use retry::RetryPolicy;
 #[cfg(test)]
 pub(crate) use test_clock::TestClock;
-pub use det::{Choice, DetScheduler, Lane, TraceEntry};
+pub use det::{wake_pumps, Choice, DetScheduler, Lane, TraceEntry};
 pub use flights::{Flights, Running};
 pub use gate::{send_in_cut, send_in_epoch, EpochGate};
 pub use open_slot::{OpenLease, OpenSlot};
@@ -43,7 +43,7 @@ pub use explore::{explore, Limits, Report, Violation};
 pub use tests::property_tests::{Exhaustive, Manifest, Property};
 pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
 pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId};
-pub use threaded::{counted, hold_until_woken, polling, release_holds, Handle, Holds, Launch, Runtime, RuntimeBuilder};
+pub use threaded::{counted, hold_until_woken, polling, release_holds, running_launch, Handle, Holds, Launch, Runtime, RuntimeBuilder};
 
 #[cfg(test)]
 mod tests;
