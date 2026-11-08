@@ -49,7 +49,7 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
             assert_eq!(crate::test_wait::within(reader.next()).await.map(|snapshot| snapshot.active_calls), Some(1), "the first call returns the current snapshot");
             let mut held: Held = Box::pin({
                 let reader = reader.clone();
-                async move { reader.next().await }
+                async move { crate::test_wait::within(reader.next()).await }
             });
             assert!(poll_once(&mut held).is_pending(), "{order:?}: the waiting call passed the cancel check and waits for a change");
 
