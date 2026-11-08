@@ -1,0 +1,19 @@
+model Vibe do
+  attribute :name, :string
+  attribute :description, :string, null: true
+  attribute :color, :string
+  attribute :position, :int
+  attribute :translations, [VibeTranslation], default: [] do
+    attribute :locale, :string
+    attribute :name, :string
+  end
+  attribute :createdAt, :date
+  attribute :updatedAt, :date
+  index :position
+  scope :list do
+    query "vibesList"
+    response shape: :list
+    freshness expires_in: 10.minutes
+    preload
+  end
+end

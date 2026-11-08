@@ -1,0 +1,35 @@
+mutation MessageReact($input: MessageReactInput!) {
+  messageReact(input: $input) {
+    message {
+      ...MessageFragment
+    }
+  }
+}
+
+mutation MomentReact($input: MomentReactInput!) {
+  momentReact(input: $input) {
+    moment {
+      id
+      reacted
+      updatedAt
+      user {
+        ...UserStandardFragment
+      }
+    }
+  }
+}
+
+mutation ImpressionTrack($input: ImpressionTrackInput!) {
+  impressionTrack(input: $input) {
+    accepted
+  }
+}
+
+mutation CompassRead($input: CompassReadInput!) {
+  compassRead(input: $input) {
+    moment {
+      id
+      updatedAt
+    }
+  }
+}

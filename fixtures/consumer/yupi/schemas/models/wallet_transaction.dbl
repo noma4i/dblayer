@@ -1,0 +1,49 @@
+model WalletTransaction do
+  attribute :amount, :int
+  attribute :creditAmount, :int
+  attribute :priceMilliUnits, :int
+  attribute :currency, :string, null: true
+  attribute :localizedPrice, :string, null: true
+  attribute :kind, :enum, values: ["CREDIT", "DEBIT"], as: LedgerEntryKind
+  attribute :title, :string, null: true
+  attribute :subtitle, :string, null: true
+  attribute :description, :string, null: true
+  attribute :gift, WalletTransactionGift, null: true do
+    attribute :imageUrl, :string, null: true
+    attribute :id, :id, null: true
+    attribute :name, :string, null: true
+    attribute :description, :string, null: true
+    attribute :animationUrl, :string, null: true
+    attribute :cost, :int, null: true
+    attribute :price, :int, null: true
+    attribute :status, :enum, values: ["ACTIVE", "INACTIVE"], as: GiftStatus, null: true
+    attribute :createdAt, :string, null: true
+    attribute :updatedAt, :string, null: true
+  end
+  attribute :recipient, WalletTransactionRecipient, null: true do
+    attribute :id, :id
+    attribute :fullName, :string, null: true
+    attribute :username, :string, null: true
+    attribute :avatarUrl, :string, null: true
+  end
+  attribute :createdAt, :date
+  attribute :updatedAt, :date
+  index :createdAt
+  scope :all do
+    query "transactions"
+    response from: "viewer.wallet.transactions"
+    paginate size: 20, direction: :forward
+    freshness expires_in: 3.days
+  end
+  scope :by_kind do
+    parameter :kind, LedgerEntryKind
+    where kind: :kind
+    query "transactions"
+    variables kindFilter: :kind
+    response from: "viewer.wallet.transactions"
+    paginate size: 20, direction: :forward
+    freshness expires_in: 3.days
+    preload kind: ["DEBIT", "CREDIT"]
+  end
+  changed_by "WALLET", via: :observed
+end

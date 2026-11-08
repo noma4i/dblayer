@@ -1,0 +1,8 @@
+query pricing {
+  pricing {
+    videoIntro
+    gifts {
+      ...GiftFragment
+    }
+  }
+}

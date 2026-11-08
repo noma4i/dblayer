@@ -1,0 +1,15 @@
+model CustomScreenDraft, storage: :memory do
+  attribute :slug, :string
+  attribute :name, :string
+  attribute :version, :int
+  attribute :spec, ScreenSpec, null: true, from: "spec"
+  scope :by_slug do
+    parameter :id, :id
+    parameter :source, CustomScreenSourceKind, default: "DRAFT"
+    where id: :id
+    query "customScreenDraft"
+    variables slug: :id, source: :source
+    freshness expires_in: 1.minute
+    subscribe "CustomScreenDocumentUpdated", from: "customScreenUpdated", id: "slug"
+  end
+end

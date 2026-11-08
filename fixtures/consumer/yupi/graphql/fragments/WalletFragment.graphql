@@ -1,0 +1,12 @@
+fragment WalletFragment on Wallet {
+  balance
+  premium {
+    id
+    expiresAt
+    createdAt
+    updatedAt
+    product {
+      productId
+    }
+  }
+}

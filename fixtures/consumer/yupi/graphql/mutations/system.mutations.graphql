@@ -1,0 +1,24 @@
+mutation UploadCreate($blob: DirectUploadCreateInput!) {
+  directUploadCreate(input: $blob) {
+    directUpload {
+      signedId
+      blobId
+      url
+      headers {
+        name
+        value
+      }
+    }
+  }
+}
+
+mutation SystemPresence($state: PresenceState!) {
+  userPresenceSet(input: { state: $state }) {
+    viewer {
+      user {
+        id
+        online
+      }
+    }
+  }
+}

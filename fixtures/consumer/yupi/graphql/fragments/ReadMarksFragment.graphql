@@ -1,0 +1,11 @@
+fragment ReadMarksFragment on ReadMarks {
+  total
+  read
+  unread
+  readByViewer
+  latestReadAt
+  members {
+    userId
+    readAt
+  }
+}

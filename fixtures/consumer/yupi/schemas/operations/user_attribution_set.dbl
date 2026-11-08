@@ -1,0 +1,4 @@
+operation :user_attribution_set do
+  mutation "UserAttributionSet"
+  parameter :input, UserAttributionSetInput
+end

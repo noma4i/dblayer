@@ -1,0 +1,51 @@
+subscription momentUpdated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}
+
+subscription momentProcessing {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}
+
+subscription reactionCreated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+      parentId
+      reaction {
+        id
+        kind
+        targetId
+        targetType
+        actor {
+          ...UserStandardFragment
+        }
+      }
+    }
+  }
+}
+
+subscription systemMessage {
+  viewerNotice {
+    kind
+    title
+    body
+    occurredAt
+  }
+}

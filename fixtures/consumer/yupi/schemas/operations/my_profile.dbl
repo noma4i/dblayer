@@ -1,0 +1,12 @@
+operation :my_profile do
+  query "myProfile"
+  returns do
+    attribute :profile, MyProfileResultProfile do
+      attribute :hasPhoto, :bool
+      attribute :hasGoodPhoto, :bool
+    end
+    attribute :user, MyProfileResultUser do
+      attribute :avatarUrl, :string
+    end
+  end
+end

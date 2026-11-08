@@ -1,0 +1,24 @@
+fragment UserFullFragment on User {
+  id
+  fullName
+  username
+  avatarUrl
+  fullAvatarUrl
+  age
+  gender
+  description
+  story
+  online
+  lastSeenAt
+  distance
+  shareUrl
+  createdAt
+  updatedAt
+  country {
+    code
+    name
+  }
+  relationship {
+    ...RelationshipFragment
+  }
+}

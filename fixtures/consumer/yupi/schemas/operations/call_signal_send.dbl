@@ -1,0 +1,10 @@
+operation :call_signal_send do
+  mutation "CallSignalSend"
+  parameter :input, CallSignalSendInput
+  returns do
+    attribute :call, CallSignalSendResultCall do
+      attribute :id, :id
+      attribute :status, :string
+    end
+  end
+end

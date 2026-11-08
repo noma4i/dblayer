@@ -1,0 +1,17 @@
+subscription CustomScreenDocumentUpdated($slug: String!, $source: CustomScreenSourceKind = PUBLISHED) {
+  customScreenUpdated(slug: $slug, source: $source) {
+    slug
+    name
+    status
+    version
+    lockVersion
+    requires {
+      ios
+      android
+    }
+    spec: document {
+      ...CustomScreenSpecFragment
+    }
+    changedAt
+  }
+}

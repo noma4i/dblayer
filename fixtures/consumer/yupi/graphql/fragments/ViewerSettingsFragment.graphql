@@ -1,0 +1,22 @@
+fragment ViewerSettingsFragment on Viewer {
+  profile {
+    dateOfBirth
+    email
+    feedVariant
+    gender
+    phone
+    updatedAt
+  }
+  settings {
+    filters {
+      distanceKilometers
+      gender
+      maxAge
+      minAge
+    }
+    notifyConnections
+    notifyMessages
+    vibration
+    travelMode
+  }
+}

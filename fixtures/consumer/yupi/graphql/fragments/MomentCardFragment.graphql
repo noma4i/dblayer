@@ -1,0 +1,12 @@
+fragment MomentCardFragment on Moment {
+  ...MomentFragment
+  user {
+    ...UserStandardFragment
+  }
+  media {
+    ...MediaFragment
+  }
+  widgets {
+    ...MomentWidgetFragment
+  }
+}

@@ -1,0 +1,4 @@
+operation :chat_action_set do
+  mutation "ChatActionSet"
+  parameter :input, ChatActivitySetInput
+end

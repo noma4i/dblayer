@@ -1,0 +1,177 @@
+model Chat do
+  attribute :uuid, :string
+  attribute :kind, :enum, values: ["DIRECT", "GROUP", "SYSTEM"], as: ChatKind
+  attribute :status, :enum, values: ["PRIMARY", "SECONDARY"], as: ChatList, from: "viewerState.list"
+  attribute :lists, [:enum], values: ["PRIMARY", "SECONDARY"], as: ChatList, from: "viewerState.lists"
+  attribute :connectionStatus, :enum, values: ["CONNECTED", "NEVER_MET", "RECEIVED_PENDING", "SENT_PENDING"], as: ConnectionStatus, null: true, from: "viewerState.connectionStatus"
+  attribute :premium, :bool, from: "viewerState.premium"
+  attribute :name, :string, null: true
+  attribute :logoUrl, :string, null: true
+  attribute :description, :string, null: true
+  attribute :shareUrl, :string, null: true, optional: true
+  attribute :isPublic, :bool, optional: true
+  attribute :history, :enum, values: ["HIDDEN", "VISIBLE"], as: ChatHistory, optional: true
+  attribute :pinned, :bool, from: "viewerState.pinned"
+  attribute :muted, :bool, from: "viewerState.muted"
+  attribute :read, :bool, from: "viewerState.read"
+  attribute :unreadCount, :int, default: 0, from: "viewerState.unreadCount"
+  attribute :serverRevision, :int, from: "revision"
+  server_revision :serverRevision
+  attribute :messagesCount, :int
+  attribute :membersCount, :int
+  attribute :lastActivityAt, :date
+  attribute :lastMessageAt, :date, null: true
+  attribute :connectedAt, :date, null: true
+  attribute :lastSequenceNumber, :int, optional: true, local: true
+  attribute :mediaSequence, :int, optional: true, local: true
+  attribute :mediaVisualCount, :int, optional: true, local: true
+  attribute :mediaAudioCount, :int, optional: true, local: true
+  attribute :mediaGiftCount, :int, optional: true, local: true
+  attribute :readMarksSummary, ChatReadMarks, null: true, from: "viewerState.readMarks" do
+    attribute :latestReadAt, :string, null: true
+    attribute :memberReadStatus, [ChatReadMarksMember], null: true, from: "members" do
+      attribute :readAt, :string, null: true
+      attribute :userId, :id, null: true
+    end
+    attribute :total, :int, null: true
+    attribute :read, :int, null: true
+    attribute :unread, :int, null: true
+    attribute :readByCurrentUser, :bool, null: true, from: "readByViewer"
+  end
+  attribute :summary, ChatSummary, null: true do
+    attribute :body, :string
+    attribute :generatedAt, :string
+    attribute :id, :id, null: true
+    attribute :languageCode, :string, null: true
+  end
+  attribute :opponentId, :id, null: true, from: "opponent.id"
+  attribute :ownerId, :id, null: true, optional: true
+  attribute :lastMessageId, :id, null: true, optional: true, from: "lastMessage.id"
+  attribute :createdAt, :date
+  attribute :updatedAt, :date
+  index :kind
+  index :premium
+  index :pinned
+  index :lastActivityAt
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ChatNode"
+    variables id: :id
+    freshness expires_in: 5.minutes
+  end
+  changed_by "CHAT", via: :node, payload: "chat", removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "CHAT", via: :observed
+  changed_by "MESSAGE", via: :node, payload: "chat"
+  changed_by "COUNTERS", via: :observed
+  scope :by_uuid do
+    parameter :uuid, :string
+    where uuid: :uuid
+    query "chatByUuid"
+    freshness expires_in: 10.minutes, empty_in: 30.seconds
+  end
+  has_many :messages, dependent: :destroy
+  belongs_to :lastMessage, class_name: Message
+  belongs_to :owner, class_name: User
+  belongs_to :opponent, class_name: User
+  operation :create do
+    mutation "ChatGroupCreate"
+    wrap "input"
+    variables name: :name, userIds: :userIds, signedId: :signedId
+    parameter :userIds, [:id]
+    parameter :signedId, :string, null: true
+    response from: "groupChatCreate.chat"
+  end
+  operation :update do
+    mutation "ChatGroupUpdate"
+    wrap "input"
+    variables chatId: :id, name: :name, description: :description, history: :history, isPublic: :isPublic, ownerId: :ownerId, signedId: :signedId
+    parameter :signedId, :string, null: true
+    response from: "groupChatUpdate.chat"
+  end
+  operation :destroy do
+    mutation "ChatGroupDelete"
+    wrap "input"
+    variables chatId: :id
+  end
+  operation :create_photo, upload: true do
+    mutation "ChatGroupCreateFile"
+    optimistic false
+    response from: "groupChatCreate.chat"
+  end
+  operation :update_photo, upload: true do
+    mutation "ChatGroupUpdateFile"
+    optimistic false
+    response from: "groupChatUpdate.chat"
+  end
+  operation :mute do
+    mutation "ChatMute"
+    parameter :mute, :bool
+    variables chatId: :id, mute: :mute
+    optimistic muted: :mute
+    wrap "input"
+    response from: "chatMute.chat"
+  end
+  operation :pin do
+    mutation "ChatPin"
+    parameter :pin, :bool
+    variables chatId: :id, pin: :pin
+    optimistic pinned: :pin
+    wrap "input"
+    response from: "chatPin.chat"
+  end
+  operation :mark_read do
+    mutation "ChatRead"
+    variables chatId: :id
+    optimistic read: true, unreadCount: 0
+    wrap "input"
+    response from: "chatRead.chat"
+    refetch :profile, model: CurrentUser
+  end
+  operation :mark_secondary_read do
+    mutation "ChatSecondaryRead"
+    parameter :chatIds, [:id]
+    variables chatIds: :chatIds
+    optimistic read: true, unreadCount: 0
+    wrap "input"
+    response :ignore
+    refetch :profile, model: CurrentUser
+  end
+  operation :leave do
+    optimistic false
+    removes_receiver
+    mutation "ChatGroupLeave"
+    variables chatId: :id
+    wrap "input"
+    response :ignore
+    refetch :list
+  end
+  operation :add_members do
+    optimistic false
+    joins_scope :chat_members, model: User, rows: :userIds, with: { chatId: :id }, order: :order, orders: ["OWNER_FIRST", "JOINED"]
+    mutation "ChatGroupUpdate"
+    parameter :userIds, [:id]
+    variables chatId: :id, addUserIds: :userIds
+    wrap "input"
+    response from: "groupChatUpdate.chat"
+    refetch :chat_members, model: User
+  end
+  operation :remove_members do
+    optimistic false
+    leaves_scope :chat_members, model: User, rows: :userIds, with: { chatId: :id }, order: :order, orders: ["OWNER_FIRST", "JOINED"]
+    mutation "ChatGroupUpdate"
+    parameter :userIds, [:id]
+    variables chatId: :id, removeUserIds: :userIds
+    wrap "input"
+    response from: "groupChatUpdate.chat"
+    refetch :chat_members, model: User
+  end
+  scope :list, insert_on: [:event, :response, :node], refresh_on_foreground: true do
+    parameter :list, ChatList
+    membership list: { contains: :lists }
+    query "chats"
+    response from: "viewer.chats"
+    paginate size: 25, direction: :forward, max_pages: 20
+    freshness expires_in: 5.minutes
+    preload list: ["PRIMARY", "SECONDARY"]
+  end
+end

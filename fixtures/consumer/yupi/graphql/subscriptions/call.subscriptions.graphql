@@ -1,0 +1,26 @@
+subscription callEvents {
+  callEvents {
+    kind
+    occurredAt
+    call {
+      id
+      status
+      mediaKind
+      origin
+      peer {
+        id
+      }
+      direction
+      createdAt
+      answeredAt
+      endedAt
+    }
+    signal {
+      kind
+      sdp
+      candidate
+      sdpMid
+      sdpMLineIndex
+    }
+  }
+}

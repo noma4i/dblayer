@@ -1,0 +1,9 @@
+fragment ReactionFragment on MessageReaction {
+  id
+  body
+  createdAt
+  updatedAt
+  user {
+    ...UserMinimalFragment
+  }
+}

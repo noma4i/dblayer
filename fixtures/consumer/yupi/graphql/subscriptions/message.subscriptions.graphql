@@ -1,0 +1,47 @@
+subscription messageCreated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+      parentId
+    }
+  }
+}
+
+subscription messageUpdated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+      parentId
+    }
+  }
+}
+
+subscription messageDeleted {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+      parentId
+    }
+  }
+}
+
+subscription messageVideoProcessing {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+      parentId
+    }
+  }
+}

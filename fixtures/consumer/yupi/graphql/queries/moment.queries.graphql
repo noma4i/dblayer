@@ -1,0 +1,78 @@
+query myMoments($first: Int, $after: Cursor) {
+  viewer {
+    moments(first: $first, after: $after) {
+      edges {
+        cursor
+        impressionScore
+        impressionUuid
+        node {
+          ...MomentCardFragment
+          visitors(first: 3, order: ID_DESC) {
+            edges {
+              node {
+                ...UserStandardFragment
+              }
+            }
+          }
+        }
+      }
+      pageInfo {
+        ...PageInfoFragment
+      }
+    }
+  }
+}
+
+query momentByUuid($uuid: String!) {
+  momentByUuid(uuid: $uuid) {
+    ...MomentCardFragment
+  }
+}
+
+query userMoments($userId: ID!, $first: Int, $after: Cursor) {
+  user(id: $userId) {
+    moments(first: $first, after: $after) {
+      edges {
+        cursor
+        impressionScore
+        impressionUuid
+        node {
+          ...MomentCardFragment
+          visitors(first: 3, order: ID_DESC) {
+            edges {
+              node {
+                ...UserStandardFragment
+              }
+            }
+          }
+        }
+      }
+      pageInfo {
+        ...PageInfoFragment
+      }
+    }
+  }
+}
+
+query shadowBannedMoments($first: Int, $after: Cursor) {
+  shadowBannedMoments(first: $first, after: $after) {
+    totalCount
+    edges {
+      cursor
+      node {
+        ...MomentCardFragment
+        shadowBanned
+        shadowBannedAt
+        shadowBannedBy {
+          id
+          fullName
+          username
+          kind
+        }
+      }
+    }
+    pageInfo {
+      ...PageInfoFragment
+    }
+  }
+}

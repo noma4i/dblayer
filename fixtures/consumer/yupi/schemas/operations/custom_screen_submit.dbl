@@ -1,0 +1,7 @@
+operation :custom_screen_submit do
+  mutation "CustomScreenSubmit"
+  parameter :input, CustomScreenSubmitInput
+  returns do
+    attribute :ok, :bool
+  end
+end

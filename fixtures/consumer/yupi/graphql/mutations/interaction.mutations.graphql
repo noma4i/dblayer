@@ -1,0 +1,11 @@
+mutation InteractionTrack($input: InteractionTrackInput!) {
+  interactionTrack(input: $input) {
+    queued
+  }
+}
+
+mutation MessageView($input: MessageViewInput!) {
+  messageView(input: $input) {
+    viewed
+  }
+}

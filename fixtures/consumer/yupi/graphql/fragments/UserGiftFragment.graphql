@@ -1,0 +1,10 @@
+fragment UserGiftFragment on GiftAttachment {
+  createdAt
+  id
+  kind
+  status
+  updatedAt
+  gift {
+    ...GiftFragment
+  }
+}

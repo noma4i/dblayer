@@ -1,0 +1,13 @@
+model SearchResult do
+  attribute :momentIds, [:id], default: []
+  attribute :userIds, [:id], default: []
+  references :moments, foreign_key: :momentIds, from: "moments"
+  references :users, foreign_key: :userIds, from: "users"
+  scope :for_query do
+    parameter :id, :id
+    where id: :id
+    query "search"
+    variables query: :id
+    freshness expires_in: 1.minute
+  end
+end

@@ -1,0 +1,34 @@
+model DeveloperCustomScreen, storage: :memory do
+  attribute :id, :id, from: "slug"
+  attribute :slug, :string
+  attribute :name, :string
+  attribute :status, :enum, values: ["ARCHIVED", "DRAFT", "PUBLISHED"], as: CustomScreenStatus
+  attribute :triggerKey, :string, null: true
+  attribute :publishedVersion, :int
+  attribute :lockVersion, :int
+  attribute :hasUnpublishedChanges, :bool
+  attribute :requires, DeveloperScreenRequires, null: true do
+    attribute :ios, :int, null: true
+    attribute :android, :int, null: true
+  end
+  attribute :updatedAt, :date
+  attribute :versions, [DeveloperScreenVersion], default: [] do
+    attribute :number, :int
+    attribute :note, :string, null: true
+    attribute :actor, :string
+    attribute :source, :enum, values: ["HUMAN", "MCP"], as: CustomScreenActorSource
+    attribute :catalogVersion, :int, null: true
+    attribute :requires, DeveloperScreenVersionRequires do
+      attribute :ios, :int, null: true
+      attribute :android, :int, null: true
+    end
+    attribute :createdAt, :date
+  end
+  scope :all do
+    order updatedAt: :desc
+    query "developerCustomScreens"
+    response shape: :list
+    freshness expires_in: 30.seconds
+  end
+  changed_by "CUSTOM_SCREEN", via: :observed
+end

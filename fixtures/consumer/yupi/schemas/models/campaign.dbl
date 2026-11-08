@@ -1,0 +1,32 @@
+model Campaign do
+  attribute :title, :string, null: true
+  attribute :subtitle, :string, null: true
+  attribute :triggerLogic, :enum, values: ["ALL", "ANY"], as: CampaignTriggerLogic
+  attribute :creditAmount, :int
+  attribute :benefits, [:string], default: []
+  attribute :triggerRules, [CampaignTriggerRule], default: [] do
+    attribute :metric, :enum, values: ["FEED_SWIPES", "PROFILE_VIEWS", "SCREENS_VIEWED", "SECONDS_IN_APP"], as: CampaignTriggerMetric
+    attribute :threshold, :int
+  end
+  scope :active do
+    query "activeCampaigns"
+    response shape: :list
+    freshness expires_in: 1.minute
+    preload
+  end
+  operation :redeem do
+    mutation "CampaignRedeem"
+    variables campaignId: :id
+    wrap "input"
+    optimistic false
+    response :ignore
+    refetch :profile, model: CurrentUser
+  end
+  operation :skip do
+    mutation "CampaignSkip"
+    variables campaignId: :id
+    wrap "input"
+    optimistic false
+    response :ignore
+  end
+end

@@ -1,0 +1,197 @@
+model User do
+  scope :chat_members do
+    parameter :chatId, :string
+    parameter :order, ChatMemberOrder, default: "OWNER_FIRST"
+    query "chatMembers"
+    response from: "node.members"
+    paginate size: 30, direction: :forward
+    freshness expires_in: 5.minutes
+    total from: "node.membersCount"
+  end
+  scope :by_uuid do
+    parameter :uuid, :string
+    query "userByUuid"
+    freshness expires_in: 5.minutes
+  end
+  scope :visitors do
+    parameter :momentId, :string
+    query "momentVisitors"
+    response from: "node.visitors"
+    paginate size: 20, direction: :forward
+    freshness expires_in: 5.minutes
+  end
+  attribute :fullName, :string
+  attribute :username, :string
+  attribute :avatarUrl, :string, null: true
+  attribute :fullAvatarUrl, :string, null: true
+  attribute :age, :int, null: true
+  attribute :gender, :enum, values: ["FEMALE", "INDETERMINATE", "MALE"], as: Gender, null: true
+  attribute :description, :string, null: true
+  attribute :story, :string, null: true
+  attribute :connectionStatus, :enum, values: ["CONNECTED", "NEVER_MET", "RECEIVED_PENDING", "SENT_PENDING"], as: ConnectionStatus, null: true, from: "relationship.status"
+  attribute :connectionChatId, :id, null: true, from: "relationship.chatId"
+  attribute :lastInteraction, :enum, values: ["GIFT", "MOMENT_REACTION", "NO_INTERACTION", "VIDEO_INTRO"], as: LastInteraction, null: true, from: "relationship.lastInteraction"
+  attribute :online, :bool
+  attribute :lastSeenAt, :date, null: true
+  attribute :distance, :num, null: true
+  attribute :shareUrl, :string, optional: true
+  attribute :countryName, :string, null: true, from: "country.name"
+  attribute :countryCode, :string, null: true, from: "country.code"
+  attribute :createdAt, :date
+  attribute :updatedAt, :date
+  attribute :kind, :enum, values: ["BOT", "DEVELOPER", "MANAGED", "REGULAR"], as: UserKind, null: true, optional: true
+  attribute :registeredAt, :date, null: true, optional: true
+  attribute :registrationCompleted, :bool, null: true, optional: true
+  attribute :status, :enum, values: ["DEACTIVATED", "DISABLED", "ENABLED", "LIMITED"], as: AccountStatus, null: true, optional: true
+  attribute :limitedReason, :string, null: true, optional: true
+  attribute :language, :string, null: true, optional: true
+  attribute :tags, [:string], null: true, optional: true
+  attribute :appVersion, :string, null: true, optional: true
+  attribute :phone, :string, null: true, optional: true
+  attribute :email, :string, null: true, optional: true
+  attribute :authProvider, :string, null: true, optional: true
+  attribute :feedVariant, :enum, values: ["EXPLORING", "FIND_LOVE", "MAKE_FRIENDS", "MEET_LOCALS", "SPORTS_GAMES"], as: FeedVariant, null: true, optional: true
+  attribute :detectedGender, :enum, values: ["FEMALE", "INDETERMINATE", "MALE"], as: Gender, null: true, optional: true
+  attribute :locationPinned, :bool, null: true, optional: true
+  attribute :ipCountryCode, :string, null: true, optional: true
+  attribute :locationCountry, :string, null: true, optional: true, from: "location.country"
+  attribute :locationState, :string, null: true, optional: true, from: "location.state"
+  attribute :locationCity, :string, null: true, optional: true, from: "location.city"
+  attribute :locationSuburb, :string, null: true, optional: true, from: "location.suburb"
+  attribute :premiumDaysLeft, :int, null: true, optional: true, from: "premiumGrant.daysLeft"
+  attribute :premiumExpiresAt, :date, null: true, optional: true, from: "premiumGrant.expiresAt"
+  attribute :premiumPrice, :string, null: true, optional: true, from: "premiumGrant.localizedPrice"
+  attribute :balance, :int, null: true, optional: true
+  attribute :ledgerEntriesCount, :int, null: true, optional: true
+  attribute :momentsCount, :int, null: true, optional: true
+  attribute :reactionsCount, :int, null: true, optional: true
+  attribute :messagesCount, :int, null: true, optional: true
+  attribute :connectionsCount, :int, null: true, optional: true
+  attribute :lastMomentAt, :date, null: true, optional: true
+  attribute :notificationsMuted, :bool, null: true, optional: true
+  attribute :deviceBrand, :string, null: true, optional: true, from: "device.brand"
+  attribute :deviceModel, :string, null: true, optional: true, from: "device.deviceModel"
+  attribute :deviceOs, :string, null: true, optional: true, from: "device.deviceOs"
+  attribute :deviceLanguage, :string, null: true, optional: true, from: "device.language"
+  has_many :moments, dependent: :destroy
+  scope :developer do
+    parameter :id, :id
+    where id: :id
+    query "userDeveloper"
+    freshness expires_in: 1.minute
+  end
+  scope :details do
+    parameter :id, :id
+    where id: :id
+    query "userProfileWithMoments"
+    variables first: 21
+    freshness expires_in: 5.minutes
+  end
+  scope :blocked do
+    query "blockedUsers"
+    response from: "viewer.blockedUsers"
+    paginate size: 20, direction: :forward
+    freshness expires_in: 3.days
+    preload
+  end
+  scope :friends do
+    query "friendUsers"
+    response from: "viewer.friends"
+    paginate size: 50, direction: :forward
+    freshness expires_in: 3.days
+    preload
+  end
+  scope :friend_search do
+    parameter :query, :string
+    query "search"
+    variables scope: "USERS", friends: true
+    response from: "search.users", shape: :list
+    freshness expires_in: 1.minute
+  end
+  operation :answer_connection do
+    mutation "ConnectionUpdate"
+    parameter :decision, ConnectionAction
+    parameter :status, ConnectionStatus
+    variables userId: :id, action: :decision
+    optimistic connectionStatus: :status
+    wrap "input"
+    upsert Chat, from: "connectionUpdate.chat"
+    response from: "connectionUpdate.user"
+    refetch :profile, model: CurrentUser
+    refetch :thread, model: Message
+    refetch :list, model: Chat
+  end
+  operation :send_gift do
+    optimistic false
+    mutation "GiftSend"
+    parameter :giftId, :string
+    variables userId: :id, giftId: :giftId
+    wrap "input"
+    upsert Message, from: "giftSend.message"
+    upsert WalletTransaction, from: "giftSend.transactionEdge.node"
+    returns do
+      attribute :successMessage, :string
+    end
+    response from: "giftSend.user"
+    refetch :profile, model: CurrentUser
+  end
+  operation :send_gift_with_note do
+    optimistic false
+    mutation "GiftSend"
+    parameter :giftId, :string
+    parameter :text, :string
+    variables userId: :id, giftId: :giftId, text: :text
+    wrap "input"
+    upsert Message, from: "giftSend.message"
+    upsert WalletTransaction, from: "giftSend.transactionEdge.node"
+    returns do
+      attribute :successMessage, :string
+    end
+    response from: "giftSend.user"
+    refetch :profile, model: CurrentUser
+  end
+  operation :send_gift_with_prompt do
+    optimistic false
+    mutation "GiftSend"
+    parameter :giftId, :string
+    parameter :messagePromptId, :string
+    variables userId: :id, giftId: :giftId, messagePromptId: :messagePromptId
+    wrap "input"
+    upsert Message, from: "giftSend.message"
+    upsert WalletTransaction, from: "giftSend.transactionEdge.node"
+    returns do
+      attribute :successMessage, :string
+    end
+    response from: "giftSend.user"
+    refetch :profile, model: CurrentUser
+  end
+  operation :send_intro, upload: true do
+    optimistic false
+    mutation "IntroSend"
+    parameter :signedId, :string
+    variables userId: :id, signedId: :signedId
+    wrap "input"
+    upsert WalletTransaction, from: "introSend.transactionEdge.node"
+    returns do
+      attribute :successMessage, :string
+    end
+    response from: "introSend.user"
+    refetch :profile, model: CurrentUser
+  end
+  operation :block do
+    optimistic false
+    mutation "UserBlock"
+    variables userId: :id
+    wrap "input"
+    response :ignore
+    refetch :blocked
+  end
+  operation :unblock do
+    optimistic false
+    mutation "UserUnblock"
+    variables userId: :id
+    wrap "input"
+    response :ignore
+    refetch :blocked
+  end
+end

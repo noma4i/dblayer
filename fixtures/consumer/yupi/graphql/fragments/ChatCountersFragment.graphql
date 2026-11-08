@@ -1,0 +1,8 @@
+fragment ChatCountersFragment on ChatCounters {
+  primaryChats
+  secondaryChats
+  premiumSecondaryChats
+  unreadChats
+  unreadSecondaryChats
+  unreadMessages
+}

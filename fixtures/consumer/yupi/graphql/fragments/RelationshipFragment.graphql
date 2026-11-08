@@ -1,0 +1,5 @@
+fragment RelationshipFragment on UserRelationship {
+  status
+  chatId
+  lastInteraction
+}

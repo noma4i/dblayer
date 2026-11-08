@@ -1,0 +1,18 @@
+fragment MediaFragment on MessageMedia {
+  blobId
+  blurHash
+  coverUrl
+  createdAt
+  duration
+  fileUrl
+  gifUrl
+  height
+  kind
+  thumbUrl
+  transcoded
+  transcodeStatus
+  transcodeProgress
+  transcodeError
+  updatedAt
+  width
+}

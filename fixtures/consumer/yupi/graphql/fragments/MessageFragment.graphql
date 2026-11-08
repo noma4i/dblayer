@@ -1,0 +1,128 @@
+fragment MessageFragment on Message {
+  id
+  body
+  kind
+  status
+  createdAt
+  updatedAt
+  modifiedAt
+  chatId
+  oneTime
+  expired
+  expiresAt
+  isSystem
+  systemKind
+  isForwarded
+  isReply
+  unread
+  sequenceNumber
+  mediaGroup {
+    id
+    position
+    size
+  }
+  transcribed
+  transcript
+  prompt {
+    id
+    text
+    translations {
+      locale
+      text
+    }
+  }
+  author {
+    ...UserMinimalFragment
+  }
+  forwardedFrom {
+    id
+  }
+  media {
+    ...MediaFragment
+  }
+  attachment {
+    __typename
+    ... on MomentAttachment {
+      ...AttachedMomentUserFragment
+      reaction {
+        id
+        body
+        createdAt
+        updatedAt
+        user {
+          ...UserMinimalFragment
+        }
+      }
+    }
+    ... on GiftAttachment {
+      id
+      giftTier: kind
+      status
+      createdAt
+      updatedAt
+      gift {
+        ...GiftFragment
+      }
+      moment {
+        ...AttachedMomentUserFragment
+      }
+    }
+    ... on ProfileAttachment {
+      user {
+        id
+        fullName
+        username
+        avatarUrl
+      }
+    }
+    ... on ReactionAttachment {
+      id
+      body
+      createdAt
+      updatedAt
+      user {
+        ...UserMinimalFragment
+      }
+    }
+  }
+  location {
+    ...LocationFragment
+  }
+  replyTo {
+    id
+    body
+    kind
+    createdAt
+    status
+    chatId
+    oneTime
+    isSystem
+    replyTo {
+      id
+    }
+    forwardedFrom {
+      id
+    }
+    prompt {
+      id
+      text
+      translations {
+        locale
+        text
+      }
+    }
+    author {
+      ...UserMinimalFragment
+    }
+    media {
+      ...MediaFragment
+    }
+  }
+  reactions {
+    ...ReactionFragment
+  }
+  mentions {
+    id
+    username
+  }
+}

@@ -1,0 +1,4 @@
+operation :system_presence do
+  mutation "SystemPresence"
+  parameter :state, PresenceState
+end

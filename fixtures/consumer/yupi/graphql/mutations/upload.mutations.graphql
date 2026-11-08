@@ -1,0 +1,46 @@
+mutation CreateBlob($filename: String!, $contentType: String, $byteSize: Int64!, $checksum: String!) {
+  directUploadCreate(input: { filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum }) {
+    directUpload {
+      signedId
+      blobId
+      url
+      headers {
+        name
+        value
+      }
+    }
+  }
+}
+
+mutation MultipartUploadInit($filename: String!, $contentType: String, $byteSize: Int64!, $checksum: String!) {
+  multipartUploadInit(input: { filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum }) {
+    multipartUpload {
+      signedId
+      blobId
+      key
+      uploadId
+    }
+  }
+}
+
+mutation MultipartUploadPresignParts($key: String!, $uploadId: String!, $partNumbers: [Int!]!) {
+  multipartUploadPresign(input: { key: $key, uploadId: $uploadId, partNumbers: $partNumbers }) {
+    parts {
+      partNumber
+      url
+    }
+  }
+}
+
+mutation MultipartUploadComplete($key: String!, $uploadId: String!, $parts: [MultipartUploadCompletedPartInput!]!) {
+  multipartUploadComplete(input: { key: $key, uploadId: $uploadId, parts: $parts }) {
+    signedId
+    blobId
+  }
+}
+
+mutation MultipartUploadAbort($key: String!, $uploadId: String!) {
+  multipartUploadAbort(input: { key: $key, uploadId: $uploadId }) {
+    aborted
+  }
+}

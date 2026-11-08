@@ -1,0 +1,7 @@
+operation :support_request_create do
+  mutation "SupportRequestCreate"
+  parameter :input, SupportRequestCreateInput
+  returns do
+    attribute :ok, :bool
+  end
+end

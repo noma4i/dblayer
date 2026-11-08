@@ -1,0 +1,23 @@
+mutation RegistrationProfileUpdate($input: ProfileUpdateInput!) {
+  profileUpdate(input: $input) {
+    viewer {
+      user {
+        id
+      }
+    }
+  }
+}
+
+mutation UserRegistrationComplete {
+  registrationComplete {
+    viewer {
+      user {
+        id
+      }
+      profile {
+        feedVariant
+        registrationCompleted
+      }
+    }
+  }
+}

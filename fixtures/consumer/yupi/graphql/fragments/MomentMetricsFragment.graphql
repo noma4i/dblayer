@@ -1,0 +1,22 @@
+fragment MomentMetricsFragment on MomentMetrics {
+  description
+  qualityScore
+  qualityScoreReason
+  aiScore
+  aiScoreReason
+  contentRating
+  contentRatingReason
+  analyzeStatus
+  analyzedAt
+  keywords
+  objects
+  scenes
+  moods
+  genders
+  compatibilityIndicators
+  styleLifestyles
+  colors {
+    name
+    weight
+  }
+}

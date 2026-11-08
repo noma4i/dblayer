@@ -1,0 +1,57 @@
+query transactions($kindFilter: LedgerEntryKind, $first: Int, $after: Cursor) {
+  viewer {
+    wallet {
+      transactions(kind: $kindFilter, first: $first, after: $after) {
+        edges {
+          node {
+            ...TransactionFragment
+          }
+        }
+        pageInfo {
+          ...PageInfoFragment
+        }
+      }
+    }
+  }
+}
+
+query gifts($first: Int, $after: Cursor) {
+  gifts(first: $first, after: $after) {
+    edges {
+      node {
+        ...GiftFragment
+      }
+    }
+    pageInfo {
+      ...PageInfoFragment
+    }
+  }
+}
+
+query storeSkus($kind: PurchaseKind!) {
+  storeProducts(kind: $kind) {
+    edges {
+      node {
+        ...StoreSkuFragment
+      }
+    }
+    pageInfo {
+      ...PageInfoFragment
+    }
+  }
+}
+
+query activeCampaigns {
+  eligibleCampaigns {
+    id
+    creditAmount
+    title
+    subtitle
+    benefits
+    triggerLogic
+    triggerRules {
+      metric
+      threshold
+    }
+  }
+}

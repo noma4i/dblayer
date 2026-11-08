@@ -1,0 +1,16 @@
+operation :giphy_load do
+  query "giphy"
+  parameter :type, GiphyKind
+  parameter :query, :string, null: true
+  parameter :offset, :int, null: true
+  parameter :limit, :int, null: true
+  returns do
+    attribute :items, [GiphyLoadResultItems] do
+      attribute :id, :id
+      attribute :title, :string
+      attribute :url, :string
+      attribute :isSticker, :bool
+    end
+    attribute :nextOffset, :int
+  end
+end

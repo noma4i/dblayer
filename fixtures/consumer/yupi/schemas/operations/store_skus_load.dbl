@@ -1,0 +1,17 @@
+operation :store_skus_load do
+  query "storeSkus"
+  parameter :kind, PurchaseKind
+  returns do
+    attribute :edges, [StoreSkusLoadResultEdges] do
+      attribute :node, StoreSkusLoadResultEdgesNode do
+        attribute :id, :id
+        attribute :productId, :string
+        attribute :title, :string
+        attribute :creditAmount, :int
+        attribute :premium, :bool
+        attribute :duration, :int
+        attribute :position, :int
+      end
+    end
+  end
+end

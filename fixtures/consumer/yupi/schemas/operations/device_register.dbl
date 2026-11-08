@@ -1,0 +1,4 @@
+operation :device_register do
+  mutation "DeviceRegister"
+  parameter :input, DeviceRegisterInput
+end

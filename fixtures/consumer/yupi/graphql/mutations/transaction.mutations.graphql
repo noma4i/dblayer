@@ -1,0 +1,56 @@
+mutation GiftSend($input: GiftSendInput!) {
+  giftSend(input: $input) {
+    gift {
+      ...UserGiftFragment
+    }
+    message {
+      ...MessageFragment
+    }
+    user {
+      ...UserStandardFragment
+    }
+    wallet {
+      ...WalletFragment
+    }
+    transactionEdge {
+      node {
+        ...TransactionFragment
+      }
+    }
+    successMessage
+  }
+}
+
+mutation GiftOpen($input: GiftOpenInput!) {
+  giftOpen(input: $input) {
+    gift {
+      ...UserGiftFragment
+      linkedMessage {
+        ...MessageFragment
+      }
+    }
+  }
+}
+
+mutation PurchaseCreate($input: PurchaseCreateInput!) {
+  purchaseCreate(input: $input) {
+    transactionDisposition
+    wallet {
+      ...WalletFragment
+    }
+  }
+}
+
+mutation CampaignRedeem($input: CampaignRedeemInput!) {
+  campaignRedeem(input: $input) {
+    wallet {
+      ...WalletFragment
+    }
+  }
+}
+
+mutation CampaignSkip($input: CampaignSkipInput!) {
+  campaignSkip(input: $input) {
+    status
+  }
+}

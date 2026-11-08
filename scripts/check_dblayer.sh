@@ -38,6 +38,7 @@ steps=(
   "cargo|cargo-test-gen|300|gen/ Cargo.|$slot cargo-step cargo test -p dblayer-gen"
   "cargo|fixtures|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures.sh --check"
   "cargo|fixtures-args|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures_test.sh"
+  "cargo|consumer-corpus|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_consumer_corpus.sh --check"
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"
   "swift|swift-test|300|swift/|$slot swift-step swift test --package-path swift --no-parallel --enable-code-coverage -Xswiftc -Xllvm -Xswiftc -instrprof-atomic-counter-update-all"
   "swift|ios-sim-compile|600|swift/|cd swift && $slot xcodebuild-step xcodebuild build -scheme DBlayer -destination 'generic/platform=iOS Simulator' ARCHS=arm64 -derivedDataPath ../target/dd-swift.noindex -quiet"

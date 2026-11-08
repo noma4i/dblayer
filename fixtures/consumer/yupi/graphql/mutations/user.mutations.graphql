@@ -1,0 +1,99 @@
+mutation UserUpdate($input: ProfileUpdateInput!) {
+  profileUpdate(input: $input) {
+    viewer {
+      user {
+        ...UserStandardFragment
+      }
+      ...ViewerSettingsFragment
+      profile {
+        location {
+          ...LocationFragment
+        }
+        mainPhoto {
+          ...UserPhotoFragment
+          media {
+            ...MediaFragment
+          }
+        }
+      }
+      wallet {
+        ...WalletFragment
+      }
+    }
+  }
+}
+
+mutation UserPhotoUpdate($input: UserPhotoUpdateInput!) {
+  userPhotoUpdate(input: $input) {
+    moment {
+      id
+    }
+    userPhoto {
+      ...UserPhotoFragment
+      media {
+        thumbUrl
+      }
+    }
+    viewer {
+      user {
+        ...PublicUserFragment
+      }
+    }
+  }
+}
+
+mutation UserLocationUpdate($input: UserLocationUpdateInput!) {
+  userLocationUpdate(input: $input) {
+    location {
+      ...LocationFragment
+    }
+    viewer {
+      user {
+        id
+        updatedAt
+      }
+    }
+  }
+}
+
+mutation UserDelete($input: UserDeleteInput!) {
+  userDelete(input: $input) {
+    deletedUserId
+  }
+}
+
+mutation FeedbackSend($input: FeedbackSendInput!) {
+  feedbackSend(input: $input) {
+    sent
+  }
+}
+
+mutation DeviceRegister($input: DeviceRegisterInput!) {
+  deviceRegister(input: $input) {
+    viewer {
+      user {
+        id
+      }
+    }
+  }
+}
+
+mutation DeviceUnregister($input: DeviceUnregisterInput!) {
+  deviceUnregister(input: $input) {
+    viewer {
+      user {
+        id
+      }
+    }
+  }
+}
+
+mutation UserAttributionSet($input: UserAttributionSetInput!) {
+  userAttributionSet(input: $input) {
+    viewer {
+      user {
+        id
+      }
+    }
+  }
+}

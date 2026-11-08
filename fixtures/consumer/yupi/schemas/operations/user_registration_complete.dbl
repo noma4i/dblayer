@@ -1,0 +1,10 @@
+operation :user_registration_complete do
+  mutation "UserRegistrationComplete"
+  returns do
+    attribute :viewer, UserRegistrationCompleteResultViewer do
+      attribute :profile, UserRegistrationCompleteResultViewerProfile do
+        attribute :registrationCompleted, :bool
+      end
+    end
+  end
+end

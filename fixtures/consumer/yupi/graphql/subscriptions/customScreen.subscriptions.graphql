@@ -1,0 +1,10 @@
+subscription customScreenUpdated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}

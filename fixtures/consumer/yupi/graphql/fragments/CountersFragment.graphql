@@ -1,0 +1,8 @@
+fragment CountersFragment on ViewerCounters {
+  primaryChats
+  secondaryChats
+  premiumSecondaryChats
+  unreadChats
+  unreadSecondaryChats
+  unreadCompass
+}

@@ -1,0 +1,24 @@
+fragment MomentFragment on Moment {
+  compassTitle
+  compassUpdatedAt
+  contentKind
+  createdAt
+  id
+  kind
+  reacted
+  shadowBanned
+  shareUrl
+  similarMomentsCount
+  status
+  unreadCount
+  unreadSimilarMomentsCount
+  updatedAt
+  uuid
+  visitsCount
+  user {
+    id
+  }
+  metrics {
+    ...MomentMetricsFragment
+  }
+}

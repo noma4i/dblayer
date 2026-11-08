@@ -1,0 +1,17 @@
+fragment CustomScreenSpecFragment on CustomScreenSpec {
+  root
+  state {
+    path
+    value
+  }
+  elements {
+    id
+    type
+    slot
+    children
+    props
+    visible
+    press
+    change
+  }
+}

@@ -1,0 +1,14 @@
+query unseenConnections {
+  unseenConnections {
+    acceptedAt
+    user {
+      id
+      fullName
+      avatarUrl
+    }
+    chat {
+      id
+      connectedAt
+    }
+  }
+}

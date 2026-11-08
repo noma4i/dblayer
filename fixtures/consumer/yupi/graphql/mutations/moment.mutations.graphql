@@ -1,0 +1,68 @@
+mutation MomentCreateFile($signedId: String!, $widgets: [MomentWidgetInput!]) {
+  momentCreate(input: { signedId: $signedId, widgets: $widgets }) {
+    moment {
+      ...MomentCardFragment
+    }
+  }
+}
+
+mutation MomentDelete($input: MomentDeleteInput!) {
+  momentDelete(input: $input) {
+    deletedId
+  }
+}
+
+mutation IntroSend($input: IntroSendInput!) {
+  introSend(input: $input) {
+    user {
+      ...PublicUserFragment
+    }
+    wallet {
+      ...WalletFragment
+    }
+    transactionEdge {
+      node {
+        ...TransactionFragment
+      }
+    }
+    successMessage
+  }
+}
+
+mutation MomentViewTrack($input: MomentViewInput!) {
+  momentView(input: $input) {
+    viewed
+  }
+}
+
+mutation MomentShadowBan($input: MomentShadowBanInput!) {
+  momentShadowBan(input: $input) {
+    ok
+    moment {
+      ...MomentCardFragment
+      shadowBannedAt
+      shadowBannedBy {
+        id
+        fullName
+        username
+        kind
+      }
+    }
+  }
+}
+
+mutation MomentShadowBanRemove($input: MomentShadowBanRemoveInput!) {
+  momentShadowBanRemove(input: $input) {
+    ok
+    moment {
+      ...MomentCardFragment
+      shadowBannedAt
+      shadowBannedBy {
+        id
+        fullName
+        username
+        kind
+      }
+    }
+  }
+}

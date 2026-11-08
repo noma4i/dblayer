@@ -1,0 +1,12 @@
+fragment GiftFragment on Gift {
+  animationUrl
+  cost
+  createdAt
+  description
+  id
+  imageUrl
+  name
+  price
+  status
+  updatedAt
+}

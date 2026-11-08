@@ -1,0 +1,288 @@
+model Message do
+  scope :node, node: :one do
+    parameter :id, :id
+    query "MessageNode"
+    variables id: :id
+    freshness expires_in: 5.minutes
+  end
+  changes "DblayerViewerChanges", from: "viewerChanges.changes", area: "area", kind: "kind", id: "entityId"
+  changed_by "MESSAGE", via: :node, payload: "message", removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "REACTION", via: :node, payload: "message"
+  scope :transcode_status, node: :one do
+    parameter :id, :id
+    query "MessageTranscodeStatus"
+    variables id: :id
+  end
+  scope :thread, insert_on: [:event, :response, :node], stable_order: true do
+    parameter :chatId, :id
+    where chatId: :chatId
+    order sequenceNumber: :asc_nulls_last, createdAt: :asc
+    query "chatThread"
+    response from: "node.messages"
+    paginate size: 25, direction: :forward
+    freshness expires_in: 5.minutes
+  end
+  scope :visual_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches mediaKind: { in: ["IMAGE", "VIDEO"] }
+    order createdAt: :desc
+    query "chatMedia"
+    variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+    freshness expires_in: 365.days
+  end
+  scope :audio_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches mediaKind: { equals: "AUDIO" }
+    order createdAt: :desc
+    query "chatMedia"
+    variables mediaKinds: ["AUDIO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+    freshness expires_in: 365.days
+  end
+  scope :gift_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches kind: { equals: "GIFT" }
+    order createdAt: :desc
+    query "chatMedia"
+    variables includeGifts: true
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+    freshness expires_in: 365.days
+  end
+  scope :visual_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches mediaKind: { in: ["IMAGE", "VIDEO"] }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc, createdAt: :asc
+    query "chatMedia"
+    variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+    freshness expires_in: 5.minutes
+  end
+  scope :audio_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches mediaKind: { equals: "AUDIO" }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc, createdAt: :asc
+    query "chatMedia"
+    variables mediaKinds: ["AUDIO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+    freshness expires_in: 5.minutes
+  end
+  scope :gifts_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches kind: { equals: "GIFT" }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc, createdAt: :asc
+    query "chatMedia"
+    variables includeGifts: true
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+    freshness expires_in: 5.minutes
+  end
+  attribute :chatId, :id
+  attribute :userId, :id, null: true, from: "author.id"
+  attribute :body, :string, null: true
+  attribute :kind, :enum, values: ["AUDIO", "GIF", "GIFT", "MESSAGE_PROMPT", "MOMENT", "MOMENT_REACTION", "PROFILE", "STICKER", "SYSTEM", "TEXT", "VIDEO", "VIDEO_INTRO"], as: MessageKind
+  attribute :status, :enum, values: ["FAILED", "SENDING", "SENT", "VIEWED"], as: MessageStatus, default: :SENDING
+  attribute :createdAt, :date
+  attribute :updatedAt, :date
+  attribute :modifiedAt, :date, null: true
+  attribute :oneTime, :bool, default: false
+  attribute :expired, :bool, default: false
+  attribute :expiresAt, :date, null: true
+  attribute :isSystem, :bool, default: false
+  attribute :systemKind, :enum, values: ["CONNECTION_ACCEPTED", "TEXT"], as: SystemMessageKind, null: true
+  attribute :isForwarded, :bool, default: false
+  attribute :isReply, :bool, default: false
+  attribute :unread, :bool, default: false
+  attribute :sequenceNumber, :int, null: true
+  attribute :mediaGroup, MessageMediaGroup, null: true do
+    attribute :id, :id
+    attribute :position, :int
+    attribute :size, :int
+  end
+  attribute :clientKey, :string, null: true
+  attribute :replyToId, :id, null: true, from: "replyTo.id"
+  attribute :forwardedFromUserId, :id, null: true, from: "forwardedFrom.id"
+  attribute :media, MomentMedia, null: true, merge: { fileUrl: :non_empty, thumbUrl: :non_empty, coverUrl: :non_empty, gifUrl: :non_empty, width: :positive, height: :positive, transcodeStatus: [[:PENDING, :SUBMITTED, :PROGRESSING], [:COMPLETED, :FAILED]], transcodeProgress: :monotonic }
+  attribute :mediaKind, :enum, values: ["AUDIO", "IMAGE", "VIDEO"], as: MediaKind, null: true, from: "media.kind"
+  attribute :localPreviewUrl, :string, optional: true, local: true
+  attribute :giftOpened, :bool, optional: true, local: true
+  attribute :location, MessageLocationNode, null: true do
+    attribute :city, :string, null: true
+    attribute :name, :string, null: true
+    attribute :address, :string, null: true
+    attribute :lat, :num, null: true
+    attribute :lng, :num, null: true
+  end
+  attribute :transcribed, :bool, default: false
+  attribute :transcript, :string, null: true
+  attribute :prompt, MessagePromptContent, null: true do
+    attribute :id, :id
+    attribute :text, :string
+    attribute :translations, [MessagePromptTranslation], default: [] do
+      attribute :locale, :string
+      attribute :text, :string
+    end
+  end
+  attribute :reactions, [MessageReactionNode], default: [] do
+    attribute :id, :id, null: true
+    attribute :body, :string, null: true
+    attribute :userId, :id, null: true, from: "user.id"
+    attribute :user, MessageUserRef, null: true, ref: User, id: :userId do
+      attribute :id, :id, null: true
+      attribute :fullName, :string, null: true
+      attribute :username, :string, null: true
+      attribute :avatarUrl, :string, null: true
+      attribute :connectionStatus, :enum, values: ["CONNECTED", "NEVER_MET", "RECEIVED_PENDING", "SENT_PENDING"], as: ConnectionStatus, null: true, from: "relationship.status"
+      attribute :connectionChatId, :id, null: true, from: "relationship.chatId"
+      attribute :online, :bool, null: true
+      attribute :lastSeenAt, :string, null: true
+      attribute :lastInteraction, :enum, values: ["GIFT", "MOMENT_REACTION", "NO_INTERACTION", "VIDEO_INTRO"], as: LastInteraction, null: true, from: "relationship.lastInteraction"
+      attribute :createdAt, :string, null: true
+      attribute :updatedAt, :string, null: true
+    end
+    attribute :createdAt, :string, null: true
+    attribute :updatedAt, :string, null: true
+  end
+  attribute :mentions, [MessageMentionNode], default: [] do
+    attribute :id, :id
+    attribute :username, :string
+  end
+  attribute :replyTo, MessageReplyNode, null: true do
+    attribute :id, :id, null: true
+    attribute :body, :string, null: true
+    attribute :kind, :enum, values: ["AUDIO", "GIF", "GIFT", "MESSAGE_PROMPT", "MOMENT", "MOMENT_REACTION", "PROFILE", "STICKER", "SYSTEM", "TEXT", "VIDEO", "VIDEO_INTRO"], as: MessageKind, null: true
+    attribute :userId, :id, null: true, from: "author.id"
+    attribute :user, MessageUserRef, null: true, from: "author"
+    attribute :media, MomentMedia, null: true
+    attribute :createdAt, :string, null: true
+    attribute :status, :enum, values: ["FAILED", "SENDING", "SENT", "VIEWED"], as: MessageStatus, null: true
+    attribute :chatId, :id, null: true
+    attribute :replyToId, :id, null: true, from: "replyTo.id"
+    attribute :oneTime, :bool, null: true
+    attribute :isSystem, :bool, null: true
+    attribute :forwardedFromUserId, :id, null: true, from: "forwardedFrom.id"
+    attribute :prompt, MessagePromptContent, null: true
+  end
+  attribute :attachment, MessageAttachment, null: true do
+    on GiftAttachment do
+      attribute :id, :id, null: true
+      attribute :kind, :enum, values: ["TIER_10", "TIER_20", "TIER_30"], as: GiftTier, from: "giftTier", null: true
+      attribute :status, :enum, values: ["CLOSED", "OPENED"], as: UserGiftStatus, null: true
+      attribute :createdAt, :date, null: true
+      attribute :updatedAt, :date, null: true
+      attribute :gift, ReceivedGiftGift, null: true
+      attribute :moment, MomentAttachment, null: true
+    end
+    on MomentAttachment do
+      attribute :reaction, ReactionAttachment, null: true
+      attribute :id, :id, null: true
+      attribute :uuid, :string, null: true
+      attribute :kind, :enum, values: ["BASIC", "INITIAL"], as: MomentKind, from: "momentKind", null: true
+      attribute :contentKind, :enum, values: ["CENSORED", "SAFE", "SENSITIVE"], as: MomentContentKind, null: true
+      attribute :user, MessageUserRef, null: true
+      attribute :media, MomentMedia, null: true
+      attribute :widgets, [MomentWidgetData], default: []
+      attribute :createdAt, :date, null: true
+      attribute :updatedAt, :date, null: true
+    end
+    on ProfileAttachment do
+      attribute :user, MessageUserRef, null: true
+    end
+    on ReactionAttachment do
+      attribute :id, :id, null: true
+      attribute :body, :string, null: true
+      attribute :user, MessageUserRef, null: true
+      attribute :createdAt, :date, null: true
+      attribute :updatedAt, :date, null: true
+    end
+  end
+  index :mediaKind
+  belongs_to :chat, sets: { lastMessageId: :id, lastMessageAt: :createdAt, lastActivityAt: :createdAt, lastSequenceNumber: :sequenceNumber }, newer: { sequenceNumber: :lastSequenceNumber, createdAt: :lastMessageAt }
+  belongs_to :user, from: "author"
+  operation :create do
+    mutation "MessageSend"
+    on_failure :keep
+    wrap "input"
+    variables chatId: :chatId, body: :body, kind: :kind, signedId: :signedId, oneTime: :oneTime, replyToId: :replyToId, attachedMomentId: :attachedMomentId, attachedUserId: :attachedUserId, messagePromptId: :messagePromptId
+    parameter :attachedMomentId, :id, null: true
+    parameter :attachedUserId, :id, null: true
+    parameter :messagePromptId, :id, null: true
+    parameter :signedId, :string, null: true
+    local :userId, :isReply
+    match_by "chatId", "userId", "kind", "body"
+    response from: "messageSend.message"
+  end
+  operation :update do
+    mutation "MessageUpdate"
+    wrap "input"
+    variables messageId: :id, body: :body
+    response from: "messageUpdate.message"
+  end
+  operation :destroy do
+    mutation "MessageDelete"
+    wrap "input"
+    variables messageId: :id
+  end
+  operation :send_file, upload: true do
+    optimistic false
+    mutation "MessageSendFile"
+    match_by "chatId", "userId", "kind", "media.blobId"
+    response from: "messageSend.message"
+  end
+  operation :send_album_file, upload: true do
+    optimistic false
+    mutation "MessageSendAlbumFile"
+    match_by "clientKey"
+    response from: "messageSend.message"
+  end
+  operation :send_files, upload: true do
+    optimistic false
+    mutation "MessageAlbumSend"
+    wrap "input"
+    match_by "clientKey"
+    batch items: "items", single: :send_album_file, input: { clientKey: :clientKey }, renumber: { position: "mediaGroup.position", size: "mediaGroup.size", start: 0 }
+    validates :items, length: { minimum: 2, maximum: 10 }
+    response from: "messageAlbumSend.messages"
+  end
+  operation :forward do
+    optimistic false
+    copies_receiver_to :targetChatId, field: :chatId
+    mutation "MessageForward"
+    parameter :targetChatId, :id
+    variables messageId: :id, chatId: :targetChatId
+    wrap "input"
+    response from: "messageForward.message"
+    upsert Message, from: "messageForward.message"
+  end
+  operation :open_gift do
+    optimistic false
+    mutation "GiftOpen"
+    parameter :userGiftId, :id
+    variables userGiftId: :userGiftId
+    wrap "input"
+    response from: "giftOpen.gift.linkedMessage"
+  end
+  operation :react do
+    mutation "MessageReact"
+    parameter :reactionBody, :string
+    parameter :userId, :id
+    variables messageId: :id, reactionBody: :reactionBody
+    optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
+    wrap "input"
+    response from: "messageReact.message"
+  end
+end

@@ -1,0 +1,43 @@
+subscription chatAction {
+  chatActivity {
+    chatId
+    userId
+    kind
+    active
+    createdAt
+    expiresAt
+  }
+}
+
+subscription chatCreated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}
+
+subscription chatUpdated {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}
+
+subscription chatDeleted {
+  viewerChanges {
+    occurredAt
+    changes {
+      area
+      kind
+      entityId
+    }
+  }
+}

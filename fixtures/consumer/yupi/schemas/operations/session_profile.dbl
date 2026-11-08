@@ -1,0 +1,21 @@
+operation :session_profile do
+  query "sessionProfile"
+  returns do
+    attribute :profile, SessionProfileResultProfile do
+      attribute :registrationCompleted, :bool
+      attribute :registrationStep, RegistrationStep
+      attribute :hasPhoto, :bool
+      attribute :hasGoodPhoto, :bool
+      attribute :dateOfBirth, :string
+      attribute :name, :string
+      attribute :gender, Gender
+      attribute :country, SessionProfileResultProfileCountry do
+        attribute :code, :string
+      end
+    end
+    attribute :user, SessionProfileResultUser do
+      attribute :id, :id
+      attribute :avatarUrl, :string
+    end
+  end
+end

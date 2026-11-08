@@ -1,0 +1,15 @@
+mutation DeveloperMomentUpdate($input: DeveloperMomentUpdateInput!) {
+  developerMomentUpdate(input: $input) {
+    moment {
+      ...MomentCardFragment
+    }
+  }
+}
+
+mutation DeveloperMomentReanalyze($input: DeveloperMomentReanalyzeInput!) {
+  developerMomentReanalyze(input: $input) {
+    moment {
+      ...MomentCardFragment
+    }
+  }
+}

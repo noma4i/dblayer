@@ -1,0 +1,4 @@
+operation :device_unregister do
+  mutation "DeviceUnregister"
+  parameter :input, DeviceUnregisterInput
+end

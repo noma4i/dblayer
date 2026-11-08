@@ -1,0 +1,11 @@
+model ChatAction, storage: :memory, expires_in: 8.seconds do
+  attribute :chatId, :id
+  attribute :userId, :id
+  attribute :kind, :enum, values: ["RECORDING_AUDIO", "RECORDING_VIDEO", "TYPING", "UPLOADING_PHOTO", "UPLOADING_VIDEO"], as: ChatActionType
+  index :chatId
+  scope :by_chat do
+    parameter :chatId, :id
+    where chatId: :chatId
+    order id: :asc
+  end
+end

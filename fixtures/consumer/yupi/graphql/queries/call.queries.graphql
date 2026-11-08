@@ -1,0 +1,17 @@
+query activeCall {
+  viewer {
+    activeCall {
+      id
+      status
+      mediaKind
+      origin
+      peer {
+        id
+      }
+      direction
+      createdAt
+      answeredAt
+      endedAt
+    }
+  }
+}

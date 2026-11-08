@@ -1,0 +1,20 @@
+fragment AttachedMomentUserFragment on MomentAttachment {
+  id
+  uuid
+  momentKind: kind
+  contentKind
+  createdAt
+  updatedAt
+  user {
+    id
+    fullName
+    createdAt
+    updatedAt
+  }
+  media {
+    ...MediaFragment
+  }
+  widgets {
+    ...MomentWidgetFragment
+  }
+}

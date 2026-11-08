@@ -1,0 +1,11 @@
+operation :pricing_load do
+  query "pricing"
+  returns do
+    attribute :videoIntro, :int
+    attribute :gifts, [PricingLoadResultGifts] do
+      attribute :id, :id
+      attribute :name, :string
+      attribute :price, :int
+    end
+  end
+end

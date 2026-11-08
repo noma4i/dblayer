@@ -1,0 +1,41 @@
+query search($query: String!, $scope: SearchScope, $friends: Boolean) {
+  search(query: $query, filter: { scope: $scope, friendsOnly: $friends }) {
+    moments {
+      ...MomentCardFragment
+    }
+    users {
+      ...UserStandardFragment
+    }
+  }
+}
+
+query searchChats($query: String!, $includeMessages: Boolean! = true) {
+  search(query: $query, filter: { scope: CHATS, includeMessages: $includeMessages }) {
+    chats {
+      chat {
+        ...ChatFragment
+      }
+      foundMessage {
+        ...MessageFragment
+      }
+    }
+  }
+}
+
+query giphy($type: GiphyKind!, $query: String, $offset: Int, $limit: Int) {
+  giphy(kind: $type, query: $query, offset: $offset, limit: $limit) {
+    nextOffset
+    items {
+      id
+      title
+      url
+      isSticker
+    }
+  }
+}
+
+query vibesList {
+  vibes {
+    ...VibeFragment
+  }
+}

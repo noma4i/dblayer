@@ -1,0 +1,14 @@
+model ChatSearchHit do
+  attribute :id, :id, id_from: :chat
+  attribute :chatId, :id
+  attribute :foundMessageId, :id, null: true
+  belongs_to :chat, from: "chat"
+  belongs_to :found, class_name: Message, foreign_key: :foundMessageId, from: "foundMessage"
+  scope :search do
+    parameter :query, :string
+    query "searchChats"
+    variables includeMessages: true
+    response from: "search.chats", shape: :list
+    freshness expires_in: 1.minute
+  end
+end

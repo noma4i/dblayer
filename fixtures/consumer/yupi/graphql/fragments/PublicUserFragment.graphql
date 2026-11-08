@@ -1,0 +1,20 @@
+fragment PublicUserFragment on User {
+  age
+  avatarUrl
+  createdAt
+  description
+  distance
+  fullAvatarUrl
+  fullName
+  gender
+  id
+  lastSeenAt
+  online
+  shareUrl
+  story
+  updatedAt
+  username
+  relationship {
+    ...RelationshipFragment
+  }
+}

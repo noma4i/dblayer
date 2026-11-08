@@ -1,0 +1,46 @@
+fragment MomentWidgetFragment on MomentWidget {
+  createdAt
+  id
+  kind
+  updatedAt
+  settings {
+    offset {
+      x
+      y
+    }
+    scale
+    rotate
+    itemProps {
+      __typename
+      ... on MomentLabelProps {
+        title
+        color
+        backgroundColor
+        fontFamily
+        textAlign
+      }
+      ... on MomentEmojiProps {
+        emoji
+      }
+      ... on MomentGifProps {
+        gifId
+        url
+      }
+      ... on MomentLocationProps {
+        location {
+          id
+          name
+          coord
+        }
+        colorIndex
+      }
+      ... on MomentHashtagProps {
+        title
+        colorIndex
+      }
+      ... on MomentTemperatureProps {
+        value
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+operation :chat_report do
+  mutation "ChatReport"
+  parameter :input, ChatReportInput
+  returns do
+    attribute :chatRemoved, :bool
+  end
+end

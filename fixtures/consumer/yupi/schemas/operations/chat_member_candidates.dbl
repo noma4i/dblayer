@@ -1,0 +1,14 @@
+operation :chat_member_candidates do
+  query "chatMemberCandidates"
+  parameter :chatId, :id
+  parameter :userIds, [:id]
+  returns do
+    attribute :members, ChatMemberCandidatesResultMembers do
+      attribute :edges, [ChatMemberCandidatesResultMembersEdges] do
+        attribute :node, ChatMemberCandidatesResultMembersEdgesNode do
+          attribute :id, :id
+        end
+      end
+    end
+  end
+end

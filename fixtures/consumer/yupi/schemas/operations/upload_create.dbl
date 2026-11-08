@@ -1,0 +1,15 @@
+operation :upload_create do
+  mutation "UploadCreate"
+  parameter :blob, DirectUploadCreateInput
+  returns do
+    attribute :directUpload, UploadCreateResultDirectUpload do
+      attribute :signedId, :string
+      attribute :blobId, :id
+      attribute :url, :string
+      attribute :headers, [UploadCreateResultDirectUploadHeaders] do
+        attribute :name, :string
+        attribute :value, :string
+      end
+    end
+  end
+end

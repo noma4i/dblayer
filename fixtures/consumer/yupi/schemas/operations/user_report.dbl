@@ -1,0 +1,7 @@
+operation :user_report do
+  mutation "UserReport"
+  parameter :input, UserReportInput
+  returns do
+    attribute :reported, :bool
+  end
+end

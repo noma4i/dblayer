@@ -1,0 +1,11 @@
+operation :registration_profile_update do
+  mutation "RegistrationProfileUpdate"
+  parameter :input, ProfileUpdateInput
+  returns do
+    attribute :viewer, RegistrationProfileUpdateResultViewer do
+      attribute :user, RegistrationProfileUpdateResultViewerUser do
+        attribute :id, :id
+      end
+    end
+  end
+end

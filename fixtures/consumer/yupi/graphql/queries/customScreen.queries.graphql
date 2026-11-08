@@ -1,0 +1,101 @@
+query customScreen($slug: String!) {
+  customScreenBySlug(slug: $slug) {
+    slug
+    version
+    status
+    requires {
+      ios
+      android
+    }
+    spec: document {
+      ...CustomScreenSpecFragment
+    }
+  }
+}
+
+query customScreenByTrigger($key: String!) {
+  customScreenByTrigger(key: $key) {
+    slug
+    version
+    status
+    requires {
+      ios
+      android
+    }
+    spec: document {
+      ...CustomScreenSpecFragment
+    }
+  }
+}
+
+query developerCustomScreens {
+  developerCustomScreens {
+    slug
+    name
+    status
+    triggerKey
+    publishedVersion
+    lockVersion
+    hasUnpublishedChanges
+    requires {
+      ios
+      android
+    }
+    updatedAt
+    versions {
+      number
+      note
+      actor
+      source
+      catalogVersion
+      requires {
+        ios
+        android
+      }
+      createdAt
+    }
+  }
+}
+
+query developerCustomScreen($slug: String!, $kind: CustomScreenSourceKind!, $number: Int) {
+  developerCustomScreen(slug: $slug, source: {kind: $kind, number: $number}) {
+    slug
+    name
+    status
+    triggerKey
+    publishedVersion
+    lockVersion
+    hasUnpublishedChanges
+    requires {
+      ios
+      android
+    }
+    updatedAt
+    spec: document(source: {kind: $kind, number: $number}) {
+      ...CustomScreenSpecFragment
+    }
+    versions {
+      number
+      note
+      actor
+      source
+      catalogVersion
+      requires {
+        ios
+        android
+      }
+      createdAt
+    }
+  }
+}
+
+query customScreenDraft($slug: String!, $source: CustomScreenSourceKind!) {
+  developerCustomScreen(slug: $slug, source: {kind: $source}) {
+    slug
+    name
+    version: publishedVersion
+    spec: document(source: {kind: $source}) {
+      ...CustomScreenSpecFragment
+    }
+  }
+}
