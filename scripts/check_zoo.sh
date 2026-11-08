@@ -426,7 +426,7 @@ for path in files:
 
 test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
 for path in sorted(root.rglob("*.rs")):
-    if "target" in path.parts:
+    if any(part.startswith(("target", ".")) for part in path.relative_to(root).parts):
         continue
     lines = path.read_text().splitlines()
     for number, line in enumerate(lines, 1):
