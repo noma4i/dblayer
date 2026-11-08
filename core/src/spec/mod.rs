@@ -70,6 +70,8 @@ mod transfer_open_tests;
 mod transfer_release_tests;
 mod transfer_open_batch_tests;
 mod transfer_work_tests;
+mod transfer_orders_tests;
+mod transfer_batch_orders_tests;
 mod rounds_tests;
 mod transfer_prop_tests;
 mod transfer_wait_tests;
