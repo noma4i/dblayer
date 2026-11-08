@@ -90,6 +90,17 @@ pub enum ProtocolReason {
 /// The name of a channel: the subscription of the `.dbl` the server runs for a model. A frame carries it as its `id`.
 pub type Channel = String;
 
+pub type Variables = serde_json::Map<String, serde_json::Value>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopedChannel {
+    pub subscription: String,
+    pub variables: Variables,
+}
+
+/// The channel name of a scoped channel is the subscription, `-` and a number of the owner: a frame id holds letters, digits, `_` and `-` only.
+pub fn subscription_of(channel: &str) -> &str { channel.split_once('-').map_or(channel, |(subscription, _)| subscription) }
+
 /// What a decrypted frame of the server says, as the executor reads it. The owner checks the counter before it reads the meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
@@ -125,7 +136,7 @@ impl Connection {
 /// The frames Feed sends over an `Established` connection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outgoing {
-    Subscribe { channel: Channel },
+    Subscribe { channel: Channel, variables: Option<Variables> },
     Unsubscribe { channel: Channel },
     /// The answer to a server `ping`.
     Pong { ts: serde_json::Number },
@@ -158,7 +169,7 @@ enum Fx {
     CancelResubscribe { connection: ConnectionId },
     Drain { connection: ConnectionId },
     CancelDrain { connection: ConnectionId },
-    ResubscribeChannel { connection: ConnectionId, channel: Channel, attempt: u32 },
+    ResubscribeChannel { connection: ConnectionId, channel: Channel, slot: u64, attempt: u32 },
     HandshakeDeadline { connection: ConnectionId },
     CancelHandshake { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
@@ -177,7 +188,7 @@ enum Fx {
 pub enum FeedInput {
     ActivateEpoch(Epoch),
     /// `stream` = the id is a stream `Events` of Deliveries: it gets `Joined` and `ModelReady`.
-    WantPlus { model: String, id: SubscriptionId, stream: bool },
+    WantPlus { model: String, id: SubscriptionId, stream: bool, scoped: Vec<ScopedChannel> },
     WantMinus { model: String, id: SubscriptionId },
     HandshakeDone { connection_id: ConnectionId, key_id: u64 },
     FrameOpened { connection_id: ConnectionId, counter: u64, frame: Frame },
@@ -262,6 +273,9 @@ pub struct FeedState {
     online: Option<bool>,
     online_seq: u64,
     want: BTreeMap<String, BTreeSet<SubscriptionId>>,
+    scoped: BTreeMap<SubscriptionId, Vec<Channel>>,
+    channel_variables: BTreeMap<Channel, Variables>,
+    scope_numbers: BTreeMap<(String, String), u64>,
     streams: BTreeSet<SubscriptionId>,
     /// `updates.debounce` of the models, from the schema at `install`.
     debounce: BTreeMap<String, u64>,
@@ -276,6 +290,7 @@ pub struct FeedState {
     /// Models that owe a `ModelGap` at their next readiness: a break came before their channels were confirmed.
     gapped: BTreeSet<String>,
     channel_attempts: BTreeMap<Channel, u32>,
+    slots: BTreeMap<Channel, u64>,
     generation: BTreeMap<String, u64>,
     base_generation: u64,
     position: BTreeMap<String, u64>,
@@ -345,9 +360,9 @@ impl Feed {
                     out.push(Effect::Schedule { id: ScheduleId(connection), after, input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
-                Fx::ResubscribeChannel { connection, channel, attempt } => {
+                Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
                     let after = RetryPolicy::Subscription.backoff().delay(attempt - 1);
-                    out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | state.channel_slot(&channel)), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
+                    out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),
@@ -413,7 +428,7 @@ impl StateOwner for Feed {
             }
             FeedInput::Closing => state.end(true, &mut fx),
             FeedInput::Census { .. } => {}
-            FeedInput::WantPlus { model, id, stream } => state.want_plus(model, id, stream, &mut fx),
+            FeedInput::WantPlus { model, id, stream, scoped } => state.want_plus(model, id, stream, scoped, &mut fx),
             FeedInput::WantMinus { model, id } => state.want_minus(&model, id, &mut fx),
             FeedInput::HandshakeDone { connection_id, key_id } => state.handshake_done(connection_id, key_id, &mut fx),
             FeedInput::FrameOpened { connection_id, counter, frame } => state.frame_opened(connection_id, counter, frame, &mut fx),

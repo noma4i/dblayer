@@ -31,7 +31,7 @@ fn view(index: usize) -> View { view_of(&Query::new(&model(index))) }
 
 fn view_of(query: &Query) -> View {
     let name = query.model.as_str().to_string();
-    View { kind: Kind::List, tables: vec![table_name(&name)], local: true, remote: false, live: false, reload: false, window: WindowKey { model: name.clone(), name: "list".into() }, subject: String::new(), query: Some(std::sync::Arc::new(query.clone())), model: name }
+    View { kind: Kind::List, tables: vec![table_name(&name)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: name.clone(), name: "list".into() }, subject: String::new(), query: Some(std::sync::Arc::new(query.clone())), model: name }
 }
 
 struct PendingRead {
@@ -91,7 +91,7 @@ impl Work {
 
 fn entity_view(index: usize, row: &str) -> View {
     let name = model(index);
-    View { kind: Kind::Entity { fetch: d::Fetch::Never }, tables: vec![table_name(&name)], local: true, remote: false, live: false, reload: false, window: WindowKey { model: name.clone(), name: "entity".into() }, subject: row.into(), query: None, model: name }
+    View { kind: Kind::Entity { fetch: d::Fetch::Never }, tables: vec![table_name(&name)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: name.clone(), name: "entity".into() }, subject: row.into(), query: None, model: name }
 }
 
 fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usize) {

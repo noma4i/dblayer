@@ -21,7 +21,7 @@ use crate::transport::{CableLine, CableLines, CancelToken, GraphQLRequest, Incom
 
 /// The one reading of the frames: what the subscription asks and which events a response carries.
 pub trait FeedCodec: Send + Sync + 'static {
-    fn request(&self, channel: &str) -> GraphQLRequest;
+    fn request(&self, channel: &str, variables: Value) -> GraphQLRequest;
     /// The events of a `next` response of `channel`, none when it carries no model event.
     fn events(&self, channel: &str, response: Response) -> Vec<FramedEvent>;
 }
@@ -179,8 +179,8 @@ impl FeedIo {
 
     fn body_of(&self, frame: Outgoing) -> Value {
         match frame {
-            Outgoing::Subscribe { channel } => {
-                let request = self.codec.request(&channel);
+            Outgoing::Subscribe { channel, variables } => {
+                let request = self.codec.request(&channel, variables.map_or_else(|| json!({}), Value::Object));
                 json!({"t":"subscribe", "id":channel, "query":request.document, "variables":request.variables, "operationName":request.operation_name})
             }
             Outgoing::Unsubscribe { channel } => json!({"t":"unsubscribe", "id":channel}),

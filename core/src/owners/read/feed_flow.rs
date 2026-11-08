@@ -53,16 +53,19 @@ impl FeedState {
             for model in models.into_iter().filter(|model| self.announced.contains(model)) {
                 self.gapped.insert(model);
             }
+            let slot = self.channel_slot(&channel);
             let attempt = self.channel_attempts.entry(channel.clone()).or_insert(0);
             *attempt += 1;
-            fx.push(Fx::ResubscribeChannel { connection, channel, attempt: *attempt });
+            fx.push(Fx::ResubscribeChannel { connection, channel, slot, attempt: *attempt });
             return;
         }
         let mut ids: Vec<SubscriptionId> = Vec::new();
         for model in models {
             self.announced.remove(&model);
             self.gapped.remove(&model);
-            ids.extend(self.want.remove(&model).unwrap_or_default().into_iter().filter(|id| self.streams.remove(id)));
+            let removed = self.want.remove(&model).unwrap_or_default();
+            removed.iter().for_each(|id| { self.scoped.remove(id); });
+            ids.extend(removed.into_iter().filter(|id| self.streams.remove(id)));
         }
         self.subscribed.remove(&channel);
         self.channel_attempts.remove(&channel);
@@ -80,8 +83,9 @@ impl FeedState {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || self.confirmed.contains(&channel) {
             return;
         }
+        let frame = self.subscribe_frame(channel);
         if let Some(found) = self.active.as_mut() {
-            Self::seal(found, Outgoing::Subscribe { channel }, fx);
+            Self::seal(found, frame, fx);
         }
     }
 
@@ -206,10 +210,14 @@ impl FeedState {
         fx.push(Fx::HandshakeDeadline { connection });
     }
 
-    pub(super) fn want_plus(&mut self, model: String, id: SubscriptionId, stream: bool, fx: &mut Vec<Fx>) {
+    pub(super) fn want_plus(&mut self, model: String, id: SubscriptionId, stream: bool, scoped: Vec<ScopedChannel>, fx: &mut Vec<Fx>) {
         let new = !self.want.contains_key(&model);
         let position = self.position(&model);
         self.want.entry(model.clone()).or_default().insert(id);
+        if !scoped.is_empty() {
+            let channels = scoped.iter().map(|scoped| self.scoped_channel(scoped)).collect();
+            self.scoped.insert(id, channels);
+        }
         if stream {
             self.streams.insert(id);
             fx.push(Fx::Joined { id, position });
@@ -238,7 +246,11 @@ impl FeedState {
             return;
         }
         self.streams.remove(&id);
+        let scoped = self.scoped.remove(&id).is_some();
         if !ids.is_empty() {
+            if scoped && self.mode == Mode::Live {
+                self.narrow(fx);
+            }
             return;
         }
         self.want.remove(model);
@@ -339,7 +351,7 @@ impl FeedState {
                 self.closing_asked = true;
                 self.mode = Mode::Draining { connection, then: Resume::End };
             }
-            FeedInput::WantPlus { model, id, stream } if then != Resume::End => self.want_plus(model, id, stream, fx),
+            FeedInput::WantPlus { model, id, stream, scoped } if then != Resume::End => self.want_plus(model, id, stream, scoped, fx),
             FeedInput::WantMinus { model, id } if then != Resume::End => self.want_minus(&model, id, fx),
             FeedInput::Online { online: Online(online), online_seq } if then != Resume::End => self.online_changed(online, online_seq, fx),
             _ => {}

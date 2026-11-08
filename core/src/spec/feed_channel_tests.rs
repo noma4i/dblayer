@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::owners::contract::{Committed, Online};
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing};
+use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, ScopedChannel};
 use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
@@ -19,11 +19,12 @@ const DELIVERIES: usize = 2;
 const CHAT: u64 = 1;
 const POST: u64 = 2;
 const THIRD: u64 = 3;
+const SCREEN: u64 = 4;
 /// The first connection the owner opens.
 const FIRST: u64 = 1;
 
 fn channels() -> BTreeMap<String, Vec<String>> {
-    [("Chat", vec!["A", "B"]), ("Post", vec!["B"]), ("Third", vec!["C"])].into_iter().map(|(model, own)| (model.to_string(), own.into_iter().map(String::from).collect())).collect()
+    [("Chat", vec!["A", "B"]), ("Post", vec!["B"]), ("Third", vec!["C"]), ("Screen", vec![])].into_iter().map(|(model, own)| (model.to_string(), own.into_iter().map(String::from).collect())).collect()
 }
 
 fn word(effect: Out) -> String {
@@ -46,6 +47,7 @@ struct Rig {
     addr: Address<Spy<Feed>>,
     log: Log<Emitted<FeedEffect>>,
     batches: Vec<u64>,
+    subscribes: Vec<Outgoing>,
     reference: Chan,
 }
 
@@ -59,7 +61,7 @@ impl Rig {
         let peers = FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) };
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
-        let mut rig = Self { det, addr, log, batches: Vec::new(), reference: Chan::new(channels()) };
+        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), reference: Chan::new(channels()) };
         rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
@@ -68,8 +70,13 @@ impl Rig {
 
     /// Posts one input and shows what the owner gave out, one word per effect.
     fn post(&mut self, input: FeedInput) -> Vec<String> {
-        let row = match &input {
-            FeedInput::WantPlus { model, id, .. } => Some(In::WantPlus { model: model.clone(), id: *id }),
+        let row = self.row_of(&input);
+        self.post_row(input, row)
+    }
+
+    fn row_of(&self, input: &FeedInput) -> Option<In> {
+        match input {
+            FeedInput::WantPlus { model, id, stream, .. } => Some(In::WantPlus { model: model.clone(), id: *id, stream: *stream, scoped: Vec::new() }),
             FeedInput::WantMinus { model, id } => Some(In::WantMinus { model: model.clone(), id: *id }),
             FeedInput::HandshakeDone { .. } => Some(In::Ready),
             FeedInput::ChannelConfirmed { channel, .. } => Some(In::ChannelConfirmed(channel.clone())),
@@ -78,7 +85,10 @@ impl Rig {
             FeedInput::ChannelResubscribe { channel, .. } => Some(In::Resubscribe(channel.clone())),
             FeedInput::Online { online_seq, .. } => Some(In::Online(*online_seq)),
             _ => None,
-        };
+        }
+    }
+
+    fn post_row(&mut self, input: FeedInput, row: Option<In>) -> Vec<String> {
         let want = row.and_then(|row| self.reference.step(row)).map(|effects| effects.into_iter().map(word).collect::<Vec<_>>());
         let got = self.owner_post(input);
         if let Some(mut want) = want {
@@ -103,7 +113,10 @@ impl Rig {
         for entry in emitted {
             match entry {
                 Emitted::Run(FeedEffect::Connect { .. }) => words.push("connect".to_string()),
-                Emitted::Run(FeedEffect::Seal { frame: Outgoing::Subscribe { channel }, .. }) => words.push(format!("subscribe:{channel}")),
+                Emitted::Run(FeedEffect::Seal { frame: Outgoing::Subscribe { channel, variables }, .. }) => {
+                    words.push(format!("subscribe:{channel}"));
+                    self.subscribes.push(Outgoing::Subscribe { channel, variables });
+                }
                 Emitted::Run(FeedEffect::Seal { frame: Outgoing::Unsubscribe { channel }, .. }) => words.push(format!("unsubscribe:{channel}")),
                 Emitted::Run(FeedEffect::Close { .. }) => words.push("close".to_string()),
                 Emitted::Schedule { input, .. } if input.starts_with("ChannelResubscribe") => words.push("schedule:channel".to_string()),
@@ -123,7 +136,13 @@ impl Rig {
         words
     }
 
-    fn want(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantPlus { model: model.into(), id, stream: true }) }
+    fn want(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantPlus { model: model.into(), id, stream: true, scoped: Vec::new() }) }
+
+    fn want_window(&mut self, id: u64, slug: &str, channel: &str) -> Vec<String> {
+        let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!(slug))]);
+        let input = FeedInput::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![ScopedChannel { subscription: "S".into(), variables }] };
+        self.post_row(input, Some(In::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![channel.to_string()] }))
+    }
 
     fn unwant(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantMinus { model: model.into(), id }) }
 
@@ -240,7 +259,7 @@ fn feed_chan_event_before_confirm() {
 fn feed_changes_refused_held() {
     for handshaken in [false, true] {
         let mut rig = Rig::new();
-        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true });
+        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new() });
         if handshaken {
             rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
         }
@@ -262,6 +281,47 @@ fn feed_chan_want_new_channel() {
     assert_eq!(rig.want("Third", THIRD), ["joined:3", "subscribe:C"], "no new connection, only the new channel");
     assert_eq!(rig.confirm("C"), ["modelready:3"]);
     assert_eq!(rig.state().subscribed(), ["A", "B", "C"]);
+}
+
+const HOME: &str = "S-1";
+const ABOUT: &str = "S-2";
+
+#[test]
+fn feed_chan_scope_variables() {
+    let mut rig = Rig::new();
+    assert_eq!(rig.want_window(SCREEN, "home", HOME), ["connect"], "the first window opens the connection, the subscribe waits for it");
+    assert_eq!(rig.state().wanted().into_iter().collect::<Vec<_>>(), [HOME], "the channel of the window is its subscription with a number of the owner for the variables");
+    assert_eq!(rig.handshake(), [format!("subscribe:{HOME}")], "the frame subscribes the channel of the window");
+    let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!("home"))]);
+    assert_eq!(rig.subscribes, [Outgoing::Subscribe { channel: HOME.into(), variables: Some(variables) }], "the frame carries the variables of the window");
+    assert!(rig.confirm(HOME).is_empty(), "a window is no stream: it gets no ready");
+    assert_eq!(rig.event(HOME, "Screen", "e1"), ["commit"], "the event of the channel takes the position of its model");
+    assert_eq!(rig.state().position("Screen"), 1);
+}
+
+#[test]
+fn feed_chan_scope_variables_shared() {
+    let mut rig = Rig::new();
+    rig.want_window(SCREEN, "home", HOME);
+    rig.handshake();
+    rig.confirm(HOME);
+    assert!(rig.want_window(SCREEN + 1, "home", HOME).is_empty(), "equal subscription and variables are one channel: no second subscribe");
+    assert_eq!(rig.want_window(SCREEN + 2, "about", ABOUT), [format!("subscribe:{ABOUT}")], "other variables are another channel");
+    assert_eq!(rig.state().subscribed(), [HOME, ABOUT]);
+}
+
+#[test]
+fn feed_chan_scope_variables_want_minus() {
+    let mut rig = Rig::new();
+    rig.want_window(SCREEN, "home", HOME);
+    rig.handshake();
+    rig.confirm(HOME);
+    rig.want_window(SCREEN + 1, "home", HOME);
+    rig.want_window(SCREEN + 2, "about", ABOUT);
+    rig.confirm(ABOUT);
+    assert!(rig.unwant("Screen", SCREEN).is_empty(), "the other window of the channel still wants it");
+    assert_eq!(rig.unwant("Screen", SCREEN + 1), [format!("unsubscribe:{HOME}")], "the last window of the channel takes only its channel away");
+    assert_eq!((rig.state().subscribed(), rig.state().confirmed()), ([ABOUT].map(String::from).to_vec(), [ABOUT].map(String::from).to_vec()));
 }
 
 #[test]

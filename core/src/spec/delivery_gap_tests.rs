@@ -49,11 +49,11 @@ fn view(kind: Kind) -> d::View {
         Kind::Count => (d::Kind::Count, "Moment"),
         Kind::Entity(fetch) => (d::Kind::Entity { fetch: match fetch { Fetch::Never => d::Fetch::Never, Fetch::Stale => d::Fetch::Stale, Fetch::Force => d::Fetch::Force, Fetch::IfMissing => d::Fetch::IfMissing } }, "Moment"),
         Kind::Events => (d::Kind::Events, "Chat"),
-        Kind::Changes => return d::View { kind: d::Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None },
+        Kind::Changes => return d::View { kind: d::Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None },
         Kind::Blob => (d::Kind::Blob, "Moment"),
         Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
-    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, reload: false, window: window(), subject: "t1".into(), query: None }
+    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: window(), subject: "t1".into(), query: None }
 }
 
 fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)| d::StreamRow::new(id, *stamp)).collect() }

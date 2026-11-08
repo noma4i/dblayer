@@ -33,6 +33,7 @@ fn operations() -> super::feed_codec::Operations {
     known.declare([
         declare("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"),
         declare("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"),
+        declare("ScreenUpdated", "subscription ScreenUpdated($slug: String!) { screenUpdated(slug: $slug) { id slug } }", "screenUpdated"),
         declare("RelationChanged", "subscription RelationChanged { relationChanged { id chatId body deleted } }", "relationChanged"),
     ]);
     known
@@ -153,7 +154,7 @@ fn feed_codec_joins() {
 
 #[test]
 fn feed_codec_request() {
-    let request = codec(true).request("Changes");
+    let request = codec(true).request("Changes", json!({}));
     assert_eq!(request.operation_name.as_str(), "Changes");
     assert!(request.document.starts_with("subscription Changes"));
 }
@@ -189,4 +190,27 @@ fn feed_codec_memory_event_without_id_gets_a_uuid() {
     assert_eq!(first[0]["op"], "upsert");
     assert_ne!(first[0]["id"], second[0]["id"], "each event without an id is a new row");
     assert!(uuid::Uuid::parse_str(first[0]["id"].as_str().unwrap()).is_ok());
+}
+
+#[test]
+fn feed_codec_scoped_channel() {
+    let mut screens = ModelSpec::new("screens", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("slug", crate::value::ScalarKind::Str)]);
+    let mut by_slug = RelationSpec::new("by_slug", &["slug"]);
+    let mut remote = crate::schema_fixtures::remote("Screen", RemoteShape::Single, "1.minute");
+    remote.variables.insert("slug".into(), crate::schema::VariableSource::Param { name: "slug".into() });
+    by_slug.remote = Some(remote);
+    by_slug.updates.push(updates(json!({"subscription":"ScreenUpdated", "id":["slug"]})));
+    screens.indexes.push(vec!["slug".into()]);
+    screens.relations.push(by_slug);
+    let db = std::sync::Arc::new(Store::open_models(None, vec![screens.clone()], None).unwrap());
+    assert!(super::channels_of(&db).is_empty(), "a subscription that takes the variables of a window is no channel of the model");
+    let scoped = super::scoped_channels(&screens, "by_slug", json!({"slug":"home"}).as_object().unwrap());
+    assert_eq!((scoped.len(), scoped[0].subscription.as_str(), Value::Object(scoped[0].variables.clone())), (1, "ScreenUpdated", json!({"slug":"home"})));
+    let channel = "ScreenUpdated-1";
+    let codec = SchemaFeedCodec::new(db, operations());
+    let request = codec.request(channel, Value::Object(scoped[0].variables.clone()));
+    assert_eq!((request.operation_name.as_str(), request.variables), ("ScreenUpdated", json!({"slug":"home"})));
+    assert!(request.document.contains("$slug: String!"), "the document of the subscription goes out with the variables");
+    let events = payloads(&codec.events(channel, frame(json!({"screenUpdated":{"id":"s1", "slug":"home"}}))));
+    assert_eq!((events[0]["op"].as_str(), events[0]["model"].as_str(), events[0]["id"].as_str()), (Some("upsert"), Some("screens"), Some("home")), "the id of the row is the `id:` path of the subscription");
 }

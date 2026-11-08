@@ -15,7 +15,7 @@ use crate::owners::read::diff::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
 use crate::identity::RowId;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};
-use crate::owners::read::feed::{Feed, FeedInput};
+use crate::owners::read::feed::{Feed, FeedInput, ScopedChannel};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
@@ -89,6 +89,7 @@ pub struct View {
     pub remote: bool,
     /// The model takes events of the server (`updates` of a relation or `listens`): an open stream wants its subscription.
     pub live: bool,
+    pub scoped: std::sync::Arc<Vec<ScopedChannel>>,
     /// The stream loads its window again each time the network returns.
     pub reload: bool,
     pub window: WindowKey,
@@ -436,7 +437,7 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision, now: machine.opened_at })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
-            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events })),
+            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), id: stream })),
         };
         out.push(effect);

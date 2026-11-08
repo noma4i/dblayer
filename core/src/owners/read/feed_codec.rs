@@ -6,13 +6,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
-use super::feed::FramedEvent;
+use super::feed::{subscription_of, FramedEvent, ScopedChannel};
 use super::feed_io::FeedCodec;
 use super::windows::{StaleKeys, WindowKey};
 use crate::store::Store;
 use crate::identity::RowId;
 use crate::schema::{ChangeFeed, ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
-use super::codec::{normalize_nodes, root_value};
+use super::codec::{mapped_variables, normalize_nodes, root_value};
 use crate::transport::{GraphQLRequest, Response};
 use crate::value::read_id;
 
@@ -224,26 +224,38 @@ impl SchemaFeedCodec {
 }
 
 impl FeedCodec for SchemaFeedCodec {
-    fn request(&self, channel: &str) -> GraphQLRequest {
-        self.operations.get(channel).map_or_else(|| GraphQLRequest::new("", channel, json!({})), |operation| GraphQLRequest::new(&operation.document, &operation.name, json!({})))
+    fn request(&self, channel: &str, variables: Value) -> GraphQLRequest {
+        let subscription = subscription_of(channel);
+        match self.operations.get(subscription) {
+            Some(operation) => GraphQLRequest::new(&operation.document, &operation.name, variables),
+            None => GraphQLRequest::new("", subscription, variables),
+        }
     }
 
     fn events(&self, channel: &str, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
-        let mut events = if self.feed().is_some_and(|feed| feed.subscription == channel) { self.change_events(&data) } else { Vec::new() };
-        events.extend(self.listen_events(channel, &data));
+        let subscription = subscription_of(channel);
+        let mut events = if self.feed().is_some_and(|feed| feed.subscription == subscription) { self.change_events(&data) } else { Vec::new() };
+        events.extend(self.listen_events(subscription, &data));
         events
     }
 }
 
-/// The channels each model reads: the change feed of the project when the model declares `changed_by`, the subscription of each `listens` and each relation `updates`.
+/// The channels each model reads: the change feed of the project when the model declares `changed_by`, the subscription of each `listens` and each relation `updates` that takes no variables of a window.
 pub fn channels_of(db: &Store) -> BTreeMap<String, Vec<String>> {
     let feed = db.specs().values().find_map(|spec| spec.change_feed.as_ref().map(|feed| feed.subscription.clone()));
     db.specs().values().filter_map(|spec| {
-        let mut channels: BTreeSet<String> = spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)).map(|updates| updates.subscription.clone()).collect();
+        let plain = spec.relations.iter().flat_map(|relation| relation.updates.iter().filter(|updates| !updates.takes_variables(relation)));
+        let mut channels: BTreeSet<String> = spec.listens.iter().chain(plain).map(|updates| updates.subscription.clone()).collect();
         if let Some(feed) = feed.as_ref().filter(|_| !spec.changes.is_empty()) {
             channels.insert(feed.clone());
         }
         (!channels.is_empty()).then(|| (spec.key.to_string(), channels.into_iter().collect()))
     }).collect()
+}
+
+pub fn scoped_channels(spec: &ModelSpec, relation: &str, params: &Map<String, Value>) -> Vec<ScopedChannel> {
+    let Some(relation) = spec.relations.iter().find(|declared| declared.name == relation) else { return Vec::new() };
+    let Some(remote) = relation.remote.as_ref() else { return Vec::new() };
+    relation.updates.iter().filter(|updates| updates.takes_variables(relation)).map(|updates| ScopedChannel { subscription: updates.subscription.clone(), variables: mapped_variables(params, &remote.variables) }).collect()
 }

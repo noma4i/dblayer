@@ -857,6 +857,7 @@ Fields combine with AND. Missing, null and nonstring fields never match, includi
 Empty lists, duplicate paths, mixed types and unknown predicate keys fail generation. A single string is invalid.
 Filters run before normalization, deletion and writes for every effect.
 Declarations with the same operation, variables and account share one incoming stream.
+A scope with `variables` sends its subscription with the variables of the open window, and windows with equal variables share one subscription. When such a scope writes `id:`, each entry names a variable of the scope, or generation fails.
 All matching row declarations apply in one commit. `ephemeral` and `reread` effects run separately before that commit.
 Model-level subscriptions also expose generated `events()` without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.

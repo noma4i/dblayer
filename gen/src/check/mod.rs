@@ -104,6 +104,14 @@ fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {
         }
         check_subscription(update, &mut report);
     }
+    for scope in &node.scopes {
+        let Some(bindings) = scope.variables.as_ref() else { continue };
+        for id in scope.subscriptions.iter().flat_map(|subscription| &subscription.id) {
+            if !bindings.iter().any(|binding| binding.name == id.item) {
+                report(id.pos, format!("scope `{}`: subscription `id: \"{}\"` is no variable of `variables`", scope.name, id.item));
+            }
+        }
+    }
     let mut member_names = HashSet::new();
     let members = node.scopes.iter().map(|scope| (scope.pos, scope.name.as_str()))
         .chain(node.associations.iter().map(|association| (association.pos, association.name.as_str())))

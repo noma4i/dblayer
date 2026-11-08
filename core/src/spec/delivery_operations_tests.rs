@@ -6,7 +6,7 @@ fn info(seq: i64, status: OperationQueueStatus) -> OperationInfo {
 }
 
 fn queue_view() -> d::View {
-    d::View { kind: d::Kind::Operations, model: String::new(), tables: vec!["op".into()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }
+    d::View { kind: d::Kind::Operations, model: String::new(), tables: vec!["op".into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }
 }
 
 fn commit(twin: &mut Twin, revision: i64, table: &str) {

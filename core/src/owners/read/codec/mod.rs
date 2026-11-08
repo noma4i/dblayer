@@ -11,7 +11,7 @@ pub use connection::{connection_page_info, connection_rows, landing_fault, EDGE_
 pub(crate) use extract::{extract, root_value};
 pub use landing::{incoming_ids, plan_landing, LandingError, LandingPlan, StoredScope};
 pub(crate) use normalize::{normalize_nodes, Normalized};
-pub(crate) use variables::{declared_variables, load_variables};
+pub(crate) use variables::{declared_variables, load_variables, mapped_variables};
 
 use serde_json::{Map, Value};
 

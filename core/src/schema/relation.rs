@@ -74,6 +74,12 @@ pub struct UpdatesSpec {
     pub apply: Option<SubscriptionApply>,
 }
 
+impl UpdatesSpec {
+    pub fn takes_variables(&self, relation: &RelationSpec) -> bool {
+        relation.remote.as_ref().is_some_and(|remote| self.id.iter().any(|name| remote.variables.contains_key(name)))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionApply {
     #[serde(flatten)]

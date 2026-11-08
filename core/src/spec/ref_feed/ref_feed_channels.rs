@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::spec) enum In {
-    WantPlus { model: String, id: u64 },
+    WantPlus { model: String, id: u64, stream: bool, scoped: Vec<String> },
     WantMinus { model: String, id: u64 },
     Ready,
     ChannelConfirmed(String),
@@ -40,6 +40,8 @@ pub(in crate::spec) struct Chan {
     online_seq: u64,
     channels: BTreeMap<String, Vec<String>>,
     pub(in crate::spec) want: BTreeMap<String, BTreeSet<u64>>,
+    streams: BTreeSet<u64>,
+    scoped: BTreeMap<u64, Vec<String>>,
     wanted: BTreeSet<String>,
     pub(in crate::spec) confirmed: BTreeSet<String>,
     ready: BTreeSet<u64>,
@@ -50,10 +52,16 @@ pub(in crate::spec) struct Chan {
 
 impl Chan {
     pub(in crate::spec) fn new(channels: BTreeMap<String, Vec<String>>) -> Self {
-        Self { mode: Mode::Off, online: false, online_seq: 0, channels, want: BTreeMap::new(), wanted: BTreeSet::new(), confirmed: BTreeSet::new(), ready: BTreeSet::new(), gap: BTreeSet::new(), position: BTreeMap::new(), held: Vec::new() }
+        Self { mode: Mode::Off, online: false, online_seq: 0, channels, want: BTreeMap::new(), streams: BTreeSet::new(), scoped: BTreeMap::new(), wanted: BTreeSet::new(), confirmed: BTreeSet::new(), ready: BTreeSet::new(), gap: BTreeSet::new(), position: BTreeMap::new(), held: Vec::new() }
     }
 
-    fn channels_of(&self, model: &str) -> Vec<String> { self.channels.get(model).cloned().unwrap_or_default() }
+    fn channels_of(&self, model: &str) -> Vec<String> {
+        let own = self.channels.get(model).cloned().unwrap_or_default();
+        let windows = self.want.get(model).into_iter().flatten().filter_map(|id| self.scoped.get(id)).flatten().cloned();
+        own.into_iter().chain(windows).collect::<BTreeSet<_>>().into_iter().collect()
+    }
+
+    fn streams_of(&self, ids: impl IntoIterator<Item = u64>) -> Vec<u64> { ids.into_iter().filter(|id| self.streams.contains(id)).collect() }
 
     fn complete(&self, model: &str, confirmed: &BTreeSet<String>) -> bool { self.channels_of(model).iter().all(|channel| confirmed.contains(channel)) }
 
@@ -68,11 +76,17 @@ impl Chan {
                 self.online = true;
                 self.online_seq = seq;
             }
-            (mode, In::WantPlus { model, id }) => {
-                let fresh: Vec<String> = self.channels_of(&model).into_iter().filter(|channel| !self.wanted.contains(channel)).collect();
+            (mode, In::WantPlus { model, id, stream, scoped }) => {
                 self.want.entry(model.clone()).or_default().insert(id);
+                if !scoped.is_empty() {
+                    self.scoped.insert(id, scoped);
+                }
+                let fresh: Vec<String> = self.channels_of(&model).into_iter().filter(|channel| !self.wanted.contains(channel)).collect();
                 self.wanted.extend(fresh.iter().cloned());
-                out.push(Out::Joined(id));
+                if stream {
+                    self.streams.insert(id);
+                    out.push(Out::Joined(id));
+                }
                 match mode {
                     Mode::Off if self.online => {
                         self.mode = Mode::Opening;
@@ -81,7 +95,7 @@ impl Chan {
                     Mode::Off | Mode::Opening => {}
                     Mode::Live => {
                         out.extend(fresh.into_iter().map(Out::Subscribe));
-                        if self.complete(&model, &self.confirmed) {
+                        if stream && self.complete(&model, &self.confirmed) {
                             self.ready.insert(id);
                             out.push(Out::ModelReady(id));
                         }
@@ -95,6 +109,8 @@ impl Chan {
                     return Some(out);
                 }
                 self.ready.remove(&id);
+                self.streams.remove(&id);
+                self.scoped.remove(&id);
                 if ids.is_empty() {
                     self.want.remove(&model);
                 }
@@ -126,7 +142,7 @@ impl Chan {
                     if self.complete(&model, &before) || !self.complete(&model, &self.confirmed) {
                         continue;
                     }
-                    let ids: Vec<u64> = self.want[&model].iter().copied().collect();
+                    let ids: Vec<u64> = self.streams_of(self.want[&model].iter().copied());
                     for id in &ids {
                         if self.ready.insert(*id) {
                             out.push(Out::ModelReady(*id));
@@ -163,7 +179,11 @@ impl Chan {
             (Mode::Live, In::Ended { channel, failed: true }) => {
                 for model in self.models_of(&channel) {
                     let ids = self.want.remove(&model).unwrap_or_default();
-                    out.extend(ids.into_iter().map(Out::ModelInvalid));
+                    out.extend(self.streams_of(ids.iter().copied()).into_iter().map(Out::ModelInvalid));
+                    for id in &ids {
+                        self.scoped.remove(id);
+                        self.streams.remove(id);
+                    }
                 }
                 let needed = self.needed();
                 self.confirmed.retain(|channel| needed.contains(channel));

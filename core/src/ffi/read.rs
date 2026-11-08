@@ -318,19 +318,20 @@ impl Database {
                 let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
                 let live = !spec.listens.is_empty() || !spec.changes.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
                 let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
+                let scoped = remote.as_ref().map(|(relation, params)| crate::owners::read::scoped_channels(spec, relation, params)).unwrap_or_default().into();
                 let window = match &remote {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) })
+                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, scoped, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
             }
-            ReadRequest::Changes => Ok(View { kind: Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
-            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
-            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
+            ReadRequest::Changes => Ok(View { kind: Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
+            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
+            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -342,7 +343,8 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone(), query: None })
+                let scoped = node.map(|relation| crate::owners::read::scoped_channels(spec, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))]))).unwrap_or_default().into();
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), scoped: if fetch == Fetch::Never { Default::default() } else { scoped }, reload: false, window, subject: id.clone(), query: None })
             }
         }
     }
@@ -400,7 +402,7 @@ impl Database {
         let stream = self.life.next_stream_id();
         let (view, valid) = match self.view_of(&request) {
             Ok(view) => (view, true),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false),
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision);

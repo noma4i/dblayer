@@ -8,6 +8,9 @@ impl FeedState {
             online: None,
             online_seq: 0,
             want: BTreeMap::new(),
+            scoped: BTreeMap::new(),
+            channel_variables: BTreeMap::new(),
+            scope_numbers: BTreeMap::new(),
             streams: BTreeSet::new(),
             debounce,
             channels,
@@ -16,6 +19,7 @@ impl FeedState {
             announced: BTreeSet::new(),
             gapped: BTreeSet::new(),
             channel_attempts: BTreeMap::new(),
+            slots: BTreeMap::new(),
             generation: BTreeMap::new(),
             base_generation: 0,
             position: BTreeMap::new(),
@@ -42,7 +46,7 @@ impl FeedState {
         if self.mode == Mode::Ended || self.active.is_none() {
             return 0;
         }
-        self.want.iter().filter(|(_, ids)| !ids.is_empty()).filter_map(|(model, _)| self.channels.get(model)).flatten().collect::<BTreeSet<_>>().len()
+        self.wanted().len()
     }
 
     pub fn online(&self) -> Option<bool> { self.online }
@@ -71,16 +75,32 @@ impl FeedState {
 
     pub(super) fn models(&self) -> Vec<String> { self.want.keys().cloned().collect() }
 
-    /// The place of a channel among all channels of the schema: a stable number for its timer id.
-    pub(super) fn channel_slot(&self, channel: &str) -> u64 {
-        let all: BTreeSet<&Channel> = self.channels.values().flatten().collect();
-        all.iter().position(|own| own.as_str() == channel).map_or(0, |at| at as u64)
+    pub(super) fn channel_slot(&mut self, channel: &Channel) -> u64 {
+        let next = self.slots.len() as u64;
+        *self.slots.entry(channel.clone()).or_insert(next)
     }
 
-    pub(super) fn channels_of(&self, model: &str) -> &[Channel] { self.channels.get(model).map_or(&[], Vec::as_slice) }
+    pub(super) fn scoped_channel(&mut self, scoped: &ScopedChannel) -> Channel {
+        let next = self.scope_numbers.len() as u64 + 1;
+        let number = *self.scope_numbers.entry((scoped.subscription.clone(), serde_json::Value::Object(scoped.variables.clone()).to_string())).or_insert(next);
+        let channel = format!("{}-{number}", scoped.subscription);
+        self.channel_variables.insert(channel.clone(), scoped.variables.clone());
+        channel
+    }
+
+    pub(super) fn subscribe_frame(&self, channel: Channel) -> Outgoing {
+        let variables = self.channel_variables.get(&channel).cloned();
+        Outgoing::Subscribe { channel, variables }
+    }
+
+    pub(super) fn channels_of(&self, model: &str) -> BTreeSet<Channel> {
+        let own = self.channels.get(model).into_iter().flatten();
+        let windows = self.want.get(model).into_iter().flatten().filter_map(|id| self.scoped.get(id)).flatten();
+        own.chain(windows).cloned().collect()
+    }
 
     /// The channels the models of `want` read.
-    pub fn wanted(&self) -> BTreeSet<Channel> { self.want.keys().flat_map(|model| self.channels_of(model).iter().cloned()).collect() }
+    pub fn wanted(&self) -> BTreeSet<Channel> { self.want.keys().flat_map(|model| self.channels_of(model)).collect() }
 
     pub fn confirmed(&self) -> Vec<Channel> { self.confirmed.iter().cloned().collect() }
 
@@ -88,7 +108,7 @@ impl FeedState {
 
     pub(super) fn model_is_ready(&self, model: &str) -> bool { self.channels_of(model).iter().all(|channel| self.confirmed.contains(channel)) }
 
-    pub(super) fn models_of(&self, channel: &str) -> Vec<String> { self.want.keys().filter(|model| self.channels_of(model).iter().any(|own| own == channel)).cloned().collect() }
+    pub(super) fn models_of(&self, channel: &str) -> Vec<String> { self.want.keys().filter(|model| self.channels_of(model).contains(channel)).cloned().collect() }
 
     pub(super) fn debounce_of(&self, model: &str) -> u64 { self.debounce.get(model).copied().unwrap_or(0) }
 
@@ -309,10 +329,14 @@ impl FeedState {
     /// `Subscribe` of every wanted channel the active connection has not subscribed yet.
     pub(super) fn subscribe_missing(&mut self, fx: &mut Vec<Fx>) {
         let wanted = self.wanted();
-        let Some(connection) = self.active.as_mut() else { return };
-        for channel in wanted {
-            if self.subscribed.insert(channel.clone()) {
-                Self::seal(connection, Outgoing::Subscribe { channel }, fx);
+        if self.active.is_none() {
+            return;
+        }
+        let fresh: Vec<Channel> = wanted.into_iter().filter(|channel| self.subscribed.insert(channel.clone())).collect();
+        let frames: Vec<Outgoing> = fresh.into_iter().map(|channel| self.subscribe_frame(channel)).collect();
+        if let Some(connection) = self.active.as_mut() {
+            for frame in frames {
+                Self::seal(connection, frame, fx);
             }
         }
     }

@@ -30,7 +30,7 @@ const EPOCH: u64 = 1;
 struct Models;
 
 impl FeedCodec for Models {
-    fn request(&self, channel: &str) -> GraphQLRequest { GraphQLRequest::new("subscription Feed", "Feed", json!({ "channel": channel })) }
+    fn request(&self, channel: &str, _variables: serde_json::Value) -> GraphQLRequest { GraphQLRequest::new("subscription Feed", "Feed", json!({ "channel": channel })) }
 
     fn events(&self, _channel: &str, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
@@ -104,7 +104,7 @@ fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (Det
     let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
     (det, feed, batches, runtime)
 }
 
@@ -246,7 +246,7 @@ fn feed_io_close_cancels_handshake() {
     let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
     let began = started.clone();
     pump(&mut det, feed, |_| began.load(Ordering::SeqCst) >= 1);
     assert_eq!(dropped.load(Ordering::SeqCst), 0, "the open waits");
@@ -288,7 +288,7 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     det.start_epoch(EPOCH);
     gate.close(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
     pump(&mut det, feed, |det| saw_input(det, "Dropped") >= 1);
     assert_eq!(started.load(Ordering::SeqCst), 0, "a connect reached the old lines after the close");
 }

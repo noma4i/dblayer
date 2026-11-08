@@ -299,3 +299,15 @@ fn matches_checks_fields_literals_and_the_threshold_parameter() {
         ("local scope", &scope("", &format!("{BY_OWNER}    matches name: {{ equals: \"a\" }}\n")), Some("`matches` needs a scope with `query`")),
     ]);
 }
+
+#[test]
+fn a_subscription_id_of_a_scope_with_variables_names_a_variable() {
+    let remote = |subscribe: &str| scope("", &format!("    parameter :q, :string\n    query \"S\"\n    variables slug: :q\n    {subscribe}\n"));
+    run(&[
+        ("id names a variable", &remote("subscribe \"Updated\", id: \"slug\""), None),
+        ("no id", &remote("subscribe \"Updated\""), None),
+        ("id names no variable", &remote("subscribe \"Updated\", id: \"other\""), Some("`id: \"other\"` is no variable of `variables`")),
+        ("one of two ids names no variable", &remote("subscribe \"Updated\", id: [\"slug\", \"other\"]"), Some("`id: \"other\"` is no variable of `variables`")),
+        ("scope without variables keeps the event id", &scope("", "    parameter :q, :string\n    query \"S\"\n    subscribe \"Updated\", id: \"other\"\n"), None),
+    ]);
+}

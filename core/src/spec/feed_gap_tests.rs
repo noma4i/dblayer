@@ -174,7 +174,7 @@ impl Twin {
     fn owner_input(&mut self, input: &Input) -> Vec<FeedInput> {
         let reread = self.reread.clone();
         match input {
-            Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream }],
+            Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream, scoped: Vec::new() }],
             Input::WantMinus { model, id } => vec![FeedInput::WantMinus { model: model.clone(), id: *id }],
             Input::HandshakeDone => {
                 let opening = self.connection(To::Opening);

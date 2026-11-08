@@ -27,6 +27,7 @@ struct Connection {
     keys: Mutex<Option<([u8; 32], [u8; 32])>>,
     sequence: AtomicUsize,
     subscription: Mutex<Option<String>>,
+    subscribes: Mutex<Vec<Value>>,
 }
 
 #[derive(Clone)]
@@ -76,7 +77,7 @@ impl CablePeer {
     /// A socket opens: the token of the connection and the challenge of the server.
     pub(crate) fn connect(&self, events: Arc<dyn CableEvents>) -> (String, CableOutcome) {
         let token = self.next.fetch_add(1, Ordering::SeqCst).to_string();
-        let connection = Arc::new(Connection { events: events.clone(), secret: StaticSecret::from([9; 32]), salt: [5; 32], keys: Mutex::new(None), sequence: AtomicUsize::new(0), subscription: Mutex::new(None) });
+        let connection = Arc::new(Connection { events: events.clone(), secret: StaticSecret::from([9; 32]), salt: [5; 32], keys: Mutex::new(None), sequence: AtomicUsize::new(0), subscription: Mutex::new(None), subscribes: Mutex::new(Vec::new()) });
         self.connections.lock().unwrap().insert(token.clone(), connection.clone());
         let challenge = json!({"type":"challenge", "v":1, "kid":self.config.pin, "challenge":URL_SAFE_NO_PAD.encode(connection.salt), "x25519":URL_SAFE_NO_PAD.encode(PublicKey::from(&connection.secret).as_bytes())});
         events.frame(challenge.to_string());
@@ -120,6 +121,7 @@ impl CablePeer {
         let body: Value = serde_json::from_slice(&plain)?;
         if body["t"] == "subscribe" {
             let id = body["id"].as_str().unwrap().to_string();
+            connection.subscribes.lock().unwrap().push(body.clone());
             *connection.subscription.lock().unwrap() = Some(id.clone());
             self.emit(token, json!({"t":"subscribed", "id":id}));
             return Ok(Some(id));
@@ -140,6 +142,8 @@ impl CablePeer {
         let frame = format!("{header}..{}.{}.{}", URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(text), URL_SAFE_NO_PAD.encode(tag));
         connection.events.frame(json!({"message":{"frame":frame}}).to_string());
     }
+
+    pub(crate) fn subscribes(&self, token: &str) -> Vec<Value> { self.connection(token).map(|connection| connection.subscribes.lock().unwrap().clone()).unwrap_or_default() }
 
     /// A data event of the open subscription.
     pub(crate) fn event(&self, token: &str, result: Value) -> bool {
