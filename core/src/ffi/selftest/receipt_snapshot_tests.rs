@@ -5,7 +5,7 @@ use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 
 async fn notes() -> Arc<Database> {
-    let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
+    let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str), FieldSpec::scalar("note", ScalarKind::Str).nullable()]);
     model.storage = Storage::Local;
     Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
 }
@@ -34,7 +34,7 @@ async fn a_noop_beside_a_concurrent_write_never_mixes_the_row_and_the_revision()
 
     let (noop, changed) = tokio::join!(
         database.update(epoch, "Note".into(), id.clone(), r#"{"text":"start"}"#.into(), "{}".into()),
-        database.update(epoch, "Note".into(), id.clone(), r#"{"text":"other"}"#.into(), "{}".into()),
+        database.update(epoch, "Note".into(), id.clone(), r#"{"note":"other"}"#.into(), "{}".into()),
     );
     let (noop, changed) = (noop.unwrap(), changed.unwrap());
 

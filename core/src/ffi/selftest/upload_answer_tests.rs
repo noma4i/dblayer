@@ -101,11 +101,12 @@ async fn xfer_accept_check_order() {
     database.close_now();
 }
 
-/// K2.02 (outcome.md OUTCOME, xfer_removing_committed_confirmed): a confirmed upload of a single row has no landed row; the receipt shows the optimistic row, both reads of the outcome carry no value.
+/// K2.02 (outcome.md OUTCOME, xfer_removing_committed_confirmed): the answer of the upload lands no row because the row was destroyed while the final mutation was in the network; the receipt shows the optimistic row, both reads of the outcome carry no value.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_confirmed_upload_without_a_landed_row_answers_no_value_on_both_reads() {
     let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let delete = ("DeleteMoment", "mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }");
+    let database = stand.open(None, &[CREATE_MOMENT, delete]).await;
     let epoch = database.session_epoch();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("intro.mp4");
@@ -114,10 +115,14 @@ async fn a_confirmed_upload_without_a_landed_row_answers_no_value_on_both_reads(
     let created = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap();
     assert!(matches!(bound(database.outcome(created)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     stand.script.data("CreateBlob", BLOB);
-    stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
+    let final_mutation = stand.script.hold("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
+    stand.script.data("DeleteMoment", r#"{"data":{"deleteMoment":{"id":"m77"}}}"#);
 
     let uploaded = bound(database.upload(epoch, "Moment".into(), "m77".into(), "upload_clip".into(), request(&source))).await.unwrap();
     assert!(uploaded.optimistic_value.is_some(), "the receipt shows the optimistic row");
+    final_mutation.entered().await;
+    bound(database.destroy(epoch, "Moment".into(), "m77".into())).await.unwrap();
+    final_mutation.release();
 
     for read in ["first", "second"] {
         let outcome = bound(database.outcome(uploaded.clone())).await.unwrap();
