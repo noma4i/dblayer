@@ -17,7 +17,7 @@ async fn chat_with_members() -> (Rig, WireRow, Arc<Rows>, serde_json::Value) {
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     let WireOperationOutcome::Confirmed { value: Some(chat), .. } = bound(rig.database.outcome(receipt)).await.unwrap() else { panic!("the chat was not confirmed") };
-    seed_members(&rig, &chat.id);
+    seed_members(&rig, &chat.id).await;
     let params = json!({"groupId": chat.id, "order": "JOINED"});
     let rows = Arc::new(Rows::default());
     let stream = rig.database.watch_query(&json!({"model":"Member","relation":"group_members","params":params}).to_string(), rows.clone());

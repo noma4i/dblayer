@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig};
-use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_owned, text};
+use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -27,10 +28,10 @@ fn first_seen_at(rig: &Rig, model: &str, rows: &Rows, id: &str, name: &str, valu
 /// P-APP-25: a gift lowers the balance at the revision of the receipt, and its answer adds the transaction to the history and the gift message to the thread and the chat row.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_wallet_gift() {
-    let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_wallet(models); }).await;
+    let rig = Rig::encrypted_edited(false, false, false, events(|models| { add_chat(models); add_profile(models); add_wallet(models); })).await;
     rig.world.set_profile(json!({"balance": 100}));
     rig.login_ios("A").await;
-    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
     let profile = watch(&rig, r#"{"model":"User","relation":"profile","params":{}}"#).await;
     let history = watch(&rig, r#"{"model":"WalletTransaction","relation":"history","params":{}}"#).await;
     let thread = watch(&rig, r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#).await;
@@ -54,9 +55,9 @@ async fn flow_wallet_gift() {
 /// P-APP-27: the row of a chat in the search is the row of the inbox: a local change and an event reach both lists at one revision.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_search_follows_rows() {
-    let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_search(models); }).await;
+    let rig = Rig::encrypted_edited(false, false, false, events(|models| { add_chat(models); add_search(models); })).await;
     rig.login_ios("A").await;
-    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
     rig.world.answer_with("ChatSearch", json!({"data":{"chatSearch":[{"__typename":"Chat","id":"c1","name":"c1","pinned":false}]}}));
     let epoch = rig.database.session_epoch();
     let params = json!({"query": "c"});
@@ -65,7 +66,7 @@ async fn flow_search_follows_rows() {
     bound(rig.database.refresh(epoch, "Chat".into(), Some("search".into()), params.to_string())).await.unwrap();
     settled(&rig, "the search finds c1", || found.len() == 1 && inbox.len() == 1).await;
 
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false})).await;
     settled(&rig, "both lists show the event", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "name") == Some(text("renamed")))).await;
     let revisions: Vec<_> = [&inbox, &found].iter().map(|rows| first_seen_at(&rig, "Chat", rows, "c1", "name", text("renamed"))).collect();
     assert!(revisions.iter().all(|revision| *revision >= 0), "a list never showed the event\ninbox: {}\nfound: {}", inbox.trace(), found.trace());

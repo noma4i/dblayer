@@ -167,11 +167,6 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
     clock.advance(200);
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 3, "fresh_for elapsed");
-
-    db.life.stale_for_tests("Moment");
-    db.life.barrier();
-    load(&db, "feed").await.unwrap();
-    assert_eq!(queries(&transport), 4, "marked stale");
 }
 
 #[tokio::test]

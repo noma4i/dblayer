@@ -337,11 +337,12 @@ impl FakeHttp for World {
 pub(super) struct Switchable {
     target: Mutex<Option<Arc<World>>>,
     invalid: bool,
+    pub(super) events: super::rig_events::Events,
 }
 
 impl Switchable {
     pub(super) fn new(target: Option<Arc<World>>, invalid: bool) -> Arc<Self> {
-        Arc::new(Self { target: Mutex::new(target), invalid })
+        Arc::new(Self { target: Mutex::new(target), invalid, events: super::rig_events::Events::new() })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
     fn current(&self) -> Result<Arc<World>, DbError> {
@@ -354,6 +355,7 @@ impl Switchable {
 
 #[async_trait]
 impl FakeTransport for Switchable {
+    fn cable(&self) -> Option<&crate::transport::encrypted::cable::tests::peer_tests::CablePeer> { Some(&self.events.peer) }
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {

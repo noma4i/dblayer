@@ -31,6 +31,7 @@ class UploadBatchTest {
             assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.uploads.isNotEmpty() })
             assertTrue(source.delete())
             repeat(2) { transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""") }
+            repeat(2) { transport.enqueuePut("https://storage.test/file") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}""")
             database.setOnline(true)
             val ids = withTimeout(5000) { confirmedPairs(receipt) }.map { "${it!!.first}:${it.second}" }

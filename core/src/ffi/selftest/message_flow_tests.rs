@@ -3,8 +3,9 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::bridge_support_tests::message;
+use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_delete, land_owned, text};
+use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome, WireOperationReceipt};
@@ -14,11 +15,11 @@ const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chat
 const CHATS: &str = r#"{"model":"Chat","relation":"all","params":{}}"#;
 
 async fn rig_with_messages(messages: &[(&str, &str, i64)]) -> Rig {
-    let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
-    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(add_chat)).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
     for (id, body, at) in messages {
         rig.world.seed_message("A", id, body, *at);
-        land_owned(&rig, "Message", json!({"id": id, "chatId": "c1", "text": body, "at": at})).await;
+        rig.land("Message", json!({"id": id, "chatId": "c1", "text": body, "at": at})).await;
     }
     rig
 }
@@ -72,7 +73,7 @@ async fn flow_message_edit() {
     confirmed(&rig, receipt).await;
     for rows in [&thread, &last] { assert_eq!(field(&rig, "Message", rows, "m1", "text"), Some(text("edited"))); }
 
-    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "from event", "at": 1})).await;
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "from event", "at": 1})).await;
     settled(&rig, "both places show the event", || field(&rig, "Message", &thread, "m1", "text") == Some(text("from event")) && field(&rig, "Message", &last, "m1", "text") == Some(text("from event"))).await;
     rig.database.close_now();
 }
@@ -106,7 +107,7 @@ async fn flow_message_delete() {
     confirmed(&rig, receipt).await;
     assert_eq!(ids(&thread), ["m1"]);
 
-    land_delete(&rig, "Message", "m1").await;
+    rig.land_removed("Message", "m1").await;
     settled(&rig, "the event empties the thread and the pointer", || ids(&thread).is_empty() && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(Cell::Null)).await;
     rig.database.close_now();
 }
@@ -130,7 +131,7 @@ async fn flow_message_status() {
     let doubled = thread.1.lock().unwrap().iter().any(|seen| seen.size > 1);
     assert!(!doubled, "the thread showed two bubbles for one message");
 
-    land_owned(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hi", "at": 10, "status": "READ"})).await;
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "hi", "at": 10, "status": "READ"})).await;
     settled(&rig, "the status shows", || field(&rig, "Message", &thread, "m1", "status") == Some(text("READ"))).await;
     assert_eq!(ids(&thread), ["m1"]);
     rig.database.close_now();

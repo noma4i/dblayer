@@ -246,6 +246,7 @@ class TransferTest {
         try {
             val transport = MockTransport()
             transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+            transport.enqueuePut("https://storage/file")
             transport.enqueue("CreateMoment", DbException.Http(422u, "rejected"))
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"""
             openSigned(Config(null, null), modelsJSON, transport, operations)
@@ -300,6 +301,7 @@ class TransferTest {
             val files = (0..1).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
             val transport = MockTransport()
             repeat(2) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
+            transport.enqueuePut("https://storage/file")
             transport.enqueue("CreateAsset", """{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             openSigned(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
@@ -326,6 +328,7 @@ class TransferTest {
             val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
             val transport = MockTransport()
             repeat(4) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
+            repeat(3) { transport.enqueuePut("https://storage/file") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             openSigned(Config(null, null), modelsJSON, RefuseFirstFile(transport), operations)
@@ -357,6 +360,7 @@ class TransferTest {
         try {
             val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
             transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
+            repeat(2) { transport.enqueuePut("https://storage/file") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             openSigned(Config(null, null), modelsJSON, transport, operations)

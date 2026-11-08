@@ -2,16 +2,17 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig};
 use super::rig_held::Held;
-use super::flow_fixtures::{one_revision, add_chat, add_profile, cell, int, land_owned, text};
+use super::flow_fixtures::{one_revision, add_chat, add_profile, cell, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
 use crate::test_wait::settled;
 
 async fn rig() -> Rig {
-    Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); }).await
+    Rig::encrypted_edited(false, false, false, events(|models| { add_chat(models); add_profile(models); })).await
 }
 
 fn field(rig: &Rig, rows: &Rows, id: &str, name: &str) -> Option<Cell> {
@@ -54,7 +55,7 @@ async fn flow_current_user_profile() {
     rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New"))));
 
-    land_owned(&rig, "User", json!({"id": "user", "name": "Event"})).await;
+    rig.land("User", json!({"id": "user", "name": "Event"})).await;
     settled(&rig, "an event changes the name everywhere", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("Event")))).await;
     rig.database.close_now();
 }
@@ -67,8 +68,8 @@ async fn flow_connection_accept() {
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
     held.shows(&rig, "A").await;
-    land_owned(&rig, "User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "Eve", "connectionStatus": "PENDING"})).await;
+    rig.land("User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "Eve", "connectionStatus": "PENDING"})).await;
     let epoch = rig.database.session_epoch();
     let counters = |rows: &Rows| (field(&rig, rows, "user", "secondaryChatsCount"), field(&rig, rows, "user", "unreadSecondaryChatsCount"));
     settled(&rig, "the counters show", || counters(&held.single) == (Some(int(3)), Some(int(2)))).await;
@@ -96,7 +97,7 @@ async fn flow_connection_accept() {
     }).await;
     assert_eq!(field(&rig, &people, "u5", "connectionStatus"), Some(text("CONNECTED")));
 
-    land_owned(&rig, "User", json!({"id": "user", "secondaryChatsCount": 0, "unreadSecondaryChatsCount": 0})).await;
+    rig.land("User", json!({"id": "user", "secondaryChatsCount": 0, "unreadSecondaryChatsCount": 0})).await;
     settled(&rig, "a counters event sets every place", || [&held.single, &held.entity, &held.rows].iter().all(|rows| counters(rows) == (Some(int(0)), Some(int(0))))).await;
     rig.database.close_now();
 }
@@ -106,7 +107,7 @@ async fn flow_connection_accept() {
 async fn flow_user_block() {
     let rig = rig().await;
     rig.login_ios("A").await;
-    land_owned(&rig, "User", json!({"id": "u5", "name": "Eve"})).await;
+    rig.land("User", json!({"id": "u5", "name": "Eve"})).await;
     let epoch = rig.database.session_epoch();
     let blocked = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"User","relation":"blocked","params":{}}"#, blocked.clone());
@@ -140,8 +141,8 @@ async fn flow_pending_counters() {
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
     held.shows(&rig, "A").await;
-    land_owned(&rig, "User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "Eve", "connectionStatus": "PENDING"})).await;
+    rig.land("User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "Eve", "connectionStatus": "PENDING"})).await;
     let epoch = rig.database.session_epoch();
     let counters = |rows: &Rows| ["secondaryChatsCount", "premiumSecondaryChatsCount", "unreadSecondaryChatsCount"].map(|name| field(&rig, rows, "user", name));
     let places = [&held.single, &held.entity, &held.rows];
@@ -153,7 +154,7 @@ async fn flow_pending_counters() {
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     settled(&rig, "the refetch of the profile sets every place to one value", || all([3, 1, 2])).await;
 
-    land_owned(&rig, "User", json!({"id": "user", "secondaryChatsCount": 0, "premiumSecondaryChatsCount": 0, "unreadSecondaryChatsCount": 0})).await;
+    rig.land("User", json!({"id": "user", "secondaryChatsCount": 0, "premiumSecondaryChatsCount": 0, "unreadSecondaryChatsCount": 0})).await;
     settled(&rig, "a counters event sets every place to one value", || all([0, 0, 0])).await;
     rig.database.close_now();
 }

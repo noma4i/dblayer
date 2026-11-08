@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use super::rig_events::events;
 use super::rig_tests::{bound, Rig};
-use super::flow_fixtures::{one_revision, add_chat, add_lists, add_profile, cell, land_owned, text};
+use super::flow_fixtures::{one_revision, add_chat, add_lists, add_profile, cell, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -13,7 +14,7 @@ const PRIMARY: &str = r#"{"model":"Chat","relation":"list","params":{"list":"PRI
 const SECONDARY: &str = r#"{"model":"Chat","relation":"list","params":{"list":"SECONDARY"}}"#;
 
 async fn rig() -> Rig {
-    let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_lists(models); }).await;
+    let rig = Rig::encrypted_edited(false, false, false, events(|models| { add_chat(models); add_profile(models); add_lists(models); })).await;
     rig.world.answer_with("ChatList", json!({"data":{"chats":[]}}));
     rig.login_ios("A").await;
     rig
@@ -36,16 +37,16 @@ async fn flow_chat_appears_from_event() {
     let epoch = rig.database.session_epoch();
     let reads = rig.world.count("ChatList");
 
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "event", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "event", "lists": ["PRIMARY"]})).await;
     settled(&rig, "the event chat stands in PRIMARY", || primary.len() == 1 && secondary.emptied()).await;
 
     rig.world.answer_with("AnswerConnection", json!({"data":{"answerConnection":{"user":{"__typename":"User","id":"u5","connectionStatus":"PENDING"},"chat":{"__typename":"Chat","id":"c2","connectionStatus":"PENDING","name":"answer","lists":["SECONDARY"]}}}}));
-    land_owned(&rig, "User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
+    rig.land("User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), "{}".into(), json!({"chatId": "c2"}).to_string())).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     settled(&rig, "the chat of the answer stands in SECONDARY", || secondary.len() == 1).await;
 
-    land_owned(&rig, "Chat", json!({"id": "c2", "name": "answer", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c2", "name": "answer", "lists": ["PRIMARY"]})).await;
     settled(&rig, "the accepted chat moves to PRIMARY", || primary.len() == 2 && secondary.emptied()).await;
     assert_eq!(rig.world.count("ChatList"), reads, "the app reread a list");
     rig.database.close_now();
@@ -56,10 +57,10 @@ async fn flow_chat_appears_from_event() {
 async fn flow_forward_picker() {
     let rig = rig().await;
     let (inbox, picker) = (watch(&rig, PRIMARY).await, watch(&rig, PRIMARY).await);
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "one", "lists": ["PRIMARY"]})).await;
-    land_owned(&rig, "Chat", json!({"id": "c2", "name": "two", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "one", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c2", "name": "two", "lists": ["PRIMARY"]})).await;
     settled(&rig, "both lists hold two chats", || inbox.len() == 2 && picker.len() == 2).await;
-    land_owned(&rig, "Chat", json!({"id": "c2", "name": "renamed", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c2", "name": "renamed", "lists": ["PRIMARY"]})).await;
     settled(&rig, "both lists show the rename", || [&inbox, &picker].iter().all(|rows| names(&rig, rows).contains(&("c2".to_string(), text("renamed"))))).await;
     assert_eq!(names(&rig, &inbox), names(&rig, &picker));
     rig.database.close_now();
@@ -72,7 +73,7 @@ async fn flow_group_name_logo() {
     let list = watch(&rig, PRIMARY).await;
     let entity = Arc::new(Rows::default());
     drop(rig.database.watch(crate::ffi::ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: crate::ffi::ReadFetch::Never }, entity.clone()));
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "old", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "old", "lists": ["PRIMARY"]})).await;
     settled(&rig, "both places show the old name", || list.len() == 1 && entity.len() == 1).await;
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("ChatUpdate");
@@ -88,7 +89,7 @@ async fn flow_group_name_logo() {
     rig.settle().await;
     assert!([&list, &entity].iter().all(|rows| names(&rig, rows) == [("c1".to_string(), text("new"))]));
 
-    land_owned(&rig, "Chat", json!({"id": "c1", "name": "event", "lists": ["PRIMARY"]})).await;
+    rig.land("Chat", json!({"id": "c1", "name": "event", "lists": ["PRIMARY"]})).await;
     settled(&rig, "an event renames both places", || [&list, &entity].iter().all(|rows| names(&rig, rows) == [("c1".to_string(), text("event"))])).await;
     rig.database.close_now();
 }

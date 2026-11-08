@@ -360,7 +360,7 @@ async fn out_join_rows_orders() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let created = confirmed_group(&rig).await;
-    seed_members(&rig, &created.id);
+    seed_members(&rig, &created.id).await;
     let result = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "add_member".into(), "{}".into(), json!({"userIds": ["u4", "u9"]}).to_string())).await;
     assert!(result.is_ok(), "the call failed: {:?}", result.as_ref().err());
     rig.settle().await;

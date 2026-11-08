@@ -55,7 +55,7 @@ async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal
             let epoch = rig.database.session_epoch();
             let (values, args) = group("friends");
             let created = confirmed_group(&rig, epoch, values, args).await;
-            seed_members(&rig, &created.id);
+            seed_members(&rig, &created.id).await;
             let gate = if refusal { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
             let acting = { let database = rig.database.clone(); let id = created.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": [user]}).to_string()).await }) };
             gate.entered().await;
@@ -278,7 +278,7 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
         let created = confirmed_group(&rig, epoch, values, args).await;
-        seed_members(&rig, &created.id);
+        seed_members(&rig, &created.id).await;
         let (first_gate, second_gate) = (rig.world.hold_then(first.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }), rig.world.hold_then(second.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }));
         let args = json!({"userIds": [user]}).to_string();
         let start = |action: &'static str| { let database = rig.database.clone(); let (id, args) = (created.id.clone(), args.clone()); rig.spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), args).await }) };
@@ -318,7 +318,7 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
         let created = confirmed_group(&rig, epoch, values, args).await;
-        seed_members(&rig, &created.id);
+        seed_members(&rig, &created.id).await;
         let held = |refused: bool| if refused { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
         let first_gate = held(first_refused);
         let second_gate = held(!first_refused);

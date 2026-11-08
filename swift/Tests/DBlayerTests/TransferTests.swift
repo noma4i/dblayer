@@ -211,6 +211,7 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: source) }
     let transport = MockTransport()
     transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
+    transport.enqueuePut("https://storage/file")
     transport.enqueue("CreateMoment", failure: .Http(status: 422, detail: "rejected"))
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"#
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
@@ -273,6 +274,7 @@ extension BridgeProbeTests {
     }
     let transport = MockTransport()
     for index in 0..<2 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
+    transport.enqueuePut("https://storage/file")
     transport.enqueue("CreateAsset", reply: #"{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
@@ -305,6 +307,7 @@ extension BridgeProbeTests {
     }
     let transport = MockTransport()
     for index in 0..<4 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
+    for _ in 0..<3 { transport.enqueuePut("https://storage/file") }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations)
@@ -345,6 +348,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let held = transport.hold("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-0","blobId":"b0"}}}"#)
     transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}"#)
+    for _ in 0..<2 { transport.enqueuePut("https://storage/file") }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)

@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig};
-use super::flow_fixtures::{one_revision, add_chat, add_moment, add_profile, cell, int, land_delete, land_owned};
+use super::flow_fixtures::{one_revision, add_chat, add_moment, add_profile, cell, int};
 use super::upload_fixtures::add_moment_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::upload_wire::WireUploadRequest;
@@ -18,7 +19,7 @@ const BY_USER: &str = r#"{"model":"Moment","where":{"type":"equal","field":"user
 const COMPASS: &str = r#"{"model":"Moment","order":[{"field":"unreadSimilarMomentsCount","direction":"desc"}]}"#;
 
 async fn rig() -> Rig {
-    Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_moment(models); add_moment_file(models); }).await
+    Rig::encrypted_edited(false, false, false, events(|models| { add_chat(models); add_profile(models); add_moment(models); add_moment_file(models); })).await
 }
 
 async fn watch(rig: &Rig, query: &str) -> Arc<Rows> {
@@ -52,7 +53,7 @@ async fn same_revision(rig: &Rig, places: &[&Arc<Rows>], id: &str, name: &str, v
 async fn flow_moment_reaction() {
     let rig = rig().await;
     rig.login_ios("A").await;
-    land_owned(&rig, "Moment", moment("m1", "u1", 2, 0)).await;
+    rig.land("Moment", moment("m1", "u1", 2, 0)).await;
     let (feed, by_user, compass) = (watch(&rig, FEED).await, watch(&rig, BY_USER).await, watch(&rig, COMPASS).await);
     let places = [&feed, &by_user, &compass];
     settled(&rig, "every list shows m1", || places.iter().all(|rows| rows.len() == 1)).await;
@@ -69,7 +70,7 @@ async fn flow_moment_reaction() {
     rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3))));
 
-    land_owned(&rig, "Moment", moment("m1", "u1", 4, 0)).await;
+    rig.land("Moment", moment("m1", "u1", 4, 0)).await;
     settled(&rig, "an event sets 4 in every list", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(4)))).await;
     same_revision(&rig, &places, "m1", "visitsCount", int(4), floor).await;
     rig.database.close_now();
@@ -81,8 +82,8 @@ async fn flow_compass_unread() {
     let rig = rig().await;
     rig.world.set_profile(json!({"unreadCompassCount": 4}));
     rig.login_ios("A").await;
-    land_owned(&rig, "Moment", moment("m1", "u1", 0, 3)).await;
-    land_owned(&rig, "Moment", moment("m2", "u2", 0, 1)).await;
+    rig.land("Moment", moment("m1", "u1", 0, 3)).await;
+    rig.land("Moment", moment("m2", "u2", 0, 1)).await;
     let compass = watch(&rig, COMPASS).await;
     settled(&rig, "the compass leads with m1", || ids(&compass) == ["m1", "m2"]).await;
     let profile = Arc::new(Rows::default());
@@ -139,9 +140,9 @@ async fn flow_moment_publish_delete() {
     settled(&rig, "the destroy empties every list", || places.iter().all(|rows| rows.emptied())).await;
     assert!(matches!(bound(rig.database.outcome(destroy)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
 
-    land_owned(&rig, "Moment", moment("m5", "u1", 0, 0)).await;
+    rig.land("Moment", moment("m5", "u1", 0, 0)).await;
     settled(&rig, "an event card stands", || places.iter().all(|rows| rows.len() == 1)).await;
-    land_delete(&rig, "Moment", "m5").await;
+    rig.land_removed("Moment", "m5").await;
     settled(&rig, "the delete event empties every list", || places.iter().all(|rows| rows.emptied())).await;
     rig.database.close_now();
 }

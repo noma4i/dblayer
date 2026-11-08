@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::flow_fixtures::{add_chat, cell, chat_row, land_owned, one_revision};
+use super::flow_fixtures::{add_chat, cell, chat_row, one_revision};
 use crate::ffi::wire::Cell;
+use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::upload_fixtures::add_uploads;
 use crate::ffi::tape::Rows;
@@ -14,11 +15,11 @@ use crate::test_wait::settled;
 use crate::owners::write::upload::UploadFile;
 
 async fn rig() -> Rig {
-    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
         add_chat(models);
         add_uploads(models);
-    }).await;
-    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
     rig
 }
 
@@ -182,7 +183,7 @@ async fn xfer_status_local_url() {
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_status_processing() {
     use crate::ffi::{ReadValue, WireProcessing};
-    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
         add_chat(models);
         add_uploads(models);
         let chat = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Chat").unwrap();
@@ -191,18 +192,18 @@ async fn xfer_status_processing() {
         fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoProgress", crate::value::ScalarKind::Num).nullable().optional()).unwrap());
         let action = chat["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "update_photo").unwrap();
         action["processing"] = json!({"field": "photoState", "done": ["ready"], "progress": "photoProgress"});
-    }).await;
-    land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+    })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
     let stream = blob_stream(&rig, "update_photo");
     let mut working = chat_row("c1", 0);
     working["photoState"] = json!("working");
     working["photoProgress"] = json!(0.5);
-    land_owned(&rig, "Chat", working).await;
+    rig.land("Chat", working).await;
     let shown = status_until(&stream, "the processing shows", |value| matches!(value, ReadValue::Status { processing: Some(_), .. })).await;
     assert!(matches!(shown, ReadValue::Status { processing: Some(WireProcessing { progress: Some(progress) }), .. } if (progress - 0.5).abs() < f64::EPSILON));
     let mut ready = chat_row("c1", 0);
     ready["photoState"] = json!("ready");
-    land_owned(&rig, "Chat", ready).await;
+    rig.land("Chat", ready).await;
     status_until(&stream, "the terminal value drops the processing", |value| matches!(value, ReadValue::Status { processing: None, .. })).await;
     rig.database.close_now();
 }
@@ -213,8 +214,8 @@ async fn xfer_status_quiet_on_other_rows() {
     let rig = rig().await;
     let _stream = blob_stream(&rig, "update_photo");
     settled(&rig, "the stream read its row at the open", || rig.database.shows.row_reads() == 1).await;
-    land_owned(&rig, "Chat", chat_row("c2", 0)).await;
-    land_owned(&rig, "Chat", chat_row("c1", 1)).await;
+    rig.land("Chat", chat_row("c2", 0)).await;
+    rig.land("Chat", chat_row("c1", 1)).await;
     settled(&rig, "the commit of its own row woke the stream", || rig.database.shows.row_reads() >= 2).await;
     assert_eq!(rig.database.shows.row_reads(), 2, "the commit of the other row read a row");
     rig.database.close_now();

@@ -14,13 +14,14 @@ struct MockTransportStrictTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func bridge_prop_strict_scripts_eachPutConsumesOneScriptAndAnUnscriptedPutFails() async throws {
+  func bridge_prop_strict_scripts_eachPutConsumesOneScriptAndAnUnscriptedPutFails() async {
     await withKnownIssue {
       let transport = MockTransport()
       transport.enqueuePut("u", failure: .Http(status: 503, detail: "down"))
       transport.enqueuePut("u", etag: "ok")
       do { _ = try await put(transport, "u"); Issue.record("the failing script returned") } catch DbError.Http {} catch { Issue.record("wrong error \(error)") }
-      #expect(try await put(transport, "u").etag == "ok")
+      let second = try? await put(transport, "u")
+      #expect(second?.etag == "ok")
       do { _ = try await put(transport, "u"); Issue.record("a third PUT returned") } catch let DbError.Invalid(detail) { #expect(detail.contains("no PUT queued for u")) } catch { Issue.record("wrong error \(error)") }
       #expect(transport.putCalls == ["u", "u", "u"])
     } matching: { "\($0.comments)".contains("no PUT queued for u") }

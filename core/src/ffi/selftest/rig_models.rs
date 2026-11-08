@@ -148,6 +148,7 @@ fn member_spec() -> crate::schema::ModelSpec {
 
 pub(super) fn plain_operations() -> String {
     let mut operations: Vec<Value> = serde_json::from_str(OPERATIONS).unwrap();
+    operations.push(json!({"name":"RigEvents","document":"subscription RigEvents { rigEvents { id } }","rootPath":"rigEvents"}));
     operations.push(json!({"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}));
     json!(operations).to_string()
 }

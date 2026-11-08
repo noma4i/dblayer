@@ -17,6 +17,8 @@ mod recovery_tests;
 mod delivery_reactivity_tests;
 mod refetch_tests;
 mod upload_tests;
+mod rig_events;
+mod stale_event_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;
