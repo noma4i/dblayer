@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, plain, request, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
-use crate::ffi::WireOperationOutcome;
+use crate::ffi::{DbError, WireOperationOutcome};
 
 const ROW: &str = r#""__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""#;
 
@@ -69,5 +69,34 @@ async fn a_send_with_a_file_confirms_through_the_declared_steps() {
 
     assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     assert_eq!(stand.script.names(), ["CreateBlob", "CreateMoment"]);
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_accept_row_missing() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("intro.mp4");
+    std::fs::write(&source, b"video").unwrap();
+    let refused = bound(database.upload(database.session_epoch(), "Moment".into(), "absent".into(), "upload_clip".into(), request(&source))).await;
+    assert!(matches!(refused, Err(DbError::NotFound { .. })), "{refused:?}");
+    assert!(stand.script.names().is_empty(), "{:?}", stand.script.names());
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_accept_check_order() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("intro.mp4");
+    std::fs::write(&source, b"video").unwrap();
+    let missing = directory.path().join("missing.mp4");
+    for (action, file) in [("undeclared", &source), ("upload_clip", &missing)] {
+        let refused = bound(database.upload(database.session_epoch(), "Moment".into(), "absent".into(), action.into(), request(file))).await;
+        assert!(matches!(refused, Err(DbError::Invalid { .. })), "{action}: {refused:?}");
+    }
+    assert!(stand.script.names().is_empty(), "{:?}", stand.script.names());
     database.close_now();
 }

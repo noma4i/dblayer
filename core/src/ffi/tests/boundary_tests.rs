@@ -47,15 +47,6 @@ async fn attach_and_detach_answer_with_their_own_batch() {
     assert_eq!(had, [false, true]);
 }
 
-/// xfer_accept_row_missing (D-168): an upload to a row that is not stored fails with NotFound before the file is read.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_upload_to_a_missing_row_is_not_found() {
-    let database = notes().await;
-    let request = crate::ffi::upload_wire::WireUploadRequest { path: "/nonexistent/file".into(), name: None, mime: None, variables_json: "{}".into() };
-    let refused = database.upload(database.session_epoch(), "Note".into(), "absent".into(), "attach".into(), request).await;
-    assert!(matches!(refused, Err(DbError::NotFound { .. })), "{refused:?}");
-}
-
 /// boundary_closed_call_precedence: after close an unknown operation is Closed, not Invalid.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_call_after_close_is_closed_before_its_operation_is_checked() {
