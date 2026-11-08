@@ -18,9 +18,14 @@ public enum ChangePump {
       }
       let reader = database.subscribeValues(epoch: epoch, request: .changes)
       var cause: ReadEnd?
-      guard let claim = try? await reader.claimReader() else {
-        ended = epoch
-        continue
+      let claim: UInt64
+      do {
+        claim = try await reader.claimReader()
+      } catch DbError.Closed(_) {
+        announce.finish()
+        return
+      } catch {
+        preconditionFailure("the change pump could not claim the reader of its own stream: \(error)")
       }
       while let value = await reader.pull(reader: claim) {
         if case let .ended(reason) = value { cause = reason }

@@ -200,16 +200,16 @@ extension BridgeProbeTests {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
     let stream = try DB.account().stream(User.profile)
-    var first = stream.makeAsyncIterator()
-    #expect(await first.next() != nil)
-    var second = stream.makeAsyncIterator()
-    guard case .ended(.invalid)? = await second.next() else { Issue.record("a second reader must end with .invalid"); return }
-    #expect(await second.next() == nil)
+    let first = Cursor(stream)
+    #expect(await first.next("the first value") != nil)
+    let second = Cursor(stream)
+    guard case .ended(.invalid)? = await second.next("the refusal of the second reader") else { Issue.record("a second reader must end with .invalid"); return }
+    #expect(await second.next("the end of the second reader") == nil)
     #expect(try await DB.subscriptionCensus().observedQueries == 1, "the refusal of the second reader leaves the stream to the first")
 
     do {
-      var early = try DB.account().stream(User.profile).makeAsyncIterator()
-      #expect(await early.next() != nil)
+      let early = Cursor(try DB.account().stream(User.profile))
+      #expect(await early.next("the first value of the early reader") != nil)
     }
     await stream.cancel()
     #expect(try await DB.subscriptionCensus().observedQueries == 0)
