@@ -83,28 +83,11 @@ fn win_load_nowait_before_snapshot_waits() {
     assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing)), Some(WindowOutcome::Interrupted), "a waiting call ends with the owner");
 }
 
-fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usize>>) {
-    if rest.is_empty() {
-        all.push(events.clone());
-        return;
-    }
-    for index in 0..rest.len() {
-        let event = rest.remove(index);
-        events.push(event);
-        orders(events, rest, all);
-        events.pop();
-        rest.insert(index, event);
-    }
-}
-
 /// win_load_nowait_before_snapshot_waits over every order of the second epoch: EpochStarted(0), the addressed snapshot (1), the broadcast (2), the call (3).
 /// The snapshot follows its request and a call stamped with the epoch follows its start.
 #[test]
 fn win_prop_nowait_second_epoch_orders() {
-    let mut all = Vec::new();
-    orders(&mut Vec::new(), &mut vec![0, 1, 2, 3], &mut all);
-    let position = |order: &[usize], event: usize| order.iter().position(|seen| *seen == event).unwrap();
-    let valid: Vec<&Vec<usize>> = all.iter().filter(|order| position(order, 0) < position(order, 1) && position(order, 0) < position(order, 3)).collect();
+    let valid = crate::test_wait::orders_of(&[0usize, 1, 2, 3], &[(0, 1), (0, 3)]);
     assert_eq!(valid.len(), 8);
     for network in [true, false] {
         for order in &valid {

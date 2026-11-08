@@ -160,3 +160,32 @@ fn sess_prop_credential_in_store() {
     assert_eq!(slot.clears.load(Ordering::SeqCst), 1, "the erase reaches the store once");
     assert_eq!(slot.memory.get().unwrap(), None);
 }
+
+/// K7.11 (P-BND-04): a SQLite failure while the read path asks for the stored session is `Storage`, never `Network`.
+#[test]
+fn a_storage_failure_of_the_session_read_is_a_storage_error() {
+    let rig = rig(Mode::BlockInGet);
+    rig.release.send(()).unwrap();
+    rig.db.lock().connection.execute_batch("DROP TABLE encrypted_session").unwrap();
+
+    assert!(matches!(rig.client.credential(), Err(TransportError::Storage(_))), "the secret store is empty and the session table is gone");
+}
+
+/// K7.12 (P-BND-04): the replay of an interrupted session end that fails in SQLite ends with `Storage`.
+#[test]
+fn a_storage_failure_of_the_session_end_replay_is_a_storage_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    drop(Store::open_models(Some(&path), Vec::new(), None).unwrap());
+    {
+        let store = Store::open_models(Some(&path), Vec::new(), None).unwrap();
+        store.lock().connection.execute_batch("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)").unwrap();
+    }
+    let store = Arc::new(Store::open_models(Some(&path), Vec::new(), None).unwrap());
+    store.lock().connection.execute_batch("DROP TABLE encrypted_session").unwrap();
+    let secret = Secret::new(Arc::new(MemoryCredentials::default()));
+
+    let replayed = super::credential::finish_session_end(&store, &secret);
+
+    assert!(matches!(replayed, Err(TransportError::Storage(_))), "{replayed:?}");
+}
