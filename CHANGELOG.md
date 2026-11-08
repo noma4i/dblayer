@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `UploadInfo` carries `localUrl` and `processing` on Swift and Kotlin.
+
 ## 6.18.0 - 2026-11-08
 
 ### Changed

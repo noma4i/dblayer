@@ -28,6 +28,10 @@ public struct SyncInfo: Codable, Sendable, Equatable {
   }
 }
 
+public struct UploadProcessing: Codable, Sendable, Equatable {
+  public let progress: Double?
+}
+
 public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed, cancelled }
 
 public struct UploadInfo: Codable, Sendable, Equatable {
@@ -41,10 +45,15 @@ public struct UploadInfo: Codable, Sendable, Equatable {
   /// Sum of retries for unfinished steps, preserved across restarts.
   public let attempts: Int
   public let error: OperationFailure?
+  /// The file URL of the copy of the library while the transfer holds it.
+  public let localUrl: String?
+  /// The server works on the file after the transfer: the progress it reports.
+  public let processing: UploadProcessing?
 
   enum CodingKeys: String, CodingKey {
-    case status, stage, attempts, error
+    case status, stage, attempts, error, processing
     case progress
+    case localUrl = "local_url"
     case sentBytes = "sent_bytes", totalBytes = "total_bytes", waitReason = "wait_reason"
   }
 }
@@ -89,7 +98,8 @@ extension UploadInfo {
   public init(wire: WireUpload) {
     self.init(
       status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes, progress: wire.progress,
-      waitReason: wire.waitReason, attempts: Int(wire.attempts), error: wire.error.map(OperationFailure.init(wire:))
+      waitReason: wire.waitReason, attempts: Int(wire.attempts), error: wire.error.map(OperationFailure.init(wire:)),
+      localUrl: wire.localUrl, processing: wire.processing.map { UploadProcessing(progress: $0.progress) }
     )
   }
 }

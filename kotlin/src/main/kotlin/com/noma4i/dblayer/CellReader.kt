@@ -115,4 +115,6 @@ fun UploadInfo.Companion.of(wire: WireUpload): UploadInfo = UploadInfo(
     waitReason = wire.waitReason,
     attempts = wire.attempts.toInt(),
     error = wire.error?.let { OperationFailure(it.kind, it.message, it.extensions) },
+    localUrl = wire.localUrl,
+    processing = wire.processing?.let { UploadProcessing(it.progress) },
 )

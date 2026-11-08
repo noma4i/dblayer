@@ -270,6 +270,8 @@ The final content mutation does not hold a file permit.
 | `progress` | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown |
 | `attempts` | saved attempts for the current unfinished step, preserved across restarts |
 | `error` | kind and message, `isRetryable` is false for a rejection |
+| `localUrl` | the file URL of the copy of the library while the transfer holds it, `nil` otherwise |
+| `processing` | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 

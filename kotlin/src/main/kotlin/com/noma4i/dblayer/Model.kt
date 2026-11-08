@@ -46,6 +46,9 @@ enum class UploadStatus {
 }
 
 @Serializable
+data class UploadProcessing(val progress: Double?)
+
+@Serializable
 data class UploadInfo(
     val status: UploadStatus,
     val stage: String,
@@ -56,6 +59,8 @@ data class UploadInfo(
     @SerialName("wait_reason") val waitReason: String?,
     val attempts: Int,
     val error: OperationFailure?,
+    @SerialName("local_url") val localUrl: String?,
+    val processing: UploadProcessing?,
 ) {
     companion object
 }
