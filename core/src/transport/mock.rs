@@ -101,6 +101,7 @@ struct MockState {
     puts_running: usize,
     puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
+    settled: HashMap<(super::Author, u64), Reply>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -198,17 +199,18 @@ impl MockTransport {
 
     async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
+        let pair = request.wire.map(|wire| (wire.author, wire.request_id));
+        let repeated = pair.and_then(|pair| self.lock().settled.get(&pair).cloned());
         let responder = self.lock().responder.clone();
-        let answered = responder.and_then(|answer| answer(&request));
-        let reply = answered.or_else(|| {
-            let mut state = self.lock();
-            let queue = state.replies.get_mut(&request.operation_name);
-            match queue {
-                Some(queue) if queue.len() > 1 => queue.pop_front(),
-                Some(queue) => queue.front().cloned(),
-                None => None,
-            }
+        let reply = repeated.or_else(|| {
+            let answered = responder.and_then(|answer| answer(&request));
+            answered.or_else(|| self.lock().replies.get_mut(&request.operation_name).and_then(VecDeque::pop_front))
         });
+        if let (Some(pair), Some(reply)) = (pair, &reply) {
+            if !matches!(reply.result, Err(TransportError::Network(_) | TransportError::Interrupted(_))) {
+                self.lock().settled.entry(pair).or_insert_with(|| reply.clone());
+            }
+        }
         let reply = reply.ok_or_else(|| TransportError::Unscripted(request.operation_name.clone()))?;
         if !reply.delay.is_zero() {
             self.wait(reply.delay).await;

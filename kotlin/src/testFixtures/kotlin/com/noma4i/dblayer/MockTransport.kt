@@ -132,25 +132,28 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         return PutReply(200u, null)
     }
 
-    /** The reply the server gave a request whose answer the library cancelled before it arrived. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one. */
-    private val settled = ConcurrentHashMap<Pair<Author, ULong>, String>()
+    /** The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one. */
+    private val settled = ConcurrentHashMap<Pair<Author, ULong>, Reply>()
 
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
         TestPulse.pulse()
         val identity = request.author to request.requestId
-        settled[identity]?.let { return it }
+        settled[identity]?.let { return deliver(it) }
         responders[request.operationName]?.invoke(request)?.let { body ->
-            settled[identity] = body
-            return body
+            val answered = Reply(body, null)
+            settled[identity] = answered
+            return deliver(answered)
         }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
-        try {
-            reply.hold?.pass()
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            reply.body?.let { settled[identity] = it }
-            throw cancelled
-        }
+        if (!lostAnswer(reply.failure)) settled[identity] = Reply(reply.body, reply.failure)
+        reply.hold?.pass()
+        return deliver(reply)
+    }
+
+    private fun lostAnswer(failure: DbException?): Boolean = failure is DbException.Network || failure is DbException.Offline || failure is DbException.Interrupted || failure is DbException.Dropped
+
+    private fun deliver(reply: Reply): String {
         TestPulse.pulse()
         reply.failure?.let { throw it }
         return reply.body ?: "{}"

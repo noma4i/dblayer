@@ -16,7 +16,7 @@ private final class HeldProfileTransport: ScriptedTransport, WrapsMock, @uncheck
     if !held { return try await base.query(request: request) }
     defer { ended.continuation.yield(()) }
     arrived.continuation.yield(())
-    _ = await Cursor(released.stream).next("the held request is released")
+    _ = await nextElement(of: released.stream)
     return #"{"data":{"me":{"__typename":"User","id":"1","name":"A"}}}"#
   }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }

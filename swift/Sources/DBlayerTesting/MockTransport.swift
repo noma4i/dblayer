@@ -102,36 +102,40 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return PutReply(status: 200, etag: nil)
   }
 
-  /// The reply the server gave a request whose answer the library cancelled before it arrived. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one.
-  private var settled: [String: String] = [:]
+  /// The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one.
+  private var settled: [String: Reply] = [:]
 
   private func answer(_ request: TransportRequest) async throws -> String {
     let identity = "\(request.author)#\(request.requestId)"
     let responder = lock.withLock { responders[request.operationName] }
     let reply = lock.withLock { () -> Reply? in
       recorded.append(request)
-      if let known = settled[identity] { return Reply(body: known, failure: nil) }
+      if let known = settled[identity] { return known }
       if let body = responder?(request) {
-        settled[identity] = body
-        return Reply(body: body, failure: nil)
+        let answered = Reply(body: body, failure: nil)
+        settled[identity] = answered
+        return answered
       }
       guard var queue = replies[request.operationName], !queue.isEmpty else { return nil }
       let next = queue.removeFirst()
       replies[request.operationName] = queue
+      if !Self.lostAnswer(next.failure) { settled[identity] = Reply(body: next.body, failure: next.failure) }
       return next
     }
     TestPulse.shared.pulse()
     guard let reply else { throw await refuse(request) }
-    do {
-      if let hold = reply.hold { await hold.pass() }
-      try Task.checkCancellation()
-    } catch {
-      if let body = reply.body { lock.withLock { settled[identity] = body } }
-      throw error
-    }
+    if let hold = reply.hold { await hold.pass() }
+    try Task.checkCancellation()
     defer { TestPulse.shared.pulse() }
     if let failure = reply.failure { throw failure }
     return reply.body ?? "{}"
+  }
+
+  private static func lostAnswer(_ failure: DbError?) -> Bool {
+    switch failure {
+    case .Network?, .Offline?, .Interrupted?, .Dropped?: return true
+    default: return false
+    }
   }
 
   private func refuse(_ request: TransportRequest) async -> DbError {

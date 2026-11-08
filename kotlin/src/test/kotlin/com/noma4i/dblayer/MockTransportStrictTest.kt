@@ -64,7 +64,39 @@ class MockTransportStrictTest {
         assertEquals("first", transport.mutate(repeated))
         assertEquals("first", transport.mutate(repeated))
         assertEquals("second", transport.mutate(other))
-        assertTrue(runCatching { transport.mutate(other) }.exceptionOrNull() is DbException.Network)
+        assertEquals("second", transport.mutate(other))
+        val unrecorded = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 3uL, 1u)
+        assertTrue(runCatching { transport.mutate(unrecorded) }.exceptionOrNull() is DbException.Network)
+    }
+
+    @Test
+    fun aRepeatOfAFailedRequestGetsTheSameFailureAndAnotherRequestTheNextReply() = bounded {
+        val transport = MockTransport(Unanswered.NetworkError)
+        val down = DbException.Http(503.toUShort(), "down")
+        transport.enqueue("Ping", down)
+        transport.enqueue("Ping", "second")
+        val first = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 1u)
+        val repeated = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 2u)
+        val other = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 2uL, 1u)
+        val third = TransportRequest("query Ping { ping }", "Ping", "{}", NetworkPurpose.STANDARD, Author.WINDOW, 3uL, 1u)
+        for (attempt in listOf(first, repeated)) {
+            val error = runCatching { transport.mutate(attempt) }.exceptionOrNull()
+            assertTrue(error.toString(), error === down)
+        }
+        assertEquals("second", transport.mutate(other))
+        assertTrue(runCatching { transport.mutate(third) }.exceptionOrNull() is DbException.Network)
+    }
+
+    @Test
+    fun aFailureOfTheTransportIsNotRecordedForThePairAndTheRepeatTakesTheNextReply() = bounded {
+        val transport = MockTransport(Unanswered.NetworkError)
+        transport.enqueue("Ping", DbException.Network("down"))
+        transport.enqueue("Ping", "second")
+        val first = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 1u)
+        val repeated = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 2u)
+        assertTrue(runCatching { transport.mutate(first) }.exceptionOrNull() is DbException.Network)
+        assertEquals("second", transport.mutate(repeated))
+        assertEquals("second", transport.mutate(first))
     }
 
     @Test
@@ -77,6 +109,8 @@ class MockTransportStrictTest {
         assertEquals("queued", transport.query(second))
         assertEquals("one", transport.query(first))
         assertEquals("one", transport.query(first))
-        assertTrue(runCatching { transport.query(second) }.exceptionOrNull() is DbException.Network)
+        assertEquals("queued", transport.query(second))
+        val third = TransportRequest("query Ping { ping }", "Ping", """{"page":3}""", NetworkPurpose.STANDARD, Author.WINDOW, 3uL, 1u)
+        assertTrue(runCatching { transport.query(third) }.exceptionOrNull() is DbException.Network)
     }
 }
