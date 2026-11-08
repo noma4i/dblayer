@@ -154,6 +154,8 @@ struct Twin {
     hold: Arc<std::sync::atomic::AtomicBool>,
     /// The text of the last batch the owner sent to the Store.
     commit: String,
+    /// Every outcome the owner gave to a caller, in order.
+    outcomes: Vec<(u32, Result3)>,
 }
 
 impl Twin {
@@ -198,7 +200,7 @@ impl Twin {
         reference.max_pages = max;
         reference.members_complete = members_complete;
         reference.media = media;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new() }
+        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new() }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -342,6 +344,7 @@ impl Twin {
         }
         assert_eq!(got, ordered, "the owner and the reference give the same effects");
         let mut want_outcomes = self.reference.take_outcomes();
+        self.outcomes.extend(outcomes.iter().copied());
         let mut got_outcomes = outcomes;
         want_outcomes.sort_by_key(|(id, _)| *id);
         got_outcomes.sort_by_key(|(id, _)| *id);
@@ -506,3 +509,5 @@ mod window_fresh_tests;
 mod window_saving_tests;
 mod window_pages_tests;
 mod window_media_tests;
+mod window_orders_tests;
+mod window_orders_more_tests;
