@@ -11,7 +11,7 @@ use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::DbError;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 use crate::owners::write::upload::UploadFile;
 
 const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
@@ -89,9 +89,9 @@ async fn out_local_set_local_same() {
     let epoch = rig.database.session_epoch();
     land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1}));
     let rows = thread(&rig).await;
-    yield_until("the row stands", || rows.len() == 1).await;
+    settled(&rig, "the row stands", || rows.len() == 1).await;
     bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "localPreviewUrl".into(), json!("file:///a").to_string())).await.unwrap();
-    yield_until("the value shows", || rows.1.lock().unwrap().len() >= 2).await;
+    settled(&rig, "the value shows", || rows.1.lock().unwrap().len() >= 2).await;
     let before = (rows.1.lock().unwrap().len(), rig.database.db.revision_seq().unwrap());
     bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "localPreviewUrl".into(), json!("file:///a").to_string())).await.unwrap();
     rig.settle().await;

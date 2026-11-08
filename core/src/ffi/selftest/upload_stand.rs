@@ -17,7 +17,6 @@ use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
 use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
-use crate::test_wait::yield_until;
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
@@ -45,17 +44,18 @@ pub(super) struct Hold {
     entered: AtomicBool,
     dropped: AtomicBool,
     gate: Notify,
+    signal: Notify,
 }
 
 struct Dropped(Arc<Hold>);
 
 impl Drop for Dropped {
-    fn drop(&mut self) { self.0.dropped.store(true, Ordering::SeqCst) }
+    fn drop(&mut self) { self.0.dropped.store(true, Ordering::SeqCst); crate::lock::effect(|| self.0.signal.notify_waiters()); }
 }
 
 impl Hold {
-    pub(super) async fn entered(&self) { yield_until("the held request arrived", || self.entered.load(Ordering::SeqCst)).await }
-    pub(super) async fn dropped(&self) { yield_until("the library dropped the held request", || self.dropped.load(Ordering::SeqCst)).await }
+    pub(super) async fn entered(&self) { crate::test_wait::signalled(&self.signal, "the held request arrived", || self.entered.load(Ordering::SeqCst)).await }
+    pub(super) async fn dropped(&self) { crate::test_wait::signalled(&self.signal, "the library dropped the held request", || self.dropped.load(Ordering::SeqCst)).await }
     pub(super) fn release(&self) { crate::lock::effect(|| self.gate.notify_one()) }
 }
 
@@ -127,6 +127,7 @@ impl FakeHttp for ScriptedHttp {
             match answer {
                 Some(Answer::Held(hold, next)) => {
                     hold.entered.store(true, Ordering::SeqCst);
+            crate::lock::effect(|| hold.signal.notify_waiters());
                     let _dropped = Dropped(hold.clone());
                     hold.gate.notified().await;
                     answer = Some(*next);
@@ -174,6 +175,7 @@ impl FakeTransport for Puts {
         self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path });
         if let Some(hold) = held {
             hold.entered.store(true, Ordering::SeqCst);
+            crate::lock::effect(|| hold.signal.notify_waiters());
             let _dropped = Dropped(hold.clone());
             hold.gate.notified().await;
         }

@@ -108,6 +108,7 @@ async fn the_cut_of_a_session_request_grows_with_a_reset_a_server_end_and_the_cl
 #[derive(Default)]
 struct Parking {
     entries: std::sync::Mutex<Vec<(&'static str, bool)>>,
+    entry: tokio::sync::Notify,
     release: tokio::sync::Notify,
     gate: std::sync::OnceLock<std::sync::Weak<EpochGate>>,
 }
@@ -116,6 +117,7 @@ impl Parking {
     fn entered(&self, verb: &'static str) {
         let admitted = self.gate.get().and_then(std::sync::Weak::upgrade).is_some_and(|gate| gate.admits(1));
         self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((verb, admitted));
+        self.entry.notify_waiters();
     }
 
     fn trace(&self) -> Vec<(&'static str, bool)> { self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() }
@@ -149,7 +151,7 @@ async fn rt_prop_close_against_query_no_old_transport() {
             }
         });
         let inside = flight(gate.clone(), first);
-        crate::test_wait::yield_until("the first request is inside the transport", || transport.trace().len() == 1).await;
+        crate::test_wait::signalled(&transport.entry, "the first request is inside the transport", || transport.trace().len() == 1).await;
         gate.close(1);
         for later in ["query", "mutate", "put"] {
             let result = crate::test_wait::within(flight(gate.clone(), later)).await.unwrap();

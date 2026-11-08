@@ -1,11 +1,9 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
 
 use super::bridge_support_tests::{group, member_list, message, seed_members, strings};
 use super::rig_tests::{bound, Fault, Rig, World};
-use crate::test_wait::yield_until;
 
 async fn confirmed_group(rig: &Rig) -> crate::ffi::WireRow {
     let epoch = rig.database.session_epoch();
@@ -100,11 +98,11 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     let old = rig.world.hold_next("GroupMembers");
-    let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
+    let refreshing = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered().await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u9"]);
     let mutation = rig.world.hold_next("AddMember");
-    let acting = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string()).await }) };
+    let acting = { let database = rig.database.clone(); let id = group.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string()).await }) };
     mutation.entered().await;
     let receipt = bound(acting).await.unwrap().unwrap();
     mutation.release();
@@ -196,11 +194,11 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     if first_join { remove_member(&rig, &group.id).await; }
     if first_join { rig.world.set_members("JOINED", &["u1", "u2", "u3"]); }
     let old = rig.world.hold_next("GroupMembers");
-    let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
+    let reading = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered().await;
     let first = rig.world.hold_then(if first_join { "AddMember" } else { "RemoveMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let second = rig.world.hold_next(if first_join { "RemoveMember" } else { "AddMember" });
-    let start = |action: &'static str| { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
+    let start = |action: &'static str| { let database = rig.database.clone(); let id = group.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
     let (earlier, later) = if first_join { ("add_member", "remove_member") } else { ("remove_member", "add_member") };
     let joining = start(earlier);
     first.entered().await;
@@ -239,7 +237,7 @@ async fn out_leave_rows_orders() {
         }
         let action = if removing { "remove_member" } else { "add_member" };
         let gate = rig.world.hold_then(if removing { "RemoveMember" } else { "AddMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
-        let acting = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
+        let acting = { let database = rig.database.clone(); let id = group.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
         gate.entered().await;
         for (order, _) in orders {
             let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": group.id, "order": order}}).to_string();
@@ -268,7 +266,7 @@ async fn forward_returns_its_optimistic_value_before_the_server_answers() {
     bound(rig.database.refresh(epoch, "Message".into(), Some("thread".into()), json!({"chatId": "c1"}).to_string())).await.unwrap();
     let source = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     let hold = rig.world.hold_next("MessageForward");
-    let mut forward = { let database = rig.database.clone(); tokio::spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c2"}).to_string()).await }) };
+    let mut forward = { let database = rig.database.clone(); rig.spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c2"}).to_string()).await }) };
     hold.entered().await;
     let result = crate::test_wait::within(&mut forward).await.unwrap().unwrap();
     let optimistic = result.optimistic_value.as_ref().unwrap();
@@ -337,11 +335,11 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
             rig.world.set_members("JOINED", &["u1", "u2", "u3"]);
         }
         let held = rig.world.hold_next("GroupMembers");
-        let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params).await }) };
+        let reading = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params).await }) };
         held.entered().await;
         let action = if removing { "remove_member" } else { "add_member" };
         let mutation = rig.world.hold_next(if removing { "RemoveMember" } else { "AddMember" });
-        let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
+        let acting = { let database = rig.database.clone(); let id = created.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
         mutation.entered().await;
         let receipt = bound(acting).await.unwrap().unwrap();
         if answer_first { mutation.release(); }
@@ -379,19 +377,19 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     let shared = rig.database.db.clone();
-    let (in_window, read_done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let (in_window, read_done) = (Arc::new(crate::test_wait::Flag::default()), Arc::new(crate::test_wait::Flag::default()));
     let (probe_window, probe_done) = (in_window.clone(), read_done.clone());
     *shared.after_commit.lock().unwrap() = Some(Box::new(move |result| {
         if result.replaced.is_empty() { return; }
-        probe_window.store(true, Ordering::SeqCst);
-        crate::test_wait::spin_until("the read of the command never came", std::time::Duration::from_secs(10), || probe_done.load(Ordering::SeqCst));
+        probe_window.set();
+        probe_done.wait_blocking("the read of the command never came");
     }));
     rig.database.set_online(true).unwrap();
-    yield_until("the confirming commit is visible and not announced", || in_window.load(Ordering::SeqCst)).await;
+    in_window.wait("the confirming commit is visible and not announced").await;
     let reading = {
         let (database, receipt, done) = (rig.database.clone(), receipt.clone(), read_done.clone());
         tokio::spawn(async move {
-            done.store(true, Ordering::SeqCst);
+            done.set();
             database.outcome(receipt).await
         })
     };

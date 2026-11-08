@@ -3,7 +3,7 @@ use super::upload_stand::{clip, request, watched, Answer, Stand, BLOB, CREATE_MO
 use crate::ffi::tape::Rows;
 use crate::ffi::tests::session_guards_tests::SOCIAL_BODY;
 use crate::ffi::{DbError, WireOperationOutcome};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const PROFILE: (&str, &str) = ("UserProfile", "query UserProfile { me { id name } }");
 const PROFILE_ANSWER: &str = r#"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#;
@@ -47,7 +47,7 @@ async fn a_reset_during_a_put_ends_the_wait_and_removes_the_old_upload() {
     let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let id = sent.optimistic_value.clone().unwrap().id;
     put.entered().await;
-    let waiting = tokio::spawn({ let database = database.clone(); async move { database.outcome(sent).await } });
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
@@ -57,7 +57,7 @@ async fn a_reset_during_a_put_ends_the_wait_and_removes_the_old_upload() {
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     put.release();
-    yield_until("the old row is gone", || stand.puts.seen.lock().unwrap().len() == 1).await;
+    settled(&database, "the old row is gone", || stand.puts.seen.lock().unwrap().len() == 1).await;
     assert!(bound(database.read_row(database.session_epoch(), "Moment".into(), id)).await.unwrap().is_none());
     assert_eq!(stand.script.count("CreateMoment"), 0);
     database.close_now();
@@ -78,7 +78,7 @@ async fn xfer_prop_reset_during_put_no_stray_work() {
     put.entered().await;
     let token = stand.puts.tokens.lock().unwrap()[0].clone();
     assert!(!token.is_cancelled());
-    let waiting = tokio::spawn({ let database = database.clone(); async move { database.outcome(sent).await } });
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
@@ -130,7 +130,7 @@ async fn xfer_prop_put_cancel_pushes() {
         let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
         let id = sent.optimistic_value.clone().unwrap().id;
         put.entered().await;
-        let waiting = tokio::spawn({ let database = database.clone(); async move { database.outcome(sent).await } });
+        let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
 
         if cause == "cancel_upload" {
             assert!(bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await.unwrap(), "{cause}");
@@ -181,13 +181,13 @@ async fn xfer_prop_reply_after_delete() {
         let failed_id = failed.optimistic_value.clone().unwrap().id;
         let failed_rows = watched(&database, "Moment", &failed_id);
         assert!(matches!(bound(database.outcome(failed)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
-        yield_until("the failed row shows its copy", || local_url(&failed_rows).is_some()).await;
+        settled(&database, "the failed row shows its copy", || local_url(&failed_rows).is_some()).await;
         let url = local_url(&failed_rows).unwrap();
         let copies = std::path::Path::new(&url["file://".len()..]).parent().unwrap().to_path_buf();
         assert_eq!(names(&copies).len(), 1, "{on_disk}");
         bound(database.discard(epoch, "Moment".into(), failed_id, None)).await.unwrap();
         assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy after the answer of discard");
-        yield_until("localUrl is cleared", || local_url(&failed_rows).is_none()).await;
+        settled(&database, "localUrl is cleared", || local_url(&failed_rows).is_none()).await;
 
         stand.script.data("CreateBlob", BLOB);
         let put = stand.puts.hold_next();
@@ -195,11 +195,11 @@ async fn xfer_prop_reply_after_delete() {
         let held_id = held.optimistic_value.clone().unwrap().id;
         let held_rows = watched(&database, "Moment", &held_id);
         put.entered().await;
-        yield_until("the held row shows its copy", || local_url(&held_rows).is_some()).await;
+        settled(&database, "the held row shows its copy", || local_url(&held_rows).is_some()).await;
         assert_eq!(names(&copies).len(), 1, "{on_disk}");
         assert!(bound(database.cancel_upload(epoch, "Moment".into(), held_id, "upload_clip".into())).await.unwrap());
         assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy after the answer of cancel_upload");
-        yield_until("localUrl is cleared", || local_url(&held_rows).is_none()).await;
+        settled(&database, "localUrl is cleared", || local_url(&held_rows).is_none()).await;
         put.release();
 
         stand.script.data("CreateBlob", BLOB);

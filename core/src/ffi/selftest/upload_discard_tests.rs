@@ -1,7 +1,7 @@
 use super::rig_tests::bound;
 use super::upload_stand::{clip, watched, Stand, CREATE_MOMENT};
 use crate::owners::write::upload::MEBIBYTE;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const PRESIGN: &str = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#;
 
@@ -25,14 +25,14 @@ async fn a_discard_offline_leaves_only_the_replay_of_the_unanswered_step_after_t
     bound(database.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
 
     let rows = watched(&database, "Moment", &id);
-    yield_until("the row is gone", || rows.emptied()).await;
+    settled(&database, "the row is gone", || rows.emptied()).await;
     database.close_now();
     stand.script.data("PresignParts", PRESIGN);
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened = stand.open(Some(&path), &operations).await;
     abort.entered().await;
     abort.release();
-    yield_until("the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
+    settled(&database, "the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
     let asked = stand.script.variables("PresignParts");
     assert_eq!(asked.len(), 2, "the discarded upload asked for parts more than once after the reopen: {asked:?}");
     assert_eq!(asked[0], asked[1], "the second presign is the replay of the first");

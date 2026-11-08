@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use super::nested_storage_tests::wrapper_models;
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::WireOperationOutcome;
-use crate::test_wait::yield_until;
 
 const DEFINITIONS: &str = r#"[{"name":"MediaMarker","document":"query MediaMarker($chatId: ID!, $upToSequence: Int!) { node(id: $chatId) { mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail($chatId: ID!, $afterSequence: Int!, $first: Int, $after: String) { node(id: $chatId) { messages(afterSequence: $afterSequence, first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"},{"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}]"#;
 
@@ -28,9 +27,17 @@ fn page(id: &str) -> Fault {
 }
 
 async fn driven(rig: &Rig, epoch: u64, params: &str) {
-    let load = { let database = rig.database.clone(); let params = params.to_string(); tokio::spawn(async move { database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params, false).await }) };
-    yield_until("the media load ends", || { rig.clock.advance(1_000); load.is_finished() }).await;
-    load.await.unwrap().unwrap();
+    let mut load = { let database = rig.database.clone(); let params = params.to_string(); rig.spawn(async move { database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params, false).await }) };
+    let mut armed = rig.clock.armed();
+    let ended = bound(async {
+        loop {
+            tokio::select! {
+                ended = &mut load => return ended,
+                () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(1_000); }
+            }
+        }
+    }).await;
+    ended.unwrap().unwrap();
 }
 
 fn requests(rig: &Rig, operation: &str) -> usize { rig.world.log().iter().filter(|entry| entry.operation == operation).count() }

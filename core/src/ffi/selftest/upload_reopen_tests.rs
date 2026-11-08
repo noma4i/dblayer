@@ -2,7 +2,7 @@ use super::rig_tests::bound;
 use super::upload_batch_shift_tests::{blob, items, ASSETS, OPERATIONS};
 use super::upload_stand::Stand;
 use crate::ffi::upload_wire::WireUploadBatch;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reopen_after_a_lost_answer_of_a_batch_member_replays_its_step_once() {
@@ -22,7 +22,7 @@ async fn a_reopen_after_a_lost_answer_of_a_batch_member_replays_its_step_once() 
     stand.script.data("CreateBlob", &blob(2));
     stand.script.data("CreateAssets", ASSETS);
     let reopened = stand.open(Some(&path), &OPERATIONS).await;
-    yield_until("the batch reaches CreateAssets", || stand.script.count("CreateAssets") == 1).await;
+    settled(&reopened, "the batch reaches CreateAssets", || stand.script.count("CreateAssets") == 1).await;
 
     let files: Vec<String> = stand.script.variables("CreateBlob").iter().map(|variables| variables["filename"].as_str().unwrap().to_string()).collect();
     assert_eq!(files, ["0.jpg", "1.jpg", "1.jpg", "2.jpg"], "the second member went out once and once more as the replay of its saved pair");

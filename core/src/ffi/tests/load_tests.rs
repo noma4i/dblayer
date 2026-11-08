@@ -40,11 +40,11 @@ async fn a_models_reset_clears_the_cache_of_the_held_stream_and_a_new_stream_rel
     let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#;
     let live = db.watch_query(query, listener.clone());
     within(live.wait_for_initial_load()).await.unwrap();
-    crate::test_wait::yield_until("the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
+    crate::test_wait::settled(&db, "the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
     db.reset_models_of(&["Moment"]).await;
     let ended = Arc::new(Rows::default());
     let _watching = db.watch_query(query, ended.clone());
-    crate::test_wait::yield_until("the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
+    crate::test_wait::settled(&db, "the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
     assert_eq!(transport.queries.load(Ordering::SeqCst), 2);
     live.cancel();
 }
@@ -71,7 +71,7 @@ pub(in super::super) async fn held_rig()-> (Arc<Database>, Arc<Counting>, Arc<to
 
 async fn joined_the_flight(db: &Database, transport: &Counting, already: usize) {
     tokio::select! {
-        () = crate::test_wait::yield_until("the second load waits in the window", || db.life.waiting_calls() > already) => {}
+        () = crate::test_wait::settled(&db, "the second load waits in the window", || db.life.waiting_calls() > already) => {}
         () = transport.started.notified() => panic!("the second load made its own request instead of joining"),
     }
     let life = db.life_handle();
@@ -125,7 +125,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     within(transport.started.notified()).await;
     hold.add_permits(1);
     crate::ffi::settled(&db).await.unwrap();
-    crate::test_wait::yield_until("the loaded row reached the listener", || listener.heard().iter().any(|seen| seen.size == 1)).await;
+    crate::test_wait::settled(&db, "the loaded row reached the listener", || listener.heard().iter().any(|seen| seen.size == 1)).await;
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None });
@@ -151,7 +151,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     assert!(!settling.is_finished(), "settled returned while the request was held");
     hold.add_permits(1);
     within(settling).await.unwrap().unwrap();
-    crate::test_wait::yield_until("the entity row", || listener.len() == 1).await;
+    crate::test_wait::settled(&db, "the entity row", || listener.len() == 1).await;
 }
 
 #[tokio::test]
@@ -180,7 +180,7 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     let _live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{}}"#, Arc::new(Rows::default()));
     within(transport.started.notified()).await;
     let already = db.life.waiting_calls();
-    let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    let sharing = tokio::spawn(crate::runtime::counted(Some(db.life.launch()), { let db = db.clone(); async move { load(&db, "feed").await } }));
     joined_the_flight(&db, &transport, already).await;
     hold.add_permits(1);
     sharing.await.unwrap().unwrap();
@@ -228,7 +228,7 @@ async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_
     let cancelled = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
     let already = db.life.waiting_calls();
-    let waiter = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    let waiter = tokio::spawn(crate::runtime::counted(Some(db.life.launch()), { let db = db.clone(); async move { load(&db, "feed").await } }));
     joined_the_flight(&db, &transport, already).await;
     cancelled.abort();
     assert!(cancelled.await.unwrap_err().is_cancelled(), "the first caller finished before the abort");
@@ -270,7 +270,7 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     let listener = Arc::new(Tape::default());
     let entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
-    crate::test_wait::yield_until("the empty first snapshot", || listener.last().is_some()).await;
+    crate::test_wait::settled(&db, "the empty first snapshot", || listener.last().is_some()).await;
     let mut loaded = std::pin::pin!(entity.wait_for_initial_load());
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     crate::ffi::owners_drained(&db).await.unwrap();

@@ -534,3 +534,14 @@ impl Rig {
     pub(super) async fn settle(&self) { bound(crate::ffi::settled(&self.database)).await.unwrap(); }
 
 }
+
+impl Rig {
+    /// Spawns a call of the test that the barrier counts from its spawn until it waits for the outside.
+    pub(super) fn spawn<T: Send + 'static>(&self, work: impl std::future::Future<Output = T> + Send + 'static) -> tokio::task::JoinHandle<T> {
+        tokio::spawn(crate::runtime::counted(Some(self.database.life.launch()), work))
+    }
+}
+
+impl crate::test_wait::Quiet for Rig {
+    async fn quiet(&self) { crate::test_wait::Quiet::quiet(&self.database).await }
+}

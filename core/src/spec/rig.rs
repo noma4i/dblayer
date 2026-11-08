@@ -44,7 +44,7 @@ struct State {
     settled: HashMap<Pair, Value>,
 }
 
-pub(super) struct Server { state: Mutex<State> }
+pub(super) struct Server { state: Mutex<State>, signal: tokio::sync::Notify }
 
 struct Flight { server: Arc<Server>, row: Option<String>, done: bool }
 
@@ -55,11 +55,13 @@ impl Drop for Flight {
             if let Some(count) = state.in_flight.get_mut(row) { *count -= 1; }
         }
         if !self.done { state.cancelled += 1; }
+        drop(state);
+        self.server.signal.notify_waiters();
     }
 }
 
 impl Server {
-    pub fn new() -> Arc<Self> { Arc::new(Self { state: Mutex::new(State::default()) }) }
+    pub fn new() -> Arc<Self> { Arc::new(Self { state: Mutex::new(State::default()), signal: tokio::sync::Notify::new() }) }
     pub fn hold(&self, kind: Kind, on: bool) { self.state.lock().unwrap().hold[kind as usize] = on; }
     pub fn release_all(&self) {
         let mut state = self.state.lock().unwrap();
@@ -104,8 +106,10 @@ impl Server {
         state.held[Kind::Mutate as usize].iter().any(|(held_text, _)| held_text == text)
     }
 
-    pub async fn wait_held(&self, kind: Kind, count: usize) { until("held requests", || self.held(kind) >= count).await }
-    pub async fn wait_seen(&self, operation: &str, count: usize) { until(operation, || self.count(operation) >= count).await }
+    /// Kind B: waits for the signal of the server, which it gives whenever a request arrives, is held or is dropped.
+    pub async fn until(&self, what: &str, condition: impl FnMut() -> bool) { crate::test_wait::signalled(&self.signal, what, condition).await }
+    pub async fn wait_held(&self, kind: Kind, count: usize) { self.until("held requests", || self.held(kind) >= count).await }
+    pub async fn wait_seen(&self, operation: &str, count: usize) { self.until(operation, || self.count(operation) >= count).await }
 
     async fn decide(self: &Arc<Self>, kind: Kind, operation: &str, variables: Value) -> Reply {
         let row = variables.get("momentId").and_then(Value::as_str).map(str::to_string);
@@ -113,6 +117,7 @@ impl Server {
         let (receiver, reply) = {
             let mut state = self.state.lock().unwrap();
             state.seen.push(Seen { kind, operation: operation.into(), variables });
+            self.signal.notify_waiters();
             if let Some(row) = &row {
                 let count = state.in_flight.entry(row.clone()).or_default();
                 *count += 1;
@@ -347,8 +352,9 @@ pub async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
     crate::test_wait::within(work).await
 }
 
-pub async fn until(what: &str, condition: impl FnMut() -> bool) {
-    crate::test_wait::yield_until(&format!("{what}: the event did not come"), condition).await
+
+impl crate::test_wait::Quiet for Rig {
+    async fn quiet(&self) { Rig::quiet(self).await }
 }
 
 impl Rig {

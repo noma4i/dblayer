@@ -104,12 +104,13 @@ pub(super) struct Stub {
     /// The tokens of the PUT requests it saw, and whether a PUT hangs until the token is cancelled.
     puts: Arc<Mutex<Vec<crate::transport::CancelToken>>>,
     hang_puts: Arc<std::sync::atomic::AtomicBool>,
+    signal: Arc<tokio::sync::Notify>,
 }
 
-struct Waiting(Arc<AtomicUsize>);
+struct Waiting(Arc<AtomicUsize>, Arc<tokio::sync::Notify>);
 
 impl Drop for Waiting {
-    fn drop(&mut self) { self.0.fetch_add(1, Ordering::SeqCst); }
+    fn drop(&mut self) { self.0.fetch_add(1, Ordering::SeqCst); crate::lock::effect(|| self.1.notify_waiters()); }
 }
 
 impl Stub {
@@ -121,6 +122,9 @@ impl Stub {
 
     pub fn put_tokens(&self) -> Vec<crate::transport::CancelToken> { lock(&self.puts).clone() }
 
+    /// Notified when a PUT arrives and when a waiting request is dropped.
+    pub fn signal(&self) -> &tokio::sync::Notify { &self.signal }
+
     pub fn hang_puts(&self) { self.hang_puts.store(true, Ordering::SeqCst); }
 
     async fn answer(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
@@ -129,7 +133,7 @@ impl Stub {
         match act {
             Act::Reply(result) => result,
             Act::Hang => {
-                let _waiting = Waiting(self.dropped.clone());
+                let _waiting = Waiting(self.dropped.clone(), self.signal.clone());
                 std::future::pending::<()>().await;
                 unreachable!("a hanging request never ends")
             }
@@ -146,8 +150,9 @@ impl Upstream for Stub {
 
     async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {
         lock(&self.puts).push(request.cancel.clone());
+        crate::lock::effect(|| self.signal.notify_waiters());
         if self.hang_puts.load(Ordering::SeqCst) {
-            let _waiting = Waiting(self.dropped.clone());
+            let _waiting = Waiting(self.dropped.clone(), self.signal.clone());
             std::future::pending::<()>().await;
         }
         Ok(PutReply::with_etag("etag"))

@@ -74,8 +74,8 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     rig.settle().await;
     let gate = if refusal { rig.world.hold_then(call.operation(), Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }) } else { rig.world.hold_next(call.operation()) };
     gate.as_account("late");
@@ -106,10 +106,10 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     let late = bound(running).await.unwrap();
     rig.settle().await;
     held.follow(&rig.database);
-    held.shows("B").await;
+    held.shows(&rig, "B").await;
     assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
-    held.lists_show("B").await;
+    held.lists_show(&rig, "B").await;
     rig.database.close_now();
 }
 
@@ -155,10 +155,10 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     let gate = rig.world.hold_next("Users");
-    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
+    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
     gate.entered().await;
     let pending = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, Arc::new(Rows::default()));
     let waits = [tokio::spawn(async move { pending.wait_for_initial_load().await })];

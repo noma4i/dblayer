@@ -7,7 +7,7 @@ use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_event, t
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const TARGET_THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c2"}}"#;
 const CHATS: &str = r#"{"model":"Chat","relation":"all","params":{}}"#;
@@ -26,7 +26,7 @@ async fn watch(rig: &Rig, query: &str, shown: usize) -> Arc<Rows> {
     let rows = Arc::new(Rows::default());
     let stream = rig.database.watch_query(query, rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    yield_until("the list shows its rows", || rows.len() == shown).await;
+    settled(&rig, "the list shows its rows", || rows.len() == shown).await;
     rows
 }
 
@@ -57,28 +57,28 @@ async fn flow_message_forward() {
     let refused = rig.world.hold_then("MessageForward", Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let receipt = forward(&rig).await;
     refused.entered().await;
-    yield_until("the copy stands in the thread", || thread.len() == 1).await;
+    settled(&rig, "the copy stands in the thread", || thread.len() == 1).await;
     let copy = ids(&thread).remove(0);
     assert!(forwarded_by_me(&rig, &thread, &copy), "the copy lacks the author, the flag or the origin");
-    yield_until("the target chat points at the copy", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text(&copy))).await;
+    settled(&rig, "the target chat points at the copy", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text(&copy))).await;
     assert!(thread.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).is_some_and(|seen| seen.revision >= receipt.revision), "the copy came before the receipt");
-    one_revision(&[&thread, &chats]).await;
+    one_revision(&rig, &[&thread, &chats]).await;
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
-    yield_until("the refusal removes the copy and the pointer", || thread.emptied() && field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(Cell::Null)).await;
+    settled(&rig, "the refusal removes the copy and the pointer", || thread.emptied() && field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(Cell::Null)).await;
 
     let hold = rig.world.hold_next("MessageForward");
     let receipt = forward(&rig).await;
     hold.entered().await;
-    yield_until("the copy stands again", || thread.len() == 1).await;
+    settled(&rig, "the copy stands again", || thread.len() == 1).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the answer replaced the copy", || ids(&thread) == ["forwarded-1"]).await;
+    settled(&rig, "the answer replaced the copy", || ids(&thread) == ["forwarded-1"]).await;
     assert!(thread.1.lock().unwrap().iter().all(|seen| seen.size <= 1), "the thread showed the copy and the answer together");
     assert!(forwarded_by_me(&rig, &thread, "forwarded-1"));
-    yield_until("the target chat points at the answer", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text("forwarded-1"))).await;
+    settled(&rig, "the target chat points at the answer", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text("forwarded-1"))).await;
 
     land_event(&rig, "Message", json!({"id": "f2", "chatId": "c2", "text": "again", "at": 9, "authorId": "user", "isForwarded": true, "forwardedFromUserId": "u7"}));
-    yield_until("the event bubble stands in the thread", || ids(&thread).len() == 2 && forwarded_by_me(&rig, &thread, "f2")).await;
+    settled(&rig, "the event bubble stands in the thread", || ids(&thread).len() == 2 && forwarded_by_me(&rig, &thread, "f2")).await;
     rig.database.close_now();
 }

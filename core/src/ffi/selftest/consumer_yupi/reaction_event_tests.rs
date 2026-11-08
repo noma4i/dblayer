@@ -4,7 +4,7 @@ use serde_json::json;
 use super::stand::{message, moment, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 /// l.104: `REACTION` on a message carries the `message` payload, its row lands and the server is not asked.
 #[tokio::test(flavor = "multi_thread")]
@@ -37,12 +37,12 @@ async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
     stand.answer("MomentNode", json!({"node": moment("mo1", 0)}));
     let (events, token) = stand.events("Moment").await;
     let rows = stand.entity("Moment", "mo1", ReadFetch::Stale);
-    yield_until("the node answered", || stand.int_of(&rows, "Moment", "mo1", "visitsCount") == Some(0)).await;
+    settled(&stand, "the node answered", || stand.int_of(&rows, "Moment", "mo1", "visitsCount") == Some(0)).await;
     let asked = stand.requests("MomentNode");
     stand.answer("MomentNode", json!({"node": moment("mo1", 5)}));
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "mo1"}));
-    yield_until("the watched node is read again", || stand.requests("MomentNode") == asked + 1).await;
-    yield_until("the reread row shows the reaction", || stand.int_of(&rows, "Moment", "mo1", "visitsCount") == Some(5)).await;
+    settled(&stand, "the watched node is read again", || stand.requests("MomentNode") == asked + 1).await;
+    settled(&stand, "the reread row shows the reaction", || stand.int_of(&rows, "Moment", "mo1", "visitsCount") == Some(5)).await;
     let event = bound(events.pull()).await;
     assert!(matches!(&event, Some(ReadValue::Event { area, kind, id, .. }) if area == "REACTION" && kind == "UPDATED" && id == "mo1"), "{event:?}");
 }

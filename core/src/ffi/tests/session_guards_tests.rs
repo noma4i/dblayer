@@ -105,7 +105,7 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
 /// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `IdentityChanged`, `Close` and `ResetModels` clear nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end() {
-    use crate::test_wait::{within, yield_until};
+    use crate::test_wait::{within, settled};
     for end in ["identity_changed", "close", "reset_models", "session_reset", "server_ended"] {
         let rig = Rig::new();
         let database = rig.open_models(None, pin(), crate::ffi::specs(super::lifecycle_tests::models())).await.unwrap();
@@ -117,7 +117,7 @@ async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end()
         match end {
             "identity_changed" => {
                 life.credential_committed(life.published().identity.expect("an identity") + 1);
-                yield_until("the next epoch was published", || life.published().epoch > epoch).await;
+                settled(&database, "the next epoch was published", || life.published().epoch > epoch).await;
             }
             "close" => within(database.close_database()).await.unwrap(),
             "reset_models" => {

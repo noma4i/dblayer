@@ -48,7 +48,7 @@ async fn data_operation_parameter_not_stored() {
     })).await.unwrap();
     let optimistic = receipt.optimistic_value.as_ref().unwrap();
     assert_eq!(optimistic.cells, vec![crate::ffi::Cell::Text { value: "hello".into() }]);
-    crate::test_wait::yield_until("mutation is held", || server.held(super::rig::Kind::Mutate) == 1).await;
+    crate::test_wait::settled(&rig, "mutation is held", || server.held(super::rig::Kind::Mutate) == 1).await;
     assert_eq!(server.seen().last().unwrap().variables["clientFlag"], json!("chosen"));
     server.answer(super::rig::Kind::Mutate, super::rig::Reply::Ok);
     assert!(matches!(rig.outcome(&receipt).await, WireOperationOutcome::Confirmed { .. }));

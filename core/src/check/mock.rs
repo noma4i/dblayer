@@ -35,6 +35,7 @@ struct Inner {
 pub struct Mock {
     inner: Mutex<Inner>,
     peer: CablePeer,
+    arrived: tokio::sync::Notify,
 }
 
 fn deliver<T>(sender: oneshot::Sender<T>, value: T) -> bool {
@@ -63,7 +64,7 @@ fn error_of(kind: &str) -> Option<DbError> {
 
 impl Mock {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()) })
+        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()), arrived: tokio::sync::Notify::new() })
     }
 
     fn record(&self, kind: &'static str, purpose: &'static str, hold: impl FnOnce(&mut Inner, String)) {
@@ -72,7 +73,12 @@ impl Mock {
         let id = format!("r{}", inner.next);
         inner.seen.push(Seen { id: id.clone(), kind, purpose, announced: false });
         hold(&mut inner, id);
+        drop(inner);
+        self.arrived.notify_waiters();
     }
+
+    /// Notified whenever a request arrives.
+    pub fn arrived(&self) -> &tokio::sync::Notify { &self.arrived }
 
     /// How many requests arrived. The runner waits until this number and the other counters stop moving.
     pub fn count(&self) -> usize {

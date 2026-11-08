@@ -452,6 +452,12 @@ for path in sorted(root.rglob("*.rs")):
         if name == "tests" and previous != "#[cfg(test)]":
             findings.append(f"Z32 mod tests; is declared under #[cfg(test)]: {path.relative_to(root)}:{number}")
 
+poll_words = re.compile(r"\b(yield_until(?:_showing)?|spin_until)\b|\byield_now\s*\(|\bthread::sleep\s*\(")
+for path in sorted((root / "core" / "src").rglob("*.rs")):
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if (poll_words.search(line) or re.search(r"\b(while|loop)\b.*\bsleep\s*\(", line)) and f"z33:{path.relative_to(root / 'core' / 'src')}" not in allowed:
+            findings.append(f"Z33 a wait polls: wait for the barrier (settled) or the signal of the party (signalled), not a loop: {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

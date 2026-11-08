@@ -1,7 +1,6 @@
 use super::fixtures::*;
 use super::*;
 use std::sync::mpsc;
-use std::time::Duration;
 use crate::test_wait::{join_within, recv_within};
 
 fn written(store: &Arc<Store>, row_id: &str) {
@@ -62,9 +61,12 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
     let earlier = store.clone();
     let first = std::thread::spawn(move || written(&earlier, "m1"));
     recv_within(&first_entered);
+    let reached = Arc::new(crate::test_wait::Flag::default());
+    let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    store.set_commit_log({ let (reached, commits) = (reached.clone(), commits.clone()); Box::new(move |_| { if commits.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 { reached.set(); } }) }).unwrap();
     let later = store.clone();
     let second = std::thread::spawn(move || written(&later, "m2"));
-    crate::test_wait::spin_until("the later commit never reached the store", Duration::from_secs(5), || store.revision_seq().unwrap() >= 2);
+    reached.wait_blocking("the later commit never reached the store");
     assert_eq!(revisions.lock().unwrap().len(), 1, "the later commit waits for the earlier hook");
     release.send(()).unwrap();
     join_within(first);

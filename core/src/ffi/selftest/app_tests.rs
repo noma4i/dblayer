@@ -4,7 +4,7 @@ use super::rig_tests::{bound, Fault, Rig};
 use super::rig_held::Held;
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, SessionCode};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 fn session_code(error: DbError) -> SessionCode {
     let DbError::Session { code, .. } = error else { panic!("expected a session error, got {error:?}") };
@@ -22,8 +22,8 @@ async fn app_login_in_the_ios_and_android_order_fills_the_handles_held_since_lau
         if android { rig.login_android("A").await } else { rig.login_ios("A").await }
         ends(&rig.database).await;
         held.follow(&rig.database);
-        held.shows("A").await;
-        held.lists_show("A").await;
+        held.shows(&rig, "A").await;
+        held.lists_show(&rig, "A").await;
         assert_eq!(rig.world.count("MyProfile"), 1, "android={android}: the profile loads once");
         assert_eq!(rig.world.count("SessionProfile"), usize::from(!android), "android={android}");
         rig.database.close_now();
@@ -36,11 +36,11 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     bound(held.query().wait_for_initial_load()).await.unwrap();
     let gate = rig.world.hold_next("Users");
-    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
+    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
     gate.entered().await;
     let waiting = held.query();
     let pending = tokio::spawn(async move { waiting.wait_for_initial_load().await });
@@ -58,7 +58,7 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     rig.login_ios("B").await;
     ends(&rig.database).await;
     held.follow(&rig.database);
-    held.shows("B").await;
+    held.shows(&rig, "B").await;
     assert!(held.quiet_since(marks, "A"), "account A reached a held stream after the exit");
     rig.database.close_now();
 }
@@ -69,8 +69,8 @@ async fn app_logout_android_order_cancels_the_streams_and_the_next_login_reads_a
     let rig = Rig::encrypted().await;
     rig.login_android("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
 
     rig.exit(&held, true, true).await;
 
@@ -79,10 +79,10 @@ async fn app_logout_android_order_cancels_the_streams_and_the_next_login_reads_a
     rig.login_android("B").await;
     let fresh = Held::open(&rig.database);
     ends(&rig.database).await;
-    fresh.shows("B").await;
-    fresh.lists_show("B").await;
+    fresh.shows(&rig, "B").await;
+    fresh.lists_show(&rig, "B").await;
     held.follow(&rig.database);
-    held.shows("B").await;
+    held.shows(&rig, "B").await;
     assert!(rig.world.count("Users") > before);
     assert!(fresh.never_showed("A"));
     rig.database.close_now();
@@ -95,8 +95,8 @@ async fn app_logout_local_only_skips_the_revoke_and_stops_every_read() {
         let rig = Rig::encrypted().await;
         rig.login_ios("A").await;
         let held = Held::open(&rig.database);
-        held.shows("A").await;
-        held.lists_show("A").await;
+        held.shows(&rig, "A").await;
+        held.lists_show(&rig, "A").await;
 
         rig.exit(&held, false, cancel).await;
         let mark = held.deliveries();
@@ -119,7 +119,7 @@ async fn app_logout_stops_when_the_unregister_is_refused() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     rig.world.fail_next("UnregisterDevice", Fault::Refuse { code: "UNAUTHENTICATED", confirmed: true });
 
     let refused = bound(rig.database.run(rig.database.session_epoch(), "UnregisterDevice".into(), "{}".into())).await.unwrap_err();
@@ -128,7 +128,7 @@ async fn app_logout_stops_when_the_unregister_is_refused() {
     assert!(rig.world.signed());
     assert_eq!(rig.world.count("UnregisterDevice"), 0);
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     rig.database.close_now();
 }
 
@@ -138,12 +138,12 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     let mut previous = "A";
     for account in ["B", "A"] {
         let gate = rig.world.hold_next("Users");
-        let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
+        let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
         gate.entered().await;
 
         rig.exit(&held, true, false).await;
@@ -151,8 +151,8 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
         rig.login_ios(account).await;
         ends(&rig.database).await;
         held.follow(&rig.database);
-        held.shows(account).await;
-        held.lists_show(account).await;
+        held.shows(&rig, account).await;
+        held.lists_show(&rig, account).await;
         gate.release();
         ends(&rig.database).await;
 
@@ -168,7 +168,7 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     let reads = rig.world.count("MyProfile");
 
     rig.exit(&held, true, false).await;
@@ -177,8 +177,8 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     ends(&rig.database).await;
 
     held.follow(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     assert!(rig.world.count("MyProfile") > reads, "the same account was not read again");
     rig.database.close_now();
 }
@@ -231,7 +231,7 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     rig.exit(&held, true, true).await;
     let early = std::sync::Arc::new(crate::ffi::tape::Rows::default());
     let late = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, early.clone());
@@ -242,12 +242,12 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
 
     let waited = bound(pending).await.unwrap();
     assert!(waited.is_ok() || matches!(waited, Err(DbError::Interrupted { .. })), "the wait of a list of the anonymous epoch ended as {waited:?}");
-    yield_until("the list of the anonymous epoch ended", || !early.ended().is_empty()).await;
+    settled(&rig, "the list of the anonymous epoch ended", || !early.ended().is_empty()).await;
     assert_eq!(early.ended(), vec![crate::ffi::ReadEnd::SessionEnded], "the login ends a list that no account owned, with one outcome");
     let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
     let fresh = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, rows.clone());
     bound(fresh.wait_for_initial_load()).await.unwrap();
-    yield_until("the fresh list shows B", || rows.0.lock().unwrap().iter().any(|row| named(row, "B"))).await;
+    settled(&rig, "the fresh list shows B", || rows.0.lock().unwrap().iter().any(|row| named(row, "B"))).await;
     assert!(rows.0.lock().unwrap().iter().all(|row| !named(row, "A")));
     rig.database.close_now();
 }

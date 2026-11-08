@@ -5,7 +5,7 @@ use super::rig_tests::{bound, Rig};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{DbError, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
-use crate::test_wait::{within, yield_until};
+use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 /// K02 (B2, old lines ffi/database.rs update, destroy, read_query, read_row): a command or a one-off read that carries the epoch of A is refused after the session ended, also when it waited for the writer while the session ended, and it changes nothing for B.
@@ -141,8 +141,8 @@ async fn the_cancel_of_a_reader_releases_its_object_outside_every_library_lock()
     let stream = rig.database.subscribe_reading(epoch, users(), Arc::new(DropProbe { held: held.clone(), dropped: dropped.clone() }));
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.database.cancel_stream(stream);
-    yield_until("the stream left the census", || rig.database.stream_census().open == 0).await;
-    yield_until("the reader object was released", || dropped.load(Ordering::SeqCst) == 1).await;
+    settled(&rig, "the stream left the census", || rig.database.stream_census().open == 0).await;
+    settled(&rig, "the reader object was released", || dropped.load(Ordering::SeqCst) == 1).await;
     assert_eq!(dropped.load(Ordering::SeqCst), 1, "the reader object was released more than once");
     assert!(held.lock().unwrap().is_empty(), "the reader object was released under {:?}", held.lock().unwrap());
     rig.database.close_now();
@@ -159,7 +159,7 @@ async fn a_queued_message_shows_as_pending_in_the_thread_before_the_server_answe
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.database.set_online(false).unwrap();
     bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-    yield_until("the thread shows the queued message", || reader.rows().iter().any(|row| row.sync.state == WireSyncState::Pending)).await;
+    settled(&rig, "the thread shows the queued message", || reader.rows().iter().any(|row| row.sync.state == WireSyncState::Pending)).await;
     assert_eq!(rig.world.count("SendMessage"), 0, "the message was shown only after the server answered");
     assert_eq!(reader.texts().len(), 1);
     rig.database.close_now();
@@ -176,13 +176,8 @@ async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_re
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.database.cancel_stream(stream);
     rig.database.release_stream(stream);
-    let census = within(async {
-        loop {
-            let census = rig.database.subscription_census().await.unwrap();
-            if (census.subscriptions, census.observed_queries, census.retained_observers) == (0, 0, 0) { return census; }
-            tokio::task::yield_now().await;
-        }
-    }).await;
+    crate::test_wait::Quiet::quiet(&rig).await;
+    let census = rig.database.subscription_census().await.unwrap();
     assert_eq!((census.subscriptions, census.observed_queries, census.retained_observers), (0, 0, 0), "a left list stream kept an observer");
     let reads = rig.database.db.counters().observation_reads;
     rig.database.set_online(false).unwrap();
@@ -209,7 +204,7 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh offline: {refreshed:?}");
     let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await;
     assert!(matches!(more, Err(DbError::Offline { .. })), "load more offline: {more:?}");
-    yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
+    settled(&rig, "the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
         ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),
         _ => false,
     })).await;
@@ -245,7 +240,7 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         let reader = Reader::open();
         let stream = rig.database.subscribe_reading(epoch, thread(), reader.clone());
         bound(rig.database.loaded(stream)).await.unwrap();
-        yield_until("the thread shows the source", || reader.texts().iter().any(|text| text.contains("hello"))).await;
+        settled(&rig, "the thread shows the source", || reader.texts().iter().any(|text| text.contains("hello"))).await;
         let before = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
         let acted = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": target}).to_string())).await.unwrap();
         let outcome = bound(rig.database.outcome(acted)).await.unwrap();
@@ -255,7 +250,7 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         let forwarded = bound(rig.database.read_row(epoch, "Message".into(), "forwarded-1".into())).await.unwrap().expect("the answer row");
         assert!(forwarded.cells.contains(&crate::ffi::Cell::Text { value: target.into() }), "{case}: the answer row is not in the target chat");
         if target == "c1" {
-            yield_until("the thread shows the source and the answer", || reader.rows().len() == 2).await;
+            settled(&rig, "the thread shows the source and the answer", || reader.rows().len() == 2).await;
         }
         rig.database.close_now();
     }

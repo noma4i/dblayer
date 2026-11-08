@@ -4,7 +4,7 @@ use serde_json::json;
 use super::stand::{chat, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 /// l.104 + l.100/130: `CHAT` with a `chat` payload lands its row first, then the `observed` form rereads the node with a reader.
 #[tokio::test(flavor = "multi_thread")]
@@ -13,14 +13,14 @@ async fn consumer_yupi_chat_updated_lands_payload_then_rereads_the_watched_node(
     stand.answer("ChatNode", json!({"node": chat("c1", "before")}));
     let (events, token) = stand.events("Chat").await;
     let rows = stand.entity("Chat", "c1", ReadFetch::Stale);
-    yield_until("the node answered", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("before")).await;
+    settled(&stand, "the node answered", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("before")).await;
     let asked = stand.requests("ChatNode");
     stand.answer("ChatNode", json!({"node": chat("c1", "reread")}));
     stand.push(&token, json!({"area": "CHAT", "kind": "UPDATED", "entityId": "c1", "chat": chat("c1", "payload")}));
     let event = bound(events.pull()).await;
     assert!(matches!(&event, Some(ReadValue::Event { area, kind, id, after: Some(row), .. }) if area == "CHAT" && kind == "UPDATED" && id == "c1" && crate::ffi::tests::lifecycle_tests::named(row, "payload")), "the event carries the payload row: {event:?}");
-    yield_until("the watched node is read again", || stand.requests("ChatNode") == asked + 1).await;
-    yield_until("the reread answer replaces the payload", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("reread")).await;
+    settled(&stand, "the watched node is read again", || stand.requests("ChatNode") == asked + 1).await;
+    settled(&stand, "the reread answer replaces the payload", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("reread")).await;
 }
 
 /// l.104 + l.130: the same event with no reader lands the payload row and asks the server for nothing.

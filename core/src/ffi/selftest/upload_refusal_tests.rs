@@ -5,7 +5,7 @@ use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOME
 use crate::ffi::wire::{WireRow, WireSyncState, WireUploadStatus};
 use crate::ffi::{Database, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 use crate::owners::write::upload::MEBIBYTE;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 const EXPIRY_OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
@@ -14,7 +14,7 @@ async fn row(database: &Database, id: &str) -> Option<WireRow> { bound(database.
 
 async fn until_state(database: &Database, id: &str, wanted: WireSyncState) {
     let rows = watched(database, "Moment", id);
-    yield_until("the row reaches the state", || shows(&rows, wanted)).await;
+    settled(&database, "the row reaches the state", || shows(&rows, wanted)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -83,7 +83,7 @@ async fn xfer_prop_step_root_declared() {
         let id = sent.optimistic_value.unwrap().id;
         match (put, failure) {
             (Some(url), _) => {
-                yield_until("the file went to the url of the answer", || stand.puts.seen.lock().unwrap().iter().any(|seen| seen.url == url)).await;
+                settled(&database, "the file went to the url of the answer", || stand.puts.seen.lock().unwrap().iter().any(|seen| seen.url == url)).await;
             }
             (None, Some(text)) => {
                 until_state(&database, &id, WireSyncState::Failed).await;
@@ -207,7 +207,7 @@ async fn an_offline_discard_is_aborted_after_the_reopen_toggles_the_network_at_o
 
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
     let names = || stand.script.names();
-    yield_until("the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
+    settled(&reopened, "the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
@@ -239,7 +239,7 @@ async fn an_offline_discard_without_waiting_for_the_dropped_step_is_aborted_afte
     database.close_now();
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    yield_until("the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
+    settled(&reopened, "the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
@@ -269,7 +269,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
 
     bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
 
-    yield_until("the copy is gone", || std::fs::read_dir(&files).unwrap().count() == 0).await;
+    settled(&database, "the copy is gone", || std::fs::read_dir(&files).unwrap().count() == 0).await;
     assert!(source.exists());
     presign.release();
     database.close_now();
@@ -277,7 +277,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
     abort.entered().await;
     abort.release();
-    yield_until("the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
+    settled(&database, "the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
     reopened.set_online(false).unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     reopened.set_online(true).unwrap();

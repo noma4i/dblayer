@@ -64,7 +64,7 @@ fn apply(rows: &mut Vec<WireRow>, value: &ReadValue) {
 
 /// The rows a stream holds after every value in protocol order (`.0`), every value as `Seen` (`.1`), and how it ended (`.2`).
 #[derive(Default)]
-pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen>>, pub(crate) Mutex<Vec<ReadEnd>>, Mutex<(u32, Vec<ReadValue>)>);
+pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen>>, pub(crate) Mutex<Vec<ReadEnd>>, Mutex<(u32, Vec<ReadValue>)>, crate::test_wait::Flag);
 
 impl Reader for Rows {
     fn delivered(&self, delivery: StreamDelivery) {
@@ -72,6 +72,7 @@ impl Reader for Rows {
         let mut shown = self.0.lock().unwrap();
         apply(&mut shown, &value);
         let mut kept = self.3.lock().unwrap();
+        self.4.set();
         kept.1.push(value.clone());
         match seen_of(seq, value, &mut kept.0) {
             Ok(seen) => self.1.lock().unwrap().push(seen),
@@ -195,7 +196,7 @@ impl Database {
         let flag = ended.clone();
         let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let halt = stopped.clone();
-        let pump = tokio::spawn(async move {
+        let counted = crate::runtime::counted(Some(self.life.launch()), async move {
             let mut seq = 0;
             loop {
                 match pulled.pull().await {
@@ -213,6 +214,7 @@ impl Database {
                 }
             }
         });
+        let pump = tokio::spawn(counted);
         let watched = Arc::new(Watched { stream, epoch, settled, pump, request, ended, stopped });
         registry().lock().unwrap().insert((Arc::as_ptr(&self.life) as usize, watched.stream.id()), watched.clone());
         watched
@@ -292,7 +294,7 @@ fn rows_show_a_delivery_only_after_it_is_kept() {
     let value = ReadValue::Snapshot { revision: 7, rows: vec![row], edits: Vec::new(), state };
     let kept = rows.1.lock().unwrap();
     let delivering = { let rows = rows.clone(); std::thread::spawn(move || rows.delivered(StreamDelivery { stream: 1, epoch: 1, seq: 1, value })) };
-    crate::test_wait::spin_until("the delivery did not reach the kept values", std::time::Duration::from_secs(10), || !crate::test_wait::mutex_free(&rows.3));
+    rows.4.wait_blocking("the delivery did not reach the kept values");
     assert!(!crate::test_wait::mutex_free(&rows.0), "the rows are readable before the delivery is kept");
     drop(kept);
     crate::test_wait::join_within(delivering);

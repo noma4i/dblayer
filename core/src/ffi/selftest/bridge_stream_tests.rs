@@ -4,7 +4,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, ReadEnd, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 fn chat_entry(index: usize) -> serde_json::Value {
@@ -67,7 +67,7 @@ async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_the
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":(0..400).map(chat_entry).collect::<Vec<_>>()}}}));
     let seen = |reader: &Reader| reader.deliveries().iter().map(|delivery| match &delivery.value { ReadValue::Event { .. } => 1, ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum::<u64>();
-    yield_until("the events reached a reading stream", || seen(&watcher) == 400).await;
+    settled(&database, "the events reached a reading stream", || seen(&watcher) == 400).await;
     let mut burst = Vec::new();
     while seen_values(&burst) < 400 { burst.push(bound(stream.pull()).await.expect("the stream is open")); }
     let kept = burst.iter().filter(|value| matches!(value, ReadValue::Event { .. })).count() as u64;
@@ -141,7 +141,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     rig.world.fail_next("DeleteGroup", Fault::Answer(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]})));
     let receipt = bound(rig.database.destroy(epoch, "User".into(), "user".into())).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the open list is read once more", || rig.world.count("Users") > before).await;
+    settled(&rig, "the open list is read once more", || rig.world.count("Users") > before).await;
     settle(&rig).await;
     assert_eq!(rig.world.count("Users") - before, 1);
     rig.database.close_now();
@@ -153,7 +153,7 @@ async fn dlv_event_before_after() {
     let epoch = database.session_epoch();
     let reader = Reader::open();
     database.subscribe_reading(epoch, ReadRequest::Events { model: "Chat".into() }, reader.clone());
-    yield_until("the events stream is open", || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Ready))).await;
+    settled(&database, "the events stream is open", || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Ready))).await;
     let params = |list: &str| json!({"list":list}).to_string();
     for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), params(list))).await.unwrap(); }
     let before = bound(database.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
@@ -162,7 +162,7 @@ async fn dlv_event_before_after() {
     assert_eq!(ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()), ["c1"]);
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}}));
-    crate::test_wait::yield_until_showing("no event arrived: ", || format!("{:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>()), || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. }))).await;
+    crate::test_wait::settled_showing(&database, "no event arrived: ", || format!("{:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>()), || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. }))).await;
     let (id, before_row, after_row) = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { id, before, after, .. } => Some((id, before, after)), _ => None }).unwrap();
     assert_eq!(id, "c1");
     assert!(named(&before_row.expect("the event carries the row before"), "before"));
@@ -208,7 +208,7 @@ async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_i
     let (reader, caller) = (Reader::open(), std::thread::current().id());
     let stream = rig.database.subscribe_reading(epoch, profile(), reader.clone());
     let newest = bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("the stream shows A", || reader.shows("A")).await;
+    settled(&rig, "the stream shows A", || reader.shows("A")).await;
     let log = reader.deliveries();
     assert!(log.iter().any(|delivery| delivery.seq == newest), "loaded names {newest}, a sequence number the reader did not receive: {log:?}");
     assert!(matches!(log[0].value, ReadValue::Snapshot { .. }), "the first value is a snapshot: {:?}", log[0]);
@@ -227,7 +227,7 @@ async fn the_session_reset_ends_every_stream_with_one_outcome_and_no_account_val
     let (profile_log, users_log) = (Reader::open(), Reader::open());
     let streams = [rig.database.subscribe_reading(epoch, profile(), profile_log.clone()), rig.database.subscribe_reading(epoch, users(), users_log.clone())];
     for stream in streams { bound(rig.database.loaded(stream)).await.unwrap(); }
-    yield_until("both streams show A", || profile_log.shows("A") && users_log.shows("A")).await;
+    settled(&rig, "both streams show A", || profile_log.shows("A") && users_log.shows("A")).await;
 
     bound(rig.database.session_reset()).await.unwrap();
     settle(&rig).await;
@@ -257,7 +257,7 @@ async fn an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b() {
         let stream = rig.database.subscribe_reading(epoch_a, request, log.clone());
         bound(rig.database.loaded(stream)).await.unwrap();
     }
-    yield_until("A shows", || first_profile.shows("A") && first_users.shows("A")).await;
+    settled(&rig, "A shows", || first_profile.shows("A") && first_users.shows("A")).await;
 
     bound(rig.database.session_reset()).await.unwrap();
     rig.login_ios("B").await;
@@ -268,7 +268,7 @@ async fn an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b() {
         let stream = rig.database.subscribe_reading(epoch_b, request, log.clone());
         bound(rig.database.loaded(stream)).await.unwrap();
     }
-    yield_until("B shows", || second_profile.shows("B") && second_users.shows("B")).await;
+    settled(&rig, "B shows", || second_profile.shows("B") && second_users.shows("B")).await;
     settle(&rig).await;
 
     assert!(!second_profile.ever_showed("A") && !second_users.ever_showed("A"), "a value of A reached the projections of B");
@@ -288,11 +288,11 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, thread(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("the thread shows the first message", || reader.texts().iter().any(|text| text.contains("first"))).await;
+    settled(&rig, "the thread shows the first message", || reader.texts().iter().any(|text| text.contains("first"))).await;
 
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
-    yield_until("the thread shows the queued message", || reader.rows().len() == 2).await;
+    settled(&rig, "the thread shows the queued message", || reader.rows().len() == 2).await;
     let queued = reader.rows();
     assert_eq!(queued[1].id, receipt.optimistic_value.as_ref().unwrap().id, "the new message sits after the first");
     assert_eq!(queued[1].sync.state, WireSyncState::Pending);
@@ -302,7 +302,7 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     rig.database.set_online(true).unwrap();
     let outcome = bound(rig.database.outcome(receipt.clone())).await.unwrap();
     assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m2"));
-    yield_until("the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;
+    settled(&rig, "the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;
     settle(&rig).await;
 
     assert_eq!(rig.world.count("SendMessage"), 1, "the message went out once");
@@ -323,10 +323,10 @@ async fn a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoc
     let first = Reader::open();
     let stream = rig.database.subscribe_reading(epoch_a, users(), first.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("A shows", || first.shows("A")).await;
+    settled(&rig, "A shows", || first.shows("A")).await;
 
     let gate = rig.world.hold_next("Users").as_account("A");
-    let late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh_stream(stream).await }) };
+    let late = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     gate.entered().await;
     bound(rig.database.session_reset()).await.unwrap();
     rig.login_ios("B").await;
@@ -334,7 +334,7 @@ async fn a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoc
     let second = Reader::open();
     let next = rig.database.subscribe_reading(epoch_b, users(), second.clone());
     bound(rig.database.loaded(next)).await.unwrap();
-    yield_until("B shows", || second.shows("B")).await;
+    settled(&rig, "B shows", || second.shows("B")).await;
     gate.release();
 
     let answer = bound(late).await.unwrap();
@@ -357,12 +357,12 @@ async fn the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing() {
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, users(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("A shows", || reader.shows("A")).await;
+    settled(&rig, "A shows", || reader.shows("A")).await;
     assert_eq!(rig.database.stream_census().open, 1);
 
     rig.database.cancel_stream(stream);
 
-    yield_until("the stream left the census", || rig.database.stream_census().open == 0).await;
+    settled(&rig, "the stream left the census", || rig.database.stream_census().open == 0).await;
     assert_eq!(rig.database.subscription_census().await.unwrap().subscriptions, 0);
     assert!(reader.ended().is_empty(), "a cancelled stream delivers no outcome");
     let mark = reader.len();
@@ -386,7 +386,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     let second = rig.database.subscribe_reading(epoch, profile(), other.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     bound(rig.database.loaded(second)).await.unwrap();
-    yield_until("the thread holds 5 rows", || reader.rows().len() == 5).await;
+    settled(&rig, "the thread holds 5 rows", || reader.rows().len() == 5).await;
     settle(&rig).await;
     assert_eq!(rig.database.stream_census().open, 2);
 

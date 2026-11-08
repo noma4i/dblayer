@@ -191,3 +191,11 @@ impl From<serde_json::Error> for DbError {
     }
 }
 
+#[cfg(test)]
+impl crate::test_wait::Quiet for Database {
+    async fn quiet(&self) { crate::test_wait::Quiet::quiet(&self.life).await }
+}
+#[cfg(test)]
+impl crate::test_wait::Quiet for std::sync::Arc<Database> {
+    async fn quiet(&self) { crate::test_wait::Quiet::quiet(&self.life).await }
+}

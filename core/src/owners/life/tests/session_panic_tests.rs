@@ -10,7 +10,7 @@ use crate::owners::contract::ErrorClass;
 use crate::owners::session::{AuthorOutcome, SessionError};
 use crate::owners::life::LifeReply;
 use crate::runtime::{ManualClock, Outcome};
-use crate::test_wait::{within, yield_until};
+use crate::test_wait::{within, settled};
 use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::tests::exchange_tests::Client;
 use crate::transport::{HttpExchange, HttpReply, NetworkPurpose, TransportError};
@@ -36,5 +36,5 @@ async fn sess_calling_http_panic() {
     http.panic.store(true, Ordering::SeqCst);
     let Outcome::Value(LifeReply::Mutated(outcome)) = within(life.mutate_answered(None, 11, "/api/auth/otp".into(), "{}".into(), 0).wait()).await else { panic!("the author has an outcome") };
     assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Http { status: 0 }, pending_retained: false }), "{outcome:?}");
-    yield_until("Lifecycle did not close after HTTP panic", || life.published().closed).await;
+    settled(&life, "Lifecycle did not close after HTTP panic", || life.published().closed).await;
 }

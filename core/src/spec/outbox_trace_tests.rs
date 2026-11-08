@@ -1,12 +1,12 @@
 //! Reference-level tests of the `outbox` machine: the traces against the model and the properties through the real database.
 
 use super::ref_outbox::{step_of, Ctx, In, Out, Policy, St, Step};
-use super::rig::{bounded, step, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, step, within, Kind, Reply, Rig, Server};
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
 use crate::schema::OnFailure;
 use super::outbox_tests::*;
 
-struct Op { text: String, state: St, requesting: bool, resolved: Option<Out>, receipt: WireOperationReceipt, handle: tokio::task::JoinHandle<WireOperationOutcome> }
+struct Op { text: String, state: St, requesting: bool, resolved: Option<Out>, receipt: WireOperationReceipt, done: std::sync::Arc<crate::test_wait::Flag> }
 
 struct Model { ops: Vec<Op>, online: bool }
 
@@ -93,15 +93,16 @@ async fn run_trace(trace: &[Act], check: Check) {
                 let receipt = rig.create(&format!("t{index}")).await;
                 let db = rig.db.clone();
                 let asked = receipt.clone();
-                let handle = tokio::spawn(async move { db.outcome(asked).await.unwrap() });
-                model.ops.push(Op { text: format!("t{index}"), state: committed.next, requesting: sends(&committed), resolved: None, receipt, handle });
+                let done = std::sync::Arc::new(crate::test_wait::Flag::default());
+                drop(tokio::spawn(crate::runtime::counted(Some(db.life_handle().launch()), { let (db, done) = (db.clone(), done.clone()); async move { let outcome = db.outcome(asked).await.unwrap(); done.set(); outcome } })));
+                model.ops.push(Op { text: format!("t{index}"), state: committed.next, requesting: sends(&committed), resolved: None, receipt, done });
             }
             Act::On => { rig.db.set_online(true).unwrap(); model_apply(&mut model, *act); }
             Act::Off => { rig.db.set_online(false).unwrap(); model_apply(&mut model, *act); }
             Act::Ok | Act::Refuse if !model.online => {}
             Act::Ok | Act::Refuse => {
                 if let Some(op) = model.ops.iter().find(|op| op.requesting) {
-                    until(&label, || rig.server.holds_text(&op.text)).await;
+                    rig.server.until(&label, || rig.server.holds_text(&op.text)).await;
                     rig.server.answer_text(&op.text, if matches!(act, Act::Ok) { Reply::Ok } else { Reply::Refuse });
                 }
                 model_apply(&mut model, *act);
@@ -116,9 +117,9 @@ async fn run_trace(trace: &[Act], check: Check) {
             Act::Close => { within(rig.db.close_database()).await.unwrap(); model_apply(&mut model, *act); }
         }
         let requesting = if model.online { model.ops.iter().filter(|op| op.requesting).count().min(1) } else { 0 };
-        until(&format!("{label} step {index}: requests in flight {requesting}"), || rig.server.held(Kind::Mutate) == requesting).await;
+        rig.server.until(&format!("{label} step {index}: requests in flight {requesting}"), || rig.server.held(Kind::Mutate) == requesting).await;
         let expected: Vec<_> = model.ops.iter().map(|op| op.resolved.is_some()).collect();
-        until(&format!("{label} step {index}: resolved {expected:?}"), || model.ops.iter().all(|op| op.resolved.is_none() || op.handle.is_finished())).await;
+        crate::test_wait::settled(&rig, &format!("{label} step {index}: resolved {expected:?}"), || model.ops.iter().all(|op| op.resolved.is_none() || op.done.is_set())).await;
         rig.quiet().await;
         if let (Some(queue), false) = (&queue, matches!(act, Act::Close)) {
             let stored = rig.db.op_statuses();
@@ -138,8 +139,8 @@ async fn run_trace(trace: &[Act], check: Check) {
             assert_eq!(shown, wanted, "{label} step {index}: sync.state of the rows is the status of their operation");
         }
         for (number, op) in model.ops.iter().enumerate() {
-            assert_eq!(op.handle.is_finished(), op.resolved.is_some(), "{label} step {index}: op {number} {:?}", op.state);
-            if let (Some(want_out), true) = (op.resolved, op.handle.is_finished()) {
+            assert_eq!(op.done.is_set(), op.resolved.is_some(), "{label} step {index}: op {number} {:?}", op.state);
+            if let (Some(want_out), true) = (op.resolved, op.done.is_set()) {
                 let outcome = within(rig.db.outcome(op.receipt.clone())).await.unwrap();
                 assert_eq!(kind_of(&outcome), wire_of(want_out), "{label} step {index}: op {number}");
                 if check == Check::RollbackClean && !matches!(act, Act::Close) && matches!(want_out, Out::Rejected | Out::Discarded) {
@@ -280,7 +281,9 @@ async fn out_prop_intent_kept_run() {
                     let receipt = first.create(&format!("t{index}")).await;
                     let db = first.db.clone();
                     let asked = receipt.clone();
-                    model.ops.push(Op { text: format!("t{index}"), state: committed.next, requesting: sends(&committed), resolved: None, receipt, handle: tokio::spawn(async move { db.outcome(asked).await.unwrap() }) });
+                    let done = std::sync::Arc::new(crate::test_wait::Flag::default());
+                    drop(tokio::spawn(crate::runtime::counted(Some(db.life_handle().launch()), { let (db, done) = (db.clone(), done.clone()); async move { let outcome = db.outcome(asked).await.unwrap(); done.set(); outcome } })));
+                    model.ops.push(Op { text: format!("t{index}"), state: committed.next, requesting: sends(&committed), resolved: None, receipt, done });
                 }
             }
         }
@@ -291,7 +294,7 @@ async fn out_prop_intent_kept_run() {
         drop(first);
         let server = Server::new();
         let second = Rig::open_at(OnFailure::Rollback, Some(path), server.clone()).await;
-        crate::test_wait::yield_until("the restored intents reached the server", || server.count("MakeMoment") >= survivors).await;
+        crate::test_wait::settled(&second, "the restored intents reached the server", || server.count("MakeMoment") >= survivors).await;
         second.quiet().await;
 
         assert_eq!(server.count("MakeMoment"), survivors, "{acts:?}");

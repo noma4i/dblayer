@@ -455,14 +455,17 @@ fn hold_before_the_call(call_state: &crate::ffi::CallState) -> (std::sync::mpsc:
 #[tokio::test(flavor = "multi_thread")]
 async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
     use crate::transport::retry::Retrying;
-    struct Tap(std::sync::Mutex<std::sync::mpsc::Sender<()>>);
+    struct Tap(std::sync::Mutex<std::sync::mpsc::Sender<()>>, Arc<crate::test_wait::Flag>);
+    impl Drop for Tap { fn drop(&mut self) { self.1.set(); } }
     impl super::RetryProgressListener for Tap {
         fn changed(&self, _: crate::transport::RetrySnapshot) {
             self.0.lock().unwrap().send(()).unwrap();
         }
     }
     let (heard, deliveries) = std::sync::mpsc::channel();
-    let tap = Arc::new(Tap(std::sync::Mutex::new(heard)));
+    let gone = Arc::new(crate::test_wait::Flag::default());
+    let keep = heard.clone();
+    let tap = Arc::new(Tap(std::sync::Mutex::new(heard), gone.clone()));
     let retries = super::RetryProgress::new();
     let subscription = retries.subscribe(tap.clone()).unwrap();
     crate::test_wait::recv_within(&deliveries);
@@ -476,9 +479,11 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
     crate::test_wait::recv_within(&at_the_call);
     subscription.cancel();
     release.send(()).unwrap();
-    crate::test_wait::yield_until("the blocked delivery ended", || Arc::strong_count(&tap) == 1).await;
+    drop(tap);
+    gone.wait("the blocked delivery ended").await;
     assert!(deliveries.try_recv().is_err());
     retrying.abort();
+    drop(keep);
 }
 
 /// Requirement: a call that the close ended answers `Closed`, a refused sign-in over a session answers `AlreadyAuthenticated`, a 401 answers `Unauthorized`.

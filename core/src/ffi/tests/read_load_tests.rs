@@ -112,7 +112,7 @@ async fn inv_loadm_18_win_loading_load_more_reports_the_page_it_landed() {
     let (db, transport) = open(true).await;
     transport.last_page.store(2, Ordering::SeqCst);
     let first = begin(&db).await;
-    crate::test_wait::yield_until("the first page left", || transport.requests() == 1).await;
+    crate::test_wait::settled(&db, "the first page left", || transport.requests() == 1).await;
     let mut next = std::pin::pin!(more(&db));
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(next.as_mut().poll(cx))).await.is_pending());
     transport.gate.add_permits(2);
@@ -150,7 +150,7 @@ async fn win_loading_error_preserves_graphql_messages_and_extensions() {
 async fn two_loads_of_one_window_share_one_request_and_a_cancel_of_one_leaves_the_other() {
     let (db, transport) = open(true).await;
     let (first, second) = (begin(&db).await, begin(&db).await);
-    crate::test_wait::yield_until("the request left", || transport.requests() == 1).await;
+    crate::test_wait::settled(&db, "the request left", || transport.requests() == 1).await;
     first.cancel();
     assert!(matches!(first.result().await, Err(DbError::Interrupted { .. })), "a cancelled call ends as interrupted");
     transport.gate.add_permits(1);
@@ -190,7 +190,7 @@ async fn a_panic_in_the_window_transport_ends_the_refresh_with_an_error_and_clos
     transport.panics.store(true, Ordering::SeqCst);
     let result = crate::test_wait::within(refresh(&db)).await;
     assert!(result.is_err(), "{result:?}");
-    crate::test_wait::yield_until("Lifecycle did not close after the task panic", || db.life.published().closed).await;
+    crate::test_wait::settled(&db, "Lifecycle did not close after the task panic", || db.life.published().closed).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -200,7 +200,7 @@ async fn a_panic_in_the_window_read_ends_the_refresh_with_an_error_and_closes_th
     let result = crate::test_wait::within(refresh(&db)).await;
     assert!(result.is_err(), "{result:?}");
     assert_eq!(transport.requests(), 0, "the failed window read sent nothing");
-    crate::test_wait::yield_until("Lifecycle did not close after the window read panic", || db.life.published().closed).await;
+    crate::test_wait::settled(&db, "Lifecycle did not close after the window read panic", || db.life.published().closed).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -210,7 +210,7 @@ async fn a_panic_in_the_snapshot_read_ends_the_wait_of_the_stream_with_an_error_
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(LIST) });
     let value = crate::test_wait::within(stream.pull()).await;
     assert!(matches!(&value, Some(ReadValue::Snapshot { state, .. }) if state.phase == ReadPhase::Failed) || matches!(&value, Some(ReadValue::Ended { .. })), "the stream ends its wait with an error or its end: {value:?}");
-    crate::test_wait::yield_until("Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
+    crate::test_wait::settled(&db, "Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
 }
 
 /// P-DATA-39 (R18): a stream loads the next page of its own relation and its first page again, and a stream without a relation refuses both.
@@ -255,8 +255,9 @@ async fn life_closed_stream_releases_store() {
     assert!(matches!(crate::test_wait::within(stream.load_more()).await, Err(DbError::Closed { .. })));
     assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Ended { cause: super::ReadEnd::Closed })));
     let (database, store) = (Arc::downgrade(&db), Arc::downgrade(&db.db));
+    let owners = db.life.owners_handle();
     drop(db);
-    crate::test_wait::yield_until("the stream keeps the Database", || database.upgrade().is_none()).await;
-    crate::test_wait::yield_until("the stream keeps the Store", || store.upgrade().is_none()).await;
+    crate::test_wait::settled(&owners, "the stream keeps the Database", || database.upgrade().is_none()).await;
+    crate::test_wait::settled(&owners, "the stream keeps the Store", || store.upgrade().is_none()).await;
     drop(stream);
 }

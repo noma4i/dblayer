@@ -28,7 +28,6 @@ extern "C" fn arm_test_deadline() {
     });
 }
 
-const SPIN_LIMIT: Duration = Duration::from_secs(10);
 const BLOCK_LIMIT: Duration = Duration::from_secs(20);
 
 #[track_caller]
@@ -37,15 +36,6 @@ pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
 }
 
 
-#[track_caller]
-pub(crate) fn spin_until(what: &str, limit: Duration, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + limit;
-    while !ready() {
-        assert!(Instant::now() < deadline, "{what}");
-        std::thread::yield_now();
-    }
-}
-
 pub(crate) trait Joinable<T> {
     fn join_bounded(self) -> T;
 }
@@ -53,7 +43,6 @@ pub(crate) trait Joinable<T> {
 impl<T> Joinable<T> for JoinHandle<T> {
     #[track_caller]
     fn join_bounded(self) -> T {
-        spin_until("the thread did not finish", BLOCK_LIMIT, || self.is_finished());
         self.join().unwrap()
     }
 }
@@ -105,7 +94,9 @@ pub(crate) async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
     within_secs(8, work).await
 }
 
-pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<Output = T>) -> T {
+pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<Output = T>) -> T { within_named(seconds, "bounded wait expired", work).await }
+
+pub(crate) async fn within_named<T>(seconds: u64, what: &str, work: impl std::future::Future<Output = T>) -> T {
     let (expired, expiry) = tokio::sync::oneshot::channel::<()>();
     let (finished, watching) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
@@ -116,24 +107,100 @@ pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<
     let _finished = finished;
     tokio::select! {
         output = work => output,
-        _ = expiry => panic!("bounded wait expired"),
+        _ = expiry => panic!("{what}: the event did not come in {seconds} s"),
     }
 }
 
-pub(crate) async fn yield_until(what: &str, ready: impl FnMut() -> bool) {
-    yield_until_showing(what, String::new, ready).await
+/// A handle whose owners can be waited for: `quiet` returns once every input and every effect task that can run has ended. Tasks that wait for the outside (a held answer of the mock) do not count.
+pub(crate) trait Quiet {
+    async fn quiet(&self);
 }
 
-pub(crate) async fn yield_until_showing(what: &str, state: impl Fn() -> String, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + SPIN_LIMIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "{what}{}", state());
-        tokio::task::yield_now().await;
+impl<T: Quiet + ?Sized> Quiet for &T {
+    async fn quiet(&self) { (**self).quiet().await }
+}
+
+impl Quiet for crate::runtime::Handle {
+    async fn quiet(&self) {
+        let owners = self.clone();
+        within_secs(TEST_DEADLINE, async move { tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap() }).await;
     }
 }
 
+impl Quiet for crate::owners::life::Life {
+    async fn quiet(&self) {
+        match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(|| self.barrier()),
+            _ => self.barrier(),
+        }
+    }
+}
 
+impl Quiet for std::sync::Arc<crate::owners::life::Life> {
+    async fn quiet(&self) {
+        let life = self.clone();
+        within_secs(TEST_DEADLINE, async move { tokio::task::spawn_blocking(move || life.barrier()).await.unwrap() }).await;
+    }
+}
 
+/// Kind A: the state after the inputs the test gave. Waits for the barrier of the owners, then checks once: a state that is not there by then is final and the test is red.
+#[track_caller]
+pub(crate) fn settled<'a>(handle: &'a impl Quiet, what: &'a str, ready: impl FnOnce() -> bool + 'a) -> impl std::future::Future<Output = ()> + 'a {
+    settled_showing(handle, what, String::new, ready)
+}
+
+#[track_caller]
+pub(crate) fn settled_showing<'a>(handle: &'a impl Quiet, what: &'a str, state: impl FnOnce() -> String + 'a, ready: impl FnOnce() -> bool + 'a) -> impl std::future::Future<Output = ()> + 'a {
+    let place = std::panic::Location::caller();
+    async move {
+        handle.quiet().await;
+        assert!(ready(), "{what}{} (at {place}: the owners are quiet, the state is final)", state());
+    }
+}
+
+/// A one-way event: `set` once, wait on it from a thread (`wait_blocking`) or from a task (`wait`). The wait ends on the event, never by polling.
+#[derive(Default)]
+pub(crate) struct Flag {
+    set: Mutex<bool>,
+    ready: Condvar,
+    signal: tokio::sync::Notify,
+}
+
+impl Flag {
+    pub(crate) fn set(&self) {
+        *self.set.lock().unwrap() = true;
+        self.ready.notify_all();
+        self.signal.notify_waiters();
+    }
+
+    pub(crate) fn is_set(&self) -> bool { *self.set.lock().unwrap() }
+
+    #[track_caller]
+    pub(crate) fn wait_blocking(&self, what: &str) {
+        let deadline = Instant::now() + BLOCK_LIMIT;
+        let mut set = self.set.lock().unwrap();
+        while !*set {
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "{what}");
+            set = self.ready.wait_timeout(set, left).unwrap().0;
+        }
+    }
+
+    pub(crate) async fn wait(&self, what: &str) { signalled(&self.signal, what, || self.is_set()).await }
+}
+
+/// Kind B: an event of the outside (a request reached the mock, a held answer came in). Waits for the signal of the party, never polls: the notification is enabled before the condition is read, so a signal between the two is not lost.
+pub(crate) async fn signalled(signal: &tokio::sync::Notify, what: &str, mut ready: impl FnMut() -> bool) {
+    within_named(TEST_DEADLINE, what, async {
+        loop {
+            let notified = signal.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if ready() { return; }
+            notified.await;
+        }
+    }).await;
+}
 
 pub(crate) fn mutex_free<T>(mutex: &Mutex<T>) -> bool {
     !matches!(mutex.try_lock(), Err(std::sync::TryLockError::WouldBlock))

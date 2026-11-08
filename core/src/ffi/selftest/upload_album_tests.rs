@@ -8,7 +8,7 @@ use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::wire::WireSyncState;
 use crate::ffi::{Database, TestClock, WireBatchReceipt, WireOperationOutcome, WireOperationReceipt};
 use crate::owners::write::upload::MEBIBYTE;
-use crate::test_wait::yield_until_showing;
+use crate::test_wait::settled_showing;
 use crate::transport::{NetworkPurpose, TransferStep};
 
 const ALBUM_OPERATIONS: [(&str, &str); 3] = [
@@ -154,7 +154,7 @@ async fn discarding_a_refused_file_sends_the_remaining_file_as_single() {
     let receipt = upload_batch(&database, items(&[&files[0], &files[1]], &["key-0", "key-1"], 2)).await;
     let first = receipt.items[0].optimistic_value.id.clone();
     let rows = watched(&database, "Asset", &first);
-    yield_until_showing("the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
+    settled_showing(&database, "the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
     bound(database.discard(epoch, "Asset".into(), first, Some("create_files".into()))).await.unwrap();
 
     assert_eq!(outcomes(&database, &receipt).await, ["rejected no storage", "confirmed a1"]);
@@ -178,7 +178,7 @@ async fn retrying_a_refused_file_keeps_the_other_album_files() {
     let receipt = upload_batch(&database, items(&[&files[0], &files[1], &files[2]], &["key-0", "key-1", "key-2"], 3)).await;
     let first = receipt.items[0].optimistic_value.id.clone();
     let rows = watched(&database, "Asset", &first);
-    yield_until_showing("the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
+    settled_showing(&database, "the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
     let again = bound(database.retry(epoch, "Asset".into(), first, Some("create_files".into()), None)).await.unwrap();
 
     assert_eq!(again.operation, receipt.items[0].receipt.operation);
@@ -270,7 +270,7 @@ async fn a_lost_answer_before_a_close_is_replayed_after_the_reopen_and_the_batch
 
     let (first, second) = (watched(&reopened, "Asset", "a1"), watched(&reopened, "Asset", "a2"));
     let optimistic: Vec<&str> = receipt.items.iter().map(|item| item.optimistic_value.id.as_str()).chain(["a1", "a2"]).collect();
-    yield_until_showing("both assets are stored", || state_report(&stand, &reopened, &optimistic), || !first.0.lock().unwrap().is_empty() && !second.0.lock().unwrap().is_empty()).await;
+    settled_showing(&reopened, "both assets are stored", || state_report(&stand, &reopened, &optimistic), || !first.0.lock().unwrap().is_empty() && !second.0.lock().unwrap().is_empty()).await;
     let attempts = stand.script.variables("CreateBlob").iter().filter(|variables| variables["filename"] == "1.jpg").count();
     assert_eq!(attempts, 2, "the lost step is requested once more");
     let filenames: Vec<String> = stand.script.variables("CreateBlob").iter().map(|variables| variables["filename"].as_str().unwrap().to_string()).collect();

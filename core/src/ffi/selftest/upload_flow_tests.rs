@@ -10,7 +10,7 @@ use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 use crate::owners::write::upload::UploadFile;
 
 async fn rig() -> Rig {
@@ -59,17 +59,17 @@ fn puts(rig: &Rig) -> usize { rig.world.log().iter().filter(|entry| entry.operat
 async fn flow_chat_photo_upload() {
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
-    yield_until("the chat shows", || chat.len() == 1).await;
+    settled(&rig, "the chat shows", || chat.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered().await;
-    yield_until("the chat shows the queued upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Queued)).await;
+    settled(&rig, "the chat shows the queued upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Queued)).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
+    settled(&rig, "the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
     assert_eq!((rig.world.count("CreateBlob"), puts(&rig), rig.world.count("ChatUpdatePhoto")), (1, 1, 1), "one blob, one PUT, one mutation");
     rig.database.close_now();
 }
@@ -79,18 +79,18 @@ async fn flow_chat_photo_upload() {
 async fn xfer_prop_local_url() {
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
-    yield_until("the chat shows", || chat.len() == 1).await;
+    settled(&rig, "the chat shows", || chat.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("PUT");
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered().await;
-    yield_until("the copy has a URL", || local_url(&chat, "c1", "update_photo").is_some()).await;
+    settled(&rig, "the copy has a URL", || local_url(&chat, "c1", "update_photo").is_some()).await;
     let url = local_url(&chat, "c1", "update_photo").unwrap();
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
+    settled(&rig, "the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
     rig.database.close_now();
 }
 
@@ -99,24 +99,24 @@ async fn xfer_prop_local_url() {
 async fn flow_chat_photo_retry_and_discard() {
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
-    yield_until("the chat shows", || chat.len() == 1).await;
+    settled(&rig, "the chat shows", || chat.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
 
     rig.world.fail_next("PUT", Fault::Http(400));
     bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    yield_until("the upload failed on the row", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    settled(&rig, "the upload failed on the row", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
 
     let again = bound(rig.database.retry(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()), None)).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(again)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
+    settled(&rig, "the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
 
     let (_other_directory, other) = source("logo2.jpg", b"another jpeg");
     rig.world.fail_next("PUT", Fault::Http(400));
     bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&other, json!({"id": "c1"})))).await.unwrap();
-    yield_until("the second upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    settled(&rig, "the second upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
     bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await.unwrap();
-    yield_until("the discard removed the upload", || status(&chat, "c1", "update_photo").is_none()).await;
+    settled(&rig, "the discard removed the upload", || status(&chat, "c1", "update_photo").is_none()).await;
     assert_eq!(rig.world.count("ChatUpdatePhoto"), 1, "only the retry reached the server");
     rig.database.close_now();
 }
@@ -129,20 +129,20 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     let list = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, list.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    yield_until("both places show the chat", || chat.len() == 1 && list.len() == 1).await;
+    settled(&rig, "both places show the chat", || chat.len() == 1 && list.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered().await;
-    yield_until("both places show the queued upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo") == Some(WireUploadStatus::Queued))).await;
+    settled(&rig, "both places show the queued upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo") == Some(WireUploadStatus::Queued))).await;
     let first = |rows: &Rows| rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.uploads.iter().any(|entry| entry.action == "update_photo"))).map(|seen| seen.revision);
     assert!(first(&chat).is_some() && first(&list).is_some(), "a place never showed the upload {:?} {:?}", first(&chat), first(&list));
-    one_revision(&[&chat, &list]).await;
+    one_revision(&rig, &[&chat, &list]).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;
+    settled(&rig, "both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;
     rig.database.close_now();
 }
 
@@ -163,7 +163,7 @@ async fn xfer_status_local_url() {
     use crate::ffi::ReadValue;
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
-    yield_until("the chat shows", || chat.len() == 1).await;
+    settled(&rig, "the chat shows", || chat.len() == 1).await;
     let stream = blob_stream(&rig, "update_photo");
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
@@ -212,10 +212,10 @@ async fn xfer_status_processing() {
 async fn xfer_status_quiet_on_other_rows() {
     let rig = rig().await;
     let _stream = blob_stream(&rig, "update_photo");
-    yield_until("the stream read its row at the open", || rig.database.shows.row_reads() == 1).await;
+    settled(&rig, "the stream read its row at the open", || rig.database.shows.row_reads() == 1).await;
     land_owned(&rig, "Chat", chat_row("c2", 0));
     land_owned(&rig, "Chat", chat_row("c1", 1));
-    yield_until("the commit of its own row woke the stream", || rig.database.shows.row_reads() >= 2).await;
+    settled(&rig, "the commit of its own row woke the stream", || rig.database.shows.row_reads() >= 2).await;
     assert_eq!(rig.database.shows.row_reads(), 2, "the commit of the other row read a row");
     rig.database.close_now();
 }

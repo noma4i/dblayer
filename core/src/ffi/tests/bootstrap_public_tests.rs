@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use super::{DbError, EncryptedReply, FakeHttp, OnlineSink, PlatformObserver, RetryProgress, TestClock};
-use crate::test_wait::{recv_within, within, yield_until};
+use crate::test_wait::{recv_within, within};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{AppPlatform, EncryptedConfig, RetrySnapshot};
 
@@ -13,6 +13,7 @@ struct Platform {
     sink: Mutex<Option<Arc<OnlineSink>>>,
     started: Mutex<std::sync::mpsc::Sender<()>>,
     stops: AtomicUsize,
+    stopped: tokio::sync::Notify,
     at_start: Vec<bool>,
 }
 
@@ -22,14 +23,14 @@ impl PlatformObserver for Platform {
         for online in &self.at_start { sink.set_online(*online); }
         self.started.lock().unwrap().send(()).unwrap();
     }
-    fn stop(&self) { self.stops.fetch_add(1, Ordering::SeqCst); }
+    fn stop(&self) { self.stops.fetch_add(1, Ordering::SeqCst); self.stopped.notify_waiters(); }
 }
 
 impl Platform {
     fn offline() -> (Arc<Self>, std::sync::mpsc::Receiver<()>) { Self::reporting(&[]) }
     fn reporting(at_start: &[bool]) -> (Arc<Self>, std::sync::mpsc::Receiver<()>) {
         let (started, heard) = std::sync::mpsc::channel();
-        (Arc::new(Self { sink: Mutex::default(), started: Mutex::new(started), stops: AtomicUsize::new(0), at_start: at_start.to_vec() }), heard)
+        (Arc::new(Self { sink: Mutex::default(), started: Mutex::new(started), stops: AtomicUsize::new(0), stopped: tokio::sync::Notify::new(), at_start: at_start.to_vec() }), heard)
     }
     fn go_online(&self) {
         let sink = self.sink.lock().unwrap().clone().unwrap();
@@ -128,9 +129,8 @@ async fn life_bootstrap_cancel() {
     call.abort();
     assert!(within(call).await.unwrap_err().is_cancelled());
     within(seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(|snapshot| snapshot.active_calls == 0 && snapshot.last_attempt.is_none()))).await.unwrap();
-    yield_until("the platform observers stopped with the cancelled call", || platform.stops.load(Ordering::SeqCst) == 1).await;
+    crate::test_wait::signalled(&platform.stopped, "the platform observers stopped with the cancelled call", || platform.stops.load(Ordering::SeqCst) == 1).await;
     subscription.cancel();
-    yield_until("the subscription task ended", || subscription.task.is_finished()).await;
     assert_eq!(http.requests.load(Ordering::SeqCst), 1);
 }
 

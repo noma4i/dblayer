@@ -532,6 +532,10 @@ impl Life {
     #[cfg(test)]
     pub fn barrier(&self) { self.wiring.handle.barrier() }
 
+    /// The address book of the owners: it outlives the `Life` and still waits for the tasks that hold it.
+    #[cfg(test)]
+    pub fn owners_handle(&self) -> crate::runtime::Handle { self.wiring.handle.clone() }
+
     /// The inputs and calls that are in flight now.
     #[cfg(test)]
     pub fn pending(&self) -> usize { self.wiring.handle.pending() }

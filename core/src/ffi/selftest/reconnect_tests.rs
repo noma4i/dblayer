@@ -6,7 +6,7 @@ use super::delivery_reactivity_tests::feed_database_in;
 use super::rig_tests::{bound, World};
 use crate::ffi::tape::Rows;
 use crate::ffi::{ReadRequest, ReadValue};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 fn list_requests(world: &World) -> usize { world.log().iter().filter(|entry| entry.operation == "ChatList").count() }
 
@@ -20,11 +20,11 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     let rows = Arc::new(Rows::default());
     let query = json!({"model":"Chat","relation":"list","params":{"list":"PRIMARY"},"refreshOnConnect":true}).to_string();
     drop(database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
-    yield_until("the list shows its first load", || rows.len() == 1).await;
+    settled(&database, "the list shows its first load", || rows.len() == 1).await;
     assert_eq!(list_requests(&world), 1);
     database.set_online(false).unwrap();
     database.set_online(true).unwrap();
-    yield_until("the list loaded again", || list_requests(&world) >= 2).await;
+    settled(&database, "the list loaded again", || list_requests(&world) >= 2).await;
     loop {
         if matches!(bound(events.pull()).await, Some(ReadValue::Gap)) { break; }
     }

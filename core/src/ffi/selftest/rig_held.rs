@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::ffi::tests::lifecycle_tests::{named, Rows};
 use crate::ffi::tape::Watched;
 use crate::ffi::{Database, ReadFetch, ReadRequest};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 /// The streams the app holds for the account it shows: the singleton and the id entity (CurrentUser), a list and a second list in another order.
 /// A new account gets new streams on the same screens: `follow` opens them for the epoch now, the deliveries of every epoch stay in the same logs.
@@ -57,13 +57,13 @@ impl Held {
         !rows.is_empty() && rows.iter().all(|row| named(row, account))
     }
 
-    pub(super) async fn shows(&self, account: &str) {
-        yield_until(&format!("the held entities show {account}"), || Self::shown(&self.single, account) && Self::shown(&self.entity, account)).await;
+    pub(super) async fn shows(&self, handle: &impl crate::test_wait::Quiet, account: &str) {
+        settled(handle, &format!("the held entities show {account}"), || Self::shown(&self.single, account) && Self::shown(&self.entity, account)).await;
     }
 
-    pub(super) async fn lists_show(&self, account: &str) {
+    pub(super) async fn lists_show(&self, handle: &impl crate::test_wait::Quiet, account: &str) {
         for rows in [&self.rows, &self.window_rows] {
-            yield_until(&format!("the held list shows {account}"), || Self::shown(rows, account)).await;
+            settled(handle, &format!("the held list shows {account}"), || Self::shown(rows, account)).await;
         }
     }
 

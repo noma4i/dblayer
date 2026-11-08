@@ -6,7 +6,7 @@ use super::rig_tests::{bound, Fault, Rig, Switchable, World};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{Database, DbError, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadValue, WireOperationOutcome};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,7 +20,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let first = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
     held.entered().await;
     let second = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
-    yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
+    settled(&rig, "both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
     let owners = rig.database.life.clone();
     tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();
     first.cancel();
@@ -83,7 +83,7 @@ async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_regis
     bound(transport.started.notified()).await;
     let earlier_call = database.loads.begin();
     request.cancel();
-    yield_until("the leave waits for the earlier call as one counted input", || database.life.pending() == 1).await;
+    assert_eq!(database.life.pending(), 1, "the leave waits for the earlier call as one counted input");
     assert!(!transport.ended.load(Ordering::SeqCst), "the window still has the interest until the leave is delivered");
     drop(earlier_call);
     bound(transport.cancelled.notified()).await;
@@ -291,9 +291,9 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     let older = rig.world.hold_next("GroupMembers");
     let response = rig.world.hold_next("RemoveMember");
     let reread = rig.world.hold_next("GroupMembers");
-    let refresh = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh_stream(stream).await }) };
+    let refresh = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     older.entered().await;
-    let action = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "remove_member".into(), "{}".into(), json!({"userIds":["u1"]}).to_string()).await }) };
+    let action = { let database = rig.database.clone(); let id = created.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, "remove_member".into(), "{}".into(), json!({"userIds":["u1"]}).to_string()).await }) };
     response.entered().await;
     rig.world.set_members("JOINED", &["u2", "u3"]);
     response.release();
@@ -369,7 +369,7 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
         rig.database.subscribe_reading(epoch, thread(), list.clone()),
     ];
     for stream in streams { bound(rig.database.loaded(stream)).await.unwrap(); }
-    yield_until("the list holds 5 rows", || list.rows().len() == 5).await;
+    settled(&rig, "the list holds 5 rows", || list.rows().len() == 5).await;
     settle(&rig).await;
 
     let mut costs = Vec::new();
@@ -398,8 +398,8 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
     let waiting = rig.database.life.waiting_calls();
-    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); tokio::spawn(async move { database.outcome(receipt).await }) };
-    crate::test_wait::yield_until("the outcome call waits for the command", || rig.database.life.waiting_calls() > waiting).await;
+    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { database.outcome(receipt).await }) };
+    crate::test_wait::settled(&rig, "the outcome call waits for the command", || rig.database.life.waiting_calls() > waiting).await;
     crate::ffi::owners_drained(&rig.database).await.unwrap();
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
     bound(rig.database.session_reset()).await.unwrap();
@@ -421,7 +421,7 @@ async fn a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothin
     let stream = rig.database.subscribe_reading(epoch, users(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let gate = rig.world.hold_next("Users").as_account("A");
-    let refresh = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh_stream(stream).await }) };
+    let refresh = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     gate.entered().await;
     refresh.abort();
     let _ = refresh.await;
@@ -446,9 +446,9 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
     for request in requests {
         let reader = Reader::open();
         let stream = rig.database.subscribe_reading(epoch, request.clone(), reader.clone());
-        yield_until("the failed stream ended", || !reader.ended().is_empty()).await;
+        settled(&rig, "the failed stream ended", || !reader.ended().is_empty()).await;
         assert_eq!(reader.ended(), vec![ReadEnd::Invalid], "{request:?} ended with more or less than one outcome");
-        yield_until("the failed stream left the table", || rig.database.stream_census().open == 0).await;
+        settled(&rig, "the failed stream left the table", || rig.database.stream_census().open == 0).await;
         assert!(bound(rig.database.loaded(stream)).await.is_err(), "{request:?} reported a first load");
     }
     rig.database.close_now();
@@ -488,7 +488,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     let blocking = Arc::new(Blocking { inner: Reader::open(), armed: AtomicBool::new(false), finished: AtomicBool::new(false), entered: Mutex::new(entered), release: Mutex::new(release) });
     let stream = rig.database.subscribe_reading(epoch, thread(), blocking.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("the thread shows the first message", || blocking.inner.texts().iter().any(|text| text.contains("first"))).await;
+    settled(&rig, "the thread shows the first message", || blocking.inner.texts().iter().any(|text| text.contains("first"))).await;
     rig.database.set_online(false).unwrap();
     blocking.armed.store(true, Ordering::SeqCst);
     bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
@@ -496,7 +496,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     rig.database.cancel_stream(stream);
     assert!(!blocking.finished.load(Ordering::SeqCst), "the cancel waited for the reader to finish a delivery");
     release_tx.send(()).unwrap();
-    yield_until("the delivery in progress finished", || blocking.finished.load(Ordering::SeqCst)).await;
+    settled(&rig, "the delivery in progress finished", || blocking.finished.load(Ordering::SeqCst)).await;
     let after_cancel = blocking.inner.len();
     bound(rig.database.send(message(epoch, "third", 3))).await.unwrap();
     rig.settle().await;

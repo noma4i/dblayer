@@ -58,7 +58,7 @@ fn cancel_interrupts_a_slow_put_and_parallel_puts_are_counted() { crate::test_wa
         let (mock, request) = (mock.clone(), request("slow", b"abcd", &cancel, &ticks));
         async move { mock.put(request).await }
     });
-    crate::test_wait::yield_until("both puts started", || mock.parallel_puts_peak() == 2).await;
+    crate::test_wait::signalled(mock.signal(), "both puts started", || mock.parallel_puts_peak() == 2).await;
     cancel.cancel();
     assert!(matches!(first.await.unwrap(), Err(TransportError::Interrupted(_))));
     assert!(second.await.unwrap().is_err());

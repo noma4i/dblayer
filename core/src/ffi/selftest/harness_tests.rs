@@ -5,7 +5,7 @@ use super::rig_held::Held;
 use crate::ffi::tests::lifecycle_tests::{named, Rows};
 use crate::ffi::tape::Watched;
 use crate::ffi::{DbError, Transport};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const ALL: &str = r#"{"model":"User","relation":"all","params":{}}"#;
 
@@ -21,8 +21,8 @@ async fn window(rig: &Rig) -> (Arc<Watched>, Arc<Rows>) {
     (live, rows)
 }
 
-async fn shows(rows: &Rows, account: &str) {
-    yield_until(&format!("the window shows {account}"), || {
+async fn shows(rig: &Rig, rows: &Rows, account: &str) {
+    settled(rig, &format!("the window shows {account}"), || {
         let rows = rows.0.lock().unwrap();
         !rows.is_empty() && rows.iter().all(|row| named(row, account))
     })
@@ -36,9 +36,9 @@ async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_databas
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
         let mut rig = Rig::bare(a.clone(), invalid).await;
         let held = Held::open(&rig.database);
-        held.shows("A").await;
-        held.lists_show("A").await;
-        yield_until("the forced entity read reached A", || a.count("UserNode") >= 1).await;
+        held.shows(&rig, "A").await;
+        held.lists_show(&rig, "A").await;
+        settled(&rig, "the forced entity read reached A", || a.count("UserNode") >= 1).await;
         rig.settle().await;
         let before = a.hits();
         held.cancel_all();
@@ -49,7 +49,7 @@ async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_databas
         assert_eq!(b.hits(), 0, "invalid={invalid}: work of the reset reached the next transport before the next test asked");
         let (live, rows) = window(&rig).await;
         bound(live.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("invalid={invalid}: a new window inherited {error:?}"));
-        shows(&rows, "B").await;
+        shows(&rig, &rows, "B").await;
         assert!(first_error(&rows).is_none(), "invalid={invalid}: the new window delivered {:?}; deliveries {:?}", first_error(&rows), trace(&rows));
         assert_eq!(b.count("Users"), 1, "invalid={invalid}: the window of the next test was read more than once");
         assert!(never_listed(&rows, "A"));
@@ -70,14 +70,14 @@ async fn a_late_answer_of_the_previous_transport_reaches_no_window_of_the_next_t
     rig.harness_cycle(Some(b.clone())).await;
     let (fresh, rows) = window(&rig).await;
     bound(fresh.wait_for_initial_load()).await.unwrap();
-    shows(&rows, "B").await;
+    shows(&rig, &rows, "B").await;
     gate.release();
     rig.settle().await;
 
     assert!(never_listed(&rows, "A-late") && never_listed(&old_rows, "A-late"), "the late answer of A reached a window");
     let (again, again_rows) = window(&rig).await;
     bound(again.wait_for_initial_load()).await.unwrap();
-    shows(&again_rows, "B").await;
+    shows(&rig, &again_rows, "B").await;
     assert!(never_listed(&again_rows, "A-late"), "the late answer of A reached the storage");
     old.cancel();
     fresh.cancel();
@@ -91,7 +91,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
     let rig = Rig::bare(a.clone(), false).await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     assert!(rig.open_again(None).await.is_err(), "a second open succeeded while the first database was open");
 
     held.cancel_all();
@@ -111,7 +111,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let rows = Arc::new(Rows::default());
     let live = remote.watch_query(ALL, rows.clone());
     bound(live.wait_for_initial_load()).await.unwrap();
-    shows(&rows, "B").await;
+    shows(&rig, &rows, "B").await;
     assert!(never_listed(&rows, "A"));
     live.cancel();
     remote.close_now();
@@ -129,7 +129,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
         bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
         let (live, rows) = window(&rig).await;
         bound(live.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("test {index} after {:?}: {error:?}", index.checked_sub(1).map(|before| leftovers[before])));
-        shows(&rows, &format!("T{index}")).await;
+        shows(&rig, &rows, &format!("T{index}")).await;
         assert!(first_error(&rows).is_none(), "test {index} inherited {:?}", first_error(&rows));
         assert_eq!(world.count("Users"), 1, "test {index} read its transport {} times", world.count("Users"));
         match *leftover {

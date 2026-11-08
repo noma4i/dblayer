@@ -147,13 +147,13 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) });
         *server.pause.lock().unwrap() = Some(pause.clone());
         let caller = database.clone();
-        let work = tokio::spawn(async move {
+        let work = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move {
             if session_call {
                 caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ())
             } else {
                 caller.refresh(caller.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).await.map(|_| ())
             }
-        });
+        }));
         within(pause.entered.notified()).await;
         match end {
             "close" => database.close_now(),
@@ -188,8 +188,8 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
         server.fail_with(Some(500));
         let hits = server.hits();
         let caller = database.clone();
-        let retrying = tokio::spawn(async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) });
-        crate::test_wait::yield_until("the request failed and the call waits for its retry", || server.hits() > hits).await;
+        let retrying = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) }));
+        crate::test_wait::settled(&database, "the request failed and the call waits for its retry", || server.hits() > hits).await;
         end_it(&database, end).await;
         assert!(within(retrying).await.unwrap().is_err(), "{end}: a call in a retry wait outlived the transition");
         database.close_now();
@@ -200,10 +200,10 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     let pause = server.pause_next();
     let idle = database.life.waiting_calls();
     let (first, second) = (database.clone(), database.clone());
-    let running = tokio::spawn(async move { first.session_call("login_link".into(), json!({"account":"first"}).to_string()).await.map(|_| ()) });
+    let running = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { first.session_call("login_link".into(), json!({"account":"first"}).to_string()).await.map(|_| ()) }));
     within(pause.entered.notified()).await;
-    let queued = tokio::spawn(async move { second.session_call("login_link".into(), json!({"account":"queued"}).to_string()).await.map(|_| ()) });
-    crate::test_wait::yield_until("both calls wait for their outcomes", || database.life.waiting_calls() >= idle + 2).await;
+    let queued = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { second.session_call("login_link".into(), json!({"account":"queued"}).to_string()).await.map(|_| ()) }));
+    crate::test_wait::settled(&database, "both calls wait for their outcomes", || database.life.waiting_calls() >= idle + 2).await;
     let life = database.life_handle();
     tokio::task::spawn_blocking(move || life.barrier()).await.unwrap();
     database.session_reset().await.unwrap();
@@ -220,7 +220,7 @@ async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothi
     sign_in(&database, "A").await;
     let pause = server.pause_next();
     let caller = database.clone();
-    let work = tokio::spawn(async move { caller.session_call("logout".into(), "{}".into()).await.map(|_| ()) });
+    let work = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { caller.session_call("logout".into(), "{}".into()).await.map(|_| ()) }));
     within(pause.entered.notified()).await;
     database.close_now();
     pause.release.add_permits(1);
@@ -236,7 +236,7 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();
-    let old = tokio::spawn(async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await });
+    let old = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }));
     within(pause.entered.notified()).await;
     let before = server.calls()["Users"];
     within(database.session_reset()).await.unwrap();
@@ -256,13 +256,13 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();
-    let owner = tokio::spawn(async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await });
+    let owner = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }));
     within(pause.entered.notified()).await;
     let second = database.clone();
     let epoch = second.session_epoch();
     let waiting = database.life.waiting_calls();
-    let joined = tokio::spawn(async move { second.load(epoch, "User".into(), "all".into(), "{}".into()).await });
-    crate::test_wait::yield_until("the load joined the flight", || database.life.waiting_calls() > waiting).await;
+    let joined = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { second.load(epoch, "User".into(), "all".into(), "{}".into()).await }));
+    crate::test_wait::settled(&database, "the load joined the flight", || database.life.waiting_calls() > waiting).await;
     within(database.session_reset()).await.unwrap();
     assert!(within(owner).await.unwrap().is_err(), "the owner of the old flight waited for its request");
     assert!(within(joined).await.unwrap().is_err(), "a call joined to the old flight waited for its request");

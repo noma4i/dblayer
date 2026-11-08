@@ -7,7 +7,7 @@ use super::rig_held::Held;
 use super::flow_fixtures::{add_chat, chat_row, land_event};
 use crate::ffi::tape::Rows;
 use crate::ffi::ReadEnd;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 fn first_named(rows: &Rows, name: &str) -> Option<i64> {
     rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| crate::ffi::tests::lifecycle_tests::named(row, name))).map(|seen| seen.revision)
@@ -19,20 +19,20 @@ async fn flow_user_everywhere() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     let epoch = rig.database.session_epoch();
 
     rig.world.set_account("A2");
     bound(rig.database.refresh(epoch, "User".into(), Some("all".into()), "{}".into())).await.unwrap();
-    held.shows("A2").await;
-    held.lists_show("A2").await;
-    yield_until("all four places show the answer", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A2").is_some())).await;
+    held.shows(&rig, "A2").await;
+    held.lists_show(&rig, "A2").await;
+    settled(&rig, "all four places show the answer", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A2").is_some())).await;
 
     land_event(&rig, "User", json!({"id": "user", "name": "A3"}));
-    held.shows("A3").await;
-    held.lists_show("A3").await;
-    yield_until("all four places show the event", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A3").is_some())).await;
+    held.shows(&rig, "A3").await;
+    held.lists_show(&rig, "A3").await;
+    settled(&rig, "all four places show the event", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A3").is_some())).await;
     rig.database.close_now();
 }
 
@@ -45,15 +45,15 @@ async fn flow_account_switch_clean() {
     let chats = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, chats.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    yield_until("the chat list shows c1", || chats.len() == 1).await;
+    settled(&rig, "the chat list shows c1", || chats.len() == 1).await;
     let thread = Arc::new(Rows::default());
     let thread_stream = rig.database.watch_query(r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#, thread.clone());
     bound(thread_stream.wait_for_initial_load()).await.unwrap();
-    yield_until("the thread shows m1", || thread.len() == 1).await;
+    settled(&rig, "the thread shows m1", || thread.len() == 1).await;
 
     bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
     rig.database.session_reset().await.unwrap();
-    yield_until("both streams of the old account ended", || chats.ended() == vec![ReadEnd::SessionEnded] && thread.ended() == vec![ReadEnd::SessionEnded]).await;
+    settled(&rig, "both streams of the old account ended", || chats.ended() == vec![ReadEnd::SessionEnded] && thread.ended() == vec![ReadEnd::SessionEnded]).await;
 
     bound(rig.database.session_call("login_link".into(), json!({"account": "B"}).to_string())).await.unwrap();
     let fresh = Arc::new(Rows::default());

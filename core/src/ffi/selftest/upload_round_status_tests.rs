@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use super::rig_tests::bound;
 use super::upload_stand::{clip, watched, Stand, CREATE_MOMENT};
 use crate::ffi::RoundJobsSink;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 #[derive(Default)]
 struct Jobs {
@@ -33,14 +33,14 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"clip"}"#, "upload_clip", &source, epoch))).await.unwrap();
     let rows = watched(&database, "Moment", &sent.optimistic_value.unwrap().id);
-    yield_until("the first round is asked", || !jobs.asked.lock().unwrap().is_empty()).await;
+    settled(&database, "the first round is asked", || !jobs.asked.lock().unwrap().is_empty()).await;
     let (request, round_epoch) = jobs.asked.lock().unwrap()[0];
 
     database.round_refused(request, round_epoch, crate::ffi::RoundRefusal::JobRefused, String::new());
 
-    yield_until("the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("while the app was not visible"))).await;
+    settled(&database, "the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("while the app was not visible"))).await;
     crate::ffi::OnlineSink::of_life(&database.life).enter_foreground();
-    yield_until("the next round clears the refusal", || refusal(&rows).is_none()).await;
+    settled(&database, "the next round clears the refusal", || refusal(&rows).is_none()).await;
     database.close_now();
 }
 
@@ -66,7 +66,7 @@ async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any
 
     database.round_started(0, 0, database.session_epoch());
 
-    yield_until("the job of the empty round ends", || jobs.ended.lock().unwrap().contains(&0)).await;
+    settled(&database, "the job of the empty round ends", || jobs.ended.lock().unwrap().contains(&0)).await;
     assert!(jobs.asked.lock().unwrap().is_empty(), "an idle database asked for a job");
     database.close_now();
 }

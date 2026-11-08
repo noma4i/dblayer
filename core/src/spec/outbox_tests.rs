@@ -1,5 +1,5 @@
 use super::ref_outbox::{step_of, Ctx, Eff, In, Obs, Out, Policy, St, Step};
-use super::rig::{bounded, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, within, Kind, Reply, Rig, Server};
 use crate::ffi::{CommandRequest, WireOperationOutcome, WireOperationReceipt, WireSyncState};
 use crate::schema::OnFailure;
 
@@ -243,7 +243,7 @@ async fn out_sending_offline_run() {
     rig.quiet().await;
     assert!(cell.eff.is_empty() && cell.next == St::Sending && rig.pending(&receipt).await);
     rig.db.set_online(true).unwrap();
-    crate::test_wait::yield_until("the Session cancelled the request with the network and sent it once more", || rig.server.count("MakeMoment") == 2).await;
+    crate::test_wait::settled(&rig, "the Session cancelled the request with the network and sent it once more", || rig.server.count("MakeMoment") == 2).await;
 
     rig.server.hold(Kind::Mutate, false);
     rig.server.answer(Kind::Mutate, Reply::Ok);
@@ -304,7 +304,7 @@ async fn out_failed_retry_run() {
     rig.server.script("MakeMoment", Reply::Refuse);
     let receipt = rig.create("hello").await;
     let id = temp_id(&receipt);
-    within(async { while rig.row(&id).await.is_none_or(|row| row.sync.state != WireSyncState::Failed) { tokio::task::yield_now().await; } }).await;
+    crate::test_wait::Quiet::quiet(&rig).await;
     let row = rig.row(&id).await.expect("the keep policy keeps the row");
     assert!(failed.obs.contains(&Obs::RowCarriesError));
     assert_eq!((row.sync.state, row.sync.error.is_some()), (WireSyncState::Failed, true));
@@ -340,7 +340,7 @@ async fn out_closing_run() {
     assert_eq!(kind_of(&rig.outcome(&first).await), wire_of(Out::Interrupted));
     assert_eq!(kind_of(&rig.outcome(&second).await), wire_of(Out::Interrupted));
     assert!(sending.eff.contains(&Eff::Cancel) && sending.eff.contains(&Eff::Drained));
-    until("the request is cancelled", || rig.server.cancelled() >= 1).await;
+    rig.server.until("the request is cancelled", || rig.server.cancelled() >= 1).await;
 }
 
 #[test]

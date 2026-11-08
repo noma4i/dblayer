@@ -11,7 +11,7 @@ use crate::owners::write::upload::UploadFile;
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
 const BY_USER: &str = r#"{"model":"Moment","where":{"type":"equal","field":"userId","value":"u1"}}"#;
@@ -44,7 +44,7 @@ async fn same_revision(rig: &Rig, places: &[&Arc<Rows>], id: &str, name: &str, v
     let revisions: Vec<_> = places.iter().map(|rows| first_seen_at(rig, rows, id, name, value.clone())).collect();
     assert!(revisions.iter().all(|revision| *revision >= floor), "a list showed the change before its commit {revisions:?}, floor {floor}\n{}", places.iter().map(|rows| rows.trace()).collect::<Vec<_>>().join("\n"));
     let rows: Vec<&Rows> = places.iter().map(|rows| &***rows).collect();
-    one_revision(&rows).await;
+    one_revision(&rig, &rows).await;
 }
 
 /// P-APP-22: a reaction changes the counter in every list of moments at one revision on the local write, the answer and an event.
@@ -55,13 +55,13 @@ async fn flow_moment_reaction() {
     land_event(&rig, "Moment", moment("m1", "u1", 2, 0));
     let (feed, by_user, compass) = (watch(&rig, FEED).await, watch(&rig, BY_USER).await, watch(&rig, COMPASS).await);
     let places = [&feed, &by_user, &compass];
-    yield_until("every list shows m1", || places.iter().all(|rows| rows.len() == 1)).await;
+    settled(&rig, "every list shows m1", || places.iter().all(|rows| rows.len() == 1)).await;
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_then("MomentReact", Fault::Answer(json!({"data":{"momentReact":{"__typename":"Moment","id":"m1","reacted":true,"visitsCount":3}}})));
 
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"reacted": true, "visitsCount": 3}).to_string(), "{}".into())).await.unwrap();
     hold.entered().await;
-    yield_until("every list shows 3", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3)))).await;
+    settled(&rig, "every list shows 3", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3)))).await;
     same_revision(&rig, &places, "m1", "visitsCount", int(3), receipt.revision).await;
     let floor = receipt.revision;
     hold.release();
@@ -70,7 +70,7 @@ async fn flow_moment_reaction() {
     assert!(places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3))));
 
     land_event(&rig, "Moment", moment("m1", "u1", 4, 0));
-    yield_until("an event sets 4 in every list", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(4)))).await;
+    settled(&rig, "an event sets 4 in every list", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(4)))).await;
     same_revision(&rig, &places, "m1", "visitsCount", int(4), floor).await;
     rig.database.close_now();
 }
@@ -84,23 +84,23 @@ async fn flow_compass_unread() {
     land_event(&rig, "Moment", moment("m1", "u1", 0, 3));
     land_event(&rig, "Moment", moment("m2", "u2", 0, 1));
     let compass = watch(&rig, COMPASS).await;
-    yield_until("the compass leads with m1", || ids(&compass) == ["m1", "m2"]).await;
+    settled(&rig, "the compass leads with m1", || ids(&compass) == ["m1", "m2"]).await;
     let profile = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"User","relation":"profile","params":{}}"#, profile.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
     let badge = |rows: &Rows| rows.0.lock().unwrap().iter().find(|row| row.id == "user").map(|row| cell(&rig, "User", row, "unreadCompassCount"));
-    yield_until("the badge shows 4", || badge(&profile) == Some(int(4))).await;
+    settled(&rig, "the badge shows 4", || badge(&profile) == Some(int(4))).await;
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_then("MomentReadCompass", Fault::Answer(json!({"data":{"momentReadCompass":{"__typename":"Moment","id":"m1","unreadSimilarMomentsCount":0}}})));
 
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "read_compass".into(), json!({"unreadSimilarMomentsCount": 0}).to_string(), "{}".into())).await.unwrap();
     hold.entered().await;
-    yield_until("m1 sank below m2", || ids(&compass) == ["m2", "m1"]).await;
+    settled(&rig, "m1 sank below m2", || ids(&compass) == ["m2", "m1"]).await;
     same_revision(&rig, &[&compass], "m1", "unreadSimilarMomentsCount", int(0), receipt.revision).await;
     rig.world.set_profile(json!({"unreadCompassCount": 1}));
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the badge falls", || badge(&profile) == Some(int(1))).await;
+    settled(&rig, "the badge falls", || badge(&profile) == Some(int(1))).await;
     assert_eq!(ids(&compass), ["m2", "m1"]);
     rig.database.close_now();
 }
@@ -125,23 +125,23 @@ async fn flow_moment_publish_delete() {
 
     let receipt = bound(rig.database.send(publish)).await.unwrap();
     hold.entered().await;
-    yield_until("the new moment stands in every list", || places.iter().all(|rows| rows.len() == 1)).await;
+    settled(&rig, "the new moment stands in every list", || places.iter().all(|rows| rows.len() == 1)).await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     assert!(places.iter().all(|rows| ids(rows) == [temporary.clone()]));
     assert!(places.iter().all(|rows| rows.0.lock().unwrap().iter().all(|row| row.uploads.iter().any(|entry| entry.action == "create_file"))), "the card shows its upload");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the answer replaced the card", || places.iter().all(|rows| ids(rows) == ["m9"])).await;
+    settled(&rig, "the answer replaced the card", || places.iter().all(|rows| ids(rows) == ["m9"])).await;
     assert!(places.iter().all(|rows| rows.1.lock().unwrap().iter().all(|seen| seen.size <= 1)), "a list showed the card twice");
 
     rig.world.answer_with("MomentDelete", json!({"data":{"momentDelete":{"id":"m9"}}}));
     let destroy = bound(rig.database.destroy(epoch, "Moment".into(), "m9".into())).await.unwrap();
-    yield_until("the destroy empties every list", || places.iter().all(|rows| rows.emptied())).await;
+    settled(&rig, "the destroy empties every list", || places.iter().all(|rows| rows.emptied())).await;
     assert!(matches!(bound(rig.database.outcome(destroy)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
 
     land_event(&rig, "Moment", moment("m5", "u1", 0, 0));
-    yield_until("an event card stands", || places.iter().all(|rows| rows.len() == 1)).await;
+    settled(&rig, "an event card stands", || places.iter().all(|rows| rows.len() == 1)).await;
     land_delete(&rig, "Moment", "m5");
-    yield_until("the delete event empties every list", || places.iter().all(|rows| rows.emptied())).await;
+    settled(&rig, "the delete event empties every list", || places.iter().all(|rows| rows.emptied())).await;
     rig.database.close_now();
 }

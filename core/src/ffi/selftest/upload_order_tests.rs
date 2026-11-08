@@ -3,7 +3,7 @@ use super::upload_batch_shift_tests::{blob, items, ASSETS, OPERATIONS};
 use super::upload_stand::{clip, OpenOrder, Stand, CREATE_MOMENT};
 use crate::ffi::upload_wire::WireUploadBatch;
 use crate::owners::write::upload::MEBIBYTE;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 async fn a_saved_step_goes_out_once(order: OpenOrder) {
     let stand = Stand::new();
@@ -22,7 +22,7 @@ async fn a_saved_step_goes_out_once(order: OpenOrder) {
     stand.script.data("CreateBlob", &blob(2));
     stand.script.data("CreateAssets", ASSETS);
     let reopened = stand.open_ordered(Some(&path), &OPERATIONS, None, order).await;
-    yield_until(&format!("{order:?}: the batch reaches CreateAssets"), || stand.script.count("CreateAssets") == 1).await;
+    settled(&reopened, &format!("{order:?}: the batch reaches CreateAssets"), || stand.script.count("CreateAssets") == 1).await;
 
     let pairs = stand.script.pairs("CreateBlob", "1.jpg");
     assert_eq!(pairs.len(), 2, "{order:?}: the saved step goes out once more, calls {:?}", stand.script.names());
@@ -52,7 +52,7 @@ async fn an_orphan_abort_goes_out_once(order: OpenOrder) {
 
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened = stand.open_ordered(Some(&path), &operations, None, order).await;
-    yield_until(&format!("{order:?}: the abort reached the transport"), || stand.script.count("AbortMultipart") == 1).await;
+    settled(&database, &format!("{order:?}: the abort reached the transport"), || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
     bound(crate::ffi::settled(&reopened)).await.unwrap();

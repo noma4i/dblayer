@@ -2,7 +2,7 @@ use super::rig_tests::bound;
 use super::upload_stand::Stand;
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 pub(super) const OPERATIONS: [(&str, &str); 3] = [
     ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
@@ -51,6 +51,6 @@ async fn discarding_the_first_member_of_a_batch_during_a_held_request_keeps_the_
     assert_eq!(sent, ["key-1", "key-2"]);
     let puts: Vec<String> = stand.puts.seen.lock().unwrap().iter().map(|put| put.item.clone()).collect();
     assert_eq!(puts.iter().filter(|item| *item == "key-1").count() + puts.iter().filter(|item| *item == "key-2").count(), 2, "{puts:?}");
-    yield_until("nothing else is in flight", || stand.script.count("CreateBlob") == 3).await;
+    settled(&database, "nothing else is in flight", || stand.script.count("CreateBlob") == 3).await;
     database.close_now();
 }

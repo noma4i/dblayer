@@ -1,5 +1,5 @@
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::owners::life::LifeReply;
 use crate::runtime::{ManualClock, Outcome};
 use crate::store::Store;
-use crate::test_wait::{within, yield_until};
+use crate::test_wait::within;
 use crate::transport::encrypted::tests::exchange_tests::Client;
 use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::{CredentialSlot, TransportError};
@@ -20,14 +20,16 @@ struct HoldSlot {
     memory: MemoryCredentials,
     reads: AtomicUsize,
     hold_at: AtomicUsize,
-    released: AtomicBool,
+    released: crate::test_wait::Flag,
+    held: crate::test_wait::Flag,
 }
 
 impl CredentialSlot for HoldSlot {
     fn get(&self) -> Result<Option<String>, TransportError> {
         let read = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
         if self.hold_at.load(Ordering::SeqCst) == read {
-            crate::test_wait::spin_until("the held read was never released", Duration::from_secs(10), || self.released.load(Ordering::SeqCst));
+            self.held.set();
+            self.released.wait_blocking("the held read was never released");
         }
         self.memory.get()
     }
@@ -58,10 +60,10 @@ async fn sess_prop_cut_before_transport() {
         let sent = server.seen().len();
         slot.hold_at.store(slot.reads.load(Ordering::SeqCst) + per_request, Ordering::SeqCst);
         drop(life.mutate_answered(None, (1 << 41) + 1, OTP.into(), "{}".into(), 0));
-        yield_until("the request task never read the secret", || slot.reads.load(Ordering::SeqCst) == slot.hold_at.load(Ordering::SeqCst)).await;
-        if closing { drop(life.close()); } else { drop(life.session_reset()); }
-        yield_until("the epoch never ended", || life.published().state != crate::owners::contract::PublishedState::Session).await;
-        slot.released.store(true, Ordering::SeqCst);
+        slot.held.wait("the request task never read the secret").await;
+        if closing { within(life.close().wait()).await; } else { within(life.session_reset().wait()).await; }
+        assert!(life.published().state != crate::owners::contract::PublishedState::Session, "the epoch never ended");
+        slot.released.set();
         life.barrier();
         assert_eq!(server.seen().len(), sent, "closing {closing}: the transport was called after the cut grew");
     }

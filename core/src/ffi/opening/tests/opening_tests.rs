@@ -43,8 +43,8 @@ async fn life_open_concurrent() {
 async fn life_close_concurrent() {
     let slot = OpenDatabase::new();
     let database = open(&slot).await.unwrap();
-    let first = tokio::spawn({ let database = database.clone(); async move { database.close_database().await } });
-    crate::test_wait::yield_until("the first close started", || database.life.is_shut()).await;
+    let first = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.close_database().await } }));
+    crate::test_wait::settled(&database, "the first close started", || database.life.is_shut()).await;
     let second = tokio::spawn({ let database = database.clone(); async move { database.close_database().await } });
     assert!(crate::test_wait::within(first).await.unwrap().is_ok());
     assert!(crate::test_wait::within(second).await.unwrap().is_ok());

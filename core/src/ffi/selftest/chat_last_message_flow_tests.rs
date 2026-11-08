@@ -8,7 +8,7 @@ use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 fn chat_cell(rig: &Rig, rows: &Rows, field: &str) -> Option<Cell> {
     let rows = rows.0.lock().unwrap();
@@ -21,7 +21,7 @@ async fn rig_with_chat() -> (Rig, Arc<Rows>) {
     let rows = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    yield_until("the chat list shows c1", || chat_cell(&rig, &rows, "name").is_some()).await;
+    settled(&rig, "the chat list shows c1", || chat_cell(&rig, &rows, "name").is_some()).await;
     (rig, rows)
 }
 
@@ -39,7 +39,7 @@ async fn flow_chat_last_message() {
     let receipt = send(&rig, 100).await;
     hold.entered().await;
 
-    yield_until("the chat shows the new message", || chat_cell(&rig, &rows, "lastMessageAt") == Some(int(100))).await;
+    settled(&rig, "the chat shows the new message", || chat_cell(&rig, &rows, "lastMessageAt") == Some(int(100))).await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     assert_eq!(chat_cell(&rig, &rows, "lastMessageId"), Some(text(&temporary)));
     assert_eq!(chat_cell(&rig, &rows, "lastActivityAt"), Some(int(100)));
@@ -47,7 +47,7 @@ async fn flow_chat_last_message() {
     assert!(first.revision >= receipt.revision, "the chat row changed before the receipt: {}", first.revision);
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the chat points at the message of the server", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
+    settled(&rig, "the chat points at the message of the server", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
     assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(100)));
     rig.database.close_now();
 }
@@ -58,7 +58,7 @@ async fn flow_chat_last_message_ignores_an_older_message_event() {
     let (rig, rows) = rig_with_chat().await;
     let receipt = send(&rig, 100).await;
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the chat points at m1", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
+    settled(&rig, "the chat points at m1", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
     let mark = rows.1.lock().unwrap().len();
 
     land_event(&rig, "Message", json!({"id":"m7","chatId":"c1","text":"late","at":60}));
@@ -77,7 +77,7 @@ async fn flow_chat_last_message_follows_a_message_event() {
 
     land_event(&rig, "Message", json!({"id":"m9","chatId":"c1","text":"event","at":200}));
 
-    yield_until("the chat shows the event message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m9"))).await;
+    settled(&rig, "the chat shows the event message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m9"))).await;
     assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(200)));
     assert_eq!(chat_cell(&rig, &rows, "lastActivityAt"), Some(int(200)));
     rig.database.close_now();

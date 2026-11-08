@@ -115,6 +115,10 @@ pub struct MockTransport {
 }
 
 impl MockTransport {
+    /// Notified whenever a request or a put is recorded.
+    #[cfg(test)]
+    pub fn signal(&self) -> &Notify { &self.wake }
+
     pub fn new() -> Self {
         Self::default()
     }

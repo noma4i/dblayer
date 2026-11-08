@@ -6,7 +6,7 @@ use super::bridge_support_tests::{group, seed_members};
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tape::Rows;
 use crate::ffi::{WireOperationOutcome, WireRow};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 fn has(rows: &Rows, id: &str) -> bool { rows.0.lock().unwrap().iter().any(|row| row.id == id) }
 
@@ -22,7 +22,7 @@ async fn chat_with_members() -> (Rig, WireRow, Arc<Rows>, serde_json::Value) {
     let rows = Arc::new(Rows::default());
     let stream = rig.database.watch_query(&json!({"model":"Member","relation":"group_members","params":params}).to_string(), rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    yield_until("the member list shows the chat members", || has(&rows, "u1") && has(&rows, "u3")).await;
+    settled(&rig, "the member list shows the chat members", || has(&rows, "u1") && has(&rows, "u3")).await;
     (rig, chat, rows, params)
 }
 
@@ -37,7 +37,7 @@ async fn flow_group_members() {
     let receipt = bound(rig.database.act(epoch, "Group".into(), chat.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string())).await.unwrap();
     hold.entered().await;
 
-    yield_until("the member is in the list before the answer", || has(&rows, "u4")).await;
+    settled(&rig, "the member is in the list before the answer", || has(&rows, "u4")).await;
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "u4")).cloned().unwrap();
     assert!(first.revision >= receipt.revision, "the member appeared before the receipt: {}", first.revision);
     hold.release();
@@ -58,11 +58,11 @@ async fn flow_group_members_refused_add_removes_the_user_from_the_list() {
 
     let receipt = bound(rig.database.act(epoch, "Group".into(), chat.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string())).await.unwrap();
     hold.entered().await;
-    yield_until("the member is in the list before the answer", || has(&rows, "u4")).await;
+    settled(&rig, "the member is in the list before the answer", || has(&rows, "u4")).await;
     hold.release();
 
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
-    yield_until("the refused member left the list", || !has(&rows, "u4")).await;
+    settled(&rig, "the refused member left the list", || !has(&rows, "u4")).await;
     assert!(has(&rows, "u1") && has(&rows, "u3"));
     rig.database.close_now();
 }

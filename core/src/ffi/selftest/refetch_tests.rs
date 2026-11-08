@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_support_tests::group;
 use super::rig_tests::{bound, Rig};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 struct Deliveries(tokio::sync::mpsc::UnboundedSender<crate::ffi::tape::StreamDelivery>);
 
@@ -56,7 +56,7 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
     let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
     let all: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Member"}"#))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert!(shown, "the joined member was not shown; reads {} -> {}: stored {ids:?} members {all:?}", before, rig.world.count("GroupMembers"));
-    yield_until("the open window is read again", || rig.world.count("GroupMembers") > before).await;
+    settled(&rig, "the open window is read again", || rig.world.count("GroupMembers") > before).await;
     rig.database.cancel_stream(stream);
     rig.database.close_now();
 }
@@ -73,7 +73,7 @@ async fn a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it()
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
     let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("the owed read", || rig.world.count("GroupMembers") > before).await;
+    settled(&rig, "the owed read", || rig.world.count("GroupMembers") > before).await;
     rig.database.cancel_stream(stream);
     rig.database.close_now();
 }

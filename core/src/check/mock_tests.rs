@@ -12,7 +12,7 @@ fn request() -> TransportRequest {
 async fn a_request_waits_until_the_trace_answers_it() {
     let mock = Mock::new();
     let waiting = { let mock = mock.clone(); tokio::spawn(async move { mock.query(request()).await }) };
-    crate::test_wait::yield_until("the request reached the mock", || mock.count() != 0).await;
+    crate::test_wait::signalled(mock.arrived(), "the request reached the mock", || mock.count() != 0).await;
     assert!(!waiting.is_finished());
     assert_eq!(mock.announce().len(), 1);
     assert!(mock.announce().is_empty());
@@ -26,7 +26,7 @@ async fn an_announced_request_is_answerable_at_once() {
     let mock = Mock::new();
     let calls: Vec<_> = (0..400).map(|_| { let mock = mock.clone(); tokio::spawn(async move { mock.query(request()).await }) }).collect();
     let mut answered = 0;
-    crate::test_wait::yield_until("every request was answered", || {
+    crate::test_wait::signalled(mock.arrived(), "every request was answered", || {
         for seen in mock.announce() {
             let id = seen.value["id"].as_str().unwrap().to_owned();
             assert!(mock.answer(&id, "{}"), "announced {id} was not answerable");

@@ -78,7 +78,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     bound(database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
     assert_eq!(jobs.0.lock().unwrap().len(), 1, "the running round of A asked for a second job");
     database.round_ended(7, first);
-    crate::test_wait::within_secs(10, async { while jobs.0.lock().unwrap().len() < 2 { tokio::task::yield_now().await; } }).await;
+    crate::test_wait::settled(&database, "the second job was asked for", || jobs.0.lock().unwrap().len() >= 2).await;
     let asked = jobs.0.lock().unwrap().clone();
     assert_eq!(asked[1].1, second);
     database.close_now();

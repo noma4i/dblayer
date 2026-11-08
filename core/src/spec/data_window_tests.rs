@@ -154,7 +154,7 @@ async fn data_insert_on_response() {
     load_params(&rig, "unbound", json!({"filter":"second"})).await;
     server.hold(Kind::Mutate, true);
     let receipt = rig.create("answer").await;
-    crate::test_wait::yield_until("first response is held", || server.held(Kind::Mutate) >= 1).await;
+    crate::test_wait::settled(&rig, "first response is held", || server.held(Kind::Mutate) >= 1).await;
     assert!(ids(&rig, "response").await.is_empty());
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
     assert!(matches!(rig.outcome(&receipt).await, WireOperationOutcome::Confirmed { .. }));
@@ -164,7 +164,7 @@ async fn data_insert_on_response() {
     assert!(ids(&rig, "selected").await.is_empty());
     assert!(ids(&rig, "allowed").await.is_empty());
     let second = rig.create("second").await;
-    crate::test_wait::yield_until("second response is held", || server.held(Kind::Mutate) >= 1).await;
+    crate::test_wait::settled(&rig, "second response is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
     assert!(matches!(rig.outcome(&second).await, WireOperationOutcome::Confirmed { .. }));
     assert_eq!(ids(&rig, "response").await, ["srv2", "srv1"]);
@@ -173,7 +173,7 @@ async fn data_insert_on_response() {
     assert_eq!(ids_params(&rig, "bound", json!({"filter":"second"})).await, ["srv2"]);
     assert!(ids_params(&rig, "unbound", json!({"filter":"second"})).await.is_empty());
     let update = rig.update("srv1", "changed").await.unwrap();
-    crate::test_wait::yield_until("update response is held", || server.held(Kind::Mutate) >= 1).await;
+    crate::test_wait::settled(&rig, "update response is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
     assert!(matches!(rig.outcome(&update).await, WireOperationOutcome::Confirmed { .. }));
     assert_eq!(ids(&rig, "response").await, ["srv2", "srv1"]);
@@ -195,7 +195,7 @@ async fn data_insert_on_create() {
     assert_eq!(ids(&rig, "created").await, [second_id.clone(), first_id.clone()]);
     assert!(ids(&rig, "other").await.is_empty());
     assert!(ids(&rig, "unloaded").await.is_empty());
-    crate::test_wait::yield_until("first create is held", || server.held(Kind::Mutate) >= 1).await;
+    crate::test_wait::settled(&rig, "first create is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Refuse);
     assert!(matches!(rig.outcome(&first).await, WireOperationOutcome::Rejected { .. }));
     assert_eq!(ids(&rig, "created").await, [second_id]);

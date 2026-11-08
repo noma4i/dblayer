@@ -108,6 +108,11 @@ expect_wrapper "$kotlin_probe" red 'object Hook {
 }'
 expect_wrapper "$kotlin_probe" red 'class Holder { @Volatile private var live: Int? = null }'
 
+expect_green 'async fn waits(signal: &Notify) { signalled(signal, "arrived", || ready()).await; settled(&rig, "shown", || shown()).await; }'
+expect_red 'async fn waits() { while !ready() { tokio::task::yield_now().await; } }'
+expect_red 'async fn waits() { yield_until("shown", || shown()).await; }'
+expect_red 'fn waits() { spin_until("shown", limit, || shown()); }'
+expect_red 'fn waits() { loop { if ready() { break; } std::thread::sleep(step); } }'
 mkdir -p "$work/core/src/spec"
 printf '#[cfg(test)]\nmod spec;\n' > "$work/core/src/lib.rs"
 printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/spec/harness.rs"

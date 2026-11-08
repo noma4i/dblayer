@@ -2,7 +2,7 @@ use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand};
 use crate::ffi::wire::WireSyncState;
 use crate::ffi::{Database, TestClock};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const WEEK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 const OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
@@ -13,13 +13,13 @@ async fn failed_upload(stand: &Stand, database: &Database, source: &std::path::P
     stand.script.enqueue("CreateBlob", Answer::Status(422));
     let id = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", source, database.session_epoch()))).await.unwrap().optimistic_value.unwrap().id;
     let rows = watched(database, "Moment", &id);
-    yield_until("the upload failed", || shows(&rows, WireSyncState::Failed)).await;
+    settled(&database, "the upload failed", || shows(&rows, WireSyncState::Failed)).await;
     id
 }
 
 async fn until_gone(database: &Database, id: &str) {
     let rows = watched(database, "Moment", id);
-    yield_until("the expired row is gone", || rows.emptied()).await;
+    settled(&database, "the expired row is gone", || rows.emptied()).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

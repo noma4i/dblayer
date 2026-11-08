@@ -9,7 +9,7 @@ use super::rig_tests::{bound, Gate, Rig};
 use super::rig_held::Held;
 use crate::ffi::tests::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, Config, Database, DbError, LoadMoreResult, OpenDatabase, PutReply, TestClock, FakeTransport, TransportRequest};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
 
 use crate::value::ScalarKind;
@@ -110,8 +110,8 @@ async fn repeated_online_and_power_saving_signals_add_no_request() {
         let rig = Rig::encrypted().await;
         rig.login_ios("A").await;
         let held = Held::open(&rig.database);
-        held.shows("A").await;
-        held.lists_show("A").await;
+        held.shows(&rig, "A").await;
+        held.lists_show(&rig, "A").await;
         if !observed { held.cancel_all(); }
         rig.settle().await;
         let baseline = rig.world.hits();
@@ -153,7 +153,7 @@ async fn memory_expiry_follows_the_last_write() {
     clock.advance(29_999);
     assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(1);
-    yield_until("the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
+    settled(&database, "the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 }
 
 /// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.
@@ -162,8 +162,8 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
-    held.shows("A").await;
-    held.lists_show("A").await;
+    held.shows(&rig, "A").await;
+    held.lists_show(&rig, "A").await;
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
 
@@ -173,8 +173,8 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     rig.settle().await;
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
     assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
-    held.lists_show("A").await;
+    held.lists_show(&rig, "A").await;
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
-    held.shows("A").await;
+    held.shows(&rig, "A").await;
     rig.database.close_now();
 }

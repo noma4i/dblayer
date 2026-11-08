@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use super::nested_storage_tests::wrapper_models;
 use super::rig_tests::{bound, Rig, World};
 use crate::ffi::{Database, DbError};
-use crate::test_wait::yield_until;
+use crate::test_wait::settled;
 
 const FEED: &str = "query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }";
 const NODE: &str = "query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title } } }";
@@ -43,7 +43,7 @@ where
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     let second = tokio::spawn(second);
-    yield_until("the second call registered", || rig.database.loads.registered_through(ticket)).await;
+    settled(&rig, "the second call registered", || rig.database.loads.registered_through(ticket)).await;
     crate::ffi::owners_drained(&rig.database).await.unwrap();
     held.release();
     bound(second).await.unwrap().unwrap();

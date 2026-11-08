@@ -341,7 +341,7 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     let link = Arc::new(Link::over(gate.clone(), EPOCH, super::wire::StepIds::held()));
     let put = || PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
     let inside = crate::task::spawn_on(&tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
-    crate::test_wait::yield_until("the PUT is inside the transport", || stub.put_tokens().len() == 1).await;
+    crate::test_wait::signalled(stub.signal(), "the PUT is inside the transport", || stub.put_tokens().len() == 1).await;
     gate.close(EPOCH);
     let late_mutation = link.mutate(GraphQLRequest::new("mutation Late", "Late", json!({})), &step_key()).await;
     let late_put = link.put(put()).await;
@@ -350,5 +350,5 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     let late: Vec<_> = stub.calls().iter().map(|call| call.operation_name.clone()).collect();
     assert!(late.is_empty() && stub.put_tokens().len() == 1, "late calls reached the old transport after the close: mutations {late:?}, PUTs {}", stub.put_tokens().len());
     inside.abort_handle().abort();
-    crate::test_wait::yield_until("the aborted PUT is dropped", || stub.dropped() == 1).await;
+    crate::test_wait::signalled(stub.signal(), "the aborted PUT is dropped", || stub.dropped() == 1).await;
 }

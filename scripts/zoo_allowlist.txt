@@ -4,3 +4,6 @@
 z18:swift/Sources/DBlayer/DB.swift  # open database slot: the core owns it (D-127, slice 2)
 z18:kotlin/src/main/kotlin/com/noma4i/dblayer/Entry.kt  # open database slot: the core owns it (D-127, slice 2)
 z18:kotlin/src/main/kotlin/com/noma4i/dblayer/UploadWork.kt  # OS tokens of the foreground service: the Service instance (live), the once-only notification flag (announced) and the round token (round: request, round, epoch) the core handed to start and the service echoes back at stop, D-120 lets the wrapper hold OS tokens only
+z33:ffi/tests/close_load_tests.rs  # yields a chosen number of scheduler turns to place the second close at each point of the first: an interleaving driver, nothing waits for it
+z33:ffi/tests/encrypted_tests.rs  # one yield orders the executor turn before the blocking job: a scheduling device, nothing waits for it
+z33:owners/read/rig.rs  # steps a deterministic scheduler (DetScheduler) that has no threads of its own: the pump is its driver

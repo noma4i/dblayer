@@ -459,7 +459,7 @@ async fn feed_prop_changed_by_reader_wants() {
     let before = world.count("ChatList");
     world.answer_with("ChatList", json!({"data":{"chats":[{"__typename":"Chat","id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}]}}));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
-    crate::test_wait::yield_until("the list shows the reread chat", || rows.len() == 1).await;
+    crate::test_wait::settled(&database, "the list shows the reread chat", || rows.len() == 1).await;
     assert_eq!(world.count("ChatList"), before + 1, "one request for one event");
     bound(database.close_database()).await.unwrap();
 }
