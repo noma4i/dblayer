@@ -316,7 +316,7 @@ impl Database {
                 let model = query.model.as_str().to_string();
                 let spec = self.db.spec(&model)?;
                 let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
-                let live = !spec.listens.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
+                let live = !spec.listens.is_empty() || !spec.changes.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
                 let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
                 let window = match &remote {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),

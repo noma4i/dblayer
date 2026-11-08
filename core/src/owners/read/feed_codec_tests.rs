@@ -85,7 +85,7 @@ fn feed_codec_payload_upsert() {
 #[test]
 fn feed_codec_removes_on() {
     let events = codec(true).events("Changes", frame(change("MESSAGE", "DELETED", "m1", Value::Null)));
-    assert_eq!(payloads(&events), [json!({"op":"delete", "model":"messages", "id":"m1"})]);
+    assert_eq!(payloads(&events), [json!({"op":"delete", "model":"messages", "id":"m1", "area":"MESSAGE", "kind":"DELETED"})]);
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn feed_codec_direct_reread() {
     let expected = StaleKeys::Set(BTreeSet::from([WindowKey::relation("chats", "list", &Map::from_iter([("list".to_string(), json!("c1"))]))]));
     assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &expected));
     assert_eq!(payloads(&events)[0]["op"], "reread");
-    assert_eq!(payloads(&codec(true).events("Changes", frame(change("CHAT", "DELETED", "c1", Value::Null)))), [json!({"op":"delete", "model":"chats", "id":"c1"})]);
+    assert_eq!(payloads(&codec(true).events("Changes", frame(change("CHAT", "DELETED", "c1", Value::Null)))), [json!({"op":"delete", "model":"chats", "id":"c1", "area":"CHAT", "kind":"DELETED"})]);
 }
 
 #[test]

@@ -70,6 +70,7 @@ impl SchemaFeedCodec {
     }
 
     fn change_targets(&self, change: &Value, area: &str, kind: &str, id: &RowId, events: &mut Vec<FramedEvent>) {
+        let first = events.len();
         for spec in self.specs() {
             let model = spec.key.as_str();
             let reads: Vec<&ChangeRead> = spec.changes.iter().filter(|read| read.area == area).collect();
@@ -87,6 +88,13 @@ impl SchemaFeedCodec {
                 events.push(self.derived_event(spec, read, id));
             }
         }
+        for event in events[first..].iter_mut().filter(|event| !event.refused) {
+            if let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(&event.payload) {
+                fields.insert("area".into(), json!(area));
+                fields.insert("kind".into(), json!(kind));
+                event.payload = Value::Object(fields).to_string();
+            }
+        }
     }
 
     fn payload_event(&self, model: &str, read: &ChangeRead, change: &Value, kind: &str, event_id: &RowId) -> FramedEvent {
@@ -99,11 +107,7 @@ impl SchemaFeedCodec {
             return invalid(model, error);
         }
         match self.upsert(model, node.clone(), &Map::new()) {
-            Ok(Some(mut payload)) => {
-                payload["area"] = json!(read.area);
-                payload["kind"] = json!(kind);
-                event(model, payload, StaleKeys::none())
-            }
+            Ok(Some(payload)) => event(model, payload, StaleKeys::none()),
             Ok(None) => invalid(model, "payload without id"),
             Err(error) => invalid(model, error),
         }

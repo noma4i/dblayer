@@ -36,6 +36,10 @@ async fn feed_database_with_models(listen: Option<serde_json::Value>, fanout: bo
 }
 
 pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_json::Value>, fanout: bool, memory: bool) -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_changed_by(world, listen, fanout, memory, vec![json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})]).await
+}
+
+async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::Value>, fanout: bool, memory: bool, changes: Vec<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -59,7 +63,7 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
     remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(remote);
     chat.relations.extend([node, list]);
-    chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})).unwrap());
+    chat.changes = changes.into_iter().map(|read| serde_json::from_value(read).unwrap()).collect();
     if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     let models = if fanout {
@@ -436,6 +440,47 @@ async fn dlv_live_overlay_position() {
             }
         };
         assert!(value[0].cells.contains(&Cell::Bool { value: shown }), "active={active}: {value:?}");
+    }
+    bound(database.close_database()).await.unwrap();
+}
+
+/// feed_prop_changed_by_reader_wants (P-FEED-29, D-145): a reader of a list of a model with `changed_by` and no `events` stream gets the subscription, and an event of the area rereads the list once.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_prop_changed_by_reader_wants() {
+    let world = World::new("server", "A", true);
+    let (database, transport) = feed_database_changed_by(world.clone(), None, false, false, vec![json!({"area":"CHAT","relation":"list","observed":true})]).await;
+    let rows = Arc::new(crate::ffi::tape::Rows::default());
+    let stream = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, rows.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    bound(transport.opened.notified()).await;
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    let before = world.count("ChatList");
+    world.answer_with("ChatList", json!({"data":{"chats":[{"__typename":"Chat","id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}]}}));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
+    crate::test_wait::yield_until("the list shows the reread chat", || rows.len() == 1).await;
+    assert_eq!(world.count("ChatList"), before + 1, "one request for one event");
+    bound(database.close_database()).await.unwrap();
+}
+
+/// feed_prop_event_area_kind (P-FEED-28, D-146): the `events` stream gives the area and the kind of the record for each form of `changed_by`.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_prop_event_area_kind() {
+    let changes = vec![
+        json!({"area":"PAYLOAD","relation":"node","payload":"chat","removes_on":["GONE"]}),
+        json!({"area":"NODE","relation":"node"}),
+        json!({"area":"NAMED","relation":"list","parameter":"list"}),
+        json!({"area":"OBSERVED","relation":"list","observed":true}),
+    ];
+    let (database, transport) = feed_database_changed_by(World::new("server", "A", true), None, false, false, changes).await;
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    let chat = json!({"id":"c1","title":"after","revision":2,"lists":[]});
+    let forms = [("PAYLOAD", "UPDATED"), ("PAYLOAD", "GONE"), ("NODE", "CREATED"), ("NAMED", "UPDATED"), ("OBSERVED", "TOUCHED")];
+    for (area, kind) in forms {
+        assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":area,"action":kind,"recordId":"c1","chat":chat}]}}})));
+        let Some(ReadValue::Event { area: seen_area, kind: seen_kind, id, .. }) = bound(stream.pull()).await else { panic!("no event for {area} {kind}") };
+        assert_eq!((seen_area.as_str(), seen_kind.as_str(), id.as_str()), (area, kind, "c1"));
     }
     bound(database.close_database()).await.unwrap();
 }

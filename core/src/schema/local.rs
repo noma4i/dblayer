@@ -14,9 +14,9 @@ impl FieldSpec {
 }
 
 impl ModelSpec {
-    /// The server sends events for the model: a relation declares `updates` or the model `listens`.
+    /// The server sends events for the model: it `listens`, declares `changed_by` or a relation declares `updates`.
     pub fn is_live(&self) -> bool {
-        !self.listens.is_empty() || self.relations.iter().any(|relation| !relation.updates.is_empty())
+        !self.listens.is_empty() || !self.changes.is_empty() || self.relations.iter().any(|relation| !relation.updates.is_empty())
     }
 
     pub(crate) fn has_local(&self) -> bool {

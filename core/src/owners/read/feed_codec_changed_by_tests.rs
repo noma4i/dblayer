@@ -53,7 +53,7 @@ fn of_model<'a>(events: &'a [FramedEvent], model: &str) -> Vec<&'a FramedEvent> 
 fn feed_changed_by_removes() {
     let events = codec(vec![json!({"area":"CHAT", "relation":"list", "removes_on":["DELETED"]})]).events("Changes", frame("CHAT", "DELETED", "c1"));
     let payload: Value = serde_json::from_str(&events[0].payload).unwrap();
-    assert_eq!((events.len(), payload), (1, json!({"op":"delete", "model":"chats", "id":"c1"})));
+    assert_eq!((events.len(), payload), (1, json!({"op":"delete", "model":"chats", "id":"c1", "area":"CHAT", "kind":"DELETED"})));
     assert!(events[0].reread.is_empty());
 }
 
