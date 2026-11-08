@@ -7,10 +7,12 @@ use super::rig_tests::{bound, Rig};
 use crate::ffi::{ReadRequest, ReadStream, ReadValue};
 use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
+type ModelStreams = BTreeMap<(u64, String), (Arc<ReadStream>, u64)>;
+
 pub(super) struct Events {
     pub(super) peer: CablePeer,
     token: tokio::sync::watch::Sender<Option<String>>,
-    streams: tokio::sync::Mutex<BTreeMap<(u64, String), (Arc<ReadStream>, u64)>>,
+    streams: tokio::sync::Mutex<ModelStreams>,
 }
 
 impl Events {
