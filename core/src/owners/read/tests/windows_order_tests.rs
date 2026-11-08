@@ -17,7 +17,7 @@ fn load(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: Go
 
 /// boundary_load_cancel_orders (P-BND-01): whatever the order in which the loads of reserved calls arrive, the window registers their interests in the order of the ids.
 #[test]
-fn loads_register_in_the_order_of_their_reserved_ids() {
+fn boundary_load_cancel_orders() {
     for order in permutations(&[1, 2, 3]) {
         let mut state = state();
         for id in [1, 2, 3] { let _ = Windows::step(&mut state, WindowsInput::Reserve { id }); }

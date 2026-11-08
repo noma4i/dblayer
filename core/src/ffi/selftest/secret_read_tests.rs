@@ -11,7 +11,7 @@ fn stored(database: &Database) -> Option<(String, u64)> {
 
 /// sess_read_secret_missing (P-SESS-22, D-197): the secret vanishes after a login. A query and a mutation end with `StateLost`; no secret is created, the digest and the sequence stay and no request leaves.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_vanished_secret_ends_every_call_with_state_lost_and_creates_nothing() {
+async fn sess_read_secret_missing() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     let epoch = database.session_epoch();

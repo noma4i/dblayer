@@ -477,3 +477,28 @@ fn xfer_round_started_duplicate() {
     let (other, _) = step(&mut state, RoundsInput::RoundStarted { request_id: 1, round_id: 6, epoch: 1 });
     assert_eq!((ended_jobs(&other), state.round), (vec![6], running_round), "a foreign round id ends only its own job");
 }
+
+/// boundary_round_orders (P-BND-08, D-176): whatever the order of a start, an end and a refusal of a foreign round or epoch, the running round stays and only a foreign job is ended.
+#[test]
+fn boundary_round_orders() {
+    let foreign = [
+        RoundsInput::RoundStarted { request_id: 99, round_id: 9, epoch: 1 },
+        RoundsInput::RoundEnded { round_id: 6, epoch: 1 },
+        RoundsInput::RoundEnded { round_id: 5, epoch: 2 },
+        RoundsInput::RoundRefused { request_id: 99, epoch: 1, reason: "foreign".into() },
+    ];
+    let orders = crate::test_wait::permutations(&[0, 1, 2, 3]);
+    assert_eq!(orders.len(), 24);
+    for order in orders {
+        let mut state = state(1);
+        running(&mut state, 1, 5);
+        let before = state.round;
+        for at in &order {
+            let (runs, sends) = step(&mut state, foreign[*at].clone());
+            let expected_ended = if *at == 0 { vec![9] } else { Vec::new() };
+            assert_eq!((ended_jobs(&runs), runs.len() - expected_ended.len(), sends.len(), state.round), (expected_ended, 0, 0, before), "{:?} in {order:?}", foreign[*at]);
+        }
+        let (runs, _) = step(&mut state, RoundsInput::RoundEnded { round_id: 5, epoch: 1 });
+        assert_eq!((runs.len(), state.round), (0, Round::Stopped { epoch: 1 }), "the own end of the round still ends it in {order:?}");
+    }
+}

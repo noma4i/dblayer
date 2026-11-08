@@ -7,7 +7,7 @@ use crate::runtime::ManualClock;
 
 /// boundary_closed_call_precedence (P-LIFE-20, D-189): after the close every public entry answers `Closed` before it reads its arguments, reads data or sends.
 #[tokio::test]
-async fn every_entry_with_an_invalid_argument_answers_closed_after_the_close() {
+async fn boundary_closed_call_precedence() {
     let (database, transport) = with_transport(Arc::new(ManualClock::new(std::time::Duration::from_secs(1)))).await;
     database.close_now();
     let (model, epoch) = ("Notice".to_string(), 1);

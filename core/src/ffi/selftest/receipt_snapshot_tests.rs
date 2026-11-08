@@ -12,7 +12,7 @@ async fn notes() -> Arc<Database> {
 
 /// out_local_noop_snapshot (P-OUT-37, D-190): a no-op write answers with the row and the revision of one snapshot, and its revision does not grow.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_noop_write_answers_with_one_snapshot_and_no_new_revision() {
+async fn out_local_noop_snapshot() {
     let database = notes().await;
     let epoch = database.session_epoch();
     let made = database.create(epoch, "Note".into(), r#"{"text":"start"}"#.into(), "{}".into()).await.unwrap();

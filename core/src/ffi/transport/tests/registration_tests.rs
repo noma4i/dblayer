@@ -9,7 +9,7 @@ fn delivered(registrations: &Registrations, token: u64) -> usize {
 }
 
 #[test]
-fn boundary_observer_stop_orders_a_delivery_counts_only_for_a_token_that_was_issued_and_not_revoked() {
+fn boundary_observer_stop_orders() {
     let registrations = Registrations::default();
     let first = registrations.issue();
     let second = registrations.issue();

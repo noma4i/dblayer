@@ -18,7 +18,7 @@ fn notes(db: &Database) -> Arc<super::ReadStream> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn boundary_reader_orders_the_second_reader_is_invalid_and_the_first_keeps_its_stream() {
+async fn boundary_reader_orders() {
     let db = open().await;
     let stream = notes(&db);
     let first = within(stream.claim_reader()).await.unwrap();
@@ -32,7 +32,7 @@ async fn boundary_reader_orders_the_second_reader_is_invalid_and_the_first_keeps
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn boundary_reader_early_exit_a_reader_that_leaves_ends_the_stream_while_the_handle_is_held() {
+async fn boundary_reader_early_exit() {
     let db = open().await;
     let stream = notes(&db);
     let reader = within(stream.claim_reader()).await.unwrap();

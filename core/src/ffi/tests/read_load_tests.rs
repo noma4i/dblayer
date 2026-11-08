@@ -244,7 +244,7 @@ async fn a_blob_stream_without_a_transfer_owner_is_gone() {
 
 /// D-172 (P-BND-04): a row the stream cannot look up shows `failed` with the error of the lookup, not an empty status.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_blob_stream_of_a_row_that_cannot_be_looked_up_shows_failed_with_the_error() {
+async fn boundary_value_orders() {
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: " ".into(), action: "upload".into() });
     loop {

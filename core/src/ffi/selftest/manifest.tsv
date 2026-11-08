@@ -7,7 +7,7 @@ S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrde
 S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
-S313	outcome	core	an_operation_outcome_can_be_read_twice_from_its_receipt	red-by-reading	read the same outcome twice	operation receipt
+S313	outcome	core	boundary_receipt_orders	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	swift	BridgeProbeTests.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
 S301	A4	core	an_acknowledged_membership_change_survives_an_older_list_answer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2

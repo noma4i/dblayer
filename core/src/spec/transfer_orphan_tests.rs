@@ -322,7 +322,7 @@ fn minted_due(twin: &mut Twin, upload_id: &str) -> Out {
     twin.post(TransferInput::Tick { now: crate::runtime::Time(1), kind: crate::owners::write::transfer::TransferTick::Minted { upload_id: upload_id.into(), attempt_id } })
 }
 
-/// xfer_minted_write_storage, xfer_minted_write_retry, xfer_minted_write_committed (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays, the write goes again with the current row, and the id is durable after Committed.
+/// xfer_minted_write_storage (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays and nothing is aborted.
 #[test]
 fn xfer_minted_write_storage() {
     let mut twin = Twin::new();
@@ -334,6 +334,16 @@ fn xfer_minted_write_storage() {
     let refused = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "the debt is kept and scheduled, nothing is aborted: {refused:?}");
     assert!(minted(&mut twin, id, "u1").runs.is_empty(), "the same id again is no new debt");
+}
+
+/// xfer_minted_write_retry (P-XFER-41, D-192): the tick of a refused write sends the write again with the current row, and Committed of the repeat settles the debt and keeps the id durable.
+#[test]
+fn xfer_minted_write_retry() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    minted(&mut twin, id, "u1");
+    twin.reject(RejectReason::Storage("disk".into()));
 
     let again = minted_due(&mut twin, "u1");
     assert_eq!(again.writes(), 1, "the write goes again");
@@ -343,9 +353,9 @@ fn xfer_minted_write_storage() {
     assert_eq!(discarded.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the removal carries the orphan of the durable id");
 }
 
-/// xfer_minted_write_storage, xfer_minted_write_retry (P-XFER-41, D-192): the id of a removed transfer is aborted only after its orphan record is durable. A refused write is repeated, and the abort comes after Committed of the repeat.
+/// xfer_minted_write_committed (P-XFER-41, D-192): the id of a removed transfer is aborted only after its orphan record is durable. A refused write is repeated, and the abort comes after Committed of the repeat.
 #[test]
-fn xfer_minted_write_storage_late() {
+fn xfer_minted_write_committed() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     twin.discard(KEY);

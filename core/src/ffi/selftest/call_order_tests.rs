@@ -88,7 +88,7 @@ async fn nodes_survives_the_cancel_of_an_earlier_nodes() {
 
 /// boundary_node_read_epoch: a node whose request is held while the session ends gets the end of its epoch.
 #[tokio::test(flavor = "multi_thread")]
-async fn node_held_at_the_server_ends_with_its_epoch_and_stores_no_row_for_the_next_session() {
+async fn boundary_node_read_epoch() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
     let held = rig.world.hold_next("ContainerNode");

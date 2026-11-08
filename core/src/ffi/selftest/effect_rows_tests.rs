@@ -42,7 +42,7 @@ async fn joining_multiple_members_keeps_each_once_in_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_operation_outcome_can_be_read_twice_from_its_receipt() {
+async fn boundary_receipt_orders() {
     let world = World::new("server", "A", true);
     let rig = Rig::plain(world.clone(), false).await;
     let epoch = rig.database.session_epoch();

@@ -169,7 +169,7 @@ fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> Result<Re
     Ok(ReadValue::Event { position, area, kind, before: event_row(wire, &id, fields.get("before"))?, after: event_row(wire, &id, fields.get("after"))?, id })
 }
 
-fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
+pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
     Ok(match value {
         Value::Snapshot { revision, rows, edits, state, .. } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, edits: edits.iter().map(edit_of).collect::<Result<_, _>>()?, state: state_of(state) },
         Value::Delta(delta) => ReadValue::Delta {

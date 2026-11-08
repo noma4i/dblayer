@@ -294,7 +294,7 @@ fn out_prop_local_write_kept() {
 
 /// boundary_selector_orders (TRACE-02): `Retry` and `Discard` with an action address only the operation of that action.
 #[test]
-fn out_selector_keeps_the_action() {
+fn boundary_selector_orders() {
     let (mut twin, _) = reach(St::Sending, &ready());
     let other = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 91 });
     assert_eq!(replies_of(&other, 91), [OutboxAnswer::Err(Fault::NotFound)]);

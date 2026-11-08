@@ -500,7 +500,7 @@ enum Recovery {
 
 /// P-FEED-23 (D-191): after the loss of channels the model is ready again only when all its channels are confirmed. Until then an event is held and a new reader gets no `ModelReady`. At that step the gap is given once, the held event commits and the new reader is ready once.
 #[test]
-fn feed_prop_chan_ready_after_recovery_orders() {
+fn feed_chan_want_during_recovery() {
     use Recovery::*;
     let orders = orders_of(&[EndA, EndB, ConfirmA, ConfirmB, EventA, WantSecond], &[(EndA, ConfirmA), (EndB, ConfirmB)]);
     assert_eq!(orders.len(), 180);

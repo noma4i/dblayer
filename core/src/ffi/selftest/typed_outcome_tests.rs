@@ -12,7 +12,7 @@ async fn a_task_that_panics_on_the_executor_is_a_runtime_failure() {
 
 /// K7.07, K7.11, K7.12 (P-BND-04, D-195): every refusal of the transport keeps its type on the way to the caller; a storage or an internal failure is no network failure and a decode failure is `Invalid`.
 #[test]
-fn a_transport_refusal_reaches_the_caller_with_its_own_type() {
+fn boundary_failure_orders() {
     use crate::transport::TransportError;
     let cases = [
         (TransportError::Internal("the answer of the session was lost".into()), "Internal"),
