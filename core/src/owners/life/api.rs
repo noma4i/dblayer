@@ -129,7 +129,7 @@ impl Life {
 
     pub fn submit(&self, epoch: Epoch, op: crate::owners::write::outbox::NewOp) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Submit { epoch, op, reply }) }
 
-    pub fn retry_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Retry { model, row_id, reply }) }
+    pub fn retry_operation(&self, epoch: Epoch, (model, row_id): (String, String), action: Option<String>) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Retry { model, row_id, action, reply }) }
 
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
     pub fn resolve_row(&self, epoch: Epoch, model: String, row: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Resolve { model, row, reply }) }
@@ -140,7 +140,7 @@ impl Life {
     /// Answers when no operation of the owner Outbox is on its way.
     pub fn operations_quiet(&self, epoch: Epoch) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::WhenQuiet { reply }) }
 
-    pub fn discard_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, reply }) }
+    pub fn discard_operation(&self, epoch: Epoch, (model, row_id): (String, String), action: Option<String>) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, action, reply }) }
 
     pub fn operation_outcome(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
 

@@ -425,9 +425,9 @@ impl OutboxState {
     }
 
     /// The first operation of the row that is not `Done`: the one `retry` and `discard` address.
-    pub(super) fn open_on_row(&self, model: &str, row: &str) -> Option<OpId> {
+    pub(super) fn open_on_row(&self, model: &str, row: &str, action: Option<&str>) -> Option<OpId> {
         let row = self.aliases.get(&(model.to_string(), row.to_string())).map_or(row, String::as_str);
-        self.ops.values().find(|operation| operation.op.model == model && operation.op.row_id == row && operation.stage != Stage::Done).map(|operation| operation.op_id)
+        self.ops.values().find(|operation| operation.op.model == model && operation.op.row_id == row && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).map(|operation| operation.op_id)
     }
 
     pub(super) fn answer_waiters(&mut self, op_id: OpId, answer: &OutboxAnswer, fx: &mut Effects<Outbox>) {
@@ -495,9 +495,9 @@ impl OutboxState {
                     self.transport_failed(op_id, temporary, fx);
                 }
             }
-            OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
+            OutboxInput::Retry { model, row_id, action, reply } => self.retry(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
-            OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
+            OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),

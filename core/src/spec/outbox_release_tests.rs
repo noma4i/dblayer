@@ -21,7 +21,7 @@ fn queued_after_answer(pending_retained: bool) -> (Twin, OpId, RequestId) {
     (twin, id, req_id)
 }
 
-fn discard(twin: &mut Twin) { twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD }); }
+fn discard(twin: &mut Twin) { twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD }); }
 
 fn releases(text: &str) -> usize { text.matches("Release {").count() }
 

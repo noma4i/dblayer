@@ -122,7 +122,7 @@ impl Store {
         let candidates = writer.candidates;
         let mut shown = None;
         for op in &batch.ops {
-            let crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } = op else { continue };
+            let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } }) = op else { continue };
             shown = self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str());
         }
         let mut live_files = std::collections::HashSet::new();

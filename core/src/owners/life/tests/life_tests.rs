@@ -439,7 +439,7 @@ fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
     let mut outbox = OutboxState::new(1, OutboxPeers { store: Address::new(0), session: Some(Address::new(1)), transfer: None });
     let classified = Outbox::step(&mut outbox, OutboxInput::RestoreFailed { error: "disk".into() });
     assert!(matches!(classified.as_slice(), [Effect::Run(OutboxEffect::RestoreClassified { epoch: 1 })]), "{classified:?}");
-    let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), reply: 5 });
+    let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), action: None, reply: 5 });
     assert!(matches!(effects.as_slice(), [Effect::Run(OutboxEffect::Reply { reply: 5, answer: OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
     let mut transfer = TransferState::new(1, 1, TransferPeers { store: Address::new(0), outbox: Address::new(2), rounds: None });
     let classified = Transfers::step(&mut transfer, TransferInput::RestoreFailed { error: "disk".into() });
@@ -461,7 +461,7 @@ async fn a_database_without_a_session_writes_a_local_row_through_local_writes() 
     let epoch = life.published().epoch;
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1"}).to_string() }], ..Default::default() };
     let reply = answer(life.local_write(epoch, "moments".into(), LocalWriteKind::Model(effects), "m1".into(), String::new(), crate::runtime::Time(0))).await;
-    assert_eq!(reply, Reply::Outbox(OutboxAnswer::Ok));
+    assert!(matches!(reply, Reply::Outbox(OutboxAnswer::Written { shown: None, .. })), "{reply:?}");
     assert!(db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().is_some());
     closed(&life).await;
 }

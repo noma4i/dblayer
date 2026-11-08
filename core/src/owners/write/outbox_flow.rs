@@ -101,7 +101,7 @@ impl OutboxState {
 
     pub(super) fn retry_transfer(&mut self, model: &str, row: &str, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow>, fx: &mut Effects<Outbox>) {
         let ids: Vec<_> = uploads.iter().map(|upload| (upload.transfer_id, upload.cycle_id)).collect();
-        let Some(op_id) = self.open_on_row(model, row) else {
+        let Some(op_id) = self.open_on_row(model, row, None) else {
             self.retry_transfer_answer(ids, Err(Fault::NotFound), fx);
             return;
         };
@@ -143,11 +143,11 @@ impl OutboxState {
         };
         operation.op.origin = origin;
         operation.retry_uploads = uploads;
-        self.retry(model, row, reply, fx);
+        self.retry(model, row, None, reply, fx);
     }
 
-    pub(super) fn retry(&mut self, model: &str, row: &str, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let Some(op_id) = self.open_on_row(model, row) else {
+    pub(super) fn retry(&mut self, model: &str, row: &str, action: Option<&str>, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        let Some(op_id) = self.open_on_row(model, row, action) else {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
         };
         let receipt = self.receipt(op_id, 0);
@@ -173,8 +173,8 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn discard(&mut self, model: &str, row: &str, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let Some(op_id) = self.open_on_row(model, row) else {
+    pub(super) fn discard(&mut self, model: &str, row: &str, action: Option<&str>, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        let Some(op_id) = self.open_on_row(model, row, action) else {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
         };
         match self.ops[&op_id].stage {

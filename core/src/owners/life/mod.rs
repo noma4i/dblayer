@@ -252,7 +252,7 @@ impl Wiring {
         }
         if author == BatchAuthor::LocalWrites {
             self.to_local_writes_at(stamp, match reply {
-                StoreReply::Committed { revision, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }),
+                StoreReply::Committed { revision, shown, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown }),
                 StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
             });
             return;

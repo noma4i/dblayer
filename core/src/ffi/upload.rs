@@ -137,7 +137,7 @@ impl Database {
         match self.await_life(waiter).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) => Err(refused(fault, what)),
             LifeReply::Transfer(answer) => Ok(answer),
-            _ => Err(super::command::ended()),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 
@@ -145,9 +145,12 @@ impl Database {
         receipt_of_transfer(epoch, model, held, value, row.to_string(), self.life.clone())
     }
 
-    /// The upload actions a model declares: a call without an action names the transfer by them.
-    fn upload_actions(&self, model: &str) -> Result<Vec<String>, DbError> {
-        Ok(self.db.spec(model)?.actions.iter().filter(|declared| declared.upload).map(|declared| declared.name.clone()).collect())
+    /// The upload action of a model that declares exactly one: a call without an action names the transfer by it.
+    pub(super) fn sole_upload(&self, model: &str) -> Result<Option<String>, DbError> {
+        if self.uploads.is_none() { return Ok(None); }
+        let spec = self.db.spec(model)?;
+        let mut declared = spec.actions.iter().filter(|declared| declared.upload).map(|declared| declared.name.clone());
+        Ok(declared.next().filter(|_| declared.next().is_none()))
     }
 
     /// The row of a transfer after its mutation: a temporary id gives the real one.
@@ -164,11 +167,7 @@ impl Database {
         let file = self.offload(move || request.into_file()).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
-        let effects = self.offload(move || match db.plan_act(&name, &verb, &target, Map::new(), args) {
-            Ok(planned) => Ok(planned.effects),
-            Err(crate::store::CoreError::NotFound { .. }) => Ok(IntentEffects::default()),
-            Err(error) => Err(error.into()),
-        }).await?;
+        let effects = self.offload(move || Ok(db.plan_act(&name, &verb, &target, Map::new(), args)?.effects)).await?;
         let item = self.single_upload(&model, row.as_str(), &action, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
@@ -239,16 +238,7 @@ impl Database {
     pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let action = match action {
-            Some(action) => action,
-            None => {
-                let declared = self.upload_actions(&model)?;
-                match declared.as_slice() {
-                    [only] => only.clone(),
-                    _ => return Err(invalid(format!("{model} {row} has more than one upload, name its action"))),
-                }
-            }
-        };
+        let Some(action) = action.or(self.sole_upload(&model)?) else { return Err(invalid(format!("{model} {row} has more than one upload, name its action"))) };
         let source = match source {
             Some(request) => {
                 let path = request.into_file()?.path;
@@ -262,41 +252,10 @@ impl Database {
         Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
     }
 
-    /// `retry` with no source: the transfers of the row first, then the mutations. `None` when no transfer has the row.
-    pub(super) async fn retry_declared_transfer(&self, epoch: u64, model: &str, row: &str) -> Result<Option<WireOperationReceipt>, DbError> {
-        if self.uploads.is_none() { return Ok(None); }
-        for action in self.upload_actions(model)? {
-            let waiter = self.life.retry_upload(epoch, key_of(model, row, &action), None);
-            match self.await_life(waiter).await? {
-                LifeReply::Transfer(TransferAnswer::Err(Fault::NotFound)) => continue,
-                LifeReply::Transfer(TransferAnswer::Err(fault)) => return Err(refused(fault, "retry")),
-                LifeReply::Transfer(TransferAnswer::Receipt(held)) => {
-                    let value = self.optimistic(model, &id(row)?)?;
-                    return Ok(Some(self.transfer_receipt(epoch, model.to_string(), held, value, row)));
-                }
-                _ => return Err(super::command::ended()),
-            }
-        }
-        Ok(None)
-    }
-
-    /// `discard` of a transfer: `false` when no transfer of the row exists, the caller asks the mutations then.
-    pub(super) async fn discard_transfer(&self, epoch: u64, model: &str, row: &str, action: Option<&str>) -> Result<bool, DbError> {
-        if self.uploads.is_none() { return Ok(false); }
-        let actions = match action {
-            Some(action) => vec![action.to_string()],
-            None => self.upload_actions(model)?,
-        };
-        for action in actions {
-            let waiter = self.life.discard_upload(epoch, key_of(model, row, &action));
-            match self.await_life(waiter).await? {
-                LifeReply::Transfer(TransferAnswer::Err(Fault::NotFound)) => continue,
-                LifeReply::Transfer(TransferAnswer::Err(fault)) => return Err(refused(fault, "discard")),
-                LifeReply::Transfer(_) => return Ok(true),
-                _ => return Err(super::command::ended()),
-            }
-        }
-        Ok(false)
+    /// `discard` of the transfer of an action.
+    pub(super) async fn discard_transfer(&self, epoch: u64, model: &str, row: &str, action: &str) -> Result<(), DbError> {
+        let waiter = self.life.discard_upload(epoch, key_of(model, row, action));
+        self.transfer_answer(waiter, "discard").await.map(drop)
     }
 
     /// The outcome of the receipt of a transfer.
@@ -305,7 +264,7 @@ impl Database {
             Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome))) => outcome,
             Ok(LifeReply::Transfer(TransferAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(refused(fault, "upload outcome")),
-            Ok(_) => return Err(super::command::ended()),
+            Ok(_) => return Err(super::database::foreign_reply()),
             Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
             Err(error) => return Err(error),
         };

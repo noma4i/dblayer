@@ -119,7 +119,7 @@ impl TestClock {
 type OutcomesByKey = Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>;
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: OutcomesByKey, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: OutcomesByKey, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -350,8 +350,9 @@ impl Database {
         uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
     }
     pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
+        self.not_closed()?;
         let Some(returns) = self.returns.get(&operation).cloned() else {
-            return Err(if self.life.published().closed { super::command::ended() } else { DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") } });
+            return Err(DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") });
         };
         let root = self.run(epoch, operation, variables_json).await?;
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
@@ -360,9 +361,13 @@ impl Database {
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             return self.retry_transfer(epoch, model, row_id, action, source).await;
         }
-        self.account_call(epoch)?;
-        if let Some(receipt) = self.retry_declared_transfer(epoch, &model, &row_id).await? { return Ok(receipt); }
-        self.retry_operation(epoch, model, row_id).await
+        match self.retry_operation(epoch, model.clone(), row_id.clone(), action.clone()).await {
+            Err(DbError::NotFound { .. }) if action.is_none() => match self.sole_upload(&model)? {
+                Some(only) => self.retry_transfer(epoch, model, row_id, Some(only), None).await,
+                None => Err(DbError::NotFound { detail: "retry: there is no such operation".into() }),
+            },
+            answered => answered,
+        }
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.apply_online(online) }
 
@@ -373,7 +378,10 @@ impl Database {
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
         let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move { Ok::<_, DbError>(waiter.wait().await) })).await;
         crate::runtime::release_holds();
-        let answered = answered.map(|_| ());
+        let answered = answered.and_then(|outcome| match outcome {
+            crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Ok(()),
+            crate::runtime::Outcome::Internal | crate::runtime::Outcome::EpochEnded(_) => Err(DbError::Internal { detail: "the answer of the close was lost".into() }),
+        });
         let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
         let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
         crate::runtime::release_holds();
@@ -389,7 +397,7 @@ impl Database {
         match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
-            _ => Err(super::command::ended()),
+            _ => Err(foreign_reply()),
         }
     }
     /// Runs the blocking part of a call. The owners barrier counts the job until the call wakes.
@@ -422,6 +430,9 @@ impl Database {
     }
 }
 
+
+/// The answer of an owner is not the one the call waits for.
+pub(super) fn foreign_reply() -> DbError { DbError::Internal { detail: "the owner answered with a reply the call does not wait for".into() } }
 
 /// The failure of `run` as the platform sees it.
 fn call_failure(error: crate::owners::calls::CallError) -> DbError {

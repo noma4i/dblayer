@@ -135,7 +135,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
     let mut eff = Vec::new();
     for effect in effects {
         match effect {
-            OutboxEffect::Reply { answer: OutboxAnswer::Ok, .. } => obs.push(WObs::Ok),
+            OutboxEffect::Reply { answer: OutboxAnswer::Written { .. }, .. } => obs.push(WObs::Ok),
             OutboxEffect::Reply { answer: OutboxAnswer::Err(fault), .. } => obs.push(WObs::Fails(fault_of(&fault))),
             OutboxEffect::Store { kind: CommitKind::LocalWrite, generation, .. } => eff.push(if generation > 0 { WEff::StoreWriteNewBasis } else { WEff::StoreWrite }),
             OutboxEffect::Store { kind: CommitKind::RemoveRow, .. } => eff.push(WEff::StoreRemoveRow),

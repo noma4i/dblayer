@@ -132,6 +132,8 @@ pub enum OutboxAnswer {
     Outcome(OutboxOutcome),
     Ok,
     Resolved(String),
+    /// A local write committed: the revision of its batch and the row the batch shows.
+    Written { revision: i64, shown: Option<crate::store::Row> },
     Err(Fault),
 }
 
@@ -176,9 +178,9 @@ pub enum OutboxInput {
     /// The answer could not be landed: `detail` is the text the row and the outcome show.
     Refused { op_id: OpId, temporary: bool, detail: String },
     Dropped { op_id: OpId },
-    Retry { model: String, row_id: String, reply: ReplyId },
+    Retry { model: String, row_id: String, action: Option<String>, reply: ReplyId },
     RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
-    Discard { model: String, row_id: String, reply: ReplyId },
+    Discard { model: String, row_id: String, action: Option<String>, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },

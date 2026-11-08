@@ -31,3 +31,4 @@ mod call_result_tests;
 mod read_load_tests;
 pub(crate) mod signed_session_tests;
 mod load_all_cancel_tests;
+mod boundary_tests;

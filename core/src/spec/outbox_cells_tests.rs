@@ -34,7 +34,7 @@ pub(super) fn tick(twin: &mut Twin, id: OpId) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::RetryDue { op_id: id, cycle_id })
 }
 
-pub(super) fn retry(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: RETRY_REPLY }) }
+pub(super) fn retry(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: RETRY_REPLY }) }
 
 pub(super) fn submit_op(twin: &mut Twin, op: NewOp, reply: u64) -> OpId {
     twin.post(OutboxInput::Submit { epoch: EPOCH, op, reply });
@@ -249,7 +249,7 @@ fn out_persisting_attempt_invalid() {
 fn out_persisting_attempt_discard() {
     let mut twin = Twin::new();
     let id = persisting(&mut twin, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD_REPLY });
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
     assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY)), (Some(St::PersistingAttempt), vec![OutboxAnswer::Err(Fault::InFlight)]));
 }
 

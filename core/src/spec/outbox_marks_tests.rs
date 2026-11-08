@@ -62,7 +62,7 @@ fn out_marking_failed_tick() {
 fn out_marking_failed_refuses() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD_REPLY });
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
     assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::InFlight)]);
     let effects = retry(&mut twin);
     assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::MarkingFailed), vec![OutboxAnswer::Err(Fault::InFlight)]));
@@ -151,9 +151,9 @@ fn out_marking_retry_invalid() {
 fn out_marking_retry_refuses() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD_REPLY });
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
     assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::InFlight)]);
-    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 803 });
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 803 });
     assert_eq!((twin.stage(id), answers(&effects, 803)), (Some(St::MarkingRetry), vec![OutboxAnswer::Err(Fault::InFlight)]));
 }
 

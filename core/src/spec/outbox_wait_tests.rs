@@ -57,18 +57,18 @@ fn out_wait_outcome() {
 #[test]
 fn out_wait_retry() {
     let (mut twin, id) = reach(St::Failed, &keep());
-    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 61 });
+    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 61 });
     assert!(replies_of(&before, 61).is_empty(), "the receipt waits for the batch of the new cycle");
     let ok = twin.committed(id);
     assert!(matches!(replies_of(&ok, 61).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, _) = reach(St::Done, &ready());
-    let none = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 62 });
+    let none = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 62 });
     assert_eq!(replies_of(&none, 62), [OutboxAnswer::Err(Fault::NotFound)]);
     let (mut twin, _) = reach(St::Sending, &ready());
-    let busy = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 63 });
+    let busy = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 63 });
     assert!(matches!(replies_of(&busy, 63).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, _) = reach(St::Submitting, &ready());
-    let pending = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 64 });
+    let pending = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 64 });
     assert!(replies_of(&pending, 64).is_empty());
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
@@ -79,18 +79,18 @@ fn out_wait_retry() {
 #[test]
 fn out_wait_discard() {
     let (mut twin, id) = reach(St::Queued, &offline());
-    let queued = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 71 });
+    let queued = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 71 });
     assert!(replies_of(&queued, 71).is_empty(), "no answer before Committed");
     let committed = twin.committed(id);
     assert_eq!(replies_of(&committed, 71), [OutboxAnswer::Ok]);
     let (mut twin, _) = reach(St::Sending, &ready());
-    let in_flight = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 72 });
+    let in_flight = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 72 });
     assert_eq!(replies_of(&in_flight, 72), [OutboxAnswer::Err(Fault::InFlight)]);
     let (mut twin, _) = reach(St::Done, &ready());
-    let none = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 73 });
+    let none = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 73 });
     assert_eq!(replies_of(&none, 73), [OutboxAnswer::Err(Fault::NotFound)]);
     let (mut twin, _) = reach(St::Queued, &offline());
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 74 });
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 74 });
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
@@ -103,7 +103,7 @@ fn out_wait_local_write() {
     let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81, now: Time(0) });
     assert!(replies_of(&effects, 81).is_empty());
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
-    assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Ok]);
+    assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Written { revision: 11, shown: None }]);
     let mut twin = Twin::new();
     twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach { source: None }, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
     take_fx(&twin.log, state_of(&twin.det));
@@ -112,7 +112,7 @@ fn out_wait_local_write() {
     let closing = take_fx(&twin.log, state_of(&twin.det));
     assert!(replies_of(&closing, 82).is_empty() && !closing.iter().any(|effect| matches!(effect, OutboxEffect::Drained)), "the write waits for the Store: {closing:?}");
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
-    assert_eq!(replies_of(&committed, 82), [OutboxAnswer::Ok]);
+    assert_eq!(replies_of(&committed, 82), [OutboxAnswer::Written { revision: 11, shown: None }]);
     assert_eq!(committed.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), 1, "Drained after the last answer");
 }
 
@@ -248,7 +248,7 @@ fn out_prop_confirmed_lands() {
 
 #[test]
 fn out_prop_rollback_clean() {
-    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 200 }]], |_| {
+    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 200 }]], |_| {
         let effects = effects_now();
         let rollbacks = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Store { kind: CommitKind::Rollback, .. })).count();
         let ended = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Reply { answer: OutboxAnswer::Outcome(o::OutboxOutcome::Rejected { .. } | o::OutboxOutcome::Discarded), .. })).count();
@@ -290,4 +290,16 @@ fn out_prop_local_write_kept() {
         let answers = effects_now().iter().filter(|effect| matches!(effect, OutboxEffect::Reply { reply: 300, .. })).count();
         if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
     });
+}
+
+/// boundary_selector_orders (TRACE-02): `Retry` and `Discard` with an action address only the operation of that action.
+#[test]
+fn out_selector_keeps_the_action() {
+    let (mut twin, _) = reach(St::Sending, &ready());
+    let other = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 91 });
+    assert_eq!(replies_of(&other, 91), [OutboxAnswer::Err(Fault::NotFound)]);
+    let other = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 92 });
+    assert_eq!(replies_of(&other, 92), [OutboxAnswer::Err(Fault::NotFound)]);
+    let own = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 93 });
+    assert!(matches!(replies_of(&own, 93).as_slice(), [OutboxAnswer::Receipt(_)]));
 }

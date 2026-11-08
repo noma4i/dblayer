@@ -46,8 +46,9 @@ async fn xfer_prop_saved_outcome_reopens_sqlite() {
     let server = Server::new();
     server.hold(Kind::Put, true);
     let rig = Rig::open_at(OnFailure::Keep, Some(path.clone()), server.clone()).await;
+    let seeded = rig.seed_row("42").await;
     let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
-    within(rig.db.upload(rig.epoch(), "Moment".into(), "42".into(), "upload".into(), request)).await.unwrap();
+    within(rig.db.upload(rig.epoch(), "Moment".into(), seeded.clone(), "upload".into(), request)).await.unwrap();
     server.wait_held(Kind::Put, 1).await;
     let sqlite = rusqlite::Connection::open(&database_path).unwrap();
     sqlite.execute_batch("CREATE TRIGGER hold_upload_removal BEFORE DELETE ON sync_upload BEGIN SELECT RAISE(ABORT, 'hold removal'); END;").unwrap();
@@ -249,11 +250,12 @@ async fn xfer_attempt_reopen_file() {
     let server = Server::new();
     server.hold(Kind::Put, true);
     let rig = Rig::open_at(OnFailure::Keep, Some(path.clone()), server.clone()).await;
+    let seeded = rig.seed_row("42").await;
     let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
-    within(rig.db.upload(rig.epoch(), "Moment".into(), "42".into(), "upload".into(), request)).await.unwrap();
+    within(rig.db.upload(rig.epoch(), "Moment".into(), seeded.clone(), "upload".into(), request)).await.unwrap();
     server.wait_held(Kind::Put, 1).await;
     let attempts = || {
-        rusqlite::Connection::open(&database_path).unwrap().query_row("SELECT attempts FROM sync_upload WHERE model = 'Moment' AND row_id = '42' AND action = 'upload'", [], |row| row.get::<_, u32>(0)).unwrap()
+        rusqlite::Connection::open(&database_path).unwrap().query_row("SELECT attempts FROM sync_upload WHERE model = 'Moment' AND row_id = ?1 AND action = 'upload'", [seeded.as_str()], |row| row.get::<_, u32>(0)).unwrap()
     };
     assert_eq!(attempts(), 1);
     within(rig.db.close_database()).await.unwrap();
@@ -281,8 +283,9 @@ async fn xfer_upload_survives_model_fingerprint_change() {
     server.hold(Kind::Put, true);
     let models = moment_models(OnFailure::Keep);
     let rig = Rig::open_models(models.clone(), Some(path.clone()), server.clone()).await;
+    let seeded = rig.seed_row("42").await;
     let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
-    within(rig.db.upload(rig.epoch(), "Moment".into(), "42".into(), "upload".into(), request)).await.unwrap();
+    within(rig.db.upload(rig.epoch(), "Moment".into(), seeded.clone(), "upload".into(), request)).await.unwrap();
     server.wait_held(Kind::Put, 1).await;
     within(rig.db.close_database()).await.unwrap();
     drop(rig);

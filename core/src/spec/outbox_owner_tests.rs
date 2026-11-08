@@ -210,7 +210,7 @@ fn out_submitting_rejected() {
 fn out_submitting_retry() {
     let want = step_of(St::Submitting, &ready(), In::Retry).unwrap();
     let (mut twin, id) = reach(St::Submitting, &ready());
-    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 802 });
+    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 802 });
     let after = twin.committed(id);
     assert_eq!((want.next, want.obs.clone()), (St::Submitting, vec![Obs::Receipt]));
     assert!(before.iter().all(|effect| !matches!(effect, OutboxEffect::Reply { reply: 802, .. })), "no answer before Committed");

@@ -45,7 +45,11 @@ impl LoadRequest {
     /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
     pub async fn result(&self) -> Result<(), DbError> {
         let mut outcome = self.outcome.clone();
-        let seen = outcome.wait_for(Option::is_some).await.map_err(|_| load_cancelled())?.clone();
+        let seen = match outcome.wait_for(Option::is_some).await {
+            Ok(seen) => seen.clone(),
+            Err(_) if crate::lock::lock(&self.held).is_none() => return Err(load_cancelled()),
+            Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
+        };
         seen.unwrap_or_else(|| Err(load_cancelled()))
     }
 
@@ -140,8 +144,7 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await?;
         self.finish_load(call).await?;
-        let (db, found) = (self.db.clone(), model.clone());
-        let row = self.offload(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
+        let row = self.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
 
@@ -155,11 +158,10 @@ impl Database {
         let name = key.name.clone();
         let call = self.start_window(epoch, key, (Goal::First, true), None)?;
         self.finish_load(call).await?;
-        let (db, found) = (self.db.clone(), model.clone());
-        let rows = self.offload(move || {
+        let rows = self.read_in_epoch(epoch, "nodes", move |database| {
             let mut rows = Vec::with_capacity(ids.len());
-            for id in db.nodes_answered(&found, &name, &ids)? {
-                rows.extend(db.find(&found, &id)?);
+            for id in database.db.nodes_answered(&model, &name, &ids)? {
+                rows.extend(database.db.find(&model, &id)?);
             }
             Ok(rows)
         }).await?;
@@ -248,14 +250,14 @@ impl Database {
         call.leave.settled = true;
         let reply = reply?;
         if !self.admits(call.epoch) { return Err(super::command::ended()); }
-        let LifeReply::Window(outcome) = reply else { return Err(super::command::ended()) };
+        let LifeReply::Window(outcome) = reply else { return Err(super::database::foreign_reply()) };
         match *outcome {
             WindowOutcome::Loaded { has_more, fetched, .. } => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             WindowOutcome::Failed { source: Some(source), .. } => Err(DbError::from(source)),
             WindowOutcome::Failed { error, .. } => Err(DbError::Storage { detail: error }),
             WindowOutcome::Offline { message } => Err(DbError::Offline { detail: message }),
             WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
-            _ => Err(super::command::ended()),
+            WindowOutcome::Interrupted => Err(super::command::ended()),
         }
     }
 }

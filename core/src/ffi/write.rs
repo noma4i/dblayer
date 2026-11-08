@@ -51,7 +51,15 @@ impl Database {
         match self.await_life(waiter).await? {
             LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, what)),
             LifeReply::Outbox(answer) => Ok(answer),
-            _ => Err(super::command::ended()),
+            _ => Err(super::database::foreign_reply()),
+        }
+    }
+
+    /// A local write is final when its batch commits: the revision and the row are those of that batch.
+    async fn written(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str, model: &str) -> Result<(i64, Option<super::wire::WireRow>), DbError> {
+        match self.outbox_answer(waiter, what).await? {
+            OutboxAnswer::Written { revision, shown } => Ok((revision, shown.map(|row| self.wire_of_row(model, &row)).transpose()?)),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 
@@ -61,7 +69,7 @@ impl Database {
         if !row.is_temp() { return Ok(row); }
         match self.await_life(self.life.resolve_row(epoch, model.to_string(), row.to_string())).await? {
             LifeReply::Outbox(OutboxAnswer::Resolved(resolved)) => id(&resolved),
-            _ => Err(super::command::ended()),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 
@@ -97,7 +105,9 @@ impl Database {
             if self.db.spec(&model)?.is_memory() {
                 let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], ..Default::default() };
                 let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new(), self.now());
-                self.outbox_answer(waiter, action).await?;
+                let (revision, _) = self.written(waiter, action, &model).await?;
+                let value = self.optimistic(&model, &shown)?;
+                return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
             }
             let value = self.optimistic(&model, &shown)?;
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
@@ -105,10 +115,11 @@ impl Database {
         let destroyed = action == "destroy";
         let call = self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string())?;
         let Some(call) = call else {
-            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(planned.effects), row.to_string(), String::new(), self.now());
-            self.outbox_answer(waiter, action).await?;
-            let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
-            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
+            let mut effects = planned.effects;
+            if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
+            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(effects), row.to_string(), String::new(), self.now());
+            let (revision, value) = self.written(waiter, action, &model).await?;
+            return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
         let mut effects = planned.effects;
@@ -227,9 +238,17 @@ impl Database {
 
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         self.account_call(epoch)?;
-        if self.discard_transfer(epoch, &model, &row_id, action.as_deref()).await? { return Ok(()); }
-        let waiter = self.life.discard_operation(epoch, model, row_id);
-        self.outbox_answer(waiter, "discard").await.map(drop)
+        if let Some(declared) = action.as_deref().filter(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
+            return self.discard_transfer(epoch, &model, &row_id, declared).await;
+        }
+        let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action.clone());
+        match self.outbox_answer(waiter, "discard").await {
+            Err(DbError::NotFound { .. }) if action.is_none() => match self.sole_upload(&model)? {
+                Some(only) => self.discard_transfer(epoch, &model, &row_id, &only).await,
+                None => Err(DbError::NotFound { detail: "discard: there is no such operation".into() }),
+            },
+            answered => answered.map(drop),
+        }
     }
 }
 
@@ -257,7 +276,7 @@ impl Database {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
             Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
-            Ok(_) => return Err(super::command::ended()),
+            Ok(_) => return Err(super::database::foreign_reply()),
             Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
             Err(error) => return Err(error),
         };
@@ -283,9 +302,9 @@ impl Database {
     }
 
     /// `retry` of a failed mutation: the owner gives the receipt of the new cycle.
-    pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
+    pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
-        let waiter = self.life.retry_operation(epoch, model.clone(), row_id.clone());
+        let waiter = self.life.retry_operation(epoch, (model.clone(), row_id.clone()), action);
         let OutboxAnswer::Receipt(held): OutboxAnswer = self.outbox_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
         let value = self.optimistic(&model, &id(&row_id)?)?;
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))

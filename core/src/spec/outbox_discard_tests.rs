@@ -23,7 +23,7 @@ fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
 #[test]
 fn out_failed_discard_restore_failed() {
     let mut twin = dropped();
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD });
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
     assert_eq!(twin.stage(7), Some(St::RollingBack(super::ref_outbox::Why::Discarded)));
     assert!(answers(&effects, DISCARD).is_empty(), "nothing is answered before the commit");
     assert!(twin.store_text.contains("DiscardRestoreFailed { table: \"op\", key: \"k1\" }") && twin.store_text.contains("RemoveIntent"), "{}", twin.store_text);
@@ -33,13 +33,13 @@ fn out_failed_discard_restore_failed() {
 #[test]
 fn out_discard_restore_failed_committed() {
     let mut twin = dropped();
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD });
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
     let effects = twin.committed(7);
     assert_eq!(twin.stage(7), Some(St::Done));
     assert_eq!(answers(&effects, DISCARD), vec![OutboxAnswer::Ok]);
     let outcome = twin.post(OutboxInput::Outcome { receipt: twin.receipt(7, EPOCH), reply: WAITER });
     assert_eq!(answers(&outcome, WAITER), vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)]);
-    let again = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: API });
+    let again = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: API });
     assert_eq!(answers(&again, API), vec![OutboxAnswer::Err(Fault::NotFound)], "the operation and its element are gone");
 }
 

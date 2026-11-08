@@ -39,8 +39,8 @@ fn submit(twin: &mut Twin, reply: u64) -> Vec<OutboxEffect> { twin.post(OutboxIn
 
 fn call_inputs() -> Vec<OutboxInput> {
     vec![
-        OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 41 },
-        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 42 },
+        OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 },
+        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 },
         OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None }, reply: 43 },
     ]
 }
@@ -212,8 +212,8 @@ fn out_register_other() {
 fn out_waiting_declaration_refuses() {
     let mut twin = Twin::bare();
     restore(&mut twin, vec![stored(7, "r")]);
-    let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 41 });
-    let discard = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 42 });
+    let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
+    let discard = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 });
     assert_eq!((answers(&retry, 41), answers(&discard, 42)), (vec![OutboxAnswer::Err(Fault::InFlight)], vec![OutboxAnswer::Err(Fault::InFlight)]));
 }
 
@@ -288,7 +288,7 @@ fn out_open_restores_state_lost() {
     let effects = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: true });
     assert_eq!((twin.stage(7), kinds(&effects).len()), (Some(St::Failed), 0), "no batch: the mark is derived at every open");
     ready(&mut twin);
-    let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 41 });
+    let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
     assert_eq!(answers(&retry, 41), vec![OutboxAnswer::Err(Fault::StateLost)]);
 }
 
@@ -381,7 +381,7 @@ fn freed_row_twin() -> Twin {
 }
 
 fn free_row(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 42 });
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 });
     twin.committed(7)
 }
 

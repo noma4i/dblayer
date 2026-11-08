@@ -17,7 +17,7 @@ impl OutboxState {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
             Batch::Write { reply, call, expire } => {
-                Self::reply(fx, reply, OutboxAnswer::Ok);
+                Self::reply(fx, reply, OutboxAnswer::Written { revision: committed.revision, shown: committed.shown });
                 if let Some(due) = expire {
                     let LocalCall { model, row, .. } = *call;
                     self.ephemeral.insert(row.clone(), due);
