@@ -25,6 +25,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   private let lock = NSLock()
   private var replies: [String: [Reply]] = [:]
   private var recorded: [TransportRequest] = []
+  private var responders: [String: @Sendable (TransportRequest) -> String?] = [:]
 
   private let unanswered: Unanswered
   private var missed: [TransportRequest] = []
@@ -84,6 +85,10 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return hold
   }
 
+  public func respondWith(_ operation: String, _ responder: @escaping @Sendable (TransportRequest) -> String?) {
+    lock.withLock { responders[operation] = responder }
+  }
+
   public func emit(_ operation: String, json: String) throws {
     _ = try cable?.event(operation: operation, result: json)
     TestPulse.shared.pulse()
@@ -102,9 +107,14 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
 
   private func answer(_ request: TransportRequest) async throws -> String {
     let identity = "\(request.author)#\(request.requestId)"
+    let responder = lock.withLock { responders[request.operationName] }
     let reply = lock.withLock { () -> Reply? in
       recorded.append(request)
       if let known = settled[identity] { return Reply(body: known, failure: nil) }
+      if let body = responder?(request) {
+        settled[identity] = body
+        return Reply(body: body, failure: nil)
+      }
       guard var queue = replies[request.operationName], !queue.isEmpty else { return nil }
       let next = queue.removeFirst()
       replies[request.operationName] = queue

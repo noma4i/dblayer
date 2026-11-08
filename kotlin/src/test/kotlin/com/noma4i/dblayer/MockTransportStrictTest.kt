@@ -66,4 +66,17 @@ class MockTransportStrictTest {
         assertEquals("second", transport.mutate(other))
         assertTrue(runCatching { transport.mutate(other) }.exceptionOrNull() is DbException.Network)
     }
+
+    @Test
+    fun twoWindowsOfOneOperationEachGetTheirOwnReplyInAnyOrder() = bounded {
+        val transport = MockTransport(Unanswered.NetworkError)
+        transport.respondWith("Ping") { request -> if (request.variablesJson.contains("\"page\":1")) "one" else null }
+        transport.enqueue("Ping", "queued")
+        val first = TransportRequest("query Ping { ping }", "Ping", """{"page":1}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 1u)
+        val second = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 2uL, 1u)
+        assertEquals("queued", transport.query(second))
+        assertEquals("one", transport.query(first))
+        assertEquals("one", transport.query(first))
+        assertTrue(runCatching { transport.query(second) }.exceptionOrNull() is DbException.Network)
+    }
 }

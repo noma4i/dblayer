@@ -52,6 +52,19 @@ struct MockTransportStrictTests {
     #expect(try await transport.mutate(request: other) == "second")
     await #expect(throws: DbError.self) { try await transport.mutate(request: other) }
   }
+
+  @Test(.timeLimit(.minutes(1)))
+  func twoWindowsOfOneOperationEachGetTheirOwnReplyInAnyOrder() async throws {
+    let transport = MockTransport(unanswered: .networkError)
+    transport.respondWith("Ping") { request in request.variablesJson.contains("\"page\":1") ? "one" : nil }
+    transport.enqueue("Ping", reply: "queued")
+    let first = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":1}"#, purpose: .standard, author: .window, requestId: 1)
+    let second = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, purpose: .standard, author: .window, requestId: 2)
+    #expect(try await transport.query(request: second) == "queued")
+    #expect(try await transport.query(request: first) == "one")
+    #expect(try await transport.query(request: first) == "one")
+    await #expect(throws: DbError.self) { try await transport.query(request: second) }
+  }
 }
 
 extension BridgeProbeTests {

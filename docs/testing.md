@@ -20,6 +20,16 @@ DBlayer.open(context, transport = transport, modelsJson = modelsJSON, uploadNoti
 
 A call with no queued reply fails at once with `Invalid` that names the operation and its variables, and the request is listed in `transport.unscripted`. The test that caused the call fails too, without any check in the test. Swift records a Swift Testing issue on the test that created the mock, so create the mock inside the test (or its suite initializer). Kotlin cannot throw on the core thread, so the next touch of any mock on a test thread throws `AssertionError` with the operation, the variables and the place that created the mock: `MockTransport()`, `enqueue`, `emit`, `calls` and `cableFrames`. A call that is still unreported when the JVM exits stops it with exit code 1. A test that expects such a call wraps it in `withKnownIssue` (Swift) or reads `transport.claimUnscripted()` (Kotlin). Pass `Unanswered.NetworkError` (Kotlin) or `unanswered: .networkError` (Swift) to the constructor when a test needs a missing reply to be a network error, which the core retries.
 
+When two windows of one operation differ only in their variables, answer them by content with `respondWith`. The responder gets the request and returns the reply, or `nil` to take the next reply queued with `enqueue`. A repeat of the same request gets the same reply.
+
+```swift
+transport.respondWith("MomentsFeed") { request in request.variablesJson.contains("\"first\":5") ? shortFeedJSON : nil }
+```
+
+```kotlin
+transport.respondWith("MomentsFeed") { request -> if (request.variablesJson.contains("\"first\":5")) shortFeedJson else null }
+```
+
 `transport.calls` lists the requests it received. `emit` pushes a subscription event.
 
 For model events, open the reader before calling `emit`: `let events = try scope.events(Message.self)` in Swift, `val events = scope.events(Message).events(Message)` in Kotlin. The call returns after the stream is registered in the core. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.

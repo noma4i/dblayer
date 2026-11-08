@@ -92,6 +92,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
+    private val responders = ConcurrentHashMap<String, (TransportRequest) -> String?>()
 
     val calls: List<TransportRequest> get() { failTestThread(); return recorded.toList() }
 
@@ -109,6 +110,11 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     private fun push(operation: String, reply: Reply) {
         failTestThread()
         synchronized(replies) { replies.getOrPut(operation) { java.util.ArrayDeque() }.add(reply) }
+    }
+
+    fun respondWith(operation: String, responder: (TransportRequest) -> String?) {
+        failTestThread()
+        responders[operation] = responder
     }
 
     fun emit(operation: String, json: String) {
@@ -134,6 +140,10 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         TestPulse.pulse()
         val identity = request.author to request.requestId
         settled[identity]?.let { return it }
+        responders[request.operationName]?.invoke(request)?.let { body ->
+            settled[identity] = body
+            return body
+        }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
         try {
             reply.hold?.pass()
