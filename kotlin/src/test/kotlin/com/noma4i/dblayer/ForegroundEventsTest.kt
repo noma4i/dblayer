@@ -75,9 +75,9 @@ class ForegroundEventsTest {
         owner.lifecycle.currentState = Lifecycle.State.CREATED
         val sink = checkNotNull(os.sink)
         val registration = os.registration
-        val before = transport.calls.size
 
         DBlayer.close()
+        val before = transport.calls.size
         owner.lifecycle.currentState = Lifecycle.State.STARTED
         os.runMain()
         sink.enterForeground(registration)

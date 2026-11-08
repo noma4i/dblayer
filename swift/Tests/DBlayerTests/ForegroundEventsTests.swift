@@ -68,9 +68,9 @@ extension BridgeProbeTests {
     let list = try await openFailedFeed(transport, os)
     defer { withExtendedLifetime(list) {} }
     let held = try #require(os.registration)
-    let before = transport.calls.count
 
     try await DB.close()
+    let before = transport.calls.count
     NotificationCenter.default.post(name: os.name, object: nil)
     held.sink.enterForeground(token: held.registration)
     #expect(transport.calls.count == before)
