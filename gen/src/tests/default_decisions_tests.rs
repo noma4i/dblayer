@@ -63,6 +63,14 @@ fn gen_default_flags() {
     assert!(!models[0].relations[0].members_complete);
     refused_at("model Sample do\n  attribute :name, :string, null: \"yes\"\nend\n", 2, "null");
     refused_at("model Sample do\n  attribute :name, :string, optional: 1\nend\n", 2, "optional");
+    let directory = tempfile::tempdir().unwrap();
+    let schema = directory.path().join("schema.graphql");
+    let source = directory.path().join("note.dbl");
+    std::fs::write(&schema, "type Query { note: Note }\ntype Note { id: ID! body: String! score: Int title: String }").unwrap();
+    std::fs::write(&source, "model Note do\n  attribute :body\n  attribute :score\n  attribute :title, null: false\nend\n").unwrap();
+    let checked = compile_files(&[source], Some(&schema), &[]).unwrap();
+    let nullable: Vec<_> = ["body", "score", "title"].iter().map(|name| checked.models[0].field(name).unwrap().nullable).collect();
+    assert_eq!(nullable, [false, true, false]);
 }
 
 #[test]
