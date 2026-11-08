@@ -38,7 +38,7 @@ extension BridgeProbeTests {
       #expect(extensions?.code == code)
       #expect(extensions?.transactionDisposition == disposition)
       #expect(extensions?.fields == ["detail": "\"refused\"", "limit": "3", "context": #"{"values":[true,null,2]}"#])
-      let failure = OperationFailure(kind: "rejected", message: "refused", extensions: extensions)
+      let failure = OperationFailure(kind: "rejected", sessionCode: nil, requestSize: nil, requestLimit: nil, message: "refused", extensions: extensions)
       let restored = try JSONDecoder().decode(OperationFailure.self, from: JSONEncoder().encode(failure))
       #expect(restored.extensions?.code == code)
       #expect(restored.extensions?.transactionDisposition == disposition)
@@ -46,4 +46,15 @@ extension BridgeProbeTests {
       #expect((try encoded.objectValue)["fields"] == .object(["detail": .string("\"refused\""), "limit": .string("3"), "context": .string(#"{"values":[true,null,2]}"#)]))
     }
   }
+}
+
+@Test func operationFailureCarriesEveryWireFailureField() throws {
+  let wire = WireFailure(kind: "request_too_large", sessionCode: .rateLimited, requestSize: 9_000_000_000, requestLimit: 8_000_000_000, message: "too large", extensions: nil)
+  let failure = OperationFailure(wire: wire)
+  #expect(failure.kind == "request_too_large")
+  #expect(failure.sessionCode == .rateLimited)
+  #expect(failure.requestSize == 9_000_000_000)
+  #expect(failure.requestLimit == 8_000_000_000)
+  #expect(failure.message == "too large")
+  #expect(try JSONDecoder().decode(OperationFailure.self, from: JSONEncoder().encode(failure)) == failure)
 }

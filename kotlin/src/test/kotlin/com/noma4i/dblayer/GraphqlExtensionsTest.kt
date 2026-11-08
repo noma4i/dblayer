@@ -43,12 +43,26 @@ class GraphqlExtensionsTest(private val queued: Boolean) {
             assertEquals(code, extensions?.code)
             assertEquals(disposition, extensions?.transactionDisposition)
             assertEquals(mapOf("detail" to "\"refused\"", "limit" to "3", "context" to """{"values":[true,null,2]}"""), extensions?.fields)
-            val failure = OperationFailure("rejected", "refused", extensions)
+            val failure = OperationFailure("rejected", null, null, null, "refused", extensions)
             val restored = dbJson.decodeFromString(OperationFailure.serializer(), dbJson.encodeToString(OperationFailure.serializer(), failure))
             assertEquals(code, restored.extensions?.code)
             assertEquals(disposition, restored.extensions?.transactionDisposition)
             val encoded = dbJson.parseToJsonElement(dbJson.encodeToString(OperationFailure.serializer(), restored))
             assertEquals(mapOf("detail" to "\"refused\"", "limit" to "3", "context" to """{"values":[true,null,2]}"""), encoded.jsonObject["extensions"]?.jsonObject?.get("fields")?.jsonObject?.mapValues { it.value.jsonPrimitive.content })
         }
+    }
+}
+
+class OperationFailureTest {
+    @Test
+    fun operationFailureCarriesEveryWireFailureField() {
+        val wire = WireFailure("request_too_large", SessionCode.RATE_LIMITED, 9_000_000_000UL, 8_000_000_000UL, "too large", null)
+        val failure = OperationFailure(wire.kind, wire.sessionCode, wire.requestSize, wire.requestLimit, wire.message, wire.extensions)
+        assertEquals("request_too_large", failure.kind)
+        assertEquals(SessionCode.RATE_LIMITED, failure.sessionCode)
+        assertEquals(9_000_000_000UL, failure.requestSize)
+        assertEquals(8_000_000_000UL, failure.requestLimit)
+        assertEquals("too large", failure.message)
+        assertEquals(failure, dbJson.decodeFromString(OperationFailure.serializer(), dbJson.encodeToString(OperationFailure.serializer(), failure)))
     }
 }

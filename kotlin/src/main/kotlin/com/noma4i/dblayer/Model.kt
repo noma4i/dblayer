@@ -15,7 +15,14 @@ enum class SyncState {
 }
 
 @Serializable
-data class OperationFailure(val kind: String, val message: String, val extensions: @Serializable(with = GraphqlExtensionsSerializer::class) GraphqlExtensions?)
+data class OperationFailure(
+    val kind: String,
+    val sessionCode: @Serializable(with = SessionCodeSerializer::class) SessionCode?,
+    val requestSize: ULong?,
+    val requestLimit: ULong?,
+    val message: String,
+    val extensions: @Serializable(with = GraphqlExtensionsSerializer::class) GraphqlExtensions?,
+)
 
 @Serializable
 data class SyncInfo(

@@ -4,6 +4,9 @@ public enum SyncState: String, Codable, Sendable { case synced, pending, sending
 
 public struct OperationFailure: Codable, Sendable, Equatable {
   public let kind: String
+  public let sessionCode: SessionCode?
+  public let requestSize: UInt64?
+  public let requestLimit: UInt64?
   public let message: String
   public let extensions: GraphqlExtensions?
 }
@@ -85,7 +88,7 @@ extension UploadStatus {
 }
 
 extension OperationFailure {
-  init(wire: WireFailure) { self.init(kind: wire.kind, message: wire.message, extensions: wire.extensions) }
+  init(wire: WireFailure) { self.init(kind: wire.kind, sessionCode: wire.sessionCode, requestSize: wire.requestSize, requestLimit: wire.requestLimit, message: wire.message, extensions: wire.extensions) }
 }
 
 extension SyncInfo {
