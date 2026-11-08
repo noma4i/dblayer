@@ -135,8 +135,8 @@ fn xfer_persisting_failure_committed() {
     let (waiting, out) = twin.outcome(id, 1);
     assert_eq!(out.all_replies(), 0, "the outcome of the cycle waits for the terminal cell");
     let out = twin.commit();
-    assert_eq!((twin.stage(id), out.shows(), out.round_idle()), (TransferStage::Failed, vec![Shown::Failed { error: "failed".into() }], vec![id]));
-    assert_eq!(out.replies(waiting), vec![failed_outcome("failed")]);
+    assert_eq!((twin.stage(id), out.shows(), out.round_idle()), (TransferStage::Failed, vec![Shown::Failed { error: super::transfer_harness::refusal() }], vec![id]));
+    assert_eq!(out.replies(waiting), vec![failed_outcome(&super::transfer_harness::refusal())]);
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn xfer_expired() {
     assert_eq!((twin.stage(id), out.removed(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], 0));
     twin.commit();
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![failed_outcome("failed")], "the outcome of the failed cycle is immutable");
+    assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())], "the outcome of the failed cycle is immutable");
 }
 
 #[test]
@@ -417,7 +417,7 @@ fn xfer_failed_outcome() {
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![failed_outcome("failed")]);
+    assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())]);
     assert_eq!(twin.stage(id), TransferStage::Failed);
 }
 

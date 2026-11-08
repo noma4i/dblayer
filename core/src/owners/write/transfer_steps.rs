@@ -160,7 +160,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn step_error(&mut self, id: TransferId, attempt_id: AttemptId, temporary: bool, fx: &mut Fx) {
+    pub(super) fn step_error(&mut self, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
@@ -170,7 +170,7 @@ impl TransferState {
         if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
         } else {
-            self.begin_failure(id, "failed".into(), true, fx);
+            self.begin_failure(id, error, true, fx);
         }
         self.start_in_order(fx);
     }
@@ -189,7 +189,7 @@ impl TransferState {
         self.start_in_order(fx);
     }
 
-    pub(super) fn complete_error(&mut self, id: TransferId, attempt_id: AttemptId, temporary: bool, fx: &mut Fx) {
+    pub(super) fn complete_error(&mut self, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
@@ -197,7 +197,7 @@ impl TransferState {
         if temporary && self.transfers.get(&id).is_some_and(|transfer| transfer.attempts < ATTEMPT_LIMIT) {
             self.schedule_retry(id, fx);
         } else {
-            self.begin_failure(id, "failed".into(), false, fx);
+            self.begin_failure(id, error, false, fx);
         }
         self.start_in_order(fx);
     }
@@ -216,7 +216,7 @@ impl TransferState {
             return;
         }
         run(fx, TransferEffect::CancelStep { transfer_id: id });
-        self.step_error(id, attempt_id, true, fx);
+        self.step_error(id, attempt_id, (true, super::failure::of_transport(&crate::transport::TransportError::Network("the upload timed out".into()))), fx);
     }
 
     fn tick_retry(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {

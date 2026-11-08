@@ -235,6 +235,9 @@
 - A feed event without a commit is refused and counted by `subscriptionCensus`.
 - A call that waits for an owner returns `Closed` when `close` stops the owners.
 - Android reports the network state before it registers the network callback.
+- A list, count or row stream of a model with `changed_by` rereads on an event of its area without an `events` stream.
+- `ModelEvent` carries the `area` and `kind` of its change record also after a reread or a removal.
+- A failed upload shows the error of its refused step instead of the text `failed`.
 
 ### Removed
 

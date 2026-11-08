@@ -3,7 +3,7 @@
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::SessionError;
 use crate::value::sync::{FailureKind, OperationFailure};
-use crate::transport::{GraphqlExtensions, SessionCode};
+use crate::transport::{GraphqlExtensions, SessionCode, TransportError};
 
 fn text(failure: &OperationFailure) -> String { serde_json::to_string(failure).unwrap_or_else(|_| failure.message.clone()) }
 
@@ -34,6 +34,21 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
 pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> String {
     text(&OperationFailure { kind: FailureKind::Rejected, message, extensions })
 }
+
+/// The error of a step of a transfer: the refusal of the server keeps its message and extensions, a failure of the connection keeps its class.
+pub fn of_transport(error: &TransportError) -> String {
+    match error {
+        TransportError::Graphql { messages, extensions } => of_graphql(messages.join("; "), extensions.clone()),
+        TransportError::Session { code, detail } => text(&OperationFailure::new(FailureKind::Session(*code), if detail.is_empty() { code.name().to_string() } else { detail.clone() })),
+        TransportError::RequestTooLarge { size, limit } => text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, error.to_string())),
+        TransportError::Network(_) | TransportError::Interrupted(_) => text(&OperationFailure::new(FailureKind::Network, error.to_string())),
+        TransportError::Http { status, .. } if *status >= 500 => text(&OperationFailure::new(FailureKind::Server, error.to_string())),
+        _ => text(&OperationFailure::new(FailureKind::Rejected, error.to_string())),
+    }
+}
+
+/// The step had no live connection to run on.
+pub fn no_link() -> String { text(&OperationFailure::new(FailureKind::Network, "the transfer has no connection")) }
 
 /// The kept text as a failure; a plain text is a refusal with that message.
 pub fn parse(error: &str) -> OperationFailure {

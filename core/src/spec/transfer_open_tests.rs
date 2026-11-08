@@ -212,7 +212,7 @@ fn xfer_step_temp_offline() {
     let id = twin.uploading(KEY, 2);
     let attempt_id = twin.attempt(id);
     twin.online(false);
-    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: true });
+    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: true, error: super::transfer_harness::refusal() });
     assert_eq!(twin.stage(id), TransferStage::Ready);
     assert!(Twin::quiet(&out));
     let out = twin.online(true);
@@ -226,7 +226,7 @@ fn xfer_complete_temp_offline() {
     let id = twin.completing(KEY);
     let attempt_id = twin.attempt(id);
     twin.online(false);
-    let out = twin.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true });
+    let out = twin.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true, error: super::transfer_harness::refusal() });
     assert_eq!(twin.stage(id), TransferStage::Ready);
     assert!(Twin::quiet(&out));
     let out = twin.online(true);

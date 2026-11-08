@@ -157,7 +157,7 @@ async fn discarding_a_refused_file_sends_the_remaining_file_as_single() {
     yield_until_showing("the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
     bound(database.discard(epoch, "Asset".into(), first, Some("create_files".into()))).await.unwrap();
 
-    assert_eq!(outcomes(&database, &receipt).await, ["rejected failed", "confirmed a1"]);
+    assert_eq!(outcomes(&database, &receipt).await, ["rejected no storage", "confirmed a1"]);
     assert_eq!(stand.script.count("CreateBlob"), 2);
     assert_eq!(stand.script.count("CreateAssets"), 0);
     assert_eq!(stand.script.variables("CreateAsset")[0]["clientKey"], "key-1");

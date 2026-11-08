@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::identity::RowId;
 use crate::store::nodes::{delete_trees, read_trees, write_tree};
-use crate::value::sync::OperationFailure;
+use crate::value::sync::{FailureKind, OperationFailure};
 use crate::transport::GraphqlExtensions;
 use crate::owners::write::upload::UploadInfo;
 
@@ -34,7 +34,10 @@ pub fn failure_cells(failure: Option<&OperationFailure>) -> [SqlValue; 2] {
 pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure>> {
     let kind: Option<String> = row.get(first)?;
     let message: Option<String> = row.get(first + 1)?;
-    Ok(kind.map(|kind| enum_from(&kind)).transpose()?.zip(message).map(|(kind, message)| OperationFailure { kind, message, extensions: None }))
+    Ok(kind.map(|kind| enum_from::<FailureKind>(&kind)).transpose()?.zip(message).map(|(kind, message)| match kind {
+        FailureKind::Unrecognized => serde_json::from_str(&message).unwrap_or(OperationFailure { kind, message, extensions: None }),
+        kind => OperationFailure { kind, message, extensions: None },
+    }))
 }
 
 fn filter_of(keys: &[&str]) -> String {

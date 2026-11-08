@@ -129,7 +129,7 @@ fn xfer_wait_outcome() {
     let id = failed.uploading(KEY, 2);
     let (reply, _) = failed.outcome(id, 1);
     failed.step_error(id, false);
-    assert_eq!(failed.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "failed".into() })], "Failed in Failed");
+    assert_eq!(failed.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: super::transfer_harness::refusal() })], "Failed in Failed");
     let mut ended = Twin::new();
     let id = ended.uploading(KEY, 2);
     let (reply, _) = ended.outcome(id, 1);

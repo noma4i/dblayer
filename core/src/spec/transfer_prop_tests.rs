@@ -32,7 +32,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
     vec![
         ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4, result: None }),
         ("discarded", discarded, discarded_id, OutboxOutcome::Discarded),
-        ("failed", failed, failed_id, OutboxOutcome::Failed { error: "failed".into() }),
+        ("failed", failed, failed_id, OutboxOutcome::Failed { error: super::transfer_harness::refusal() }),
         ("interrupted", interrupted, interrupted_id, OutboxOutcome::Interrupted),
     ]
 }
@@ -316,7 +316,7 @@ fn xfer_prop_observed_after_commit() {
     twin.commit();
     let out = twin.step_error(id, false);
     assert_eq!(out.shows().len(), 0, "failed");
-    assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: "failed".into() }]);
+    assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: super::transfer_harness::refusal() }]);
     let (cancel, out) = twin.cancel(KEY);
     assert_eq!(out.replies(cancel).len(), 0, "cancel");
     assert_eq!(twin.commit().replies(cancel).len(), 1);
@@ -348,7 +348,7 @@ fn xfer_prop_provenance() {
     let before = (twin.stage(fresh), twin.attempt(fresh));
     for input in [
         TransferInput::StepOk { transfer_id: id, attempt_id: old_attempt, part: Some(1), upload_id: Some("u9".into()), etag: None },
-        TransferInput::StepError { transfer_id: id, attempt_id: old_attempt, temporary: false },
+        TransferInput::StepError { transfer_id: id, attempt_id: old_attempt, temporary: false, error: super::transfer_harness::refusal() },
         TransferInput::StepOk { transfer_id: fresh, attempt_id: old_attempt, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: fresh, attempt_id: old_attempt, signed_id: None },
         TransferInput::CopyDone { transfer_id: fresh, attempt_id: old_attempt, size: 1, sha256: "x".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },

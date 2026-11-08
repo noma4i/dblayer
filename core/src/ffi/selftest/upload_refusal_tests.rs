@@ -36,6 +36,29 @@ async fn a_refused_blob_fails_the_row_of_its_upload() {
     database.close_now();
 }
 
+/// xfer_prop_failure_carries_step_error (P-XFER-39, D-147): a step refused with a GraphQL error fails the upload with that error, the outcome of the send shows the same one.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_failure_carries_step_error() {
+    let stand = Stand::new();
+    let database = stand.open(None, &EXPIRY_OPERATIONS).await;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("video");
+    std::fs::write(&source, b"video").unwrap();
+    stand.script.data("CreateBlob", r#"{"errors":[{"message":"BLOB_REFUSED","extensions":{"code":"BLOB_REFUSED"}}]}"#);
+
+    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap();
+    let id = sent.optimistic_value.clone().unwrap().id;
+    assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.message == "BLOB_REFUSED" && failure.kind == "rejected"));
+
+    until_state(&database, &id, WireSyncState::Failed).await;
+    let failed = row(&database, &id).await.unwrap();
+    let upload = &failed.uploads.iter().find(|entry| entry.action == "upload_clip").unwrap().upload;
+    let error = upload.error.as_ref().expect("the failed upload shows its error");
+    assert_eq!((error.message.as_str(), error.kind.as_str()), ("BLOB_REFUSED", "rejected"));
+    assert_eq!(error.extensions.as_ref().and_then(|extensions| extensions.code.as_deref()), Some("BLOB_REFUSED"));
+    database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
     let stand = Stand::new();

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::failure;
 use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
@@ -217,14 +218,14 @@ impl TransferExecutor {
             stamp,
             back,
             transfer_id,
-            TransferInput::StepError { transfer_id, attempt_id, temporary: true },
+            TransferInput::StepError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
                 Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
             },
             move |result| match result {
                 Ok(done) => TransferInput::StepOk { transfer_id, attempt_id, part, upload_id: done.upload_id, etag: done.etag },
-                Err(error) => TransferInput::StepError { transfer_id, attempt_id, temporary: temporary(&error) },
+                Err(error) => TransferInput::StepError { transfer_id, attempt_id, temporary: temporary(&error), error: failure::of_transport(&error) },
             },
         );
     }
@@ -234,11 +235,11 @@ impl TransferExecutor {
             stamp,
             back,
             transfer_id,
-            TransferInput::CompleteError { transfer_id, attempt_id, temporary: true },
+            TransferInput::CompleteError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, link| Box::pin(async move { codec.complete(&link, &key, upload_id.as_deref(), &parts).await }),
             move |result| match result {
                 Ok(signed_id) => TransferInput::Completed { transfer_id, attempt_id, signed_id },
-                Err(error) => TransferInput::CompleteError { transfer_id, attempt_id, temporary: temporary(&error) },
+                Err(error) => TransferInput::CompleteError { transfer_id, attempt_id, temporary: temporary(&error), error: failure::of_transport(&error) },
             },
         );
     }

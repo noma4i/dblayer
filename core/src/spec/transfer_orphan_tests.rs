@@ -241,7 +241,7 @@ fn xfer_discard_before_the_cancelled_attempt_answers() {
     assert_eq!((out.orphans_written(), out.removed(), out.writes()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()], 1), "the removal carries the orphan of the minted upload");
     assert_eq!(twin.stage(id), TransferStage::Removing);
     let attempt_id = twin.attempt(id);
-    twin.ignores(id, vec![TransferInput::StepError { transfer_id: id, attempt_id, temporary: true }]);
+    twin.ignores(id, vec![TransferInput::StepError { transfer_id: id, attempt_id, temporary: true, error: super::transfer_harness::refusal() }]);
     assert_eq!(twin.commit().replies(reply).len(), 1);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()]);
 }

@@ -228,9 +228,9 @@ impl Twin {
         let attempt_id = self.attempt(id) + 1000;
         vec![
             TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
-            TransferInput::StepError { transfer_id: id, attempt_id, temporary: true },
+            TransferInput::StepError { transfer_id: id, attempt_id, temporary: true, error: refusal() },
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-            TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true },
+            TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true, error: refusal() },
             TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } },
         ]
     }
@@ -363,7 +363,7 @@ impl Twin {
 
     pub fn step_error(&mut self, id: TransferId, temporary: bool) -> Out {
         let attempt_id = self.attempt(id);
-        self.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary })
+        self.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary, error: refusal() })
     }
 
     pub fn completed(&mut self, id: TransferId) -> Out {
@@ -373,7 +373,7 @@ impl Twin {
 
     pub fn complete_error(&mut self, id: TransferId, temporary: bool) -> Out {
         let attempt_id = self.attempt(id);
-        self.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary })
+        self.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary, error: refusal() })
     }
 
     pub fn tick_retry(&mut self, id: TransferId) -> Out {
@@ -548,3 +548,5 @@ pub fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
         permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, first.clone()); tail })
     }).collect()
 }
+
+pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused".into(), None) }

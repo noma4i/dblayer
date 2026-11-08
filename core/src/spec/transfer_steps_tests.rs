@@ -124,7 +124,7 @@ fn xfer_attempt_other() {
     let (mut twin, id) = ready(2);
     twin.online(true);
     let attempt_id = twin.attempt(id);
-    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: false });
+    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() });
     assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
     assert!(out.steps().is_empty());
     assert!(out.batches.is_empty());
@@ -429,7 +429,7 @@ fn xfer_uploading_stray() {
         id,
         vec![
             TransferInput::StepOk { transfer_id: id, attempt_id: attempt_id + 1, part: Some(1), upload_id: None, etag: None },
-            TransferInput::StepError { transfer_id: id, attempt_id: attempt_id + 1, temporary: false },
+            TransferInput::StepError { transfer_id: id, attempt_id: attempt_id + 1, temporary: false, error: super::transfer_harness::refusal() },
             TransferInput::StepOk { transfer_id: id + 40, attempt_id, part: Some(1), upload_id: None, etag: None },
             TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(3), upload_id: None, etag: None },
         ],
@@ -445,7 +445,7 @@ fn xfer_uploading_other() {
         id,
         vec![
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-            TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: false },
+            TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() },
             TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         ],
     );
@@ -618,7 +618,7 @@ fn xfer_completing_other() {
         id,
         vec![
             TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
-            TransferInput::StepError { transfer_id: id, attempt_id, temporary: false },
+            TransferInput::StepError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() },
             TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
             TransferInput::SlotFreed,
             TransferInput::Online(Online(true)),
