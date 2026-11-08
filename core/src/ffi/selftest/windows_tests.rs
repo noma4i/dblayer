@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use super::rig_tests::{bound, Gate, Rig};
 use super::rig_held::Held;
-use crate::ffi::lifecycle_tests::Rows;
+use crate::ffi::tests::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, Config, Database, DbError, LoadMoreResult, OpenDatabase, PutReply, TestClock, FakeTransport, TransportRequest};
 use crate::test_wait::yield_until;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
@@ -172,7 +172,7 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
     rig.settle().await;
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
-    assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
+    assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
     held.lists_show("A").await;
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     held.shows("A").await;

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, World};
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, ReadEnd, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
 use crate::test_wait::yield_until;
 use super::bridge_support_tests::*;
@@ -13,7 +13,7 @@ fn chat_entry(index: usize) -> serde_json::Value {
 
 /// The transport of a database with a session: the cable of the server is a peer that seals the frames.
 struct CableTransport {
-    cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
+    cable: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
     token: Arc<Mutex<Option<String>>>,
     subscribed: Arc<tokio::sync::Notify>,
 }
@@ -22,8 +22,8 @@ impl CableTransport {
     fn new(config: crate::transport::EncryptedConfig) -> Self {
         let (token, subscribed) = (Arc::new(Mutex::new(None)), Arc::new(tokio::sync::Notify::new()));
         let observed = (token.clone(), subscribed.clone());
-        let cable = crate::transport::encrypted::cable::peer_tests::CablePeer::observed(config, move |event| {
-            if let crate::transport::encrypted::cable::peer_tests::PeerEvent::Subscribed(opened) = event {
+        let cable = crate::transport::encrypted::cable::tests::peer_tests::CablePeer::observed(config, move |event| {
+            if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(opened) = event {
                 *observed.0.lock().unwrap() = Some(opened);
                 observed.1.notify_one();
             }
@@ -48,7 +48,7 @@ impl CableTransport {
 
 #[async_trait::async_trait]
 impl crate::ffi::FakeTransport for CableTransport {
-    fn cable(&self) -> Option<&crate::transport::encrypted::cable::peer_tests::CablePeer> { Some(&self.cable) }
+    fn cable(&self) -> Option<&crate::transport::encrypted::cable::tests::peer_tests::CablePeer> { Some(&self.cable) }
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
@@ -107,10 +107,10 @@ async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
     chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat"})).unwrap());
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     let world = World::new("server", "A", true);
-    let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+    let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(CableTransport::new(encrypted.clone()));
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![chat]).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![chat]).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},

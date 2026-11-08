@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 
 use super::encrypted_cable_tests::Peer;
 use super::rig_tests::bound;
-use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
+use crate::ffi::tests::encrypted_tests::ThroughServer;
+use crate::ffi::tests::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::tape::{Reader, StreamDelivery};
 use crate::ffi::{Config, Database, ReadRequest};
 use crate::schema::{FieldSpec, ModelSpec, RelationSpec, RemoteShape, UpdatesSpec, VariableSource};
@@ -34,7 +34,7 @@ fn window(slug: &str) -> ReadRequest { ReadRequest::List { query: crate::ffi::Qu
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_subscribes_its_channel_with_the_variables_of_the_window() {
     let rig = Rig::new();
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));

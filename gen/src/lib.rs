@@ -264,104 +264,34 @@ fn declaration_site(models: &[decl::ModelDecl], calls: &[decl::CallDecl], subjec
 }
 
 #[cfg(test)]
-mod members_tests;
-
-#[cfg(test)]
-mod lib_tests;
+mod tests;
 
 
-#[cfg(test)]
-mod docs_tests;
 
-#[cfg(test)]
-mod short_form_tests;
 
-#[cfg(test)]
-mod closed_effects_tests;
 
-#[cfg(test)]
-mod nested_tests;
 
-#[cfg(test)]
-mod storage_tests;
 
-#[cfg(test)]
-mod args_tests;
 
-#[cfg(test)]
-mod operation_tests;
 
-#[cfg(test)]
-mod input_tests;
 
-#[cfg(test)]
-mod enum_tests;
 
-#[cfg(test)]
-mod result_tests;
 
-#[cfg(test)]
-mod active_record_tests;
 
-#[cfg(test)]
-mod union_tests;
-#[cfg(test)]
-mod model_enum_args_tests;
 
-#[cfg(test)]
-mod interface_tests;
 
-#[cfg(test)]
-mod input_list_tests;
 
-#[cfg(test)]
-mod edge_tests;
 
-#[cfg(test)]
-mod enum_list_tests;
 
-#[cfg(test)]
-mod scope_enum_tests;
-#[cfg(test)]
-mod subscription_args_tests;
-#[cfg(test)]
-mod scalar_param_tests;
-#[cfg(test)]
-mod order_stable_tests;
-#[cfg(test)]
-mod scope_default_tests;
-#[cfg(test)]
-mod media_tests;
 
-#[cfg(test)]
-mod enum_position_tests;
 
-#[cfg(test)]
-mod edge_from_tests;
 
-#[cfg(test)]
-mod edge_enum_tests;
 
-#[cfg(test)]
-mod enum_walk_tests;
 
-#[cfg(test)]
-mod enum_schema_conflict_tests;
 
-#[cfg(test)]
-mod upload_batch_tests;
 
-#[cfg(test)]
-mod raw_json_tests;
 
-#[cfg(test)]
-mod patch_tests;
 
-#[cfg(test)]
-mod file_field_tests;
 
-#[cfg(test)]
-mod upload_steps_tests;
 
-#[cfg(test)]
-mod removed_by_tests;
+

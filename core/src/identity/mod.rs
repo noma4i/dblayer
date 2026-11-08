@@ -219,4 +219,4 @@ impl Generation {
 }
 
 #[cfg(test)]
-mod identity_tests;
+mod tests;

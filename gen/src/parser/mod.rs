@@ -368,4 +368,4 @@ fn parse_hash(reader: &mut Reader) -> Result<Node<Value>, ParseError> {
 }
 
 #[cfg(test)]
-mod parse_tests;
+mod tests;

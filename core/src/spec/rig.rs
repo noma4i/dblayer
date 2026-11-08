@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use crate::ffi::{ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, PutReply, TestClock, FakeTransport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::CredentialSlot;
 use super::harness_life::Held;
 use crate::value::ScalarKind;
@@ -302,7 +302,7 @@ impl Rig {
 
     pub async fn open_models(models: String, path: Option<String>, server: Arc<Server>) -> Rig {
         let clock = TestClock::new(1_000_000);
-        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
         let credentials = credentials_of(path.as_deref());
         let signed = CredentialSlot::get(&*credentials).unwrap().is_some();

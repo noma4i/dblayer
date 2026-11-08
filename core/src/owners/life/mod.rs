@@ -5,28 +5,12 @@ mod observers;
 mod read;
 mod call_rule;
 #[cfg(test)]
-mod attempt_tests;
-#[cfg(test)]
-mod close_orders_tests;
-#[cfg(test)]
-mod stop_tests;
-#[cfg(test)]
-mod call_rule_tests;
+mod tests;
 mod api;
 mod transfer_api;
 mod calls_runner;
-#[cfg(test)]
-mod calls_runner_tests;
 mod runners;
 pub(crate) mod session_runner;
-#[cfg(test)]
-mod life_tests;
-#[cfg(test)]
-mod session_exchange_tests;
-#[cfg(test)]
-mod session_panic_tests;
-#[cfg(test)]
-mod session_cut_tests;
 
 pub use observers::{ObserverPort, StopDone};
 

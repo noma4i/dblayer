@@ -1,7 +1,7 @@
 use super::rig_tests::bound;
 use super::upload_stand::{clip, request, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::tape::Rows;
-use crate::ffi::session_guards_tests::SOCIAL_BODY;
+use crate::ffi::tests::session_guards_tests::SOCIAL_BODY;
 use crate::ffi::{DbError, WireOperationOutcome};
 use crate::test_wait::yield_until;
 

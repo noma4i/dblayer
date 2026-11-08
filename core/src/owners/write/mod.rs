@@ -34,24 +34,4 @@ pub mod upload_io;
 #[cfg(test)]
 mod rig;
 #[cfg(test)]
-mod upload_io_tests;
-#[cfg(test)]
-mod answer_tests;
-#[cfg(test)]
-mod outbox_executor_tests;
-#[cfg(test)]
-mod transfer_executor_tests;
-#[cfg(test)]
-mod failure_tests;
-#[cfg(test)]
-mod operation_machine_tests;
-#[cfg(test)]
-mod operation_outbox_tests;
-#[cfg(test)]
-mod operation_status_tests;
-#[cfg(test)]
-mod plan_cascade_tests;
-#[cfg(test)]
-mod plan_intent_tests;
-#[cfg(test)]
-mod plan_variables_tests;
+mod tests;

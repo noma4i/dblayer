@@ -10,14 +10,14 @@ use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValu
 use crate::ffi::wire::Cell;
 
 pub(super) struct FeedTransport {
-    cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
+    cable: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
     pub(super) token: Arc<Mutex<Option<String>>>,
     opened: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait::async_trait]
 impl crate::ffi::FakeTransport for FeedTransport {
-    fn cable(&self) -> Option<&crate::transport::encrypted::cable::peer_tests::CablePeer> { Some(&self.cable) }
+    fn cable(&self) -> Option<&crate::transport::encrypted::cable::tests::peer_tests::CablePeer> { Some(&self.cable) }
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
@@ -73,15 +73,15 @@ async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::
         if room_payload != "chat" { room.server_revision = None; }
         vec![chat, room]
     } else { vec![chat] };
-    let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+    let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
     let (token, opened) = (Arc::new(Mutex::new(None)), Arc::new(tokio::sync::Notify::new()));
     let observed = (token.clone(), opened.clone());
-    let cable = crate::transport::encrypted::cable::peer_tests::CablePeer::observed(encrypted.clone(), move |event| {
-        if let crate::transport::encrypted::cable::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
+    let cable = crate::transport::encrypted::cable::tests::peer_tests::CablePeer::observed(encrypted.clone(), move |event| {
+        if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
     });
     let transport = Arc::new(FeedTransport { cable, token, opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
@@ -113,7 +113,7 @@ async fn feed_payload_lands() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     let value = bound(stream.pull()).await.unwrap();
-    assert!(matches!(value, ReadValue::Event { position: 1, area, kind, id, before: None, after: Some(row) } if area == "MESSAGE" && kind == "UPDATED" && id == "c1" && crate::ffi::lifecycle_tests::named(&row, "after")));
+    assert!(matches!(value, ReadValue::Event { position: 1, area, kind, id, before: None, after: Some(row) } if area == "MESSAGE" && kind == "UPDATED" && id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
     bound(database.close_database()).await.unwrap();
 }
 
@@ -165,7 +165,7 @@ async fn feed_changes_area_fanout() {
     let token = transport.token.lock().unwrap().clone().unwrap();
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":[]}}]}}})));
     for stream in [&chat, &room] {
-        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 1, id, after: Some(row), .. }) if id == "c1" && crate::ffi::lifecycle_tests::named(&row, "after")));
+        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 1, id, after: Some(row), .. }) if id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
     }
     bound(database.close_database()).await.unwrap();
 }
@@ -184,7 +184,7 @@ async fn feed_composite_id() {
     let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
     for (revision, title) in [(1, "first"), (2, "second")] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","entry":"e1","title":title,"revision":revision,"lists":[]}}}})));
-        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::lifecycle_tests::named(&row, title)));
+        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::tests::lifecycle_tests::named(&row, title)));
     }
     bound(database.close_database()).await.unwrap();
 }
@@ -209,7 +209,7 @@ async fn feed_live_event_memory_no_id() {
     for title in ["first", "second"] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"title":title,"revision":1,"lists":[]}}}})));
         let Some(ReadValue::Event { id, after: Some(row), .. }) = bound(stream.pull()).await else { panic!("the event was not delivered") };
-        assert!(crate::ffi::lifecycle_tests::named(&row, title));
+        assert!(crate::ffi::tests::lifecycle_tests::named(&row, title));
         assert_eq!(uuid::Uuid::parse_str(&id).unwrap().get_version_num(), 4);
         ids.push(id);
     }
@@ -275,7 +275,7 @@ async fn feed_apply_ephemeral() {
     assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
     let Some(ReadValue::Delta { edits, .. }) = bound(entity.pull()).await else { panic!("the overlay did not reach the row") };
     let rows = crate::ffi::RowEdit::carried(&edits);
-    assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
+    assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::tests::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     bound(database.close_database()).await.unwrap();
 }
@@ -376,7 +376,7 @@ async fn dlv_prop_one_change_every_view_feed() {
         let value = bound(stream.pull()).await.unwrap();
         let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert_eq!(rows.len(), 1);
-        assert!(crate::ffi::lifecycle_tests::named(&rows[0], "after"));
+        assert!(crate::ffi::tests::lifecycle_tests::named(&rows[0], "after"));
         revisions.push(revision);
     }
     assert!(revisions.iter().all(|revision| *revision > floor), "a stream showed the event before its commit: {revisions:?}, floor {floor}");
@@ -501,11 +501,11 @@ async fn feed_payload_two_models_one_entry() {
     let requests = world.count("ChatNode");
     let entry = json!({"topic":"MESSAGE","action":"CREATED","recordId":"m1","chat":{"__typename":"Chat","id":"1","title":"chat","revision":5,"lists":[]},"room":{"__typename":"Room","id":"r1","title":"room","revision":1,"lists":[]}});
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[entry]}}})));
-    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "1" && crate::ffi::lifecycle_tests::named(&row, "chat")));
-    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "r1" && crate::ffi::lifecycle_tests::named(&row, "room")));
+    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "1" && crate::ffi::tests::lifecycle_tests::named(&row, "chat")));
+    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "r1" && crate::ffi::tests::lifecycle_tests::named(&row, "room")));
     for (model, id, title) in [("Chat", "1", "chat"), ("Room", "r1", "room")] {
         let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: model.into(), id: id.into(), fetch: ReadFetch::Never });
-        assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && crate::ffi::lifecycle_tests::named(&rows[0], title)), "{model} row");
+        assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && crate::ffi::tests::lifecycle_tests::named(&rows[0], title)), "{model} row");
     }
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     assert_eq!(world.count("ChatNode"), requests);

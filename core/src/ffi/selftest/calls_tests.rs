@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use super::rig_tests::{bound, Fault, Rig, BOUND};
 use super::rig_held::Held;
-use crate::ffi::lifecycle_tests::Rows;
+use crate::ffi::tests::lifecycle_tests::Rows;
 use crate::ffi::{Database, DbError};
 
 #[derive(Clone, Copy, Debug)]

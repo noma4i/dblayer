@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use crate::ffi::lifecycle_tests::{named, Rows};
+use crate::ffi::tests::lifecycle_tests::{named, Rows};
 use crate::ffi::tape::Watched;
 use crate::ffi::{Database, ReadFetch, ReadRequest};
 use crate::test_wait::yield_until;

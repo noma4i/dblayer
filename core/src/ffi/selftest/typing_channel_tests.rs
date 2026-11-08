@@ -6,8 +6,8 @@ use tokio::sync::mpsc;
 use super::encrypted_cable_tests::Peer;
 use super::rig_tests::{bound};
 use super::rig_models::plain_models;
-use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
+use crate::ffi::tests::encrypted_tests::ThroughServer;
+use crate::ffi::tests::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{Config, Database, ReadRequest, ReadValue};
 use crate::schema::{FieldSpec, ModelSpec, Storage, UpdatesSpec};
 use crate::value::ScalarKind;
@@ -25,7 +25,7 @@ fn typing_models() -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_memory_model_with_subscribe_receives_the_frames_of_its_channel() {
     let rig = Rig::new();
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
@@ -55,7 +55,7 @@ async fn until<F: Fn(&ReadValue) -> bool>(stream: &crate::ffi::ReadStream, what:
 #[tokio::test(flavor = "multi_thread")]
 async fn one_signal_routes_typed_actions_and_notices() {
     let rig = Rig::new();
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));

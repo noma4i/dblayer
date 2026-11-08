@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::transport::{self as core, RawFailureKind, RawOutcome};
-use crate::transport::encrypted::cable::peer_tests::CablePeer;
+use crate::transport::encrypted::cable::tests::peer_tests::CablePeer;
 use super::{ByteProgress, CableEvents, CableOutcome, DbError, EncryptedHttp, Transport};
 
 pub(crate) const FAKE_ENDPOINT: &str = "https://graphql.test/graphql";

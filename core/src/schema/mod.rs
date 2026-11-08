@@ -436,26 +436,8 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
 }
 
 #[cfg(test)]
-mod ephemeral_tests;
-#[cfg(test)]
-mod merge_tests;
-#[cfg(test)]
-mod path_tests;
-#[cfg(test)]
-mod newer_tests;
-#[cfg(test)]
-mod relation_schema_tests;
-#[cfg(test)]
-mod schema_tests;
-#[cfg(test)]
-mod stable_order_tests;
-#[cfg(test)]
-mod union_tests;
-#[cfg(test)]
-mod scope_param_tests;
+mod tests;
 
 #[cfg(test)]
 pub(crate) mod screens_fixture;
 
-#[cfg(test)]
-mod interface_tests;

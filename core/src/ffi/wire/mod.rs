@@ -358,10 +358,6 @@ impl WireModel {
 }
 
 #[cfg(test)]
-mod wire_tests;
+mod tests;
 
-#[cfg(test)]
-mod union_tests;
 
-#[cfg(test)]
-mod interface_tests;

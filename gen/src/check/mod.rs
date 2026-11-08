@@ -18,13 +18,7 @@ mod effects;
 mod enums;
 mod nested;
 #[cfg(test)]
-mod changes_tests;
-#[cfg(test)]
-mod attribute_tests;
-#[cfg(test)]
-mod operation_tests;
-#[cfg(test)]
-mod scope_tests;
+mod tests;
 
 use scope::*;
 

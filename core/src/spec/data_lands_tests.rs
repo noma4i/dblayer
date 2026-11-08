@@ -8,7 +8,7 @@ use super::rig::{moment_models, within, Server, Wire, OPERATIONS};
 use super::harness_life::Held;
 use crate::ffi::{Config, Database, DbError, FakeHttp, EncryptedReply, OpenPorts, TestClock, WireOperationOutcome};
 use crate::schema::{ActionLanding, Coverage, FieldSpec, ModelSpec, OnFailure, RelationSpec, RemoteShape, RemoteSpec};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::{EncryptedOperationClass, NetworkPurpose};
 use crate::value::ScalarKind;
 
@@ -50,7 +50,7 @@ async fn data_upsert_lands() {
     list.remote = Some(RemoteSpec { operation: "Annotations".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: false, page_size: None, variables: Default::default(), root: None, total_from: None });
     models[1].relations.push(list);
     let server = Server::new();
-    let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+    let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), http: Some(Arc::new(LandingHttp(server))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), ports, TestClock::new(1_000_000))).await.unwrap();

@@ -4,9 +4,9 @@ use tokio::sync::mpsc;
 
 use super::encrypted_cable_tests::Peer;
 use super::rig_tests::bound;
-use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
+use crate::ffi::tests::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::tape::{Reader, StreamDelivery};
-use crate::ffi::encrypted_tests::ThroughServer;
+use crate::ffi::tests::encrypted_tests::ThroughServer;
 use crate::ffi::{Config, Database, ReadRequest};
 
 struct Quiet;
@@ -17,7 +17,7 @@ const PROFILE: &str = r#"{"model":"User","relation":"profile","params":{}}"#;
 const RECENT: &str = r#"{"model":"Moment","relation":"recent","params":{}}"#;
 
 async fn signed(rig: &Rig, peer: Arc<Peer>) -> Arc<Database> {
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let models = include_str!("wrapper_models.inc").to_string();
     let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(OPERATIONS.into()).await.unwrap();
@@ -29,7 +29,7 @@ async fn signed(rig: &Rig, peer: Arc<Peer>) -> Arc<Database> {
 fn peer() -> (Arc<Peer>, mpsc::UnboundedReceiver<String>, mpsc::UnboundedReceiver<String>) {
     let (subscribed, subscriptions) = mpsc::unbounded_channel();
     let (closed, closes) = mpsc::unbounded_channel();
-    (Arc::new(Peer::new(crate::transport::encrypted::protocol_tests::config(), subscribed, closed)), subscriptions, closes)
+    (Arc::new(Peer::new(crate::transport::encrypted::tests::protocol_tests::config(), subscribed, closed)), subscriptions, closes)
 }
 
 #[tokio::test(flavor = "multi_thread")]

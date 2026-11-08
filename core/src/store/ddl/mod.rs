@@ -393,4 +393,4 @@ pub fn manifest_verify(
 }
 
 #[cfg(test)]
-mod ddl_tests;
+mod tests;

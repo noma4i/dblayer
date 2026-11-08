@@ -16,9 +16,7 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     }
 }
 #[cfg(test)]
-mod close_tests;
-#[cfg(test)]
-mod close_load_tests;
+pub(crate) mod tests;
 mod call_result;
 #[cfg(test)]
 pub(crate) const EMPTY_SPECS: &str = r#"{"models":[]}"#;
@@ -30,19 +28,12 @@ mod foreign_future;
 mod open_slot;
 mod opening;
 #[cfg(test)]
-mod lifecycle_tests;
-#[cfg(test)]
 mod selftest;
-#[cfg(test)]
-pub(crate) mod database_tests;
 mod encrypted;
 mod query;
 mod query_spec;
-#[cfg(test)]
-mod query_spec_tests;
 pub use query_spec::{QueryCondition, QueryOrder, QuerySpec};
 #[cfg(test)]
-#[path = "tape_tests.rs"]
 pub(crate) mod tape;
 mod command;
 mod load_order;
@@ -50,10 +41,6 @@ mod loading;
 mod write;
 mod read;
 mod queue;
-#[cfg(test)]
-mod read_tests;
-#[cfg(test)]
-mod read_cancel_tests;
 mod transport;
 mod upload;
 mod upload_rounds;
@@ -199,54 +186,8 @@ impl From<crate::transport::TransportError> for DbError {
 impl From<serde_json::Error> for DbError {
     fn from(error: serde_json::Error) -> Self {
         #[cfg(test)]
-        offload_tests::note_parse_failure(&error);
+        tests::offload_tests::note_parse_failure(&error);
         Self::Invalid { detail: error.to_string() }
     }
 }
 
-#[cfg(test)]
-pub(super) mod encrypted_tests;
-#[cfg(test)]
-mod bootstrap_public_tests;
-#[cfg(test)]
-mod lost_session_recovery_tests;
-#[cfg(test)]
-pub(super) mod queue_view_tests;
-#[cfg(test)]
-mod queued_detail_tests;
-#[cfg(test)]
-mod sealed_errors_tests;
-#[cfg(test)]
-mod session_guards_tests;
-#[cfg(test)]
-mod open_layout_tests;
-#[cfg(test)]
-mod executor_tests;
-#[cfg(test)]
-mod failure_tests;
-#[cfg(test)]
-mod offload_tests;
-#[cfg(test)]
-mod input_encoding_tests;
-#[cfg(test)]
-mod load_tests;
-#[cfg(test)]
-mod session_restore_tests;
-#[cfg(test)]
-mod snapshot_tests;
-#[cfg(test)]
-mod request_ids_tests;
-#[cfg(test)]
-mod local_open_tests;
-#[cfg(test)]
-mod open_tests;
-#[cfg(test)]
-mod write_calls_tests;
-#[cfg(test)]
-mod call_result_tests;
-#[cfg(test)]
-mod read_load_tests;
-#[cfg(test)]
-mod signed_session_tests;
-#[cfg(test)]
-mod load_all_cancel_tests;

@@ -9,13 +9,11 @@ pub(crate) mod exchange;
 mod config;
 pub(crate) mod bootstrap;
 #[cfg(test)]
-pub(crate) mod fake_server_tests;
+pub(crate) mod tests;
 mod graphql;
 pub(crate) mod jwe;
 pub(crate) mod key;
 mod origin;
-#[cfg(test)]
-pub(crate) mod vectors_tests;
 
 pub(crate) use exchange::SendOnce;
 pub(crate) use exchange::checked_path;
@@ -42,26 +40,4 @@ pub trait CredentialSlot: Send + Sync {
     fn clear(&self) -> Result<(), TransportError>;
 }
 
-#[cfg(test)]
-pub(crate) mod exchange_tests;
-#[cfg(test)]
-mod credential_reenter_tests;
-#[cfg(test)]
-pub(crate) mod bootstrap_tests;
-#[cfg(test)]
-mod graphql_tests;
-#[cfg(test)]
-mod jwe_tests;
-#[cfg(test)]
-mod key_tests;
-#[cfg(test)]
-mod origin_tests;
-#[cfg(test)]
-mod persisted_query_tests;
-#[cfg(test)]
-mod refused_sequence_tests;
-#[cfg(test)]
-mod sealed_errors_tests;
 
-#[cfg(test)]
-pub(crate) mod protocol_tests;

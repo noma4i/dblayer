@@ -10,7 +10,7 @@ pub use line::{CableCredential, CableLine, CableLines, EncryptedLines, Incoming}
 mod wire;
 pub use wire::{CableSocket, SocketEvent};
 #[cfg(test)]
-pub(crate) mod peer_tests;
+pub(crate) mod tests;
 pub use link::{CableKeys, CableLink};
 
 const CLIENT_BYTES: usize = 32 * 1024;
@@ -36,5 +36,3 @@ pub enum CableError {
     Closed,
 }
 
-#[cfg(test)]
-mod link_tests;

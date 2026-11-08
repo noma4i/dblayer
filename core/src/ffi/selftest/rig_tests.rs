@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use tokio::sync::{Notify, Semaphore};
 
-use crate::ffi::session_guards_tests::WatchedHeld;
+use crate::ffi::tests::session_guards_tests::WatchedHeld;
 use crate::ffi::{
     ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, EncryptedSessionOperation, OpenDatabase, PutReply,
     TestClock, Transport, TransportRequest,
@@ -15,7 +15,7 @@ use crate::test_wait::within_secs;
 
 use super::rig_held::Held;
 use super::rig_models::{add_reactions, plain_models, plain_operations};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 
 /// Every call of a sequence returns within this many seconds or the test fails instead of hanging.
 pub(super) const BOUND: u64 = 8;
@@ -395,7 +395,7 @@ impl Rig {
     pub(super) async fn encrypted_edited(page: bool, keep_message: bool, reactions: bool, edit: impl FnOnce(&mut Value)) -> Rig {
         let world = World::new("server", "initial", false);
         let switch = Switchable::new(Some(world.clone()), false);
-        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("social".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
@@ -477,7 +477,7 @@ impl Rig {
     /// The app path with an existing world: a real session client on the fake HTTP of `first`, signed in as its account. `edit` changes the models before the database opens.
     pub(super) async fn signed_as(first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value)) -> Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
-        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();

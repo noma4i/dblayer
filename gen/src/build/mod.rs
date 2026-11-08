@@ -450,4 +450,4 @@ fn optimistic_json(value: &OptimisticValue) -> Json {
 }
 
 #[cfg(test)]
-mod build_tests;
+mod tests;

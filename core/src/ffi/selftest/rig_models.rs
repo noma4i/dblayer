@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use crate::ffi::lifecycle_tests::models;
+use crate::ffi::tests::lifecycle_tests::models;
 
 const OPERATIONS: &str = r#"[
     {"name":"MyProfile","document":"query MyProfile { me { id name } }"},

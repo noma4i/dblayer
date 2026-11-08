@@ -108,12 +108,12 @@ expect_wrapper "$kotlin_probe" red 'object Hook {
 }'
 expect_wrapper "$kotlin_probe" red 'class Holder { @Volatile private var live: Int? = null }'
 
-mkdir -p "$work/core/src/zoo_probe"
-printf '#[cfg(test)]\nmod zoo_probe;\n' > "$work/core/src/lib.rs"
-printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/zoo_probe/harness.rs"
+mkdir -p "$work/core/src/spec"
+printf '#[cfg(test)]\nmod spec;\n' > "$work/core/src/lib.rs"
+printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/spec/harness.rs"
 : > "$probe"
 run || { echo "check_zoo_test: a cfg(test) module was scanned" >&2; exit 1; }
-printf 'mod zoo_probe;\n' > "$work/core/src/lib.rs"
+printf 'mod spec;\n' > "$work/core/src/lib.rs"
 if run; then
   echo "check_zoo_test: an unwrap in a non-test module was not caught" >&2
   exit 1

@@ -10,16 +10,12 @@ use crate::{FileError, ParseError};
 
 mod documents;
 #[cfg(test)]
-mod documents_tests;
+mod tests;
 mod fields;
 mod graphql;
 mod operation;
 mod selection;
 mod inputs;
-#[cfg(test)]
-mod idempotency_tests;
-#[cfg(test)]
-mod event_payload_tests;
 mod paths;
 mod media;
 mod standalone;
@@ -210,33 +206,11 @@ fn root_path(scope: &ScopeDecl) -> Option<&str> {
 }
 
 
-#[cfg(test)]
-mod schema_check_tests;
 
-#[cfg(test)]
-mod node_tests;
-#[cfg(test)]
-mod members_tests;
-#[cfg(test)]
-mod total_tests;
 
-#[cfg(test)]
-mod union_tests;
 
-#[cfg(test)]
-mod interface_tests;
 
-#[cfg(test)]
-mod alias_tests;
 
-#[cfg(test)]
-mod edge_tests;
 
-#[cfg(test)]
-mod paths_tests;
 
-#[cfg(test)]
-mod total_alias_tests;
 
-#[cfg(test)]
-mod edge_nodes_tests;

@@ -10,7 +10,7 @@ const CHUNK: usize = 1024 * 1024;
 
 pub async fn file_len(path: &Path, cancel: &CancelToken) -> io::Result<u64> {
     read_source(path, cancel, |path, _| {
-        #[cfg(test)] super::upload_io_tests::record_read(path, "metadata");
+        #[cfg(test)] super::tests::upload_io_tests::record_read(path, "metadata");
         Ok(std::fs::metadata(path)?.len())
     }).await
 }
@@ -18,7 +18,7 @@ pub async fn file_len(path: &Path, cancel: &CancelToken) -> io::Result<u64> {
 pub async fn copy_range(path: &Path, offset: u64, length: u64, target: &Path, cancel: &CancelToken) -> io::Result<()> {
     let target = target.to_path_buf();
     read_source(path, cancel, move |path, cancel| {
-        #[cfg(test)] super::upload_io_tests::record_read(path, "range");
+        #[cfg(test)] super::tests::upload_io_tests::record_read(path, "range");
         if std::fs::metadata(&target).is_ok_and(|stored| stored.len() == length) {
             return Ok(());
         }
@@ -48,7 +48,7 @@ pub async fn copy_range(path: &Path, offset: u64, length: u64, target: &Path, ca
 
 pub async fn md5_base64(path: &Path, cancel: &CancelToken) -> io::Result<String> {
     read_source(path, cancel, |path, cancel| {
-        #[cfg(test)] super::upload_io_tests::record_read(path, "checksum");
+        #[cfg(test)] super::tests::upload_io_tests::record_read(path, "checksum");
         let mut file = File::open(path)?;
         let mut hasher = Md5::new();
         let mut buffer = vec![0; CHUNK];

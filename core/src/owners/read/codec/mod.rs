@@ -16,17 +16,7 @@ pub(crate) use variables::{declared_variables, load_variables, mapped_variables}
 use serde_json::{Map, Value};
 
 #[cfg(test)]
-mod connection_tests;
-#[cfg(test)]
-mod extract_tests;
-#[cfg(test)]
-mod landing_tests;
-#[cfg(test)]
-mod normalize_tests;
-#[cfg(test)]
-mod data_cells_tests;
-#[cfg(test)]
-mod variables_tests;
+mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CodecError {

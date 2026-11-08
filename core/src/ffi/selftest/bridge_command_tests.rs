@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use serde_json::json;
 use super::rig_tests::{bound, Rig};
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{DbError, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
 use crate::test_wait::{within, yield_until};
@@ -40,7 +40,7 @@ async fn a_send_needs_a_session_and_a_plain_action_waits_for_the_network() {
     let epoch = rig.database.session_epoch();
     let sent = bound(rig.database.send(message(epoch, "anonymous", 1))).await;
     assert!(matches!(sent, Err(DbError::NoSession { .. })), "a send without a session was accepted: {sent:?}");
-    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a send without a session left an operation");
+    assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).is_empty(), "a send without a session left an operation");
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
@@ -49,7 +49,7 @@ async fn a_send_needs_a_session_and_a_plain_action_waits_for_the_network() {
     let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     assert_eq!(plain.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     settle(&rig).await;
-    assert_eq!(crate::ffi::queue_view_tests::queued(&rig.database).len(), 1, "a plain action was not queued while the network was away");
+    assert_eq!(crate::ffi::tests::queue_view_tests::queued(&rig.database).len(), 1, "a plain action was not queued while the network was away");
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out without the network");
     rig.database.set_online(true).unwrap();
     assert!(matches!(bound(rig.database.outcome(plain)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));

@@ -7,13 +7,13 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::rig_tests::bound;
-use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::sealed_errors_tests::moment_spec;
-use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
+use crate::ffi::tests::encrypted_tests::ThroughServer;
+use crate::ffi::tests::sealed_errors_tests::moment_spec;
+use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest, WireOperationOutcome};
-use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, FakeServer};
+use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, FakeServer};
 use crate::transport::NetworkPurpose;
 use crate::owners::write::upload::{UploadFile, MEBIBYTE};
 
@@ -53,7 +53,7 @@ async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
 }
 
 async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::schema::ModelSpec) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);

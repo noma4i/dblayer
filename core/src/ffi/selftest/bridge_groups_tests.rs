@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig};
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
 use super::bridge_support_tests::*;
@@ -263,7 +263,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     settle(&rig).await;
     let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
     assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
-    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "the confirmed create is still queued");
+    assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).is_empty(), "the confirmed create is still queued");
     rig.database.close_now();
 }
 
@@ -288,7 +288,7 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         let first_call = start(first.0);
         first_gate.entered().await;
         let second_call = start(second.0);
-        yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
+        yield_until("the second change is queued", || crate::ffi::tests::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
         second_gate.entered().await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
@@ -330,7 +330,7 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         let first_call = start();
         first_gate.entered().await;
         let second_call = start();
-        yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
+        yield_until("the second change is queued", || crate::ffi::tests::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
         second_gate.entered().await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));

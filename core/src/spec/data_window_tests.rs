@@ -5,7 +5,7 @@ use super::harness_life::Held;
 use super::rig::{moment_models, within, Kind, Rig, Server, Wire, OPERATIONS};
 use crate::ffi::{Config, Database, DbError, EncryptedHttp, EncryptedReply, OpenPorts, TestClock, WireOperationOutcome};
 use crate::schema::{Coverage, Membership, OnFailure, RelationSpec, RemoteShape, RemoteSpec, RowRule, RowTest};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::{CredentialSlot, EncryptedOperationClass, NetworkPurpose};
 use serde_json::{json, Value};
 
@@ -103,7 +103,7 @@ async fn open_models(models: String, path: String, server: Arc<Server>, credenti
 async fn open_models_with_http(models: String, path: String, server: Arc<Server>, credentials: Arc<MemoryCredentials>, http: Arc<dyn EncryptedHttp>) -> Rig {
     let signed = credentials.get().unwrap().is_some();
     let clock = TestClock::new(1_000_000);
-    let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+    let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(http), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None }, crate::ffi::specs(models), ports, clock.clone())).await.unwrap();

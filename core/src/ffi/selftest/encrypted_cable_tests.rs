@@ -6,10 +6,10 @@ use tokio::sync::mpsc;
 
 use super::rig_tests::{bound};
 use super::rig_models::plain_models;
-use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
+use crate::ffi::tests::encrypted_tests::ThroughServer;
+use crate::ffi::tests::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{ByteProgress, Config, Database, DbError, PutReply, ReadRequest, FakeTransport, TransportRequest};
-use crate::transport::encrypted::cable::peer_tests::{CablePeer, PeerEvent};
+use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
 pub(super) struct Peer {
     pub(super) cable: CablePeer,
@@ -35,7 +35,7 @@ impl crate::ffi::tape::Reader for Rows { fn delivered(&self, _: StreamDelivery) 
 #[tokio::test(flavor = "multi_thread")]
 async fn feed_prop_census_from_owners() {
     let rig = Rig::new();
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
@@ -59,7 +59,7 @@ async fn feed_prop_census_from_owners() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     let rig = Rig::new();
-    let config = crate::transport::encrypted::protocol_tests::config();
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));

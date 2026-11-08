@@ -33,25 +33,9 @@ mod record;
 pub(crate) mod replaced_log;
 pub(crate) mod changed_log;
 #[cfg(test)]
-mod atomic_tests;
-#[cfg(test)]
-mod cells_tests;
-#[cfg(test)]
-mod data_sets_tests;
-#[cfg(test)]
-mod data_cells_tests;
-#[cfg(test)]
-mod data_inv_tests;
-#[cfg(test)]
-mod data_nested_tests;
-#[cfg(test)]
-mod nodes_answer_tests;
-#[cfg(test)]
-mod data_decode_tests;
+mod tests;
 mod batch_plan;
 pub use batch_plan::*;
-#[cfg(test)]
-mod batch_plan_tests;
 mod apply;
 mod batch_common;
 mod batch_result;
@@ -441,55 +425,3 @@ impl Store {
 
 #[cfg(test)]
 pub(crate) mod fixtures;
-#[cfg(test)]
-mod admission_tests;
-#[cfg(test)]
-mod apply_tests;
-#[cfg(test)]
-mod batch_tests;
-#[cfg(test)]
-mod members_among_tests;
-#[cfg(test)]
-mod stable_tests;
-#[cfg(test)]
-mod progress_tests;
-#[cfg(test)]
-mod boot_tests;
-#[cfg(test)]
-mod file_ops_tests;
-#[cfg(test)]
-mod memory_tests;
-#[cfg(test)]
-mod open_tests;
-#[cfg(test)]
-mod readers_tests;
-#[cfg(test)]
-mod reads_tests;
-#[cfg(test)]
-mod hook_tests;
-#[cfg(test)]
-mod commit_notice_tests;
-#[cfg(test)]
-mod reset_tests;
-#[cfg(test)]
-mod restore_tests;
-#[cfg(test)]
-mod rows_tests;
-#[cfg(test)]
-mod shape_tests;
-#[cfg(test)]
-mod value_tests;
-#[cfg(test)]
-mod union_tests;
-#[cfg(test)]
-mod outbox_storage_tests;
-#[cfg(test)]
-mod cache_storage_tests;
-#[cfg(test)]
-mod tombstones_tests;
-#[cfg(test)]
-mod tombstones_pin_tests;
-#[cfg(test)]
-mod windows_tests;
-#[cfg(test)]
-mod interface_tests;

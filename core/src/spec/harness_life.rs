@@ -7,8 +7,8 @@ use serde_json::json;
 use crate::ffi::{ByteProgress, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, PutReply, FakeTransport, TransportRequest};
 use crate::runtime::SystemClock;
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
-use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
-use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
+use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
+use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{HttpExchange, PutFile, TransferIdentity, TransportError};
 use crate::value::ScalarKind;
 
@@ -72,7 +72,7 @@ impl Rig {
     pub async fn open() -> Self {
         let server = FakeServer::new(Arc::new(SystemClock));
         let credentials = Arc::new(MemoryCredentials::default());
-        let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
+        let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
         let config = Config { path: None, data_version: None };
         let database = Database::open(config, crate::ffi::specs(models_json()), crate::ffi::OpenPorts { transport: Some(Arc::new(NoCable)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.expect("the database opens");
         database.register_operations(OPERATIONS.into()).await.expect("operations register");

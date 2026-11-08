@@ -355,13 +355,9 @@ pub fn relation_scope_key_from_values(
 }
 
 #[cfg(test)]
-mod value_tests;
-#[cfg(test)]
-mod fractional_tests;
+mod tests;
 
 pub fn same_fields(left: &Map<String, Value>, right: &Map<String, Value>) -> bool {
     let present = |row: &Map<String, Value>| row.values().filter(|value| !value.is_null()).count();
     present(left) == present(right) && left.iter().filter(|(_, value)| !value.is_null()).all(|(key, value)| right.get(key) == Some(value))
 }
-#[cfg(test)]
-mod sync_tests;

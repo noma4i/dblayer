@@ -7,8 +7,8 @@ use tokio::sync::oneshot;
 
 use super::value::Observation;
 use crate::ffi::{ByteProgress, CredentialStore, DbError, EncryptedReply, FakeHttp, FakeTransport, PutReply, TransportRequest};
-use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
-use crate::transport::encrypted::cable::peer_tests::CablePeer;
+use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
+use crate::transport::encrypted::cable::tests::peer_tests::CablePeer;
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 type Reply = Result<String, DbError>;
@@ -63,7 +63,7 @@ fn error_of(kind: &str) -> Option<DbError> {
 
 impl Mock {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::protocol_tests::config()) })
+        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()) })
     }
 
     fn record(&self, kind: &'static str, purpose: &'static str, hold: impl FnOnce(&mut Inner, String)) {

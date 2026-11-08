@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
 use super::rig_held::Held;
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, SessionCode};
 use crate::test_wait::yield_until;
 

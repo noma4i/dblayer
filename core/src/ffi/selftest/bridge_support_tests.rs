@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 use serde_json::json;
 use super::rig_tests::{bound, Rig};
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{CommandRequest, ReadEnd, ReadRequest, ReadValue, RowEdit, WireOperationOutcome, WireRow};
 

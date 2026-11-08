@@ -20,6 +20,6 @@ mod blocking;
 mod task;
 
 #[cfg(test)]
-mod lib_tests;
+mod tests;
 #[cfg(test)]
 mod test_wait;

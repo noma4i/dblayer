@@ -87,7 +87,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
     let work = {
         let caller = std::thread::current().id();
         move || {
-            super::offload_tests::note_blocking_thread(caller);
+            super::tests::offload_tests::note_blocking_thread(caller);
             work()
         }
     };
@@ -139,7 +139,7 @@ impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, endpoint: Option<String>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         Self::start_with(config, models_json, clock, |db, _| {
             #[cfg(test)]
-            if transport.is_some() { super::signed_session_tests::signed_session(db); }
+            if transport.is_some() { super::tests::signed_session_tests::signed_session(db); }
             let _ = db;
             Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
         })

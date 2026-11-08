@@ -63,7 +63,7 @@ mv "$generated.wake" "$generated"
 complete_pattern='`uniffiFutureCallback`: UniffiForeignFutureComplete'
 alloc='    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, '
 [ "$(grep -cF -- "$complete_pattern" "$generated")" = 8 ] || { echo "$name: expected exactly 8 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
-[ "$(grep -cE -- '`uniffiFutureCallback`: UniffiForeignFutureComplete(RustBuffer|Void),' "$generated")" = 8 ] || { echo "$name: dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future.rs" >&2; exit 1; }
+[ "$(grep -cE -- '`uniffiFutureCallback`: UniffiForeignFutureComplete(RustBuffer|Void),' "$generated")" = 8 ] || { echo "$name: dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future/mod.rs" >&2; exit 1; }
 [ "$(grep -cxF -- "$alloc" "$generated")" = 1 ] || { echo "$name: expected exactly 1 ffi_dblayer_rustbuffer_alloc declaration in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
 awk -v alloc="$alloc" '
   $0 == alloc {

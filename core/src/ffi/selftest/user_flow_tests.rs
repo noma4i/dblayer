@@ -10,7 +10,7 @@ use crate::ffi::ReadEnd;
 use crate::test_wait::yield_until;
 
 fn first_named(rows: &Rows, name: &str) -> Option<i64> {
-    rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| super::super::lifecycle_tests::named(row, name))).map(|seen| seen.revision)
+    rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| crate::ffi::tests::lifecycle_tests::named(row, name))).map(|seen| seen.revision)
 }
 
 /// P-APP-18: one row of the user gives one name in every place that shows it, whether it comes with an answer of the server or with an event.

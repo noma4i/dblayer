@@ -23,9 +23,11 @@ test_modules = set(re.findall(r"#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\
 
 def in_test_module(path):
     parts = path.relative_to(source).parts
+    if parts == ("ffi", "tape.rs") or "tests" in parts[:-1] or any(part.endswith(("_tests", "_tests.rs")) for part in parts):
+        return True
     return parts[0] in test_modules or (len(parts) == 1 and parts[0][:-3] in test_modules)
 
-files = [path for path in source.rglob("*.rs") if not path.name.endswith("_tests.rs") and not in_test_module(path)]
+files = [path for path in source.rglob("*.rs") if not in_test_module(path)]
 contents = {path: path.read_text() for path in files}
 findings = []
 
@@ -87,7 +89,7 @@ non_effects = {
     ("db/upload_round.rs", "self", "send"),
     ("sync/send/flush.rs", "self", "send"),
     ("sync/resume.rs", "inner.resume", "abort"),
-    ("ffi/transport.rs", "self", "send"),
+    ("ffi/transport/mod.rs", "self", "send"),
     ("transport/encrypted/cable/wire.rs", "socket", "send"),
 }
 
@@ -415,7 +417,7 @@ for path in files:
         if suppressed and f"z29:{relative}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (spawn lives in task.rs): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
-before_open = {"ffi/encrypted.rs", "ffi/transport.rs"}
+before_open = {"ffi/encrypted.rs", "ffi/transport/mod.rs"}
 for path in files:
     relative = str(path.relative_to(source))
     if not (relative.startswith(("ffi/", "owners/", "store/", "runtime/"))) or relative in before_open:
@@ -425,24 +427,30 @@ for path in files:
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
+test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig"}
 for path in sorted(root.rglob("*.rs")):
     if any(part.startswith(("target", ".")) for part in path.relative_to(root).parts):
         continue
+    parts = path.relative_to(root).parts
     lines = path.read_text().splitlines()
+    if path.name.endswith("_tests.rs") and "src" in parts and not any(part in ("tests", "spec", "selftest", "check") for part in parts[:-1]):
+        findings.append(f"Z32 a test file lives in the tests/ directory of its code directory: {path.relative_to(root)}")
     for number, line in enumerate(lines, 1):
         match = test_decl.match(line)
         if not match:
             continue
         name = match.group(3)
-        if name == "tests":
-            findings.append(f"Z32 a test module is named <name>_tests: {path.relative_to(root)}:{number}")
-        if not name.endswith("_tests"):
-            continue
-        above = [l.strip() for l in lines[max(0, number - 3):number - 1]]
-        if above and above[-1].startswith("#[path"):
-            above = above[:-1]
-        if not above or above[-1] != "#[cfg(test)]" or (len(above) > 1 and above[-2] == "#[cfg(test)]"):
-            findings.append(f"Z32 a test module is declared as #[cfg(test)] (+ #[path]) + mod <name>_tests: {path.relative_to(root)}:{number}")
+        previous = lines[number - 2].strip() if number > 1 else ""
+        if previous.startswith("#[path"):
+            findings.append(f"Z32 a module is declared without #[path]: {path.relative_to(root)}:{number}")
+        if path.name not in ("mod.rs", "lib.rs", "main.rs") and "src" in parts:
+            findings.append(f"Z32 a module with children is a directory with mod.rs: {path.relative_to(root)}:{number}")
+        if previous == "#[cfg(test)]" and name != "tests" and name not in test_directories:
+            findings.append(f"Z32 #[cfg(test)] stands only on mod tests; and on a whole test directory: {path.relative_to(root)}:{number}")
+        if name == "tests" and not (path.parent / "tests" / "mod.rs").exists():
+            findings.append(f"Z32 mod tests; needs tests/mod.rs: {path.relative_to(root)}:{number}")
+        if name == "tests" and previous != "#[cfg(test)]":
+            findings.append(f"Z32 mod tests; is declared under #[cfg(test)]: {path.relative_to(root)}:{number}")
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")

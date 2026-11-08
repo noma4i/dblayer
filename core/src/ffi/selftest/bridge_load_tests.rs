@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, Switchable, World};
-use crate::ffi::lifecycle_tests::named;
+use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{Database, DbError, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadValue, WireOperationOutcome};
 use crate::test_wait::yield_until;
@@ -62,7 +62,7 @@ impl crate::ffi::FakeTransport for CancelledLoadTransport {
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
@@ -76,7 +76,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();

@@ -27,22 +27,6 @@ pub use snapshots::{DbSnapshots, Snapshots};
 pub use window_io::{WindowCodec, WindowIo, WindowReader};
 
 #[cfg(test)]
-mod delivery_io_tests;
-#[cfg(test)]
-mod diff_tests;
-#[cfg(test)]
-mod delivery_work_tests;
-#[cfg(test)]
-mod feed_codec_tests;
-#[cfg(test)]
-mod feed_codec_changed_by_tests;
-#[cfg(test)]
-mod feed_io_tests;
+mod tests;
 #[cfg(test)]
 mod rig;
-#[cfg(test)]
-mod schema_io_tests;
-#[cfg(test)]
-mod window_io_tests;
-#[cfg(test)]
-mod windows_pin_tests;

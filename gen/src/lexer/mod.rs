@@ -182,4 +182,4 @@ fn lex_number(cursor: &mut Cursor, line: usize, column: usize) -> Result<Kind, P
 }
 
 #[cfg(test)]
-mod lex_tests;
+mod tests;

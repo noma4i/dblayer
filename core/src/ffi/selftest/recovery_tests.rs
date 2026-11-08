@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::rig_tests::{bound, Gate};
-use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::sealed_errors_tests::moment_spec;
-use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
+use crate::ffi::tests::encrypted_tests::ThroughServer;
+use crate::ffi::tests::sealed_errors_tests::moment_spec;
+use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest};
-use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
+use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::owners::write::upload::UploadFile;
 
 fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
@@ -53,7 +53,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("upload.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -92,7 +92,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         let gate = Gate::new();
         let put_ended = Arc::new(tokio::sync::Notify::new());
         let directory = tempfile::tempdir().unwrap();
-        let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
             let document = format!("mutation {name} {{ {root} {{ id }} }}");
             rig.server.register(&document);
