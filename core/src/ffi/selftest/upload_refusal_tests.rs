@@ -59,6 +59,46 @@ async fn xfer_prop_failure_carries_step_error() {
     database.close_now();
 }
 
+/// xfer_prop_step_root_declared (P-XFER-40, D-148): the root of the answer of a step is the `root:` of `uploads do`, else the root of the registered operation.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_step_root_declared() {
+    let nested = r#"{"data":{"a":{"b":{"url":"https://storage.test/nested","headers":{},"signedId":"signed"}}}}"#;
+    let flat = r#"{"data":{"a":{"url":"https://storage.test/flat","headers":{},"signedId":"signed"}}}"#;
+    let missing = r#"{"data":{"a":{"b":{"signedId":"signed"}}}}"#;
+    let operations = [("CreateBlob", "mutation CreateBlob { a { url signedId } }"), CREATE_MOMENT];
+    for (root, answer, put, failure) in [
+        (Some("a.b"), nested, Some("https://storage.test/nested"), None),
+        (None, flat, Some("https://storage.test/flat"), None),
+        (Some("a.b"), missing, None, Some("CreateBlob: a.b has no url")),
+    ] {
+        let stand = Stand::new().declaring_root(root);
+        let database = stand.open(None, &operations).await;
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("video");
+        std::fs::write(&source, b"video").unwrap();
+        stand.script.data("CreateBlob", answer);
+        stand.script.data("CreateMoment", ROW);
+
+        let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap();
+        let id = sent.optimistic_value.unwrap().id;
+        match (put, failure) {
+            (Some(url), _) => {
+                yield_until("the file went to the url of the answer", || stand.puts.seen.lock().unwrap().iter().any(|seen| seen.url == url)).await;
+            }
+            (None, Some(text)) => {
+                until_state(&database, &id, WireSyncState::Failed).await;
+                let failed = row(&database, &id).await.unwrap();
+                let upload = &failed.uploads.iter().find(|entry| entry.action == "upload_clip").unwrap().upload;
+                let message = upload.error.as_ref().expect("the failed upload shows its error").message.clone();
+                assert!(message.contains(text), "{message}");
+                assert!(stand.puts.seen.lock().unwrap().is_empty());
+            }
+            _ => unreachable!(),
+        }
+        database.close_now();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
     let stand = Stand::new();

@@ -22,7 +22,7 @@ use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_respo
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
-pub(super) const BLOB: &str = r#"{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#;
+pub(super) const BLOB: &str = r#"{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#;
 
 const STEPS: [(&str, &str); 6] = [
     ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
@@ -197,10 +197,30 @@ pub(super) struct Stand {
     pub(super) rig: SessionRig,
     pub(super) script: Arc<Script>,
     pub(super) puts: Arc<Puts>,
+    root: Option<Option<&'static str>>,
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default() } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None } }
+
+    pub(super) fn declaring_root(mut self, root: Option<&'static str>) -> Self {
+        self.root = Some(root);
+        self
+    }
+
+    fn models(&self) -> String {
+        let text = include_str!("upload_wrapper_models.json");
+        let Some(root) = self.root else { return text.to_string() };
+        let mut models: Value = serde_json::from_str(text).unwrap();
+        for model in models.as_array_mut().unwrap() {
+            let Some(create) = model["upload_steps"].get_mut("create_blob") else { continue };
+            match root {
+                Some(root) => create["root_path"] = json!(root),
+                None => { create.as_object_mut().unwrap().remove("root_path"); }
+            }
+        }
+        models.to_string()
+    }
 
     pub(super) async fn open(&self, path: Option<&Path>, operations: &[(&str, &str)]) -> Arc<Database> { self.open_with(path, operations, None).await }
 
@@ -208,7 +228,7 @@ impl Stand {
 
     pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
         let restored = self.rig.credentials.inner.value().is_some();
-        let models = include_str!("upload_wrapper_models.json").to_string();
+        let models = self.models();
         let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
         let database = match clock {

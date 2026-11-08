@@ -47,6 +47,17 @@ impl Held {
     fn text(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
 }
 
+struct Answered {
+    data: Value,
+    label: String,
+}
+
+impl Answered {
+    fn text(&self, field: &str) -> Result<String, TransportError> {
+        self.data.get(field).and_then(Value::as_str).map(str::to_string).ok_or_else(|| TransportError::Decode(format!("{} has no {field}", self.label)))
+    }
+}
+
 pub(crate) struct UploadCodec {
     operations: UploadOperations,
     lookup: OperationLookup,
@@ -56,12 +67,14 @@ pub(crate) struct UploadCodec {
 impl UploadCodec {
     pub fn new(operations: UploadOperations, lookup: OperationLookup, config: UploadConfig) -> Self { Self { operations, lookup, config } }
 
-    async fn graphql(&self, link: &Link, (name, step): (&str, UploadStage), (operation, item): (u64, &str), variables: Value) -> Result<Value, TransportError> {
-        let (document, root) = (self.lookup)(name).ok_or_else(|| rejected(&format!("operation {name} is not registered")))?;
+    async fn graphql(&self, link: &Link, (name, step): (&str, UploadStage), (operation, item): (u64, &str), variables: Value) -> Result<Answered, TransportError> {
+        let (document, registered) = (self.lookup)(name).ok_or_else(|| rejected(&format!("operation {name} is not registered")))?;
+        let root = self.operations.root_of(name).map_or(registered, str::to_string);
         let key = RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step };
         let request = GraphQLRequest { owner: (step != UploadStage::Abort).then(|| key.clone()), ..GraphQLRequest::new(&document, name, variables) };
         let response = link.mutate(request, &key).await?;
-        answered(name, &root, response)
+        let data = answered(name, &root, response)?;
+        Ok(Answered { data, label: format!("{name}: {root}") })
     }
 
     async fn put(&self, link: &Link, (url, headers): (&str, Vec<(String, String)>), file: PutFile, (step, identity): (TransferStep, (u64, &str))) -> Result<Option<String>, TransportError> {
@@ -86,8 +99,8 @@ impl UploadCodec {
         let checksum = md5_base64(Path::new(&source.path), &CancelToken::new()).await.map_err(unreadable)?;
         let variables = json!({"filename": body.name, "contentType": body.mime, "byteSize": total, "checksum": checksum});
         let data = self.graphql(link, (&create.name, UploadStage::Create), (operation, &body.item), variables).await?;
-        let (url, signed) = (text(&data, "url")?, text(&data, "signedId")?);
-        let headers = parse_headers(data.get("headers")).map_err(TransportError::Decode)?;
+        let (url, signed) = (data.text("url")?, data.text("signedId")?);
+        let headers = parse_headers(data.data.get("headers")).map_err(TransportError::Decode)?;
         let file = PutFile { path: source.path.clone(), offset: 0, length: total };
         self.put(link, (&url, headers), file, (TransferStep::Put, (operation, &body.item))).await?;
         Ok(StepDone { upload_id: Some(Held::Blob { signed_id: signed }.text()), etag: None })
@@ -101,14 +114,14 @@ impl UploadCodec {
                 let checksum = md5_base64(Path::new(&source.path), &CancelToken::new()).await.map_err(unreadable)?;
                 let variables = json!({"filename": body.name, "contentType": body.mime, "byteSize": total, "checksum": checksum});
                 let data = self.graphql(link, (&steps.initiate.name, UploadStage::Init), (operation, &body.item), variables).await?;
-                let created = Held::Multipart { key: text(&data, "key")?, id: text(&data, "uploadId")? };
+                let created = Held::Multipart { key: data.text("key")?, id: data.text("uploadId")? };
                 link.minted(created.text());
                 (created.clone(), Some(created.text()))
             }
         };
         let Held::Multipart { key: blob_key, id } = blob else { return Err(rejected("the upload id is not a multipart id")) };
         let data = self.graphql(link, (&steps.presign.name, UploadStage::Presign), (operation, &body.item), json!({"key": blob_key, "uploadId": id, "partNumbers": [part]})).await?;
-        let target = data.get("parts").and_then(Value::as_array).into_iter().flatten().find(|item| item.get("partNumber").and_then(Value::as_u64) == Some(u64::from(part))).ok_or_else(|| TransportError::Decode("the presign answer misses the part".into()))?;
+        let target = data.data.get("parts").and_then(Value::as_array).into_iter().flatten().find(|item| item.get("partNumber").and_then(Value::as_u64) == Some(u64::from(part))).ok_or_else(|| TransportError::Decode("the presign answer misses the part".into()))?;
         let url = target.get("url").and_then(Value::as_str).ok_or_else(|| TransportError::Decode("the presign answer has no url".into()))?;
         let headers = parse_headers(target.get("headers")).map_err(TransportError::Decode)?;
         let (offset, length) = part_range(total, self.config.part_size, part);
@@ -121,10 +134,6 @@ impl UploadCodec {
 fn rejected(message: &str) -> TransportError { TransportError::Graphql { messages: vec![message.to_string()], extensions: None } }
 
 fn unreadable(error: std::io::Error) -> TransportError { TransportError::Graphql { messages: vec![format!("source file is unreadable: {error}")], extensions: None } }
-
-fn text(data: &Value, field: &str) -> Result<String, TransportError> {
-    data.get(field).and_then(Value::as_str).map(str::to_string).ok_or_else(|| TransportError::Decode(format!("the answer has no {field}")))
-}
 
 /// The root of a committed answer, or the error of the server as a transport error: the class of the error decides a repeat.
 fn answered(name: &str, root: &str, response: Response) -> Result<Value, TransportError> {
@@ -154,7 +163,7 @@ impl StepCodec for UploadCodec {
                 let steps = self.operations.multipart.as_ref().ok_or_else(|| rejected("the upload has no multipart operations"))?;
                 let listed: Vec<Value> = parts.iter().map(|(number, etag)| json!({"partNumber": number, "etag": etag})).collect();
                 let data = self.graphql(link, (&steps.complete.name, UploadStage::Complete), (0, transfer_key), json!({"key": key, "uploadId": id, "parts": listed})).await?;
-                Ok(Some(text(&data, "signedId")?))
+                Ok(Some(data.text("signedId")?))
             }
         }
     }

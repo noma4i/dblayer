@@ -11,7 +11,7 @@ pub(super) const OPERATIONS: [(&str, &str); 3] = [
 ];
 pub(super) const ASSETS: &str = r#"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a1","clientKey":"key-1","size":2,"position":0}]}}}"#;
 
-pub(super) fn blob(index: usize) -> String { format!(r#"{{"data":{{"createBlob":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{index}","blobId":"b{index}"}}}}}}"#) }
+pub(super) fn blob(index: usize) -> String { format!(r#"{{"data":{{"blobCreate":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{index}","blobId":"b{index}"}}}}}}"#) }
 
 pub(super) fn items(directory: &std::path::Path) -> Vec<WireUploadItem> {
     (0..3).map(|index| {

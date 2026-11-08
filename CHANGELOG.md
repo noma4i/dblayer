@@ -147,6 +147,7 @@
 
 ### Fixed
 
+- An upload step reads its answer from the `root:` of `uploads do` and names the root when a field is missing.
 - A stream that outlives `close` no longer holds the database.
 - A cable socket that opens after the core gave up on it is closed.
 - An upload abort that the network interrupts is sent again when the network returns.

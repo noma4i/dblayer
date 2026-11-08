@@ -18,7 +18,7 @@ const ALBUM_OPERATIONS: [(&str, &str); 3] = [
 ];
 const REFUSED_BLOB: &str = r#"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#;
 
-fn blob(index: usize) -> String { format!(r#"{{"data":{{"createBlob":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{index}","blobId":"b{index}"}}}}}}"#) }
+fn blob(index: usize) -> String { format!(r#"{{"data":{{"blobCreate":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{index}","blobId":"b{index}"}}}}}}"#) }
 
 fn assets(rows: &[(&str, &str, usize)]) -> String {
     let listed: Vec<String> = rows.iter().map(|(id, key, position)| format!(r#"{{"id":"{id}","clientKey":"{key}","size":2,"position":{position}}}"#)).collect();
