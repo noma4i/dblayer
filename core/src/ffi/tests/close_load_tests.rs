@@ -15,7 +15,7 @@ async fn life_prop_close_under_load() {
             let epoch = database.session_epoch();
             let streams: Vec<_> = (0..3).map(|_| database.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Notice"}"#) })).collect();
             let refreshing: Vec<_> = streams.iter().cloned().map(|stream| tokio::spawn(async move { let _ = stream.refresh().await; })).collect();
-            let pulling: Vec<_> = streams.iter().cloned().map(|stream| tokio::spawn(async move { while let Some(value) = stream.pull().await { if matches!(value, ReadValue::Ended { .. }) { break; } } })).collect();
+            let pulling: Vec<_> = streams.iter().cloned().map(|stream| tokio::spawn(async move { while let Some(value) = stream.pull_next().await { if matches!(value, ReadValue::Ended { .. }) { break; } } })).collect();
             within_secs(15, database.close_database()).await.unwrap_or_else(|error| panic!("lane {lane} cycle {cycle}: {error:?}"));
             for task in refreshing.into_iter().chain(pulling) { within_secs(15, task).await.unwrap(); }
         }

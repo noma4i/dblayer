@@ -92,6 +92,6 @@ async fn life_closed_stream_releases_store() {
     assert!(matches!(stream.refresh().await, Err(DbError::Closed { .. })));
     assert!(matches!(stream.load_more().await, Err(DbError::Closed { .. })));
     let mut last = None;
-    while let Some(value) = stream.pull().await { last = Some(value); }
+    while let Some(value) = stream.pull_next().await { last = Some(value); }
     assert!(matches!(last, Some(ReadValue::Ended { cause: ReadEnd::Closed })));
 }

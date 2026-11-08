@@ -205,12 +205,12 @@ impl super::Life {
     }
 
     /// The next value of a stream: the answer comes with the next value of the journal.
-    pub fn pull(&self, stream: StreamId) -> Waiter<PullAnswer> {
+    pub fn pull(&self, stream: StreamId, reader: u64) -> Waiter<PullAnswer> {
         let waiter = self.wiring.pulls.register(Epoch::MAX);
         if self.is_shut() || self.published().closed {
             self.wiring.pulls.settle(waiter.id(), PullAnswer::Done);
         } else {
-            self.wiring.to_deliveries(DeliveryInput::Pull { stream, outcome: waiter.id() });
+            self.wiring.to_deliveries(DeliveryInput::Pull { stream, outcome: waiter.id(), reader });
         }
         waiter
     }

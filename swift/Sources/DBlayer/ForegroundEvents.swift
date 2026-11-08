@@ -26,7 +26,7 @@ enum ForegroundEvents {
     #endif
   }
 
-  /// Calls `deliver` once at registration when the app is active, then on every notification. The returned stop returns after the queued first call ran or was dropped: no `deliver` runs after it.
+  /// Calls `deliver` once at registration when the app is active, then on every notification. The core drops a delivery of a registration that ended, so the stop needs no wait.
   static func observe(name: Notification.Name? = ForegroundEvents.systemName, active: @escaping @Sendable () -> Bool = { ForegroundEvents.systemActive }, _ deliver: @escaping @Sendable () -> Void) -> @Sendable () -> Void {
     guard let name else { return {} }
     let initial = DispatchWorkItem { if active() { deliver() } }
@@ -35,7 +35,6 @@ enum ForegroundEvents {
     return {
       initial.cancel()
       NotificationCenter.default.removeObserver(token)
-      if !Thread.isMainThread { initial.wait() }
     }
   }
 }

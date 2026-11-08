@@ -87,6 +87,27 @@ class UploadWorkTest {
         }
     }
 
+    /** boundary_round_orders (P-BND-08, D-176): the core issues one round id per process, so a late `EndJob` of round A leaves the pending job and the network of round B. */
+    @Test
+    fun aLateEndJobOfAnOldRoundLeavesThePendingJobAndTheNetworkOfTheNewRound() = bounded {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val scheduler = context.getSystemService(JobScheduler::class.java)
+        val database = openSigned(Config(null, null), modelsJSON, MockTransport())
+        try {
+            val rounds = UploadRounds(context, database, UploadScheduler { _, _ -> null })
+            UploadNetwork.started(8u, null)
+            UploadJobService.schedule(context, RoundJob(2uL, 8u, 1uL))
+            rounds.endJob(7u)
+            assertEquals(8u, roundJobOf(scheduler.getPendingJob(UploadJobService.JOB_ID)!!.extras).roundId)
+            refused { OkHttpTransport().send(probeRequest("http://127.0.0.1:1/graphql", "{}").copy(purpose = NetworkPurpose.TRANSFER)) }
+            rounds.endJob(8u)
+            assertNull(scheduler.getPendingJob(UploadJobService.JOB_ID))
+        } finally {
+            UploadNetwork.ended(8u)
+            closeForCleanup()
+        }
+    }
+
     private suspend fun refused(block: suspend () -> RawOutcome) {
         val outcome = block()
         assertTrue("expected a failed outcome, got $outcome", outcome.rawFailure() != null)

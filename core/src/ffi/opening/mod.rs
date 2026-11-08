@@ -134,10 +134,10 @@ impl Database {
 
     async fn start_observers(&self, observers: Option<Arc<dyn PlatformObserver>>) -> Result<(), DbError> {
         let Some(observers) = observers else { return Ok(()) };
-        if self.db.observers().set(Arc::new(ObserverStop(observers.clone()))).is_err() {
+        let sink = super::OnlineSink::of_life(&self.life);
+        if self.db.observers().set(Arc::new(ObserverStop(observers.clone(), sink.registrations()))).is_err() {
             return Err(DbError::Invalid { detail: "the observers are already set".into() });
         }
-        let sink = super::OnlineSink::of_life(&self.life);
         super::database::blocking(move || { observers.start(sink); Ok(()) }).await
     }
 }

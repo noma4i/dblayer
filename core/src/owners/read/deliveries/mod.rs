@@ -237,7 +237,8 @@ pub enum DeliveryInput {
     ModelInvalid { stream: StreamId },
     TransferStatus { stream: StreamId, blob: BlobStatus },
     RetryState { stream: StreamId, retry: RetryStatus },
-    Pull { stream: StreamId, outcome: OutcomeId },
+    /// `reader` is the number `claim_reader` gave. The first pull of an unclaimed stream takes it, a pull of another reader answers `Invalid`.
+    Pull { stream: StreamId, outcome: OutcomeId, reader: u64 },
     PullCancelled { stream: StreamId, outcome: OutcomeId },
     Census { reply: ReplyId },
     Resync { stream: StreamId },
@@ -503,9 +504,9 @@ impl StateOwner for Deliveries {
             }
             DeliveryInput::Release { stream, reader } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
             DeliveryInput::SinkClosed { stream } => on(state, stream, &mut out, |machine, fx| machine.sink_closed(fx)),
-            DeliveryInput::Pull { stream, outcome } => {
+            DeliveryInput::Pull { stream, outcome, reader } => {
                 if state.streams.contains_key(&stream) {
-                    on(state, stream, &mut out, |machine, fx| machine.pull(outcome, fx));
+                    on(state, stream, &mut out, |machine, fx| machine.pull(outcome, reader, fx));
                 } else {
                     out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Answer { outcome, answer: PullAnswer::Done } }));
                 }

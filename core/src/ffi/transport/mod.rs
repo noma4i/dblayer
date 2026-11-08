@@ -57,14 +57,35 @@ enum SignalTarget {
     Connectivity(Arc<core::Connectivity>),
 }
 
+/// The foreground registrations of one sink: a delivery counts only while its token is live, and revoking waits for the deliveries in flight.
+#[derive(Default)]
+pub(crate) struct Registrations { live: std::sync::RwLock<std::collections::BTreeSet<u64>>, next: std::sync::atomic::AtomicU64 }
+
+impl Registrations {
+    fn issue(&self) -> u64 {
+        let token = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(token);
+        token
+    }
+
+    fn revoke(&self, token: u64) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&token); }
+
+    pub(crate) fn revoke_all(&self) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); }
+
+    fn deliver(&self, token: u64, send: impl FnOnce()) {
+        let live = self.live.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if live.contains(&token) { send(); }
+    }
+}
+
 /// The inputs of the platform signals: each OS value reaches the core as one input, without dedup.
 #[derive(uniffi::Object)]
-pub struct OnlineSink { target: SignalTarget }
+pub struct OnlineSink { target: SignalTarget, registrations: Arc<Registrations> }
 
 impl OnlineSink {
-    pub(crate) fn of_life(life: &Arc<crate::owners::life::Life>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Life(Arc::downgrade(life)) }) }
+    pub(crate) fn of_life(life: &Arc<crate::owners::life::Life>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Life(Arc::downgrade(life)), registrations: Arc::default() }) }
 
-    pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity) }) }
+    pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity), registrations: Arc::default() }) }
 
     /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
     pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
@@ -81,6 +102,8 @@ impl OnlineSink {
             crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
         }
     }
+
+    pub(crate) fn registrations(&self) -> Arc<Registrations> { self.registrations.clone() }
 
     fn life(&self) -> Option<Arc<crate::owners::life::Life>> {
         match &self.target {
@@ -99,8 +122,15 @@ impl OnlineSink {
         if let Some(life) = self.life() { drop(life.set_power_saving(saving)); }
     }
 
-    pub fn enter_foreground(&self) {
-        if let Some(life) = self.life() { drop(life.foreground()); }
+    /// Registers one foreground observer and returns its token: every `enter_foreground` of the observer carries it.
+    pub fn register_foreground(&self) -> u64 { self.registrations.issue() }
+
+    /// Ends the registration of `token`: a delivery with it is dropped from now on.
+    pub fn unregister_foreground(&self, token: u64) { self.registrations.revoke(token); }
+
+    /// One return to the foreground. Dropped when the registration of `token` ended, also after `stop` of the observers was asked.
+    pub fn enter_foreground(&self, token: u64) {
+        if let Some(life) = self.life() { self.registrations.deliver(token, || drop(life.foreground())); }
     }
 }
 
@@ -113,7 +143,7 @@ pub trait PlatformObserver: Send + Sync {
     fn stop(&self);
 }
 
-pub(super) struct ObserverStop(pub Arc<dyn PlatformObserver>);
+pub(super) struct ObserverStop(pub Arc<dyn PlatformObserver>, pub Arc<Registrations>);
 
 impl Drop for ObserverStop {
     fn drop(&mut self) { crate::lock::assert_no_library_lock("ObserverStop::drop"); }
@@ -121,6 +151,7 @@ impl Drop for ObserverStop {
 
 impl crate::owners::life::ObserverPort for ObserverStop {
     fn stop(&self, done: crate::owners::life::StopDone) {
+        self.1.revoke_all();
         self.0.stop();
         done.finish();
     }

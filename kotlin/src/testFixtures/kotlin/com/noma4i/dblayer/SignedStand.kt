@@ -136,7 +136,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
 
 /** The same session stand on a clock that only `advance` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations. */
 @OptIn(DBlayerTestingApi::class)
-suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true): TestClock {
+suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null): TestClock {
     val server = SealedServer(answer = bridgeToTransport(transport, withUploadSteps(operations, modelsJson)))
     transport.cable = EncryptedCablePeer(server)
     try {
@@ -146,7 +146,7 @@ suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, oper
     }
     val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
-    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = if (onlineAtOpen) null else SilentPlatform())
+    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = observers ?: if (onlineAtOpen) null else SilentPlatform())
     if (onlineAtOpen) DBlayer.database.setOnline(true)
     DBlayer.database.registerOperations(withSessionProfile(operations))
     signIn(DBlayer.database, restored)

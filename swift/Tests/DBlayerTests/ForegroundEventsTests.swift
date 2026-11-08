@@ -10,34 +10,68 @@ private final class Delivered: @unchecked Sendable {
   func add() { lock.withLock { value += 1 } }
 }
 
+private final class FakeOs: PlatformObserver, @unchecked Sendable {
+  let name: Notification.Name
+  private let lock = NSLock()
+  private var held: (sink: OnlineSink, registration: UInt64)?
+  private var stopObserving: @Sendable () -> Void = {}
+  init(name: Notification.Name) { self.name = name }
+
+  var registration: (sink: OnlineSink, registration: UInt64)? { lock.withLock { held } }
+
+  func start(sink: OnlineSink) {
+    sink.setOnline(online: true)
+    let registration = sink.registerForeground()
+    let stop = ForegroundEvents.observe(name: name, active: { false }) { sink.enterForeground(token: registration) }
+    lock.withLock { held = (sink, registration); stopObserving = stop }
+  }
+
+  func stop() {
+    let stop = lock.withLock { stopObserving }
+    stop()
+  }
+}
+
 extension BridgeProbeTests {
   static let reloadingOnForeground = modelsJSON.replacingOccurrences(of: #""name":"feed","updates""#, with: #""name":"feed","refresh_on_foreground":true,"updates""#)
+  static let feedOperations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#
 
   @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aForegroundNotificationReachesTheCoreUntilTheRegistrationEnds() async throws {
-    let name = Notification.Name("DBlayerTestForeground")
-    let transport = MockTransport()
-    for _ in 0..<8 { transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request")) }
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: Self.reloadingOnForeground, transport: transport)
-    try await DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+  private func openFailedFeed(_ transport: MockTransport, _ os: FakeOs) async throws -> ListReader<Moment> {
+    for _ in 0..<16 { transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request")) }
+    try await openSignedClocked(modelsJson: Self.reloadingOnForeground, transport: transport, operations: Self.feedOperations, observers: os)
     let list = ListReader(Moment.feed)
     await eventually("the relation fails") { list.snapshot.phase == .failed }
-    let sink = try DB.database.onlineSink()
-    let delivered = Delivered()
-    let stop = ForegroundEvents.observe(name: name, active: { false }) {
-      delivered.add()
-      sink.enterForeground()
-    }
+    return list
+  }
+
+  /// boundary_observer_stop_orders (P-BND-09, D-177), delivery before stop: a notification reaches the core with the token the core issued.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aDeliveryOfTheLiveRegistrationReloadsTheFailedWindow() async throws {
+    let transport = MockTransport()
+    let os = FakeOs(name: Notification.Name("DBlayerTestForeground"))
+    _ = try await openFailedFeed(transport, os)
     let before = transport.calls.count
 
-    NotificationCenter.default.post(name: name, object: nil)
-    #expect(delivered.count == 1)
-    await eventually("the delivered notification reloads the failed window") { transport.calls.count > before }
+    NotificationCenter.default.post(name: os.name, object: nil)
+    await eventually("the delivery reloads the failed window") { transport.calls.count > before }
+  }
 
-    stop()
-    NotificationCenter.default.post(name: name, object: nil)
-    #expect(delivered.count == 1)
+  /// boundary_observer_stop_orders, stop before delivery: after `close` acknowledged the stop, a notification and a delivery with the old token reach nothing.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func noDeliveryReachesTheCoreAfterTheStopOfTheObserversIsAcknowledged() async throws {
+    let transport = MockTransport()
+    let os = FakeOs(name: Notification.Name("DBlayerTestForegroundStop"))
+    _ = try await openFailedFeed(transport, os)
+    let held = try #require(os.registration)
+    let before = transport.calls.count
+
+    try await DB.close()
+    NotificationCenter.default.post(name: os.name, object: nil)
+    held.sink.enterForeground(token: held.registration)
+    #expect(transport.calls.count == before)
   }
 
   @Test(.timeLimit(.minutes(1)))

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C8: the generated bindings are changed only by the repository generator, and no hand file owns ABI state next to them.
+# C8: the generated bindings are changed only by the repository generator, no hand file owns ABI state next to them, and a committed dblayer.swift equals the generation of the current core (--bindings <fresh> <committed>).
 set -uo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 name="check_artifact_provenance.sh"
@@ -22,6 +22,12 @@ check() {
   return "$failed"
 }
 
+same_bindings() {
+  local fresh="$1" committed="$2"
+  [ -f "$fresh" ] && [ -f "$committed" ] || { echo "$name: a bindings file is missing: $fresh $committed" >&2; return 1; }
+  [ "$(shasum -a 256 < "$fresh")" = "$(shasum -a 256 < "$committed")" ] || { echo "$name: the committed dblayer.swift differs from the generation of the current core" >&2; return 1; }
+}
+
 selftest() {
   dir=""
   dir="$(mktemp -d)" || exit 1
@@ -37,7 +43,16 @@ selftest() {
   mkdir -p "$dir/swift/Sources/DBlayer"
   : > "$dir/swift/Sources/DBlayer/RustFutureHandle.swift"
   check "$dir" 2> /dev/null && { echo "$name: selftest: a hand ABI file passed" >&2; exit 1; }
+  printf 'let a = 1\n' > "$dir/fresh.swift"
+  cp "$dir/fresh.swift" "$dir/committed.swift"
+  same_bindings "$dir/fresh.swift" "$dir/committed.swift" 2> /dev/null || { echo "$name: selftest: equal bindings failed" >&2; exit 1; }
+  printf 'let a = 2\n' > "$dir/committed.swift"
+  same_bindings "$dir/fresh.swift" "$dir/committed.swift" 2> /dev/null && { echo "$name: selftest: stale committed bindings passed" >&2; exit 1; }
   echo "$name: selftest ok"
 }
 
-if [ "${1:-}" = "--selftest" ]; then selftest; else check "$root"; fi
+case "${1:-}" in
+  --selftest) selftest ;;
+  --bindings) same_bindings "${2:?--bindings needs the freshly generated dblayer.swift}" "${3:?--bindings needs the committed dblayer.swift}" ;;
+  *) check "$root" ;;
+esac

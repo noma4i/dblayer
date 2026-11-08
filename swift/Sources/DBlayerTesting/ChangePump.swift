@@ -18,7 +18,11 @@ public enum ChangePump {
       }
       let reader = database.subscribeValues(epoch: epoch, request: .changes)
       var cause: ReadEnd?
-      while let value = await reader.pull() {
+      guard let claim = try? await reader.claimReader() else {
+        ended = epoch
+        continue
+      }
+      while let value = await reader.pull(reader: claim) {
         if case let .ended(reason) = value { cause = reason }
         announce.finish()
         TestPulse.shared.pulse()

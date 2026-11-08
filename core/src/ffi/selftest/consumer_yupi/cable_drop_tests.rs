@@ -26,7 +26,7 @@ async fn consumer_yupi_cable_drop_resubscribes_and_reloads_only_observed() {
     stand.database.set_online(false).unwrap();
     stand.database.set_online(true).unwrap();
     let token = stand.next_subscription().await;
-    while !matches!(crate::ffi::selftest::rig_tests::bound(events.pull()).await, Some(crate::ffi::ReadValue::Gap)) {}
+    while !matches!(crate::ffi::selftest::rig_tests::bound(events.pull_next()).await, Some(crate::ffi::ReadValue::Gap)) {}
     stand.settle().await;
     assert_eq!((stand.requests_with("userMoments", "userId", "u1"), stand.requests_with("userMoments", "userId", "u2")), (2, 1));
 

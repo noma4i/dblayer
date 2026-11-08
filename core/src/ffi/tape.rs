@@ -200,7 +200,7 @@ impl Database {
         let counted = crate::runtime::counted(Some(self.life.launch()), async move {
             let mut seq = 0;
             loop {
-                match pulled.pull().await {
+                match pulled.pull_next().await {
                     Some(value) => {
                         if halt.load(std::sync::atomic::Ordering::SeqCst) { return; }
                         seq += 1;

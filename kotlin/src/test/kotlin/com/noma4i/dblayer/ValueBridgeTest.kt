@@ -9,6 +9,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -237,6 +239,32 @@ class ValueBridgeTest {
         }
     }
 
+    /** boundary_reader_orders, boundary_reader_early_exit (D-175): a stream has one reader, the second collector is invalid, and a collector that takes one value releases the interest while the stream is held. */
+    @Test
+    fun aSecondReaderIsInvalidAndAReaderThatTakesOneValueFreesTheStream() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val held = AccountScope.current().stream(User.profile)
+            val reading = screen.launch { held.values.collect { } }
+            eventually("the first reader holds the stream") { DBlayer.subscriptionCensus().observedQueries == 1uL }
+            val refused = held.values.first()
+            assertTrue("a second reader must end with Invalid: $refused", refused is ReadValue.Ended && refused.cause == ReadEnd.Invalid)
+            assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
+            reading.cancel()
+            reading.join()
+
+            val early = AccountScope.current().stream(User.profile)
+            assertTrue(early.values.take(1).toList().single() is ReadValue.Snapshot)
+            eventually("the reader that left releases the interest while the stream is held") { DBlayer.subscriptionCensus().observedQueries == 0uL }
+            early.close()
+        } finally {
+            screen.cancel()
+            closeForCleanup()
+        }
+    }
+
     /** B07: a change of one row decodes one row, and the subscriptions are the readers. */
     @Test
     fun aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders() = bounded {
@@ -296,12 +324,13 @@ class ValueBridgeTest {
             signIn("A")
             val reader = DBlayer.database.subscribeValues(DBlayer.database.sessionEpoch(), ReadRequest.Entity("Nope", "x", ReadFetch.NEVER))
             val ended = ArrayList<ReadEnd>()
+            val claim = reader.claimReader()
             while (true) {
-                val value = reader.pull() ?: break
+                val value = reader.pull(claim) ?: break
                 if (value is ReadValue.Ended) ended.add(value.cause)
             }
             assertEquals(listOf(ReadEnd.Invalid), ended)
-            assertEquals("a stream that ended gives nothing more", null, reader.pull())
+            assertEquals("a stream that ended gives nothing more", null, reader.pull(claim))
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
             closeForCleanup()

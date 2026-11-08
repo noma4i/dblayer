@@ -2794,7 +2794,15 @@ public func FfiConverterTypeLoadRequest_lower(_ value: LoadRequest) -> UInt64 {
  */
 public protocol OnlineSinkProtocol: AnyObject, Sendable {
     
-    func enterForeground() 
+    /**
+     * One return to the foreground. Dropped when the registration of `token` ended, also after `stop` of the observers was asked.
+     */
+    func enterForeground(token: UInt64) 
+    
+    /**
+     * Registers one foreground observer and returns its token: every `enter_foreground` of the observer carries it.
+     */
+    func registerForeground()  -> UInt64
     
     /**
      * Returns once the owners heard the change.
@@ -2802,6 +2810,11 @@ public protocol OnlineSinkProtocol: AnyObject, Sendable {
     func setOnline(online: Bool) 
     
     func setPowerSaving(saving: Bool) 
+    
+    /**
+     * Ends the registration of `token`: a delivery with it is dropped from now on.
+     */
+    func unregisterForeground(token: UInt64) 
     
 }
 /**
@@ -2860,12 +2873,28 @@ open class OnlineSink: OnlineSinkProtocol, @unchecked Sendable {
     
 
     
-open func enterForeground()  {try! rustCall() {
+    /**
+     * One return to the foreground. Dropped when the registration of `token` ended, also after `stop` of the observers was asked.
+     */
+open func enterForeground(token: UInt64)  {try! rustCall() {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_onlinesink_enter_foreground(
-            self.uniffiCloneHandle(),uniffiCallStatus
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Registers one foreground observer and returns its token: every `enter_foreground` of the observer carries it.
+     */
+open func registerForeground() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_onlinesink_register_foreground(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2885,6 +2914,18 @@ open func setPowerSaving(saving: Bool)  {try! rustCall() {
     uniffi_dblayer_fn_method_onlinesink_set_power_saving(
             self.uniffiCloneHandle(),
         FfiConverterBool.lower(saving),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Ends the registration of `token`: a delivery with it is dropped from now on.
+     */
+open func unregisterForeground(token: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_onlinesink_unregister_foreground(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
     )
 }
 }
@@ -3664,7 +3705,7 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
     /**
      * The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
      */
-    func pull() async  -> ReadValue?
+    func pull(reader: UInt64) async  -> ReadValue?
     
     /**
      * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
@@ -3796,12 +3837,12 @@ open func loadMore()async throws  -> LoadMoreResult  {
     /**
      * The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
      */
-open func pull()async  -> ReadValue?  {
+open func pull(reader: UInt64)async  -> ReadValue?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_readstream_pull(
-                        self.uniffiCloneHandle()
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(reader)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -12982,7 +13023,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_readstream_load_more() != 27067) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_readstream_pull() != 28209) {
+    if (uniffi_dblayer_checksum_method_readstream_pull() != 31191) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_refresh() != 22747) {
@@ -13000,13 +13041,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_byteprogress_sent() != 10526) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_onlinesink_enter_foreground() != 61611) {
+    if (uniffi_dblayer_checksum_method_onlinesink_enter_foreground() != 792) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_onlinesink_register_foreground() != 52205) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_onlinesink_set_online() != 43843) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_onlinesink_set_power_saving() != 13530) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_onlinesink_unregister_foreground() != 27431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_platformobserver_start() != 29279) {

@@ -32,7 +32,7 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
             return@flow
         }
         try {
-            while (true) emit(reader.pull() ?: break)
+            while (true) emit(reader.pull(claim) ?: break)
         } catch (cancelled: CancellationException) {
             if (!currentCoroutineContext().isActive) withContext(NonCancellable) { reader.cancel() }
             throw cancelled

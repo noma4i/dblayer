@@ -531,7 +531,7 @@ impl DatabaseSut {
         let launch = database.life_handle().launch();
         let task = crate::task::spawn(crate::runtime::counted(Some(launch), async move {
             let mut seq = 0;
-            while let Some(value) = pulling.pull().await {
+            while let Some(value) = pulling.pull_next().await {
                 seq += 1;
                 kept.lock().unwrap().push_back((seq, value));
                 heard.0.fetch_add(1, Ordering::SeqCst);

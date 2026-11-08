@@ -149,7 +149,7 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
 
 async fn status_until(stream: &crate::ffi::ReadStream, what: &str, wanted: impl Fn(&crate::ffi::ReadValue) -> bool) -> crate::ffi::ReadValue {
     loop {
-        let value = crate::test_wait::within(stream.pull()).await.unwrap_or_else(|| panic!("the stream ended before {what}"));
+        let value = crate::test_wait::within(stream.pull_next()).await.unwrap_or_else(|| panic!("the stream ended before {what}"));
         if wanted(&value) { return value; }
     }
 }

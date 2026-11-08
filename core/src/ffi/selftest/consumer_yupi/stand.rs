@@ -122,7 +122,7 @@ impl Stand {
     /// The events of the model: its stream opens the change feed of the app.
     pub(super) async fn events(&self, model: &str) -> (Arc<ReadStream>, String) {
         let stream = self.database.subscribe_values(self.database.session_epoch(), ReadRequest::Events { model: model.into() });
-        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+        assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready)));
         let token = self.next_subscription().await;
         (stream, token)
     }

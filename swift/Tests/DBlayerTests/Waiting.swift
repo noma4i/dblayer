@@ -179,13 +179,13 @@ func parallel<Item: Sendable, Result: Sendable>(_ items: [Item], limit: Int, _ w
 }
 
 func drained(_ what: String, _ reader: ReadStream, timeout: Duration = hangGuard, sourceLocation: SourceLocation = #_sourceLocation) async throws -> [ReadValue] {
+  try await drained(what, lease: ReaderLease(reader), reader, timeout: timeout, sourceLocation: sourceLocation)
+}
+
+func drained(_ what: String, lease: ReaderLease, _ reader: ReadStream, timeout: Duration = hangGuard, sourceLocation: SourceLocation = #_sourceLocation) async throws -> [ReadValue] {
   let values = Collected()
   let finished = await finishes(what, timeout: timeout, sourceLocation: sourceLocation) {
-    do {
-      while let value = try await reader.pull() { values.append(value) }
-    } catch {
-      Issue.record("\(what) failed: \(error)", sourceLocation: sourceLocation)
-    }
+    while let value = await lease.next() { values.append(value) }
   }
   if !finished { await reader.cancel() }
   return values.all

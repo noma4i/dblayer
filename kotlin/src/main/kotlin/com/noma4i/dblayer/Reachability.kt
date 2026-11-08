@@ -27,9 +27,10 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
     private var stops: List<() -> Unit> = emptyList()
 
     override fun start(sink: OnlineSink) {
+        val registration = sink.registerForeground()
         stops = listOf(
             Reachability.observe(context) { sink.setOnline(it) },
-            ForegroundEvents.observe { sink.enterForeground() },
+            ForegroundEvents.observe { sink.enterForeground(registration) },
             PowerSaving.observe(context) { sink.setPowerSaving(it) },
         )
     }

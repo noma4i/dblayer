@@ -241,8 +241,8 @@ impl Delivery {
         fx.push(self.new_read(self.revision));
     }
 
-    pub(super) fn pull(&mut self, outcome: OutcomeId, fx: &mut Vec<Emit>) {
-        if self.waiting.is_some() {
+    pub(super) fn pull(&mut self, outcome: OutcomeId, reader: u64, fx: &mut Vec<Emit>) {
+        if !self.claim(reader) || self.waiting.is_some() {
             fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Invalid }));
             return;
         }

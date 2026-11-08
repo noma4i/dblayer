@@ -41,6 +41,7 @@ def fixture(base, touch=None, manifest=True):
     for name in ("check_docs.sh", "check_zoo.sh"):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
     shutil.copy2(source / "scripts/check_legacy.sh", repo / "scripts/check_legacy.sh")
+    shutil.copy2(source / "scripts/check_artifact_provenance.sh", repo / "scripts/check_artifact_provenance.sh")
     (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
 echo "check_sequences $*" >> "$TEST_EVENTS"
 S="${STUB_SHA:-$RELEASE_SOURCE_SHA}"; R="${STUB_RUN:-$RELEASE_RUN_ID}"

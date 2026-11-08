@@ -250,7 +250,7 @@ if [ "$publish" = --publish ]; then
     git show HEAD:Package.swift > "$tmp/committed-Package.swift"
     git show HEAD:swift/Sources/DBlayer/dblayer.swift > "$tmp/committed-dblayer.swift"
     cmp -s "$tmp/Package.swift" "$tmp/committed-Package.swift" || fail 'existing Package.swift differs from the release package'
-    cmp -s "$stage/dblayer.swift" "$tmp/committed-dblayer.swift" || fail 'existing dblayer.swift differs from the release package'
+    bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/committed-dblayer.swift" || fail 'existing dblayer.swift differs from the release package'
   else
     fail "unexpected Package release $version commit state"
   fi
@@ -259,7 +259,7 @@ if [ "$publish" = --publish ]; then
     [ "$(git rev-parse "$version^{commit}")" = "$package_sha" ] || fail "tag $version already points elsewhere"
   }
   git show "$version":swift/Sources/DBlayer/dblayer.swift > "$tmp/tagged-dblayer.swift"
-  cmp -s "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
+  bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
 else
   printf '%s\n' 'Package.swift to be written:'
   cat "$tmp/Package.swift"

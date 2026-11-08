@@ -96,7 +96,7 @@ async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::
 async fn feed_events() -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, String) {
     let (database, transport) = feed_database().await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     (database, transport, stream, token)
 }
@@ -104,7 +104,7 @@ async fn feed_events() -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, S
 async fn feed_listen_events(listen: serde_json::Value) -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, String) {
     let (database, transport) = feed_database_with_listen(Some(listen)).await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     (database, transport, stream, token)
 }
@@ -113,7 +113,7 @@ async fn feed_listen_events(listen: serde_json::Value) -> (Arc<Database>, Arc<Fe
 async fn feed_payload_lands() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
-    let value = bound(stream.pull()).await.unwrap();
+    let value = bound(stream.pull_next()).await.unwrap();
     assert!(matches!(value, ReadValue::Event { position: 1, area, kind, id, before: None, after: Some(row) } if area == "MESSAGE" && kind == "UPDATED" && id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
     bound(database.close_database()).await.unwrap();
 }
@@ -123,7 +123,7 @@ async fn feed_payload_incomplete() {
     let (database, transport, stream, token) = feed_events().await;
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1"}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
@@ -132,9 +132,9 @@ async fn feed_payload_incomplete() {
 async fn feed_payload_removes() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":2,"lists":["PRIMARY"]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { after: Some(_), .. })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { after: Some(_), .. })));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"DELETED","recordId":"c1"}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
     bound(database.close_database()).await.unwrap();
 }
 
@@ -142,7 +142,7 @@ async fn feed_payload_removes() {
 async fn feed_changes_not_list() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":{}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
@@ -151,7 +151,7 @@ async fn feed_changes_not_list() {
 async fn feed_changes_entry_incomplete() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","recordId":"c1"},{"topic":"MESSAGE","action":"UPDATED","recordId":"c2","chat":{"id":"c2","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 1, id, .. }) if id == "c2"));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 1, id, .. }) if id == "c2"));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
@@ -161,12 +161,12 @@ async fn feed_changes_area_fanout() {
     let (database, transport) = feed_database_with_models(None, true, false).await;
     let chat = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
     let room = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Room".into() });
-    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Ready)));
-    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(chat.pull_next()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(room.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":[]}}]}}})));
     for stream in [&chat, &room] {
-        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 1, id, after: Some(row), .. }) if id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
+        assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 1, id, after: Some(row), .. }) if id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
     }
     bound(database.close_database()).await.unwrap();
 }
@@ -175,7 +175,7 @@ async fn feed_changes_area_fanout() {
 async fn feed_event_without_id() {
     let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item"})).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"title":"missing","revision":1,"lists":[]}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
@@ -185,7 +185,7 @@ async fn feed_composite_id() {
     let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
     for (revision, title) in [(1, "first"), (2, "second")] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","entry":"e1","title":title,"revision":revision,"lists":[]}}}})));
-        assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::tests::lifecycle_tests::named(&row, title)));
+        assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::tests::lifecycle_tests::named(&row, title)));
     }
     bound(database.close_database()).await.unwrap();
 }
@@ -194,7 +194,7 @@ async fn feed_composite_id() {
 async fn feed_composite_id_missing() {
     let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","title":"missing","revision":1,"lists":[]}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
@@ -204,12 +204,12 @@ async fn feed_live_event_memory_no_id() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item"});
     let (database, transport) = feed_database_with_models(Some(listen), false, true).await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     let mut ids = Vec::new();
     for title in ["first", "second"] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"title":title,"revision":1,"lists":[]}}}})));
-        let Some(ReadValue::Event { id, after: Some(row), .. }) = bound(stream.pull()).await else { panic!("the event was not delivered") };
+        let Some(ReadValue::Event { id, after: Some(row), .. }) = bound(stream.pull_next()).await else { panic!("the event was not delivered") };
         assert!(crate::ffi::tests::lifecycle_tests::named(&row, title));
         assert_eq!(uuid::Uuid::parse_str(&id).unwrap().get_version_num(), 4);
         ids.push(id);
@@ -223,10 +223,10 @@ async fn feed_apply_values() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "set":{"typing":true}, "apply":{"effect":"upsert"}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.is_empty()));
+    assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.is_empty()));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","title":"after","revision":1,"lists":[]}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, .. }) if id == "c1"));
-    assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Delta { edits, .. }) if matches!(crate::ffi::RowEdit::carried(&edits).as_slice(), [row] if row.cells.contains(&Cell::Bool { value: true }))));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, .. }) if id == "c1"));
+    assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Delta { edits, .. }) if matches!(crate::ffi::RowEdit::carried(&edits).as_slice(), [row] if row.cells.contains(&Cell::Bool { value: true }))));
     bound(database.close_database()).await.unwrap();
 }
 
@@ -235,22 +235,22 @@ async fn feed_apply_values_on_delete() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "set":{"typing":true}, "deleted_by":"deleted", "apply":{"effect":"upsert"}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","deleted":true}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, after: None, .. }) if id == "c1"));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, after: None, .. }) if id == "c1"));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":1,"lists":[]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { after: Some(_), .. })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { after: Some(_), .. })));
     let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
+    assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
     bound(database.close_database()).await.unwrap();
 }
 
 async fn feed_conditional_delete(listen: serde_json::Value, field: &'static str, value: serde_json::Value) {
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":1,"lists":[]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { after: Some(_), .. })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { after: Some(_), .. })));
     let mut item = json!({"id":"c1"});
     item[field] = value;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":item}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
     bound(database.close_database()).await.unwrap();
 }
 
@@ -269,12 +269,12 @@ async fn feed_apply_ephemeral() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":1,"lists":[]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 1, .. })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 1, .. })));
     let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
+    assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":true}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
-    let Some(ReadValue::Delta { edits, .. }) = bound(entity.pull()).await else { panic!("the overlay did not reach the row") };
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
+    let Some(ReadValue::Delta { edits, .. }) = bound(entity.pull_next()).await else { panic!("the overlay did not reach the row") };
     let rows = crate::ffi::RowEdit::carried(&edits);
     assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::tests::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
@@ -286,14 +286,14 @@ async fn feed_apply_ephemeral_missing() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1"}}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
 
 
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
-    let value = bound(stream.pull()).await.unwrap();
+    let value = bound(stream.pull_next()).await.unwrap();
     let (revision, rows) = match value {
         ReadValue::Snapshot { revision, rows, .. } => (revision, rows),
         ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)),
@@ -305,7 +305,7 @@ async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
 }
 
 async fn assert_quiet(db: &Database, streams: &[&Arc<ReadStream>]) {
-    let mut pulls: Vec<_> = streams.iter().map(|stream| Box::pin(stream.pull())).collect();
+    let mut pulls: Vec<_> = streams.iter().map(|stream| Box::pin(stream.pull_next())).collect();
     for pull in &mut pulls {
         assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     }
@@ -329,7 +329,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let (first_list, first_entity) = (next_rows(&rig, &list, 2).await, next_rows(&rig, &entity, 2).await);
     assert!(first_list >= floor && first_entity >= floor, "the landing value is not older than its commit: {first_list} {first_entity} floor {floor}");
-    assert!(matches!(bound(count.pull()).await, Some(ReadValue::Count { count: 1, .. })));
+    assert!(matches!(bound(count.pull_next()).await, Some(ReadValue::Count { count: 1, .. })));
     let hold = rig.world.hold_then("MomentReact", Fault::Answer(json!({"data":{"momentReact":{"__typename":"Moment","id":"m1","visitsCount":4,"reacted":true}}})));
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":3,"reacted":true}).to_string(), "{}".into())).await.unwrap();
     hold.entered().await;
@@ -359,11 +359,11 @@ async fn dlv_prop_one_change_every_view_feed() {
     let epoch = db.session_epoch();
     bound(db.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
     let events = db.subscribe_values(epoch, ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(events.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
     let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#) });
-    for stream in [&list, &entity, &count] { bound(stream.pull()).await.unwrap(); }
+    for stream in [&list, &entity, &count] { bound(stream.pull_next()).await.unwrap(); }
     loop {
         let notified = transport.opened.notified();
         if transport.token.lock().unwrap().is_some() { break; }
@@ -374,7 +374,7 @@ async fn dlv_prop_one_change_every_view_feed() {
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
-        let value = bound(stream.pull()).await.unwrap();
+        let value = bound(stream.pull_next()).await.unwrap();
         let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert_eq!(rows.len(), 1);
         assert!(crate::ffi::tests::lifecycle_tests::named(&rows[0], "after"));
@@ -396,13 +396,13 @@ async fn dlv_prop_one_change_every_view_related_row() {
     let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never });
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });
-    for stream in [&list, &entity, &count] { bound(stream.pull()).await.unwrap(); }
+    for stream in [&list, &entity, &count] { bound(stream.pull_next()).await.unwrap(); }
     let hold = rig.world.hold_then("ProfileUpdate", Fault::Business);
     let receipt = bound(db.act(epoch, "User".into(), "u2".into(), "update".into(), json!({"name":"Robert"}).to_string(), json!({"name":"Robert"}).to_string())).await.unwrap();
     hold.entered().await;
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
-        let value = bound(stream.pull()).await.unwrap();
+        let value = bound(stream.pull_next()).await.unwrap();
         let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert_eq!(rows.len(), 1);
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Robert".to_string()));
@@ -413,7 +413,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
     let mut restored = Vec::new();
     for stream in [&list, &entity] {
-        let value = bound(stream.pull()).await.unwrap();
+        let value = bound(stream.pull_next()).await.unwrap();
         let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Bob".to_string()));
         restored.push(revision);
@@ -429,14 +429,14 @@ async fn dlv_live_overlay_position() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"t","revision":1,"lists":[]}}]}}})));
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Event { after: Some(_), .. })));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { after: Some(_), .. })));
     let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    let ReadValue::Snapshot { revision, rows, .. } = bound(entity.pull()).await.unwrap() else { panic!("the first value is a Snapshot") };
+    let ReadValue::Snapshot { revision, rows, .. } = bound(entity.pull_next()).await.unwrap() else { panic!("the first value is a Snapshot") };
     assert!(rows[0].cells.contains(&Cell::Bool { value: false }));
     for (active, shown) in [(true, true), (false, false)] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":active}}}})));
         let value = loop {
-            match bound(entity.pull()).await.unwrap() {
+            match bound(entity.pull_next()).await.unwrap() {
                 ReadValue::Delta { revision: seen, edits, .. } => { assert_eq!(seen, revision, "an overlay-only batch keeps the revision"); break crate::ffi::RowEdit::carried(&edits); }
                 ReadValue::State { .. } => {}
                 other => panic!("an overlay-only batch is a Delta: {other:?}"),
@@ -476,13 +476,13 @@ async fn feed_prop_event_area_kind() {
     ];
     let (database, transport) = feed_database_changed_by(World::new("server", "A", true), None, None, false, changes).await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     let chat = json!({"id":"c1","title":"after","revision":2,"lists":[]});
     let forms = [("PAYLOAD", "UPDATED"), ("PAYLOAD", "GONE"), ("NODE", "CREATED"), ("NAMED", "UPDATED"), ("OBSERVED", "TOUCHED")];
     for (area, kind) in forms {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":area,"action":kind,"recordId":"c1","chat":chat}]}}})));
-        let Some(ReadValue::Event { area: seen_area, kind: seen_kind, id, .. }) = bound(stream.pull()).await else { panic!("no event for {area} {kind}") };
+        let Some(ReadValue::Event { area: seen_area, kind: seen_kind, id, .. }) = bound(stream.pull_next()).await else { panic!("no event for {area} {kind}") };
         assert_eq!((seen_area.as_str(), seen_kind.as_str(), id.as_str()), (area, kind, "c1"));
     }
     bound(database.close_database()).await.unwrap();
@@ -496,17 +496,17 @@ async fn feed_payload_two_models_one_entry() {
     let (database, transport) = feed_database_changed_by(world.clone(), None, Some("room"), false, changes).await;
     let chat = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
     let room = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Room".into() });
-    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Ready)));
-    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(chat.pull_next()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(room.pull_next()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
     let requests = world.count("ChatNode");
     let entry = json!({"topic":"MESSAGE","action":"CREATED","recordId":"m1","chat":{"__typename":"Chat","id":"1","title":"chat","revision":5,"lists":[]},"room":{"__typename":"Room","id":"r1","title":"room","revision":1,"lists":[]}});
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[entry]}}})));
-    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "1" && crate::ffi::tests::lifecycle_tests::named(&row, "chat")));
-    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "r1" && crate::ffi::tests::lifecycle_tests::named(&row, "room")));
+    assert!(matches!(bound(chat.pull_next()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "1" && crate::ffi::tests::lifecycle_tests::named(&row, "chat")));
+    assert!(matches!(bound(room.pull_next()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "r1" && crate::ffi::tests::lifecycle_tests::named(&row, "room")));
     for (model, id, title) in [("Chat", "1", "chat"), ("Room", "r1", "room")] {
         let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: model.into(), id: id.into(), fetch: ReadFetch::Never });
-        assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && crate::ffi::tests::lifecycle_tests::named(&rows[0], title)), "{model} row");
+        assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && crate::ffi::tests::lifecycle_tests::named(&rows[0], title)), "{model} row");
     }
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     assert_eq!(world.count("ChatNode"), requests);

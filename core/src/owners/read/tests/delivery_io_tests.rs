@@ -97,7 +97,7 @@ fn open(rig: &mut Rig, revision: i64) {
 
 fn pull(rig: &mut Rig) -> Waiter<PullAnswer> {
     let waiter = rig.answers.register(EPOCH);
-    rig.det.post(rig.owner, EpochStamp::Control, DeliveryInput::Pull { stream: STREAM, outcome: waiter.id() });
+    rig.det.post(rig.owner, EpochStamp::Control, DeliveryInput::Pull { stream: STREAM, outcome: waiter.id(), reader: 1 });
     waiter
 }
 

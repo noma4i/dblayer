@@ -38,7 +38,7 @@ impl Rig {
 
 fn pulls(count: usize) -> Vec<d::DeliveryInput> {
     let answers = Outcomes::<PullAnswer>::new();
-    (0..count).map(|_| d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() }).collect()
+    (0..count).map(|_| d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id(), reader: 1 }).collect()
 }
 
 fn rows_script(rev: &[(i64, &[&str])]) -> Vec<d::DeliveryInput> {
@@ -424,7 +424,7 @@ fn dlv_prop_delta_order() {
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced, total: None } });
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
         if next(2) == 0 {
-            det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() });
+            det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id(), reader: 1 });
         }
         det.run_until_quiet(1_000).expect("quiet");
         for entry in take(&log) {

@@ -22,7 +22,7 @@ fn reactions(stand: &Stand, row: &WireRow) -> Vec<(String, String)> {
 
 async fn shown_at(stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64) {
     loop {
-        let value = bound(stream.pull()).await.expect("the stream is open");
+        let value = bound(stream.pull_next()).await.expect("the stream is open");
         let at = match value {
             ReadValue::Snapshot { revision, rows, .. } => { *shown = rows; revision }
             ReadValue::Delta { revision, edits, .. } => { RowEdit::replay(shown, &edits); revision }

@@ -50,11 +50,14 @@ impl Drop for RoundJobsSlot {
     fn drop(&mut self) { crate::lock::assert_no_library_lock("RoundJobsSlot drop"); }
 }
 
+/// One counter of the process: a round id is never issued twice, so an `EndJob` of an old round names no other round.
+static NEXT_ROUND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
 impl RoundJobs for RoundJobsSlot {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch) {
         if let Some(sink) = self.0.get() {
             crate::lock::assert_no_library_lock("RoundJobsSink::schedule_job");
-            sink.schedule_job(RoundJob { request_id, round_id: request_id as RoundId, epoch });
+            sink.schedule_job(RoundJob { request_id, round_id: NEXT_ROUND.fetch_add(1, std::sync::atomic::Ordering::SeqCst), epoch });
         }
     }
 

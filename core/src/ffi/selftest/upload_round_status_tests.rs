@@ -9,10 +9,11 @@ use crate::test_wait::settled;
 struct Jobs {
     asked: Mutex<Vec<(u64, u64)>>,
     ended: Mutex<Vec<u32>>,
+    rounds: Mutex<Vec<u32>>,
 }
 
 impl RoundJobsSink for Jobs {
-    fn schedule_job(&self, job: crate::ffi::RoundJob) { self.asked.lock().unwrap().push((job.request_id, job.epoch)); }
+    fn schedule_job(&self, job: crate::ffi::RoundJob) { self.asked.lock().unwrap().push((job.request_id, job.epoch)); self.rounds.lock().unwrap().push(job.round_id); }
     fn end_job(&self, round_id: u32) { self.ended.lock().unwrap().push(round_id); }
 }
 
@@ -39,8 +40,12 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     database.round_refused(request, round_epoch, crate::ffi::RoundRefusal::JobRefused, String::new());
 
     settled(&database, "the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("while the app was not visible"))).await;
-    crate::ffi::OnlineSink::of_life(&database.life).enter_foreground();
+    let sink = crate::ffi::OnlineSink::of_life(&database.life);
+    let registration = sink.register_foreground();
+    sink.enter_foreground(registration);
     settled(&database, "the next round clears the refusal", || refusal(&rows).is_none()).await;
+    let rounds = jobs.rounds.lock().unwrap().clone();
+    assert!(rounds.len() >= 2 && rounds.iter().collect::<std::collections::BTreeSet<_>>().len() == rounds.len(), "every round asked in the process has its own id: {rounds:?}");
     database.close_now();
 }
 

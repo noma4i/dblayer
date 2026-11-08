@@ -16,7 +16,7 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     world.answer_with("ChatList", json!({"data":{"chats":[{"id":"c1","title":"one","revision":1,"lists":["PRIMARY"]}]}}));
     let (database, _transport) = feed_database_in(world.clone(), Some(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"upsert"}})), false, false).await;
     let events = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(events.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
     let rows = Arc::new(Rows::default());
     let query = json!({"model":"Chat","relation":"list","params":{"list":"PRIMARY"},"refreshOnConnect":true}).to_string();
     drop(database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
@@ -26,7 +26,7 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     database.set_online(true).unwrap();
     settled(&database, "the list loaded again", || list_requests(&world) >= 2).await;
     loop {
-        if matches!(bound(events.pull()).await, Some(ReadValue::Gap)) { break; }
+        if matches!(bound(events.pull_next()).await, Some(ReadValue::Gap)) { break; }
     }
     let life = database.life_handle();
     crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();

@@ -23,9 +23,10 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
   init(path: any PathSource = SystemPath()) { self.path = path }
 
   func start(sink: OnlineSink) {
+    let registration = sink.registerForeground()
     stops = [
       path.observe { sink.setOnline(online: $0) },
-      ForegroundEvents.observe { sink.enterForeground() },
+      ForegroundEvents.observe { sink.enterForeground(token: registration) },
       PowerSaving.observe { sink.setPowerSaving(saving: $0) }
     ]
   }

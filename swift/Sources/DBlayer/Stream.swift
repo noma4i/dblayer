@@ -42,9 +42,9 @@ final class ReaderLease: @unchecked Sendable {
         return .ended(cause: .invalid)
       }
     }
-    guard case .held = claim else { return nil }
+    guard case let .held(id) = claim else { return nil }
     let reader = reader
-    return await withTaskCancellationHandler { await reader.pull() } onCancel: { Task { await reader.cancel() } }
+    return await withTaskCancellationHandler { await reader.pull(reader: id) } onCancel: { Task { await reader.cancel() } }
   }
 
   deinit {

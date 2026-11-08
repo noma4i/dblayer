@@ -86,7 +86,7 @@ impl Work {
         self.feed(DeliveryInput::Committed(notice.for_deliveries()));
     }
 
-    fn pull(&mut self, stream: StreamId) { self.feed(DeliveryInput::Pull { stream, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() }); }
+    fn pull(&mut self, stream: StreamId) { self.feed(DeliveryInput::Pull { stream, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id(), reader: 1 }); }
 }
 
 fn entity_view(index: usize, row: &str) -> View {

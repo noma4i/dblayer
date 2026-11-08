@@ -193,6 +193,28 @@ extension BridgeProbeTests {
     #expect(try await DB.subscriptionCensus().observedQueries == 0)
   }
 
+  /// boundary_reader_orders, boundary_reader_early_exit (D-175): a stream has one reader, the second iterator is invalid, and a reader that leaves early lets the stream end while the `ValueStream` is held.
+  @MainActor
+  @Test
+  func aSecondReaderIsInvalidAndAReaderThatLeavesEarlyFreesTheStream() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let stream = try DB.account().stream(User.profile)
+    var first = stream.makeAsyncIterator()
+    #expect(await first.next() != nil)
+    var second = stream.makeAsyncIterator()
+    guard case .ended(.invalid)? = await second.next() else { Issue.record("a second reader must end with .invalid"); return }
+    #expect(await second.next() == nil)
+    #expect(try await DB.subscriptionCensus().observedQueries == 1, "the refusal of the second reader leaves the stream to the first")
+
+    do {
+      var early = try DB.account().stream(User.profile).makeAsyncIterator()
+      #expect(await early.next() != nil)
+    }
+    await stream.cancel()
+    #expect(try await DB.subscriptionCensus().observedQueries == 0)
+  }
+
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
   @MainActor
   @Test
@@ -244,12 +266,13 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let database = try DB.database
     let reader = database.subscribeValues(epoch: database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never))
-    let ended: [ReadEnd] = try await drained("the stream that cannot connect to end", reader).compactMap {
+    let lease = ReaderLease(reader)
+    let ended: [ReadEnd] = try await drained("the stream that cannot connect to end", lease: lease, reader).compactMap {
       if case let .ended(cause) = $0 { return cause }
       return nil
     }
     #expect(ended == [.invalid])
-    #expect(try await reader.pull() == nil, "a stream that ended gives nothing more")
+    #expect(await lease.next() == nil, "a stream that ended gives nothing more")
     #expect(try await DB.subscriptionCensus().subscriptions == 0)
   }
 

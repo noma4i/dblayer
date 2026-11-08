@@ -11,7 +11,7 @@ async fn consumer_yupi_message_reaction_lands_the_payload_row() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1", "message": message("m1", "c1", "reacted")}));
-    let event = bound(events.pull()).await;
+    let event = bound(events.pull_next()).await;
     assert!(matches!(&event, Some(ReadValue::Event { area, id, after: Some(row), .. }) if area == "REACTION" && id == "m1" && crate::ffi::tests::lifecycle_tests::named(row, "reacted")), "{event:?}");
     stand.settle().await;
     assert_eq!(stand.requests("MessageNode"), 0);
@@ -22,7 +22,7 @@ async fn consumer_yupi_message_reaction_without_payload_is_lost() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1"}));
-    let value = bound(events.pull()).await;
+    let value = bound(events.pull_next()).await;
     assert!(matches!(value, Some(ReadValue::Lost { first: 1, last: 1 })), "{value:?}");
     stand.settle().await;
     assert_eq!(stand.requests("MessageNode"), 0);
@@ -40,7 +40,7 @@ async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "mo1"}));
     settled(&stand, "the watched node is read again", || stand.requests("MomentNode") == asked + 1).await;
     settled(&stand, "the reread row shows the reaction", || stand.int_of(&rows, "Moment", "mo1", "visitsCount") == Some(5)).await;
-    let event = bound(events.pull()).await;
+    let event = bound(events.pull_next()).await;
     assert!(matches!(&event, Some(ReadValue::Event { area, kind, id, .. }) if area == "REACTION" && kind == "UPDATED" && id == "mo1"), "{event:?}");
 }
 

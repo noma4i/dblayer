@@ -14,7 +14,7 @@ async fn open() -> Arc<Database> {
     Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default(), TestClock::new(1_000_000)).await.unwrap()
 }
 
-async fn next(stream: &ReadStream) -> ReadValue { crate::test_wait::within(stream.pull()).await.expect("a value") }
+async fn next(stream: &ReadStream) -> ReadValue { crate::test_wait::within(stream.pull_next()).await.expect("a value") }
 
 fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_str()).collect() }
 
@@ -22,12 +22,12 @@ fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_s
 async fn dropping_a_pending_pull_cancels_the_stream() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
-    assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Snapshot { .. })));
-    let mut pending = Box::pin(stream.pull());
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Snapshot { .. })));
+    let mut pending = Box::pin(stream.pull_next());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
     drop(pending);
-    assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
-    assert!(crate::test_wait::within(stream.pull()).await.is_none());
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
+    assert!(crate::test_wait::within(stream.pull_next()).await.is_none());
     crate::test_wait::within(db.close_database()).await.unwrap();
 }
 
@@ -42,16 +42,16 @@ async fn dlv_prop_first_value_off_caller() {
     let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let reads = db.db.read_threads.lock().unwrap().clone();
     assert!(!reads.contains(&caller), "SQLite reads must run outside the caller");
-    assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Snapshot { .. })));
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Snapshot { .. })));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dlv_prop_resync_ends() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
-    let ReadValue::Snapshot { revision, .. } = crate::test_wait::within(stream.pull()).await.unwrap() else { panic!("first snapshot") };
+    let ReadValue::Snapshot { revision, .. } = crate::test_wait::within(stream.pull_next()).await.unwrap() else { panic!("first snapshot") };
     stream.resync();
-    let ReadValue::Snapshot { revision: recovered, .. } = crate::test_wait::within(stream.pull()).await.unwrap() else { panic!("resync snapshot") };
+    let ReadValue::Snapshot { revision: recovered, .. } = crate::test_wait::within(stream.pull_next()).await.unwrap() else { panic!("resync snapshot") };
     assert!(recovered >= revision);
 }
 
@@ -73,27 +73,27 @@ async fn dlv_prop_one_change_every_view() {
     let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Note".into(), id: "n1".into(), fetch: super::ReadFetch::Never });
-    for stream in [&list, &count, &entity] { crate::test_wait::within(stream.pull()).await.unwrap(); }
+    for stream in [&list, &count, &entity] { crate::test_wait::within(stream.pull_next()).await.unwrap(); }
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
-    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
-    let count_revision = match crate::test_wait::within(count.pull()).await.unwrap() { ReadValue::Count { revision, count: 1, .. } => revision, value => panic!("{value:?}") };
-    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull_next()).await.unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
+    let count_revision = match crate::test_wait::within(count.pull_next()).await.unwrap() { ReadValue::Count { revision, count: 1, .. } => revision, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull_next()).await.unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
     assert_eq!((count_revision, entity_revision), (list_revision, list_revision));
     let first_revision = list_revision;
     db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"two"}"#.into(), "{}".into()).await.unwrap();
-    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
-    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull_next()).await.unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull_next()).await.unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
     assert!(list_revision > first_revision);
     assert_eq!(entity_revision, list_revision);
-    let mut pull = Box::pin(count.pull());
+    let mut pull = Box::pin(count.pull_next());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     let life = db.life_handle();
     crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
     let count_revision = match crate::test_wait::within(pull).await.unwrap() { ReadValue::Count { revision, count: 0, .. } => revision, value => panic!("{value:?}") };
-    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
-    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull_next()).await.unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull_next()).await.unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
     assert_eq!((list_revision, entity_revision), (count_revision, count_revision));
 }
 
@@ -184,7 +184,7 @@ async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     db.close_database().await.unwrap();
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
-    assert!(crate::test_wait::within(stream.pull()).await.is_none());
+    assert!(crate::test_wait::within(stream.pull_next()).await.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -242,16 +242,16 @@ async fn a_pull_after_a_second_commit_takes_one_delta_at_the_last_revision() {
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
     let query = || ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) };
     let (early, late) = (db.subscribe_values(epoch, query()), db.subscribe_values(epoch, query()));
-    for stream in [&early, &late] { assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Snapshot { .. }))); }
+    for stream in [&early, &late] { assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Snapshot { .. }))); }
 
     db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"two"}"#.into(), "{}".into()).await.unwrap();
     settled(&db).await;
-    let (base, first) = delta_at(crate::test_wait::within(early.pull()).await.unwrap());
+    let (base, first) = delta_at(crate::test_wait::within(early.pull_next()).await.unwrap());
     db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"three"}"#.into(), "{}".into()).await.unwrap();
     settled(&db).await;
 
-    let (late_base, last) = delta_at(crate::test_wait::within(late.pull()).await.unwrap());
-    let (early_base, early_last) = delta_at(crate::test_wait::within(early.pull()).await.unwrap());
+    let (late_base, last) = delta_at(crate::test_wait::within(late.pull_next()).await.unwrap());
+    let (early_base, early_last) = delta_at(crate::test_wait::within(early.pull_next()).await.unwrap());
     assert!(first > base && last > first, "two commits, two revisions: {base} {first} {last}");
     assert_eq!((late_base, early_base, early_last), (base, first, last), "the late reader skipped the revision between: one delta from the snapshot to the last commit");
 }

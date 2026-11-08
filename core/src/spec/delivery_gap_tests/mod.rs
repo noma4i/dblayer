@@ -230,7 +230,7 @@ impl Twin {
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
                 if !self.reference.waiting() { self.pull = Some(outcome); }
-                self.call(d::DeliveryInput::Pull { stream, outcome });
+                self.call(d::DeliveryInput::Pull { stream, outcome, reader: 1 });
             }
             Input::PullCancelled { matched } => {
                 let outcome = if *matched { self.pull.unwrap() } else { crate::runtime::OutcomeId::from_raw(u64::MAX) };

@@ -59,7 +59,7 @@ impl crate::ffi::FakeTransport for CableTransport {
 async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end() {
     let (database, transport, _) = chat_events().await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    let opened = bound(stream.pull()).await;
+    let opened = bound(stream.pull_next()).await;
     assert!(matches!(opened, Some(ReadValue::Ready)), "the first value is the open source: {opened:?}");
 
     let watcher = Reader::open();
@@ -69,14 +69,14 @@ async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_the
     let seen = |reader: &Reader| reader.deliveries().iter().map(|delivery| match &delivery.value { ReadValue::Event { .. } => 1, ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum::<u64>();
     settled(&database, "the events reached a reading stream", || seen(&watcher) == 400).await;
     let mut burst = Vec::new();
-    while seen_values(&burst) < 400 { burst.push(bound(stream.pull()).await.expect("the stream is open")); }
+    while seen_values(&burst) < 400 { burst.push(bound(stream.pull_next()).await.expect("the stream is open")); }
     let kept = burst.iter().filter(|value| matches!(value, ReadValue::Event { .. })).count() as u64;
     let lost: u64 = burst.iter().map(|value| match value { ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum();
     assert_eq!(kept + lost, 400, "kept events and lost positions add up to the events sent");
     assert!(lost > 0, "a reader that pulled nothing lost the oldest events");
     database.close_now();
-    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close");
-    assert!(bound(stream.pull()).await.is_none());
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close");
+    assert!(bound(stream.pull_next()).await.is_none());
 }
 
 fn seen_values(values: &[ReadValue]) -> u64 { values.iter().map(|value| match value { ReadValue::Event { .. } => 1, ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum() }
@@ -182,7 +182,7 @@ async fn feed_event_insert_on() {
     let (database, transport, world) = chat_events().await;
     let epoch = database.session_epoch();
     let events = database.subscribe_values(epoch, ReadRequest::Events { model: "Chat".into() });
-    assert!(matches!(bound(events.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
     for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), json!({"list": list}).to_string())).await.unwrap(); }
     let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
     let before = (ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("PRIMARY")))).await.unwrap()), ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()));
@@ -190,7 +190,7 @@ async fn feed_event_insert_on() {
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m9","chat":{"id":"c9","title":"new","revision":1,"lists":["PRIMARY"]}}]}}}));
     loop {
-        if matches!(bound(events.pull()).await, Some(ReadValue::Event { id, .. }) if id == "c9") { break; }
+        if matches!(bound(events.pull_next()).await, Some(ReadValue::Event { id, .. }) if id == "c9") { break; }
     }
     let (primary, secondary) = (ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("PRIMARY")))).await.unwrap()), ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()));
     assert!(primary.contains(&"c9".to_string()) && primary.len() == before.0.len() + 1, "the window of its list takes the row: {primary:?}");

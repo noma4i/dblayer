@@ -23,32 +23,65 @@ class ForegroundEventsTest {
         owner.lifecycle.currentState = Lifecycle.State.STARTED
     }
 
-    @Test
-    fun aReturnToTheForegroundReachesTheCoreUntilTheRegistrationEnds() = bounded {
-        val transport = MockTransport()
-        repeat(8) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
-        openSigned(Config(null, null), modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
-        val scope = CoroutineScope(SupervisorJob())
-        val list = ListReader(Moment.feed, scope)
-        withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
-        owner.lifecycle.currentState = Lifecycle.State.CREATED
-        val sink = DBlayer.database.onlineSink()
-        val delivered = java.util.concurrent.atomic.AtomicInteger()
-        val stop = ForegroundEvents.observe(owner.lifecycle, post = { it() }) {
-            delivered.incrementAndGet()
-            sink.enterForeground()
+    /** The OS of the test: the observer the core starts reports online and a foreground registration, and the main thread is a queue the test drains. */
+    private inner class FakeOs : PlatformObserver {
+        val queue = java.util.concurrent.LinkedBlockingQueue<() -> Unit>()
+        @Volatile var sink: OnlineSink? = null
+        @Volatile var registration = 0uL
+        private var stopObserving: () -> Unit = {}
+
+        override fun start(sink: OnlineSink) {
+            this.sink = sink
+            sink.setOnline(true)
+            registration = sink.registerForeground()
+            stopObserving = ForegroundEvents.observe(owner.lifecycle, post = { queue.put(it) }) { sink.enterForeground(registration) }
         }
+
+        override fun stop() = stopObserving()
+
+        fun runMain() { while (queue.isNotEmpty()) queue.take()() }
+    }
+
+    private suspend fun openFailedFeed(transport: MockTransport, os: FakeOs): ListReader<Moment> {
+        repeat(16) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
+        openSignedClocked(modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport, FEED_OPERATIONS, observers = os)
+        os.runMain()
+        val list = ListReader(Moment.feed, CoroutineScope(SupervisorJob()))
+        withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
+        return list
+    }
+
+    private val FEED_OPERATIONS = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"""
+
+    /** boundary_observer_stop_orders (P-BND-09, D-177), delivery before stop: a start of the process lifecycle reaches the core with the token the core issued. */
+    @Test
+    fun aDeliveryOfTheLiveRegistrationReloadsTheFailedWindow() = bounded {
+        val transport = MockTransport()
+        val os = FakeOs()
+        openFailedFeed(transport, os)
+        owner.lifecycle.currentState = Lifecycle.State.CREATED
         val before = transport.calls.size
 
         owner.lifecycle.currentState = Lifecycle.State.STARTED
-        assertEquals(1, delivered.get())
-        eventually("the delivered start reloads the failed window") { transport.calls.size > before }
+        eventually("the delivery reloads the failed window") { transport.calls.size == before + 1 }
+    }
 
-        stop()
-        returnToForeground()
-        assertEquals(1, delivered.get())
-        scope.cancel()
+    /** boundary_observer_stop_orders, stop before delivery: after `close` acknowledged the stop of the observers, a start of the lifecycle and a delivery with the old token reach nothing. */
+    @Test
+    fun noDeliveryReachesTheCoreAfterTheStopOfTheObserversIsAcknowledged() = bounded {
+        val transport = MockTransport()
+        val os = FakeOs()
+        openFailedFeed(transport, os)
+        owner.lifecycle.currentState = Lifecycle.State.CREATED
+        val sink = checkNotNull(os.sink)
+        val registration = os.registration
+        val before = transport.calls.size
+
+        DBlayer.close()
+        owner.lifecycle.currentState = Lifecycle.State.STARTED
+        os.runMain()
+        sink.enterForeground(registration)
+        assertEquals(before, transport.calls.size)
     }
 
     /** boundary_observer_stop_orders (P-BND-09, D-177): a registration queued on the main thread and stopped before it ran never delivers, and the stop needs no main thread. */

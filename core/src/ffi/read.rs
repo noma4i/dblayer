@@ -208,6 +208,10 @@ impl ReadStream {
     #[cfg(test)]
     pub(crate) fn id(&self) -> u64 { self.stream }
 
+    /// The next value for a test that reads with the one reader of its stream.
+    #[cfg(test)]
+    pub(crate) async fn pull_next(&self) -> Option<ReadValue> { self.pull(0).await }
+
     fn life(&self) -> Option<Arc<Life>> { self.database.upgrade().map(|database| database.life.clone()) }
 
     fn relation(&self) -> Result<&RelationLoad, DbError> {
@@ -239,9 +243,9 @@ impl ReadStream {
     }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
-    pub async fn pull(&self) -> Option<ReadValue> {
+    pub async fn pull(&self, reader: u64) -> Option<ReadValue> {
         let Some(life) = self.life() else { return self.finished(ReadEnd::Closed) };
-        let waiter = life.pull(self.stream);
+        let waiter = life.pull(self.stream, reader);
         let mut waiting = PullWait { life, stream: self.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
         waiting.armed = false;
@@ -259,7 +263,7 @@ impl ReadStream {
             Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(ReadEnd::Closed),
             Outcome::EpochEnded(_) => self.finished(ReadEnd::SessionEnded),
             Outcome::Internal => self.finished(ReadEnd::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Invalid) => self.finished(ReadEnd::Invalid),
+            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: ReadEnd::Invalid }),
             Outcome::Value(PullAnswer::Interrupted) => self.finished(ReadEnd::Cancelled),
         }
     }

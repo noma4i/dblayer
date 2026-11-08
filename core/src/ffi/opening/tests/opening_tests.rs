@@ -200,7 +200,7 @@ async fn a_load_call_without_a_relation_is_invalid() {
 }
 
 #[test]
-fn the_round_job_carries_the_round_id_the_core_numbered() {
+fn every_round_job_carries_a_round_id_no_other_job_of_the_process_has() {
     use crate::ffi::upload_rounds::{RoundJob, RoundJobsSink, RoundJobsSlot};
     use crate::owners::write::rounds_executor::RoundJobs;
     struct Asked(std::sync::Mutex<Vec<RoundJob>>);
@@ -211,8 +211,15 @@ fn the_round_job_carries_the_round_id_the_core_numbered() {
     let asked = Arc::new(Asked(Default::default()));
     let slot = RoundJobsSlot::default();
     assert!(slot.set(asked.clone()));
-    slot.schedule_job((1u64 << 32) + 5, 9);
-    assert_eq!(*asked.0.lock().unwrap(), [RoundJob { request_id: (1 << 32) + 5, round_id: 5, epoch: 9 }]);
+    let other = RoundJobsSlot::default();
+    assert!(other.set(asked.clone()));
+    slot.schedule_job(1, 9);
+    other.schedule_job(1, 9);
+    slot.schedule_job(2, 9);
+    let jobs = asked.0.lock().unwrap();
+    assert_eq!(jobs.iter().map(|job| job.request_id).collect::<Vec<_>>(), [1, 1, 2]);
+    let ids: std::collections::BTreeSet<u32> = jobs.iter().map(|job| job.round_id).collect();
+    assert_eq!(ids.len(), 3, "a request id repeats between databases of one process, a round id does not");
 }
 
 #[tokio::test]
