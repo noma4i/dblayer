@@ -33,7 +33,7 @@ class SealedErrorsTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         DBlayer.database.registerOperations(operations)
-        val sent = GraphqlExtensions("FORBIDDEN", TransactionDisposition.Keep, mapOf("reasonCode" to ""child""))
+        val sent = GraphqlExtensions("FORBIDDEN", TransactionDisposition.Keep, mapOf("reasonCode" to "\"child\""))
         transport.enqueue("QrCodeCreate", DbException.Graphql(listOf("Forbidden"), sent))
         val failure = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull() as? DbException.Graphql
             ?: throw AssertionError("the operation call did not throw a Graphql error")

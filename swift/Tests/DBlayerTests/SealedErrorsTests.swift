@@ -27,7 +27,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1))) func aGraphqlRefusalKeepsEveryExtensionFieldThroughAnOperationCall() async throws {
     let transport = MockTransport()
     try await openSealedRig(transport)
-    let sent = GraphqlExtensions(code: "FORBIDDEN", transactionDisposition: .keep, fields: ["reasonCode": ""child""])
+    let sent = GraphqlExtensions(code: "FORBIDDEN", transactionDisposition: .keep, fields: ["reasonCode": "\"child\""])
     transport.enqueue("QrCodeCreate", failure: DbError.Graphql(messages: ["Forbidden"], extensions: sent))
     do {
       _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
@@ -36,7 +36,7 @@ extension BridgeProbeTests {
       #expect(messages == ["Forbidden"])
       #expect(extensions?.code == "FORBIDDEN")
       #expect(extensions?.transactionDisposition == .keep)
-      #expect(extensions?.fields == ["reasonCode": ""child""])
+      #expect(extensions?.fields == ["reasonCode": "\"child\""])
     }
   }
 
