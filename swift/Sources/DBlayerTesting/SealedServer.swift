@@ -84,11 +84,11 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     _ = await held.next()
   }
 
-  private static func wireExtensions(_ extensions: GraphqlExtensions?) -> [String: Any] {
+  private static func wireExtensions(_ extensions: GraphqlExtensions?) throws -> [String: Any] {
     guard let extensions else { return [:] }
     var wire: [String: Any] = [:]
     for (key, text) in extensions.fields {
-      wire[key] = (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) ?? text
+      wire[key] = try JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])
     }
     if let code = extensions.code { wire["code"] = code }
     if let disposition = extensions.transactionDisposition { wire["transactionDisposition"] = transactionDispositionText(disposition: disposition) }
@@ -115,7 +115,7 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
         case .Http(let status, _): return EncryptedReply(status: status, body: "")
         case .Session(let code, _): reply = ["error": Self.wireName(code)]
         case .Graphql(let messages, let extensions):
-          reply = ["errors": messages.map { ["message": $0, "extensions": Self.wireExtensions(extensions)] as [String: Any] }]
+          reply = ["errors": try messages.map { ["message": $0, "extensions": try Self.wireExtensions(extensions)] as [String: Any] }]
         default: throw error
         }
       }
