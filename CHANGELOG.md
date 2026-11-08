@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.18.0 - 2026-11-08
+
+### Changed
+
+- Reorganise the source tree: the tests of each module live in a `tests` directory next to its code.
+
 ## 6.17.0 - 2026-11-08
 
 ### Added
