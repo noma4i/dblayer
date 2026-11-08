@@ -57,6 +57,7 @@ extension BridgeProbeTests {
       try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
       let entity = Projected<User>(try DB.account().stream(User.profile))
       await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+      await eventually("the subscription of the held entity reaches the cable") { first.calls.contains { $0.operationName == "UserTyping" } }
       let before = first.calls.count
 
       switchable.target = nil
