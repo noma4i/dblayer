@@ -38,6 +38,7 @@ extension BridgeProbeTests {
     try await DB.database.registerOperations(defsJson: feedDefs)
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
     try await list.loaded()
+    await eventually("the events subscription of the stream opened") { transport.calls.filter { $0.operationName == "MomentEvents" }.count == 1 }
     try DB.database.setOnline(online: false)
     let calls = transport.calls.count
 
@@ -54,7 +55,7 @@ extension BridgeProbeTests {
     await eventually("the stream shows the network error") {
       list.error != nil
     }
-    #expect(transport.calls.count == calls, "a call offline reached the transport")
+    #expect(transport.calls.count == calls, "a call offline reached the transport: \(transport.calls.map(\.operationName))")
   }
 
   /// K10: a send whose first attempt failed on the network goes out at once when the network returns. No clock step is taken.
