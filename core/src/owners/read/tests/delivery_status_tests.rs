@@ -61,9 +61,8 @@ fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_
     assert_eq!((shown[0].0, shown[0].1.progress, shown[0].1.local_url.as_deref()), (3, 40, Some("file:copy")));
 }
 
-/// xfer_status_quiet_on_other_rows: a commit of another row examines no `Blob` stream and reads no row.
 #[test]
-fn a_commit_of_another_row_wakes_no_blob_stream() {
+fn xfer_status_quiet_on_other_rows() {
     let mut state = opened();
     assert!(reads(Deliveries::step(&mut state, commit(&["r2"]))).is_empty());
     assert_eq!(state.streams_examined(), 0);
