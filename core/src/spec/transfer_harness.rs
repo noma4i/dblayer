@@ -45,6 +45,9 @@ where
     fn closing() -> O::Input { O::closing() }
 }
 
+/// The stream that follows every key of the twin.
+const SPY: u64 = u64::MAX;
+
 /// What the owner gave out in one or more steps.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Out {
@@ -62,7 +65,8 @@ impl Out {
 
     pub fn all_replies(&self) -> usize { self.runs.iter().filter(|run| matches!(run, Run::Reply { .. })).count() }
 
-    pub fn shows(&self) -> Vec<Shown> { self.runs.iter().filter_map(|run| if let Run::Shows { shown, .. } = run { Some(shown.clone()) } else { None }).collect() }
+    /// What the stream `SPY` follows: it follows every key of the transfers the twin takes, so these are the real `Status` effects.
+    pub fn shows(&self) -> Vec<Shown> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id: SPY, shown, .. } = run { Some(shown.clone()) } else { None }).collect() }
 
     pub fn steps(&self) -> Vec<(Option<u32>, u64)> { self.runs.iter().filter_map(|run| if let Run::Step { part, attempt_id, .. } = run { Some((*part, *attempt_id)) } else { None }).collect() }
 
@@ -95,9 +99,8 @@ impl Out {
 
     pub fn classified(&self) -> usize { self.count(|run| matches!(run, Run::RestoreClassified { .. })) }
 
-    pub fn refused(&self) -> Vec<Option<String>> { self.runs.iter().filter_map(|run| if let Run::Refused { reason, .. } = run { Some(reason.clone()) } else { None }).collect() }
 
-    pub fn statuses(&self) -> Vec<(u64, Shown)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, shown, .. } = run { Some((*stream_id, shown.clone())) } else { None }).collect() }
+    pub fn statuses(&self) -> Vec<(u64, Shown)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, shown, .. } = run { (*stream_id != SPY).then(|| (*stream_id, shown.clone())) } else { None }).collect() }
 
     /// The final mutations handed to Outbox: of a batch, of a single element, reserved or not.
     pub fn submit_ops(&self) -> Vec<&NewOp> { self.outbox.iter().filter_map(|input| match input { OutboxInput::Submit { op, .. } | OutboxInput::SubmitReserved { op, .. } => Some(op), _ => None }).collect() }
@@ -181,6 +184,7 @@ pub(super) struct Twin {
     reply: ReplyId,
     unanswered: Vec<BatchId>,
     seen_ids: std::collections::BTreeMap<String, TransferId>,
+    followed: std::collections::BTreeSet<String>,
 }
 
 impl Twin {
@@ -195,7 +199,7 @@ impl Twin {
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default() }
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default(), followed: Default::default() }
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
@@ -279,7 +283,24 @@ impl Twin {
         out
     }
 
+    fn follow(&mut self, input: &TransferInput) {
+        let keys: Vec<String> = match input {
+            TransferInput::Accept { item, .. } => vec![item.key.clone()],
+            TransferInput::AcceptBatch { items, .. } => items.iter().map(|item| item.key.clone()).collect(),
+            TransferInput::Restored { uploads, .. } => uploads.iter().map(|row| row.key.clone()).collect(),
+            _ => Vec::new(),
+        };
+        for key in keys {
+            if self.followed.insert(key.clone()) {
+                self.det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), TransferInput::StatusInterestPlus { key, stream_id: SPY });
+                self.det.run_until_quiet(10_000).expect("the owner is quiet");
+                self.collect();
+            }
+        }
+    }
+
     pub fn post(&mut self, input: TransferInput) -> Out {
+        self.follow(&input);
         self.det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
         self.collect()

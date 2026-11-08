@@ -438,20 +438,34 @@ fn xfer_outcome_wait() {
 fn xfer_interest() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    let out = twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 5 });
+    let out = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
     assert_eq!(out.statuses(), vec![(5, Shown::Uploading { progress: 0 })], "the first value answers the interest");
     twin.step_ok(id, 1, Some("u1"));
     let out = twin.commit();
     assert!(out.statuses().contains(&(5, Shown::Uploading { progress: 33 })));
 }
 
+/// xfer_status_by_key: a stream that follows a key before its transfer exists gets `Gone` at once and every later value of the transfer that takes the key.
+#[test]
+fn xfer_status_by_key() {
+    let mut twin = Twin::new();
+    let out = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
+    assert_eq!(out.statuses(), vec![(5, Shown::Gone)]);
+    let id = twin.uploading(KEY, 3);
+    twin.post(TransferInput::StatusInterestPlus { key: "Moment:other:upload".into(), stream_id: 6 });
+    twin.step_ok(id, 1, None);
+    let out = twin.commit();
+    assert!(out.statuses().contains(&(5, Shown::Uploading { progress: 33 })));
+    assert!(out.statuses().iter().all(|(stream, _)| *stream == 5), "a key of another transfer gets no value of this one");
+}
+
 #[test]
 fn xfer_interest_minus() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 5 });
-    twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 6 });
-    twin.post(TransferInput::InterestMinus { transfer_id: id, stream_id: 5 });
+    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
+    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 6 });
+    twin.post(TransferInput::StatusInterestMinus { key: KEY.into(), stream_id: 5 });
     twin.step_ok(id, 1, None);
     let out = twin.commit();
     let streams: Vec<u64> = out.statuses().into_iter().map(|(stream, _)| stream).collect();
@@ -462,8 +476,8 @@ fn xfer_interest_minus() {
 fn xfer_interest_minus_unknown() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 5 });
-    let out = twin.post(TransferInput::InterestMinus { transfer_id: id, stream_id: 9 });
+    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
+    let out = twin.post(TransferInput::StatusInterestMinus { key: KEY.into(), stream_id: 9 });
     assert!(Twin::quiet(&out), "{out:?}");
     twin.step_ok(id, 1, None);
     assert!(!twin.commit().statuses().is_empty(), "the stream 5 still gets its values");
@@ -475,18 +489,18 @@ fn xfer_round_status() {
     let id = twin.uploading(KEY, 3);
     let refused = TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: Some("denied".into()) };
     let out = twin.post(refused.clone());
-    assert_eq!(out.refused(), vec![Some("denied".to_string())]);
+    assert_eq!(out.shows(), vec![Shown::Failed { error: "refused".into() }]);
     assert_eq!(out.round_errors(), vec![(KEY.to_string(), Some("denied".to_string()))], "the reason goes to the row of the transfer through the Store");
     assert!(Twin::quiet(&twin.post(refused)), "the same refusal is not shown twice");
     let out = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: None });
-    assert_eq!(out.refused(), vec![None], "the refusal is taken off");
+    assert_eq!(out.shows(), vec![Shown::Uploading { progress: 0 }], "the refusal is taken off");
     assert_eq!(out.round_errors(), vec![(KEY.to_string(), None)], "the column is cleared");
     let out = twin.post(TransferInput::RoundStatus { epoch: EPOCH + 1, transfer_ids: vec![id], refused: Some("late".into()) });
     assert!(Twin::quiet(&out), "{out:?}");
     let mut broken = Twin::new();
     let failed = broken.failed(OTHER);
     let out = broken.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![failed], refused: Some("denied".into()) });
-    assert!(out.refused().is_empty(), "a failed transfer shows its own error");
+    assert!(out.shows().is_empty(), "a failed transfer shows its own error");
     assert_eq!(out.round_errors(), vec![(OTHER.to_string(), Some("denied".to_string()))], "the column still holds the reason: the row shows error_message first");
 }
 

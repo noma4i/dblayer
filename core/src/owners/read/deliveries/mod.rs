@@ -60,6 +60,8 @@ pub enum ReadData {
     Changes { keys: Vec<(String, i64)>, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
     Operations(Vec<crate::ffi::OperationInfo>),
+    /// The copy URL and the processing that the row of a transfer shows.
+    Upload { local_url: Option<String>, processing: Option<crate::ffi::WireProcessing> },
     Overflow,
 }
 
@@ -122,6 +124,21 @@ pub struct BlobStatus {
     pub error: Option<String>,
     pub local_url: Option<String>,
     pub processing: Option<crate::ffi::WireProcessing>,
+}
+
+impl BlobStatus {
+    /// The state and the progress of a transfer; the row of the transfer gives the copy URL and the processing.
+    pub fn of(shown: &crate::owners::write::transfer::Shown) -> Self {
+        use crate::owners::write::transfer::Shown;
+        let (state, progress, error) = match shown {
+            Shown::Gone => ("gone", 0, None),
+            Shown::Copying => ("copying", 0, None),
+            Shown::Queued => ("queued", 0, None),
+            Shown::Uploading { progress } => ("uploading", u64::from(*progress), None),
+            Shown::Failed { error } => ("failed", 0, Some(error.clone())),
+        };
+        Self { state: state.into(), progress, error, local_url: None, processing: None }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,7 +209,8 @@ pub enum StreamEffect {
     CloseSink,
     Cancelled { reply: ReplyId },
     ReaderClaimed { reply: ReplyId, claimed: bool },
-    StatusInterest { plus: bool },
+    /// `key` is the transfer key of a `Blob` stream, `None` for the retry status.
+    StatusInterest { plus: bool, key: Option<String> },
 }
 
 enum Emit {
@@ -301,6 +319,10 @@ struct Delivery {
     ready: bool,
     held_events: Vec<Held>,
     blob: Option<BlobStatus>,
+    /// The state of the transfer, as the last `TransferStatus` gave it.
+    transfer: Option<BlobStatus>,
+    /// What the row of the transfer showed at the last read of a `Blob` stream.
+    upload_row: Option<Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>>,
     retry: Option<RetryStatus>,
     status_revision: i64,
     journal: VecDeque<Value>,
@@ -320,7 +342,11 @@ struct Delivery {
 }
 
 fn entity_row(view: &View) -> Option<(String, &str)> {
-    matches!(view.kind, Kind::Entity { .. }).then(|| (crate::store::ddl::table_name(&view.model), view.subject.as_str()))
+    match view.kind {
+        Kind::Entity { .. } => Some((crate::store::ddl::table_name(&view.model), view.subject.as_str())),
+        Kind::Blob => crate::store::split_transfer_key(&view.subject).map(|(model, id, _)| (crate::store::ddl::table_name(model), id)),
+        _ => None,
+    }
 }
 
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
@@ -369,7 +395,7 @@ impl DeliveriesState {
         if self.streams.get(&stream).is_some_and(|machine| machine.view.kind == Kind::Changes && machine.stage == DeliveryStage::Live) {
             self.watchers.insert(stream);
         }
-        let Some(machine) = self.streams.get(&stream).filter(|machine| machine.view.kind.reads_rows() && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
+        let Some(machine) = self.streams.get(&stream).filter(|machine| (machine.view.kind.reads_rows() || machine.view.kind == Kind::Blob) && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
         let own = entity_row(&machine.view);
         for table in &machine.view.tables {
             match &own {

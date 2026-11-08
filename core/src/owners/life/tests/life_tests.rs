@@ -134,7 +134,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
@@ -231,9 +231,9 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     life.credential_committed(2);
     crate::test_wait::settled(&life, "the next identity was published", || life.published().identity == Some(2)).await;
     let old_key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "old"}).as_object().unwrap());
-    let (stale, _) = life.load(epoch, old_key, crate::owners::read::windows::Goal::First, true, 0, None);
+    let stale = reserved_load(&life, epoch, old_key, true);
     assert!(matches!(crate::test_wait::within(stale.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
-    let (waiter, _) = life.load(life.published().epoch, key, crate::owners::read::windows::Goal::First, false, 0, None);
+    let waiter = reserved_load(&life, life.published().epoch, key, false);
     let reply = answer(waiter).await;
     assert!(matches!(&reply, Reply::Window(outcome) if matches!(**outcome, crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
     let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
@@ -274,7 +274,7 @@ async fn net_prop_connectivity_not_database() {
     let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
@@ -289,7 +289,7 @@ async fn net_prop_no_request_before_snapshot() {
     let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(transport.calls().is_empty(), "no request left before the network said it is online");
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
@@ -495,4 +495,10 @@ async fn life_open_starts_observers() {
     crate::test_wait::settled(&database, "the snapshot holds the value the observer reported", || heard.lock().unwrap().contains(&NetworkEvent::Online { online: true, epoch: Some(epoch) })).await;
     assert_eq!(started.load(Ordering::SeqCst), 1);
     database.close_database().await.unwrap();
+}
+
+fn reserved_load(life: &Life, epoch: u64, key: crate::owners::read::windows::WindowKey, force: bool) -> Waiter<Reply> {
+    let (waiter, id) = life.reserve_load(epoch);
+    life.load(epoch, id, key, (crate::owners::read::windows::Goal::First, force), 0, None);
+    waiter
 }

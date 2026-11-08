@@ -217,6 +217,12 @@ pub struct WindowsState {
     pub(super) peers: WindowsPeers,
     /// `LoadNoWait` calls that came before the addressed snapshot of the epoch.
     pub(super) held_nowait: Vec<WindowsInput>,
+    /// The ids of the calls that began and whose `Load` is not applied yet.
+    pub(super) reserved: BTreeSet<InterestId>,
+    /// `Load` inputs that wait for the smaller reserved ids.
+    pub(super) held_loads: BTreeMap<InterestId, WindowsInput>,
+    /// `InterestMinus` of a registered call with the ids that were reserved when it came: it applies after they registered.
+    pub(super) held_leaves: Vec<(BTreeSet<InterestId>, WindowKey, InterestId)>,
 }
 
 /// The owners `Windows` sends inputs to.
@@ -229,7 +235,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
     }
 
     #[cfg(test)]
@@ -359,9 +365,30 @@ impl Windows {
         }
     }
 
+    /// Applies the held loads whose smaller ids are all registered, in id order, then the held leaves whose reserved calls all registered.
+    fn apply_held(state: &mut WindowsState) -> Effects<Self> {
+        let mut out: Effects<Self> = Vec::new();
+        while let Some(id) = state.held_loads.keys().next().copied().filter(|id| state.reserved.range(..*id).next().is_none()) {
+            if let Some(input) = state.held_loads.remove(&id) {
+                out.extend(Self::step(state, input));
+            }
+        }
+        let reserved = state.reserved.clone();
+        for (waiting, _, _) in &mut state.held_leaves {
+            waiting.retain(|id| reserved.contains(id));
+        }
+        while let Some(position) = state.held_leaves.iter().position(|(waiting, _, _)| waiting.is_empty()) {
+            let (_, key, id) = state.held_leaves.remove(position);
+            Self::on(state, &key, Ev::InterestMinus { id }, &mut out);
+        }
+        out
+    }
+
     fn interrupt_held(state: &mut WindowsState, out: &mut Effects<Self>) {
-        for held in std::mem::take(&mut state.held_nowait) {
-            if let WindowsInput::LoadNoWait { key, id, .. } = held {
+        state.reserved.clear();
+        state.held_leaves.clear();
+        for held in std::mem::take(&mut state.held_loads).into_values().chain(std::mem::take(&mut state.held_nowait)) {
+            if let WindowsInput::LoadNoWait { key, id, .. } | WindowsInput::Load { key, id, .. } = held {
                 out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Interrupted } }));
             }
         }
@@ -431,11 +458,31 @@ impl StateOwner for Windows {
 
     fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
+        let mut released = false;
+        if let WindowsInput::Load { id, .. } | WindowsInput::LoadNoWait { id, .. } = &input {
+            let id = *id;
+            if state.reserved.range(..id).next().is_some() {
+                state.held_loads.insert(id, input);
+                return out;
+            }
+            released = state.reserved.remove(&id);
+        }
         if matches!(input, WindowsInput::LoadNoWait { .. }) && state.online.is_none() {
             state.held_nowait.push(input);
-            return out;
+            return if released { Self::apply_held(state) } else { out };
         }
         match input {
+            WindowsInput::Reserve { id } => { state.reserved.insert(id); }
+            WindowsInput::Unreserve { id } | WindowsInput::InterestMinus { id, .. } if state.reserved.contains(&id) => {
+                state.reserved.remove(&id);
+                state.held_loads.remove(&id);
+                released = true;
+            }
+            WindowsInput::Unreserve { .. } => {}
+            WindowsInput::InterestMinus { key, id } if !state.reserved.is_empty() && state.windows.get(&key).is_some_and(|window| window.waiters().contains(&id)) => {
+                let waiting = state.reserved.clone();
+                state.held_leaves.push((waiting, key, id));
+            }
             WindowsInput::InterestPlus { key, id, now } => Self::interest_plus(state, key, (id, now), &mut out),
             WindowsInput::InterestPassive { key, id } => Self::interest_passive(state, key, id, &mut out),
             WindowsInput::ReloadOnConnect { key, id } => Self::reload_on_connect(state, key, id, &mut out),
@@ -565,6 +612,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::Tick(_) => {}
         }
+        if released { out.extend(Self::apply_held(state)); }
         out
     }
 

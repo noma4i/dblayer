@@ -11,7 +11,7 @@ use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
-use crate::owners::read::deliveries::{BlobStatus, EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
+use crate::owners::read::deliveries::{EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
 use crate::owners::read::windows::WindowKey;
 use crate::runtime::Outcome;
 
@@ -198,8 +198,6 @@ pub struct ReadStream {
     database: Weak<Database>,
     stream: u64,
     ended: std::sync::atomic::AtomicBool,
-    /// The task that hands the status of a transfer to the stream.
-    status: Option<tokio::task::AbortHandle>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
     /// The epoch of the open, and the relation the request reads from the server.
@@ -313,7 +311,6 @@ impl ReadStream {
 
 impl Drop for ReadStream {
     fn drop(&mut self) {
-        if let Some(task) = &self.status { crate::lock::effect(|| task.abort()); }
         if let Some(life) = self.life() { life.release_stream(self.stream); }
     }
 }
@@ -357,7 +354,7 @@ impl Database {
             }
             ReadRequest::Changes => Ok(View { kind: Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
-            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
+            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -376,52 +373,6 @@ impl Database {
     }
 }
 
-impl Database {
-    /// The copy URL and the processing `uploads[action]` of the row shows, read from the row like the row streams read it.
-    fn row_upload(&self, model: &str, id: &str, action: &str) -> Result<(Option<String>, Option<WireProcessing>), String> {
-        let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
-        #[cfg(test)]
-        self.shows.note_read();
-        let row = crate::blocking::blocking_unit(|| self.db.find(model, &id)).map_err(|error| error.to_string())?;
-        let upload = row.and_then(|row| row.sync.uploads.get(action).map(super::wire::upload));
-        Ok(upload.map_or((None, None), |upload| (upload.local_url, upload.processing)))
-    }
-
-    /// Hands the status of the transfer of a row and action to the stream at each change of the transfer and each commit of its row.
-    fn watch_status(&self, stream: u64, model: &str, id: &str, action: &str) -> Option<tokio::task::AbortHandle> {
-        let (database, shows, life) = (self.clone(), self.shows.clone(), Arc::downgrade(&self.life));
-        let (key, model, id, action) = (crate::store::transfer_key(model, id, action), model.to_string(), id.to_string(), action.to_string());
-        let (mut changes, mut row_commits) = (shows.watch(), shows.watch_row(crate::store::ddl::table_name(&model), id.clone()));
-        let launch = self.life.launch();
-        let task = crate::task::spawn_on(super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
-            let mut last = None;
-            let mut row_count = None;
-            let mut upload = Ok((None, None));
-            loop {
-                changes.borrow_and_update();
-                let count = *row_commits.borrow_and_update();
-                let row_moved = row_count.replace(count) != Some(count);
-                let Some(life) = life.upgrade() else { return };
-                if row_moved {
-                    upload = database.row_upload(&model, &id, &action);
-                }
-                let next = match &upload {
-                    Ok((local_url, processing)) => BlobStatus { local_url: local_url.clone(), processing: processing.clone(), ..shows.status(&key).blob_status() },
-                    Err(error) => BlobStatus { state: "failed".into(), progress: 0, error: Some(error.clone()), local_url: None, processing: None },
-                };
-                if last.as_ref() != Some(&next) {
-                    life.push_status(stream, next.clone());
-                    last = Some(next);
-                }
-                drop(life);
-                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = row_commits.changed() => moved.is_err() };
-                if ended { return; }
-            }
-        }));
-        Some(task.abort_handle())
-    }
-}
-
 #[uniffi::export]
 impl Database {
     /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
@@ -435,10 +386,6 @@ impl Database {
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision);
-        let status = match (&request, valid) {
-            (ReadRequest::Blob { model, id, action }, true) => self.watch_status(stream, model, id, action),
-            _ => None,
-        };
         let wire = match (&request, valid) {
             (ReadRequest::Events { model }, true) => self.wire(model).ok().cloned(),
             _ => None,
@@ -447,7 +394,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire, epoch, load })
+        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), wire, epoch, load })
     }
 }
 

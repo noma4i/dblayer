@@ -30,7 +30,15 @@ impl Snapshots for DbSnapshots {
     fn read(&self, view: &View, revision: i64, after: i64, mode: ReadMode) -> Result<(i64, ReadData), String> {
         if view.kind == Kind::Operations {
             let (seen, operations) = self.db.read_operations(revision).map_err(|error| error.to_string())?;
-            return Ok((seen, ReadData::Operations(crate::ffi::queue_of(&operations))));
+            return Ok((seen, ReadData::Operations(crate::owners::write::operation_queue::queue_of(&operations)?.into_iter().map(Into::into).collect())));
+        }
+        if view.kind == Kind::Blob {
+            let (model, id, action) = crate::store::split_transfer_key(&view.subject).ok_or_else(|| format!("{} is no transfer key", view.subject))?;
+            let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
+            let row = self.db.find(model, &id).map_err(|error| error.to_string())?;
+            let upload = row.and_then(|row| row.sync.uploads.get(action).map(crate::ffi::wire::upload));
+            let (local_url, processing) = upload.map_or((None, None), |upload| (upload.local_url, upload.processing));
+            return Ok((self.db.published_revision().load(std::sync::atomic::Ordering::Acquire).max(revision), ReadData::Upload { local_url, processing }));
         }
         let (query, count) = match view.kind {
             Kind::List | Kind::Count => (view.query.as_deref().cloned().ok_or_else(|| "a list or count view has no query".to_string())?, view.kind == Kind::Count),

@@ -25,6 +25,7 @@ impl Delivery {
             ReadData::Rows { rows, replaced, total } => Some(Whole::Rows { rows, replaced, total }),
             ReadData::Count(count) => Some(Whole::Count(count)),
             ReadData::Operations(items) => Some(Whole::Operations(items)),
+            ReadData::Upload { .. } => None,
             ReadData::Changes { keys, rows, replaced, total } => {
                 let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
                 let held: HashMap<&str, &StreamRow> = self.rows.iter().map(|row| (row.id.as_str(), row)).collect();
@@ -159,7 +160,7 @@ impl Delivery {
         }
         Some(match self.view.kind {
             Kind::Events => Emit::WantMinus,
-            Kind::Blob | Kind::RetryStatus => Emit::Run(StreamEffect::StatusInterest { plus: false }),
+            Kind::Blob | Kind::RetryStatus => Emit::Run(StreamEffect::StatusInterest { plus: false, key: (self.view.kind == Kind::Blob).then(|| self.view.subject.clone()) }),
             _ => Emit::InterestMinus,
         })
     }
@@ -176,6 +177,10 @@ impl Delivery {
     }
 
     pub(super) fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
+        if self.view.kind == Kind::Blob {
+            if self.sink_open() { fx.push(self.new_read(committed.revision)); }
+            return;
+        }
         if !self.view.kind.reads_rows() {
             return;
         }
@@ -187,6 +192,10 @@ impl Delivery {
     }
 
     pub(super) fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<Emit>) {
+        if read_id == self.read_id && self.view.kind == Kind::Blob {
+            if let ReadData::Upload { local_url, processing } = data { self.upload_read(Ok((local_url, processing)), fx); }
+            return;
+        }
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }

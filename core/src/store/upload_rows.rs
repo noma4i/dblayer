@@ -199,3 +199,10 @@ impl Store {
 pub(crate) fn transfer_key(model: &str, id: &str, action: &str) -> String {
     format!("{model}:{id}:{action}")
 }
+
+/// The model, the row id and the action of a transfer key.
+pub(crate) fn split_transfer_key(key: &str) -> Option<(&str, &str, &str)> {
+    let (model, rest) = key.split_once(':')?;
+    let (id, action) = rest.rsplit_once(':')?;
+    Some((model, id, action))
+}

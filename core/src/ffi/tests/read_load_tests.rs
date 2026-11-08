@@ -231,17 +231,14 @@ async fn a_stream_loads_more_and_refreshes_its_own_relation() {
     assert!(matches!(crate::test_wait::within(entity.load_more()).await, Err(DbError::Invalid { .. })));
 }
 
-/// P-DATA-91 (R17): the core builds the key of a transfer from the model, row and action: a status put under it reaches the stream.
+/// A database without a transfer owner shows a `Blob` stream as gone at once.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_blob_stream_follows_the_transfer_of_its_model_row_and_action() {
+async fn a_blob_stream_without_a_transfer_owner_is_gone() {
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: "m1".into(), action: "upload".into() });
-    db.shows.put(&crate::store::transfer_key("Moment", "m1", "upload"), crate::owners::write::transfer::Shown::Uploading { progress: 40 });
-    loop {
-        match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
-            ReadValue::Status { state, progress, .. } if state == "uploading" => { assert_eq!(progress, 40); break; }
-            _ => {}
-        }
+    match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
+        ReadValue::Status { state, progress, .. } => assert_eq!((state.as_str(), progress), ("gone", 0)),
+        other => panic!("{other:?}"),
     }
 }
 
@@ -251,7 +248,7 @@ async fn a_blob_stream_of_a_row_that_cannot_be_looked_up_shows_failed_with_the_e
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: " ".into(), action: "upload".into() });
     loop {
-        match crate::test_wait::within(stream.pull()).await.expect("a value") {
+        match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
             ReadValue::Status { state, error, .. } => { assert_eq!(state, "failed"); assert!(error.is_some_and(|error| !error.is_empty())); break; }
             _ => {}
         }

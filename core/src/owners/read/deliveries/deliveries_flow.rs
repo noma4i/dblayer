@@ -44,6 +44,10 @@ impl Delivery {
     }
 
     pub(super) fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<Emit>) {
+        if read_id == self.read_id && self.view.kind == Kind::Blob {
+            self.upload_read(Err(error), fx);
+            return;
+        }
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
@@ -203,7 +207,30 @@ impl Delivery {
     }
 
     pub(super) fn status(&mut self, blob: BlobStatus, fx: &mut Vec<Emit>) {
-        if self.view.kind != Kind::Blob || !self.sink_open() || self.blob.as_ref() == Some(&blob) {
+        if self.view.kind != Kind::Blob || !self.sink_open() {
+            return;
+        }
+        self.transfer = Some(blob);
+        if self.upload_row.is_none() {
+            fx.push(self.new_read(self.read_revision));
+            return;
+        }
+        self.show_status(fx);
+    }
+
+    pub(super) fn upload_read(&mut self, row: Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>, fx: &mut Vec<Emit>) {
+        self.upload_row = Some(row);
+        self.show_status(fx);
+    }
+
+    /// The value of a `Blob` stream: the state of the transfer with the copy URL and the processing of its row, pushed when it differs from the last one.
+    fn show_status(&mut self, fx: &mut Vec<Emit>) {
+        let (Some(transfer), Some(row)) = (&self.transfer, &self.upload_row) else { return };
+        let blob = match row {
+            Ok((local_url, processing)) => BlobStatus { local_url: local_url.clone(), processing: processing.clone(), ..transfer.clone() },
+            Err(error) => BlobStatus { state: "failed".into(), progress: 0, error: Some(error.clone()), local_url: None, processing: None },
+        };
+        if !self.sink_open() || self.blob.as_ref() == Some(&blob) {
             return;
         }
         self.stage = DeliveryStage::Live;

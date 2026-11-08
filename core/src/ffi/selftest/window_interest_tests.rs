@@ -30,9 +30,6 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     rig.world.mark("request of A entered");
     let second = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     rig.world.mark("begin B");
-    let issued = rig.database.loads.issued();
-    settled(&rig, "the second interest is registered in the window", || rig.database.loads.registered_through(issued)).await;
-    rig.world.mark("B registered");
     first.cancel();
     rig.world.mark("A cancelled");
     held.release();

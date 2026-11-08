@@ -1,6 +1,7 @@
 use serde_json::json;
 
-use super::flow_fixtures::{add_chat, chat_row, land_owned};
+use super::flow_fixtures::{add_chat, chat_row};
+use super::rig_events::events;
 use super::rig_tests::{bound, Rig, World};
 use super::upload_fixtures::add_uploads;
 use crate::ffi::upload_wire::WireUploadRequest;
@@ -12,11 +13,11 @@ use crate::test_wait::settled;
 #[tokio::test(flavor = "multi_thread")]
 async fn a_discard_without_action_ends_the_first_operation_of_the_row() {
     for transfer_first in [false, true] {
-        let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+        let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
             add_chat(models);
             add_uploads(models);
-        }).await;
-        land_owned(&rig, "Chat", chat_row("c1", 0)).await;
+        })).await;
+        rig.land("Chat", chat_row("c1", 0)).await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("logo.jpg");
         std::fs::write(&path, b"jpeg").unwrap();

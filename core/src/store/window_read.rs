@@ -14,13 +14,12 @@ use super::{window_identity, Store};
 fn json_fault(error: impl std::fmt::Display) -> CoreError { CoreError::Internal(error.to_string()) }
 
 impl Store {
-    /// The stored record of the window of a relation, `None` before its first page.
-    pub(crate) fn window_record(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::WindowRecord>, CoreError> {
+    /// Fails when the relation of a call does not name a remote window for these params.
+    pub(crate) fn check_window(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<(), CoreError> {
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
         let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
-        let (_, key) = window_identity(spec, model, relation, remote, params)?;
-        Ok(self.window(&key)?)
+        window_identity(spec, model, relation, remote, params).map(drop)
     }
 
     /// The saved window of a relation with params, `None` before its first page.

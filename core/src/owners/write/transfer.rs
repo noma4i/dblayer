@@ -26,12 +26,16 @@ impl TransferState {
         }
     }
 
+    /// What a key shows now: `Gone` while no transfer holds it.
+    pub(super) fn shown_by_key(&self, key: &str) -> Shown {
+        self.transfers.values().find(|transfer| transfer.key == key).map_or(Shown::Gone, |transfer| self.shown_now(transfer.transfer_id))
+    }
+
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
     pub(super) fn show(&self, id: TransferId, shown: Shown, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
-        run(fx, TransferEffect::Shows { key: transfer.key.clone(), shown: shown.clone() });
-        for stream_id in self.subscribers.get(&id).into_iter().flatten() {
-            run(fx, TransferEffect::Status { stream_id: *stream_id, transfer_id: id, shown: shown.clone() });
+        for stream_id in self.subscribers.get(&transfer.key).into_iter().flatten() {
+            run(fx, TransferEffect::Status { stream_id: *stream_id, key: transfer.key.clone(), shown: shown.clone() });
         }
     }
 
@@ -423,8 +427,8 @@ impl TransferState {
             TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
-            TransferInput::InterestPlus { transfer_id, stream_id } => self.interest_plus(transfer_id, stream_id, fx),
-            TransferInput::InterestMinus { transfer_id, stream_id } => self.interest_minus(transfer_id, stream_id),
+            TransferInput::StatusInterestPlus { key, stream_id } => self.interest_plus(key, stream_id, fx),
+            TransferInput::StatusInterestMinus { key, stream_id } => self.interest_minus(&key, stream_id),
             TransferInput::Committed(committed) => self.committed((committed.batch, committed.shown), fx),
             TransferInput::Rejected(rejected) => self.rejected(rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(&key, reply, true, fx),

@@ -409,15 +409,15 @@ fn xfer_prop_saved_outcome() {
 fn xfer_prop_status_subscribers() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    let first = twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 1 });
-    let second = twin.post(TransferInput::InterestPlus { transfer_id: id, stream_id: 2 });
+    let first = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 1 });
+    let second = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 2 });
     assert_eq!((first.statuses().len(), second.statuses().len()), (1, 1), "each interest gets the current value");
-    twin.post(TransferInput::InterestMinus { transfer_id: id, stream_id: 1 });
+    twin.post(TransferInput::StatusInterestMinus { key: KEY.into(), stream_id: 1 });
     twin.step_ok(id, 1, None);
     let out = twin.commit();
     assert!(out.statuses().iter().all(|(stream, _)| *stream == 2) && !out.statuses().is_empty());
     twin.commit();
-    twin.post(TransferInput::InterestMinus { transfer_id: id, stream_id: 2 });
+    twin.post(TransferInput::StatusInterestMinus { key: KEY.into(), stream_id: 2 });
     twin.step_ok(id, 2, None);
     assert!(twin.commit().statuses().is_empty(), "no values after the last id is taken off");
 }

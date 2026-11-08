@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -74,11 +74,10 @@ pub(crate) trait StepCodec: Send + Sync + 'static {
     async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
 }
 
-/// What Life needs to install Transfer and Rounds: the codec of the steps, the platform job of the round and the sink of `uploads[action]`.
+/// What Life needs to install Transfer and Rounds: the codec of the steps, the platform job of the round.
 pub(crate) struct TransferPort {
     pub codec: Arc<dyn StepCodec>,
     pub jobs: Arc<dyn super::rounds_executor::RoundJobs>,
-    pub shows: ShowSink,
     /// `FileSlots`: transfers in Uploading and Completing at the same time.
     pub slots: u32,
     pub put_timeout: std::time::Duration,
@@ -110,7 +109,7 @@ pub(crate) struct TransferExecutor {
     codec: Arc<dyn StepCodec>,
     files: Arc<FileDirectories>,
     settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
-    shows: ShowSink,
+    status: StatusSink,
     drained: Arc<dyn Fn(Drained) + Send + Sync>,
     signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
     copies: Flights<TransferId>,
@@ -124,15 +123,15 @@ pub(crate) struct TransferExecutor {
 /// Where the executor reports to.
 pub struct TransferSinks {
     pub settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
-    pub shows: ShowSink,
+    pub status: StatusSink,
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
     pub signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
 }
 
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
-        let TransferSinks { settle, shows, drained, signal } = sinks;
-        Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache, doomed: Vec::new(), answers: Vec::new() }
+        let TransferSinks { settle, status, drained, signal } = sinks;
+        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
     fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, source: Source) {
@@ -320,13 +319,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
-            TransferEffect::Shows { key, shown } => (self.shows)(&key, shown),
-            TransferEffect::Refused { key, reason } => {
-                if reason.is_some() {
-                    (self.shows)(&key, Shown::Failed { error: "refused".into() });
-                }
-            }
-            TransferEffect::Status { .. } => {}
+            TransferEffect::Status { stream_id, shown, .. } => (self.status)(stream_id, shown),
             TransferEffect::Started { epoch } => (self.signal)(LifeSignal::Started(epoch)),
             TransferEffect::SnapshotRequest { epoch } => (self.signal)(LifeSignal::SnapshotRequest(epoch)),
             TransferEffect::RestoreClassified { epoch } => (self.signal)(LifeSignal::RestoreClassified(epoch)),

@@ -430,7 +430,7 @@ impl Life {
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref(), transfer_at, rounds_at) {
             (Some(outbox), Some(port), Some(_), Some(address), Some(rounds)) => {
-                let (settle_wiring, drained_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone());
+                let (settle_wiring, drained_wiring, signal_wiring, status_wiring) = (wiring.clone(), wiring.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     gate: wiring.gate.clone(),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
@@ -442,7 +442,7 @@ impl Life {
                     ports.db.files().clone(),
                     TransferSinks {
                         settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
-                        shows: port.shows.clone(),
+                        status: Arc::new(move |stream, shown| status_wiring.to_deliveries(super::read::deliveries::DeliveryInput::TransferStatus { stream, blob: super::read::deliveries::BlobStatus::of(&shown) })),
                         drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                         signal: Arc::new(move |signal| match signal {
                             LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),

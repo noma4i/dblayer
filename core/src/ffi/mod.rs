@@ -34,7 +34,6 @@ pub use query_spec::{QueryCondition, QueryOrder, QuerySpec};
 #[cfg(test)]
 pub(crate) mod tape;
 mod command;
-mod load_order;
 mod loading;
 mod write;
 mod read;
@@ -42,8 +41,6 @@ mod queue;
 mod transport;
 mod upload;
 mod upload_rounds;
-mod transfer_status;
-pub use transfer_status::{WireTransferState, WireTransferStatus};
 mod event;
 pub use event::WireModelEvent;
 pub mod upload_wire;
@@ -64,7 +61,6 @@ pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
-pub(crate) use queue::queue_of;
 pub use queue::{OperationInfo, OperationQueueStatus};
 pub use crate::transport::{PutFile, PutReply};
 #[cfg(test)]

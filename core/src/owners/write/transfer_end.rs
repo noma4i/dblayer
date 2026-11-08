@@ -294,7 +294,6 @@ impl TransferState {
                     if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }
                     if self.groups.get(&group_id).is_some_and(|group| group.ids.is_empty()) { self.groups.remove(&group_id); }
                 }
-                self.subscribers.remove(&id);
             }
         }
         self.send_orphans(false, fx);
@@ -366,17 +365,17 @@ impl TransferState {
         }
     }
 
-    pub(super) fn interest_plus(&mut self, id: TransferId, stream_id: StreamId, fx: &mut Fx) {
-        self.subscribers.entry(id).or_default().insert(stream_id);
-        let shown = self.shown_now(id);
-        run(fx, TransferEffect::Status { stream_id, transfer_id: id, shown });
+    pub(super) fn interest_plus(&mut self, key: Key, stream_id: StreamId, fx: &mut Fx) {
+        let shown = self.shown_by_key(&key);
+        self.subscribers.entry(key.clone()).or_default().insert(stream_id);
+        run(fx, TransferEffect::Status { stream_id, key, shown });
     }
 
-    pub(super) fn interest_minus(&mut self, id: TransferId, stream_id: StreamId) {
-        if let Some(streams) = self.subscribers.get_mut(&id) {
+    pub(super) fn interest_minus(&mut self, key: &str, stream_id: StreamId) {
+        if let Some(streams) = self.subscribers.get_mut(key) {
             streams.remove(&stream_id);
             if streams.is_empty() {
-                self.subscribers.remove(&id);
+                self.subscribers.remove(key);
             }
         }
     }
@@ -385,7 +384,7 @@ impl TransferState {
         if epoch != self.epoch {
             return;
         }
-        let mut ops = Vec::new();
+        let (mut ops, mut shows) = (Vec::new(), Vec::new());
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             if transfer.stage == TransferStage::Done || transfer.round_error == refused {
@@ -393,10 +392,13 @@ impl TransferState {
             }
             transfer.round_error = refused.clone();
             ops.push(crate::owners::store::StoreOp::UploadRoundError { key: transfer.key.clone(), error: refused.clone() });
-            let shows = refused.is_none() || matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading);
-            if shows {
-                run(fx, TransferEffect::Refused { key: transfer.key.clone(), reason: refused.clone() });
+            if refused.is_none() || matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading) {
+                shows.push((id, refused.is_some()));
             }
+        }
+        for (id, refusing) in shows {
+            let shown = if refusing { Shown::Failed { error: "refused".into() } } else { self.shown_now(id) };
+            self.show(id, shown, fx);
         }
         self.commit_ops(ops, fx);
     }

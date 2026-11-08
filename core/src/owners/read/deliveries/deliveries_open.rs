@@ -31,6 +31,8 @@ impl Delivery {
             ready: false,
             held_events: Vec::new(),
             blob: None,
+            transfer: None,
+            upload_row: None,
             retry: None,
             status_revision: 0,
             journal: VecDeque::new(),
@@ -62,7 +64,7 @@ impl Delivery {
                 machine.push(Value::Ready, fx);
             }
             Kind::Blob | Kind::RetryStatus => {
-                fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true }));
+                fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true, key: (machine.view.kind == Kind::Blob).then(|| machine.view.subject.clone()) }));
                 machine.interested = true;
             }
             Kind::List | Kind::Count | Kind::Operations | Kind::Entity { .. } => {

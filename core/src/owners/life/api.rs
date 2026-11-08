@@ -10,6 +10,7 @@ use crate::owners::store::StoreReply;
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorId, SessionInput};
+use crate::owners::read::windows::WindowsInput;
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput};
 use crate::runtime::{Epoch, EpochStamp, Waiter};
 
@@ -151,12 +152,16 @@ impl Life {
         waiter
     }
 
-    pub fn register_operations(&self, declarations: Vec<(String, String)>) {
+    /// The declarations of a registration reach every receiver in one step; `Windows` starts the preload last.
+    pub fn register_operations(&self, calls: Vec<(String, CallKind)>, declarations: Vec<(String, String)>) {
+        self.wiring.to_calls(CallsInput::Declare(calls));
         self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone() });
         self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations });
+        self.wiring.to_windows(WindowsInput::RegisterOperations { now: (self.wiring.now)() });
     }
 
-    pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
+    /// The clock of the runtime, the time that the platform calls hand to the owners.
+    pub fn now(&self) -> crate::runtime::Time { crate::runtime::Time((self.wiring.now)().unsigned_abs()) }
 
     pub fn session_reset(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

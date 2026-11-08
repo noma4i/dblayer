@@ -226,6 +226,10 @@ pub enum WindowsInput {
     /// The stream of `id` asks for a load of the key each time the network returns.
     ReloadOnConnect { key: WindowKey, id: InterestId },
     InterestMinus { key: WindowKey, id: InterestId },
+    /// A platform call takes its place in the order of the loads when it begins, before its load is ready.
+    Reserve { id: InterestId },
+    /// The call of `id` ended before its `Load` came: its place and its held `Load` are void.
+    Unreserve { id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
     Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
     /// `refresh`, `load_more`, `node(force)`: a `Load` that does not wait for the network. Without `online = Some(true)` the owner answers `Offline` and applies `OfflineRefused`.

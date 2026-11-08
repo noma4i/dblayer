@@ -14,6 +14,7 @@ pub mod plan_intent;
 pub(crate) mod plan_variables;
 pub(crate) mod operation_machine;
 pub mod operation_outbox;
+pub(crate) mod operation_queue;
 pub mod operation_status;
 pub mod outbox_executor;
 pub mod transfer;

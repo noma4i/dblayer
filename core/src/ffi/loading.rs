@@ -86,9 +86,21 @@ struct LoadCall {
     leave: LeaveLoad,
 }
 
+/// The place of a call in the order of the loads: `Windows` registers the loads in the order of the places.
+struct LoadSlot {
+    life: Arc<crate::owners::life::Life>,
+    waiter: Option<crate::runtime::Waiter<LifeReply>>,
+    id: u64,
+}
+
+impl Drop for LoadSlot {
+    fn drop(&mut self) {
+        if self.waiter.is_some() { self.life.unreserve_load(self.id); }
+    }
+}
+
 struct LeaveLoad {
     life: Arc<crate::owners::life::Life>,
-    order: Arc<super::load_order::LoadOrder>,
     key: WindowKey,
     id: u64,
     settled: bool,
@@ -96,13 +108,7 @@ struct LeaveLoad {
 
 impl Drop for LeaveLoad {
     fn drop(&mut self) {
-        if self.settled { return; }
-        let (life, key, id) = (self.life.clone(), self.key.clone(), self.id);
-        let counted = life.launch();
-        self.order.leave_after(self.order.issued(), move || {
-            life.leave_load(key, id);
-            drop(counted);
-        });
+        if !self.settled { self.life.leave_load(self.key.clone(), self.id); }
     }
 }
 
@@ -156,7 +162,7 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
         let name = key.name.clone();
-        let call = self.start_window(epoch, key, (Goal::First, true), None)?;
+        let call = self.start_window(epoch, self.reserve_load(epoch), key, (Goal::First, true), None)?;
         self.finish_load(call).await?;
         let rows = self.read_in_epoch(epoch, "nodes", move |database| {
             let mut rows = Vec::with_capacity(ids.len());
@@ -175,7 +181,7 @@ impl Database {
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let launch = self.life.launch();
-        let turn = self.loads.begin();
+        let slot = self.reserve_load(args.epoch);
         let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
         let release = ReleaseBarrier(dropping.clone());
         let task = crate::task::spawn_on(executor()?.handle(), crate::runtime::counted(Some(launch), async move {
@@ -184,13 +190,9 @@ impl Database {
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = match this.prepare_load(&model, &relation, &params_json).await {
-                Ok(params) => {
-                    turn.wait().await;
-                    this.start_window(epoch, WindowKey::relation(&model, &relation, &params), (goal, force), None)
-                }
+                Ok(params) => this.start_window(epoch, slot, WindowKey::relation(&model, &relation, &params), (goal, force), None),
                 Err(error) => Err(error),
             };
-            drop(turn);
             let result = match started {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
@@ -198,6 +200,11 @@ impl Database {
             crate::lock::effect(|| sender.send_replace(Some(result)));
         }));
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
+    }
+
+    fn reserve_load(&self, epoch: u64) -> LoadSlot {
+        let (waiter, id) = self.life.reserve_load(epoch);
+        LoadSlot { life: self.life.clone(), waiter: Some(waiter), id }
     }
 
     #[cfg(test)]
@@ -215,10 +222,9 @@ impl Database {
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
-        let turn = self.loads.begin();
+        let slot = self.reserve_load(epoch);
         let params = self.prepare_load(model, relation, params_json).await?;
-        turn.wait().await;
-        self.start_window(epoch, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
+        self.start_window(epoch, slot, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
     }
 
     async fn prepare_load(&self, model: &str, relation: &str, params_json: &str) -> Result<Map<String, Value>, DbError> {
@@ -228,21 +234,22 @@ impl Database {
         let prepared = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
             let params = db.spec(&found)?.selection_values(&name, &params).map_err(crate::store::CoreError::from)?;
-            db.window_record(&found, &name, &params)?;
+            db.check_window(&found, &name, &params)?;
             Ok(params)
         }).await;
         crate::runtime::release_holds();
         prepared
     }
 
-    fn start_window(&self, epoch: u64, key: WindowKey, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
+    fn start_window(&self, epoch: u64, mut slot: LoadSlot, key: WindowKey, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
         self.remote()?;
         self.account_call(epoch)?;
         let published = self.life.published();
         if published.epoch != epoch { return Err(super::command::ended()); }
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
-        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?, no_wait);
-        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), order: self.loads.clone(), key, id, settled: false } })
+        let (id, waiter) = (slot.id, slot.waiter.take().ok_or_else(super::database::foreign_reply)?);
+        self.life.load(epoch, id, key.clone(), (goal, force), self.db.revision_seq()?, no_wait);
+        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 
     async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {

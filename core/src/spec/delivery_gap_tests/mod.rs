@@ -171,7 +171,7 @@ impl Twin {
                         StreamEffect::CloseSink => Effect::CloseSink,
                         StreamEffect::Cancelled { reply } => Effect::Cancelled(reply),
                         StreamEffect::ReaderClaimed { .. } => unreachable!("the twin posts no ClaimReader"),
-                        StreamEffect::StatusInterest { plus } => Effect::StatusInterest(plus),
+                        StreamEffect::StatusInterest { plus, .. } => Effect::StatusInterest(plus),
                     });
                 }
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => modelled.push(Effect::InterestPlus),
@@ -256,7 +256,20 @@ impl Twin {
                 self.run();
             }
         }
-        let got = Self::modelled(take(&self.log));
+        let mut entries = take(&self.log);
+        loop {
+            let mut asked = Vec::new();
+            entries.retain(|entry| match entry {
+                Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { read_id, view, .. }, .. }) if view.kind == d::Kind::Blob => { asked.push(*read_id); false }
+                _ => true,
+            });
+            if asked.is_empty() { break; }
+            for read_id in asked {
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, data: d::ReadData::Upload { local_url: None, processing: None } });
+            }
+            entries.extend(take(&self.log));
+        }
+        let got = Self::modelled(entries);
         self.reference.next_total(self.total);
         let want = self.reference.step(input);
         assert_eq!(got, want, "the owner and the reference give the same effects");

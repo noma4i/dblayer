@@ -208,15 +208,3 @@ async fn xfer_status_processing() {
     rig.database.close_now();
 }
 
-/// A commit of another row wakes no `Blob` stream and reads no row: the commit of its own row wakes it once.
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_status_quiet_on_other_rows() {
-    let rig = rig().await;
-    let _stream = blob_stream(&rig, "update_photo");
-    settled(&rig, "the stream read its row at the open", || rig.database.shows.row_reads() == 1).await;
-    rig.land("Chat", chat_row("c2", 0)).await;
-    rig.land("Chat", chat_row("c1", 1)).await;
-    settled(&rig, "the commit of its own row woke the stream", || rig.database.shows.row_reads() >= 2).await;
-    assert_eq!(rig.database.shows.row_reads(), 2, "the commit of the other row read a row");
-    rig.database.close_now();
-}

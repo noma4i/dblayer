@@ -92,7 +92,7 @@ fn world() -> World {
         files.clone(),
         TransferSinks {
             settle: Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
-            shows: Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
+            status: Arc::new(move |_stream, shown| lock(&to_shown).push(shown)),
             drained: Arc::new(|_| {}),
             signal: Arc::new(|_| {}),
         },
@@ -110,6 +110,8 @@ fn world() -> World {
     world.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     world.post(TransferInput::RestoreReady { epoch: EPOCH });
     world.post(TransferInput::Online(Online(true)));
+    world.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 1 });
+    lock(&world.shown).clear();
     world
 }
 

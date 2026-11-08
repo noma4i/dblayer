@@ -72,7 +72,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     database.close_now();
 }
 
-/// D-138: a caller that leaves while an earlier call has still to register is an input the owner counts, not a task apart.
+/// boundary_load_cancel_orders (D-138): the leave of the last registered interest waits in the owner for the calls that began before it, and goes on at their registration.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {
     let transport = Arc::new(CancelledLoadTransport::default());
@@ -81,11 +81,12 @@ async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_regis
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
-    let earlier_call = database.loads.begin();
+    let (_earlier, earlier_id) = database.life.reserve_load(database.session_epoch());
     request.cancel();
-    assert_eq!(database.life.pending(), 1, "the leave waits for the earlier call as one counted input");
-    assert!(!transport.ended.load(Ordering::SeqCst), "the window still has the interest until the leave is delivered");
-    drop(earlier_call);
+    let owners = database.life.clone();
+    tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();
+    assert!(!transport.ended.load(Ordering::SeqCst), "the window still has the interest until the earlier call registered");
+    database.life.unreserve_load(earlier_id);
     bound(transport.cancelled.notified()).await;
     let owners = database.life.clone();
     tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();

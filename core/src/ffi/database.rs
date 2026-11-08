@@ -117,7 +117,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -158,13 +158,10 @@ impl Database {
         let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
-        let shows: Arc<super::transfer_status::Shows> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
-        let committed_shows = shows.clone();
-        life.on_committed(move |broadcast| committed_shows.touch(&broadcast.rows));
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, jobs, shows, loads: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, jobs, wires: Arc::new(wires) }))
     }
 
     pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
@@ -200,7 +197,7 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let config = crate::owners::write::upload::UploadConfig::default();
@@ -208,7 +205,6 @@ impl Database {
             put_timeout: config.put_timeout,
             codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), config)),
             jobs,
-            shows: Arc::new(move |key, shown| shows.put(key, shown)),
             slots: 1,
         });
         let ports = crate::owners::life::Ports {
@@ -333,9 +329,7 @@ impl Database {
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
         self.reads.declare(declared);
-        self.life.declare(names);
-        self.life.register_operations(registered);
-        self.life.start_preload();
+        self.life.register_operations(names, registered);
         Ok(())
     }
 

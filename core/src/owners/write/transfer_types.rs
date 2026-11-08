@@ -25,8 +25,8 @@ pub type TransferId = u64;
 pub use crate::owners::session::AttemptId;
 pub type CycleId = u64;
 pub use crate::owners::read::deliveries::StreamId;
-/// The sink of `uploads[action]`: the key and what it shows.
-pub type ShowSink = std::sync::Arc<dyn Fn(&str, Shown) + Send + Sync>;
+/// The sink of a `Blob` stream: the stream and what its key shows.
+pub type StatusSink = std::sync::Arc<dyn Fn(StreamId, Shown) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TransferPeers {
@@ -203,8 +203,9 @@ pub enum TransferInput {
     RetryOutcome { cycles: Vec<(TransferId, CycleId)>, result: Result<i64, Fault> },
     DiscardOutcome { key: Key, result: Result<(), Fault> },
     Outcome { receipt: Receipt, reply: ReplyId },
-    InterestPlus { transfer_id: TransferId, stream_id: StreamId },
-    InterestMinus { transfer_id: TransferId, stream_id: StreamId },
+    /// A `Blob` stream follows the key `model:row:action`, also before a transfer exists.
+    StatusInterestPlus { key: Key, stream_id: StreamId },
+    StatusInterestMinus { key: Key, stream_id: StreamId },
     Committed(Committed),
     Rejected(Rejected),
     Cancel { key: Key, reply: ReplyId },
@@ -277,11 +278,8 @@ pub enum TransferEffect {
     DeleteFile { path: String },
     Reply { reply: ReplyId, answer: TransferAnswer },
     /// `uploads[action]`.
-    Shows { key: Key, shown: Shown },
-    /// `uploads[action].error = refused` (`None` clears it).
-    Refused { key: Key, reason: Option<String> },
     /// Deliveries `TransferStatus` for the stream `stream_id`.
-    Status { stream_id: StreamId, transfer_id: TransferId, shown: Shown },
+    Status { stream_id: StreamId, key: Key, shown: Shown },
     Started { epoch: Epoch },
     SnapshotRequest { epoch: Epoch },
     RestoreClassified { epoch: Epoch },
@@ -436,7 +434,7 @@ pub struct TransferState {
     pub(super) landed_rows: std::collections::HashMap<(TransferId, u64), crate::store::Row>,
     pub(super) groups: BTreeMap<u64, Group>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
-    pub(super) subscribers: BTreeMap<TransferId, BTreeSet<StreamId>>,
+    pub(super) subscribers: BTreeMap<Key, BTreeSet<StreamId>>,
     pub(super) declarations: BTreeSet<(String, String)>,
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,

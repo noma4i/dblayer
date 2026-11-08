@@ -9,11 +9,12 @@ use crate::store::Store;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
-use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
+use crate::owners::read::deliveries::{BlobStatus, DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
 use crate::owners::read::{channels_of, has_media, lifetimes, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
+use crate::owners::write::transfer::{Shown, TransferInput};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, Outcome, OutcomeId, RuntimeBuilder, Waiter};
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
@@ -108,6 +109,15 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { effect: StreamEffect::ReaderClaimed { reply, claimed }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Reader { claimed });
             }
+            DeliveryEffect::Stream { stream, effect: StreamEffect::StatusInterest { plus, key: Some(key) } } => {
+                let owned = deliveries_wiring.addresses().is_some_and(|addresses| addresses.transfer.is_some());
+                match (plus, owned) {
+                    (true, true) => deliveries_wiring.to_transfer(TransferInput::StatusInterestPlus { key, stream_id: stream }),
+                    (false, true) => deliveries_wiring.to_transfer(TransferInput::StatusInterestMinus { key, stream_id: stream }),
+                    (true, false) => deliveries_wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob: BlobStatus::of(&Shown::Gone) }),
+                    (false, false) => {}
+                }
+            }
             DeliveryEffect::Drained(done) => drained(&deliveries_wiring, done),
             DeliveryEffect::Census { reply, observed, retained } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Streams { observed, retained });
@@ -170,23 +180,31 @@ impl Addresses {
 
 impl super::Life {
     /// A platform call that waits for a load of `key`: the waiter is the id of the call in `Windows`.
-    pub fn load(&self, epoch: Epoch, key: WindowKey, goal: Goal, force: bool, store_revision: i64, no_wait: Option<&'static str>) -> (Waiter<LifeReply>, u64) {
+    /// Takes the place of a platform call in the order of the loads: the id and the waiter of its outcome. `Windows` registers the loads in the order of their ids.
+    pub fn reserve_load(&self, epoch: Epoch) -> (Waiter<LifeReply>, u64) {
         let waiter = self.wiring.outcomes.register(epoch);
         let id = waiter.id().raw() | CALL;
         if self.is_shut() {
             self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed);
         } else {
-            let now = (self.wiring.now)();
-            self.wiring.to_windows_in(epoch, match no_wait {
-                Some(verb) => WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, verb },
-                None => WindowsInput::Load { key, id, goal, force, store_revision, now },
-            });
+            self.wiring.to_windows_in(epoch, WindowsInput::Reserve { id });
         }
         (waiter, id)
     }
 
-    /// The keys of the schema declared `preload` start loading once their operations are registered.
-    pub fn start_preload(&self) { self.wiring.to_windows(WindowsInput::RegisterOperations { now: (self.wiring.now)() }); }
+    /// The call of `id` ended before its load was registered.
+    pub fn unreserve_load(&self, id: u64) {
+        if !self.is_shut() { self.wiring.to_windows(WindowsInput::Unreserve { id }); }
+    }
+
+    pub fn load(&self, epoch: Epoch, id: u64, key: WindowKey, (goal, force): (Goal, bool), store_revision: i64, no_wait: Option<&'static str>) {
+        if self.is_shut() { return; }
+        let now = (self.wiring.now)();
+        self.wiring.to_windows_in(epoch, match no_wait {
+            Some(verb) => WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, verb },
+            None => WindowsInput::Load { key, id, goal, force, store_revision, now },
+        });
+    }
 
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]
@@ -248,7 +266,6 @@ impl super::Life {
     }
 
     /// The transfer a stream of kind `Blob` follows changed its status.
-    pub fn push_status(&self, stream: StreamId, blob: crate::owners::read::deliveries::BlobStatus) { self.wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob }); }
 
     /// The last handle of the stream is gone.
     pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None }); }
