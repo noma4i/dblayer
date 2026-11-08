@@ -85,7 +85,7 @@ private let sessionProfile = #"{"name":"SessionProfile","document":"query Sessio
 /// The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock.
 private func mutationNames(_ operations: String) throws -> Set<String> {
   let listed = try JSONSerialization.jsonObject(with: Data(operations.utf8)) as? [[String: Any]] ?? []
-  return Set(listed.compactMap { ($0["document"] as? String)?.hasPrefix("mutation") == true ? $0["name"] as? String : nil })
+  return Set(listed.compactMap { ($0["document"] as? String)?.drop(while: \.isWhitespace).hasPrefix("mutation") == true ? $0["name"] as? String : nil })
 }
 
 public func bridgeToTransport(_ transport: any ScriptedTransport, operations: String) throws -> @Sendable (String, [String: Any]) async throws -> [String: Any] {

@@ -55,7 +55,11 @@ const val SEND_MOMENT = """[{"name":"CreateMoment","document":"mutation CreateMo
 private const val SESSION_PROFILE = """{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}"""
 
 private fun mutationNames(operations: String): Set<String> =
-    Regex(""""name":"(\w+)","document":"mutation""").findAll(operations).map { it.groupValues[1] }.toSet()
+    (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray)
+        .map { it as kotlinx.serialization.json.JsonObject }
+        .filter { (it["document"] as kotlinx.serialization.json.JsonPrimitive).content.trimStart().startsWith("mutation") }
+        .map { (it["name"] as kotlinx.serialization.json.JsonPrimitive).content }
+        .toSet()
 
 /** The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock. */
 fun bridgeToTransport(transport: ScriptedTransport, operations: String): suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject {
