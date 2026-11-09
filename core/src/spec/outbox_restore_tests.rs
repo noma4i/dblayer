@@ -93,7 +93,7 @@ fn out_restoring_epoch_ended() {
     twin.run();
     let ended = take_fx(&twin.log, state_of(&twin.det));
     for reply in [40, 41, 42] {
-        assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::Interrupted)], "reply {reply}");
+        assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::SessionEnded)], "reply {reply}");
     }
     assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
     let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
@@ -144,7 +144,7 @@ fn out_restoring_closing() {
     twin.det.close();
     twin.run();
     let closed = take_fx(&twin.log, state_of(&twin.det));
-    assert_eq!(answers(&closed, 40), vec![OutboxAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(answers(&closed, 40), vec![OutboxAnswer::Err(Fault::Closed)]);
     assert_eq!(answers(&closed, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
     assert_eq!(drained(&closed), 1);
 }

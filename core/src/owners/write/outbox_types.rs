@@ -118,6 +118,7 @@ pub enum OutboxOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     NoSession,
+    SessionEnded,
     NotFound,
     InFlight,
     Interrupted,

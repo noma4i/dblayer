@@ -130,13 +130,13 @@ impl OutboxState {
     }
 
     /// Every held call gets exactly one answer.
-    pub(super) fn answer_held(&mut self, fx: &mut Effects<Outbox>) {
+    pub(super) fn answer_held(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
-                OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Interrupted), fx),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())),
+                OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx),
                 OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted)),
-                OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(Fault::Interrupted)),
+                OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
                 _ => {}
             }
         }
@@ -170,10 +170,10 @@ impl OutboxState {
             OutboxInput::AliasesRestored { aliases } => self.aliases = aliases,
             OutboxInput::EpochEnded(_) => {
                 self.ended = true;
-                self.answer_held(fx);
+                self.answer_held(Fault::SessionEnded, fx);
             }
             OutboxInput::Closing => {
-                self.answer_held(fx);
+                self.answer_held(Fault::Closed, fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }

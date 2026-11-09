@@ -28,6 +28,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
     match fault {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
+        Fault::SessionEnded => DbError::Session { code: crate::transport::SessionCode::SessionEnded, detail: "the session ended".into() },
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
         Fault::Interrupted => super::command::ended(),
