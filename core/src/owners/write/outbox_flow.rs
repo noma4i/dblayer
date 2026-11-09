@@ -294,7 +294,7 @@ impl OutboxState {
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         match outcome {
             AuthorOutcome::Response(body) => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = serde_json::from_str::<serde_json::Value>(&body).is_ok_and(|parsed| crate::transport::retry::temporary_error(&parsed).is_some()); }
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = serde_json::from_str::<serde_json::Value>(&body).is_ok_and(|parsed| crate::transport::answer_kind::transient_failure(&parsed).is_some()); }
                 self.decode_answer(op_id, body, fx);
             }
             AuthorOutcome::Error { class, error, pending_retained } => {

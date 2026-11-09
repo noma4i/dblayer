@@ -41,7 +41,7 @@ impl Link {
         let id = (self.ids.mint)(step);
         let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
         let response = self.gate.mutate(self.epoch, request).await?;
-        if !serde_json::to_value(&response).is_ok_and(|body| crate::transport::retry::temporary_error(&body).is_some()) { (self.ids.settle)(id); }
+        if !serde_json::to_value(&response).is_ok_and(|body| crate::transport::answer_kind::transient_failure(&body).is_some()) { (self.ids.settle)(id); }
         Ok(response)
     }
 

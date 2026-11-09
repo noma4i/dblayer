@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-mod answer_kind;
+pub(crate) mod answer_kind;
 mod cancel;
 pub(crate) mod encrypted;
 mod error;

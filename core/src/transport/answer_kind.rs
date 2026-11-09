@@ -45,7 +45,7 @@ pub fn refusal(body: &Value) -> Option<SessionCode> {
 }
 
 const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";
-const RETRYABLE: [&str; 3] = ["INTERNAL_SERVER_ERROR", "SERVICE_UNAVAILABLE", "TIMEOUT"];
+pub(crate) const RETRYABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 
 fn answered(sequence: Option<i64>, body: &Value, sequenced: bool) -> AnswerKind {
     let name = refusal_name(body);
@@ -68,7 +68,7 @@ fn answered(sequence: Option<i64>, body: &Value, sequenced: bool) -> AnswerKind 
         };
     }
     match name {
-        Some(name) if RETRYABLE.contains(&name) => AnswerKind::Transient { reason: name.into() },
+        Some(name) if RETRYABLE_CODES.contains(&name) => AnswerKind::Transient { reason: name.into() },
         _ => AnswerKind::Answered { sequence },
     }
 }
@@ -84,5 +84,13 @@ pub fn classify(outcome: &WireOutcome, sequenced: bool) -> AnswerKind {
         WireOutcome::Status(408 | 425 | 429 | 500..=599) => AnswerKind::Transient { reason: "http status".into() },
         WireOutcome::Status(status) => AnswerKind::Permanent { status: Some(*status) },
         WireOutcome::Answer { sequence, body } => answered(*sequence, body, sequenced),
+    }
+}
+
+/// The failure of a body the server answered with a retryable code on a pair without a `sequence`; `None` when the answer is final.
+pub fn transient_failure(body: &Value) -> Option<super::TransportError> {
+    match classify(&WireOutcome::Answer { sequence: None, body: body.clone() }, false) {
+        AnswerKind::Transient { reason } => Some(super::TransportError::Graphql { messages: vec![reason], extensions: None }),
+        _ => None,
     }
 }

@@ -17,7 +17,7 @@ use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::encrypted::credential::{dropped_pending, stored_answers, stored_pending, stored_session, Secret};
 use crate::transport::encrypted::exchange::{digest_of, permanently_refused, Exchange};
-use crate::transport::retry::temporary_error;
+use crate::transport::answer_kind::transient_failure;
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
@@ -199,7 +199,7 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
             if let Some(code) = refusal_of(&answer.body) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
-            if temporary_error(&answer.body).is_some() {
+            if transient_failure(&answer.body).is_some() {
                 return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: Some(answer.body.to_string()) };
             }
             if logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {

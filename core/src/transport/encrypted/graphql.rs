@@ -8,7 +8,7 @@ use std::sync::{OnceLock, Weak};
 
 use super::credential::Secret;
 use super::exchange::{session_failure, Answer, Exchange};
-use crate::transport::retry::temporary_error;
+use crate::transport::answer_kind::transient_failure;
 use super::jwe::random_token;
 use crate::store::Store;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
@@ -52,7 +52,7 @@ impl EncryptedTransport {
     async fn exchange_once(&self, credential: &str, path: &str, body: &Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let (request_id, response_key) = (uuid::Uuid::new_v4().to_string(), random_token());
         let answer = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await?;
-        match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
+        match transient_failure(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.

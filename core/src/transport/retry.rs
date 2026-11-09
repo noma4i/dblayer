@@ -2,7 +2,7 @@ use super::error::TransportError;
 use crate::runtime::{Backoff, Clock, RetryPolicy};
 use super::Connectivity;
 
-const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
+use super::answer_kind::RETRYABLE_CODES;
 // GraphQL list cursor errors require restarting pagination from the first page.
 pub(crate) const INVALID_CURSOR: &str = "INVALID_CURSOR";
 
@@ -25,7 +25,7 @@ impl RetryClass {
         if matches!(http_status, Some(408 | 429)) {
             return RetryClass::Retriable;
         }
-        if graphql_codes.iter().any(|code| RETRIABLE_CODES.contains(code)) {
+        if graphql_codes.iter().any(|code| RETRYABLE_CODES.contains(code)) {
             return RetryClass::Retriable;
         }
         RetryClass::Fatal
@@ -44,14 +44,6 @@ impl RetryClass {
         }
     }
 
-}
-
-pub(crate) fn temporary_error(body: &serde_json::Value) -> Option<TransportError> {
-    let codes: Vec<_> = body.get("error").and_then(serde_json::Value::as_str).into_iter().chain(
-        body.get("errors").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str())
-    ).collect();
-    if codes.iter().any(|code| super::SessionCode::from_wire(code).is_some()) || RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return None; }
-    Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
