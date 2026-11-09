@@ -65,5 +65,5 @@ fn custom_cursor_is_read_from_its_path_in_the_connection() {
 
     assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("7".to_string()), total: None }));
     let missing = json!({"feed": {"edges": [], "pageInfo": {"hasNextPage": true}}});
-    assert!(extract(&missing, "feed", &shape, None).is_err());
+    assert!(matches!(extract(&missing, "feed", &shape, None), Err(CodecError::Malformed(_))));
 }

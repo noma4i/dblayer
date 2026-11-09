@@ -37,7 +37,7 @@ async fn ranges_preserve_offsets_and_reject_truncation() {
     };
     assert_eq!(copied("a", 3, 4).await.unwrap(), b"3456");
     assert_eq!(copied("b", 8, 2).await.unwrap(), b"89");
-    assert!(copied("c", 8, 5).await.is_err());
+    assert_eq!(copied("c", 8, 5).await.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
     assert!(!directory.path().join("c").exists() && !directory.path().join("c.partial").exists());
 }
 

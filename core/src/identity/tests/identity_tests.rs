@@ -30,9 +30,9 @@ fn row_id_serializes_as_string_and_deserializes_string_or_integer_but_not_blank(
     assert_eq!(serde_json::to_string(&id).unwrap(), "\"m1\"");
     assert_eq!(serde_json::from_str::<RowId>("\"m1\"").unwrap().as_str(), "m1");
     assert_eq!(serde_json::from_str::<RowId>("42").unwrap().as_str(), "42");
-    assert!(serde_json::from_str::<RowId>("\"   \"").is_err());
-    assert!(serde_json::from_str::<RowId>("1.5").is_err());
-    assert!(serde_json::from_str::<RowId>("true").is_err());
+    assert_eq!(serde_json::from_str::<RowId>("\"   \"").unwrap_err().to_string(), "RowId must not be blank at line 1 column 5");
+    assert_eq!(serde_json::from_str::<RowId>("1.5").unwrap_err().to_string(), "invalid type: floating point `1.5`, expected a string or integer row id at line 1 column 3");
+    assert_eq!(serde_json::from_str::<RowId>("true").unwrap_err().to_string(), "invalid type: boolean `true`, expected a string or integer row id at line 1 column 4");
 }
 
 #[test]

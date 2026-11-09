@@ -52,7 +52,7 @@ fn the_counter_properties_fail_on_a_trace_that_breaks_them() {
     let good = vec![step(inc(1), vec![count(1, 1)]), step(epoch_ended(), vec![ended(1, 1)]), step(inc(2), vec![count(2, 1)])];
     assert!(properties.iter().all(|p| (p.check)(&good).is_ok()));
     let after_end = vec![step(inc(1), vec![count(1, 1)]), step(epoch_ended(), vec![ended(1, 1)]), step(inc(1), vec![count(1, 2)])];
-    assert!((properties[0].check)(&after_end).is_err());
+    assert_eq!((properties[0].check)(&after_end), Err("step 3 counts in the ended epoch 1".to_string()));
     let skipped = vec![step(inc(1), vec![count(1, 2)])];
-    assert!((properties[1].check)(&skipped).is_err());
+    assert_eq!((properties[1].check)(&skipped), Err("step 1 counts 2 after 0".to_string()));
 }

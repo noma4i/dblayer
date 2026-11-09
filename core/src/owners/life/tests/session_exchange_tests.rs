@@ -469,7 +469,7 @@ async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_databas
     slot.panic_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, life) = open_with(&world, slot.clone(), &db);
     let outcome = crate::test_wait::within(client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await;
-    assert!(matches!(outcome, Err(crate::transport::TransportError::Internal(_))), "{outcome:?}");
+    assert!(matches!(outcome, Err(crate::transport::TransportError::Interrupted(_) | crate::transport::TransportError::Storage(_))), "{outcome:?}");
     settled(&life, "Lifecycle never heard the executor failure", || life.published().closed).await;
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
 }

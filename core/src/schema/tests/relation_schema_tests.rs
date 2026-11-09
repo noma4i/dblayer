@@ -316,7 +316,7 @@ fn local_rows_get_zero_values_for_fields_the_server_owns() {
     assert_eq!(row["name"], json!("Ann"));
     assert_eq!((row["unread"].clone(), row["muted"].clone()), (json!(0), json!(false)));
     assert_eq!(row["createdAt"], json!("1970-01-01T00:00:01.000Z"));
-    assert!(spec.normalize(&json!({"id": "c1", "name": "Ann"}).as_object().unwrap().clone()).is_err());
+    assert!(matches!(spec.normalize(&json!({"id": "c1", "name": "Ann"}).as_object().unwrap().clone()), Err(crate::schema::SchemaError::MissingField(_))));
 }
 
 #[test]

@@ -17,7 +17,7 @@ fn data_scope_param_typed() {
         ("a bool for an int", json!({"afterSequence": true, "pinned": true})),
         ("a number for a bool", json!({"afterSequence": 5, "pinned": 1})),
     ] {
-        assert!(key("since", params).is_err(), "{case} is refused");
+        assert!(matches!(key("since", params), Err(crate::schema::SelectionKeyError::Normalize(crate::value::RelationParamsError::Scalar(crate::value::ScalarError::RejectedValue { .. })))), "{case} is refused");
     }
     let (null, empty, word) = (key("vibe_feed", json!({"vibeId": null})).unwrap(), key("vibe_feed", json!({"vibeId": ""})).unwrap(), key("vibe_feed", json!({"vibeId": "null"})).unwrap());
     assert!(null != empty && null != word && empty != word, "null and a text are different windows");

@@ -55,7 +55,7 @@ fn out_queued_retry() { row_check(St::Queued, offline(), In::Retry); }
 fn out_queued_models_reset() { row_check(St::Queued, offline(), In::ModelsReset); }
 
 #[test]
-fn out_queued_models_other() { row_check(St::Queued, offline(), In::ModelsReset); }
+fn out_queued_models_other() { row_check(St::Queued, Ctx { online: false, owns_model: false, ..Ctx::ready() }, In::ModelsReset); }
 
 #[test]
 fn out_queued_stray() { row_check(St::Queued, offline(), In::Response); row_check(St::Queued, offline(), In::TransportError { temporary: true }); row_check(St::Queued, offline(), In::Dropped); row_check(St::Queued, offline(), In::Tick); row_check(St::Queued, offline(), In::Rejected(RReason::Storage)); }
