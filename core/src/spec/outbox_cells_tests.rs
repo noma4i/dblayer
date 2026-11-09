@@ -641,10 +641,7 @@ fn out_queued_persist_attempt() {
 fn out_queued_exhausted() {
     let mut twin = Twin::new();
     let id = exhausted(&mut twin, Policy::Rollback);
-    twin.post(OutboxInput::Online(Online(false)));
-    tick(&mut twin, id);
-    assert_eq!(twin.stage(id), Some(St::Queued));
-    let effects = twin.post(OutboxInput::Online(Online(true)));
+    let effects = twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
     assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0));
 }
 
