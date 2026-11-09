@@ -110,7 +110,8 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
             let case = format!("{wire} confirmed={confirmed}");
-            assert_eq!((failure.session_code, failure.message), (Some(code), wire.to_string()), "{case}");
+            let refusal = serde_json::from_str::<serde_json::Value>(&failure.message).ok().and_then(|body| body["error"].as_str().map(str::to_string));
+            assert_eq!((failure.session_code, refusal.as_deref()), (Some(code), Some(wire)), "{case}: the failure carries the refusal body unchanged, got {:?}", failure.message);
             assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
         }
     }
