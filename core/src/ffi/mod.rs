@@ -177,6 +177,7 @@ impl From<crate::transport::TransportError> for DbError {
         match error {
             TransportError::Security { code, detail } => Self::Security { code, detail },
             TransportError::Config { code, detail } => Self::Config { code, detail },
+            TransportError::Http { status: 401, body } => Self::Unauthorized { detail: body },
             TransportError::Http { status, body } => Self::Http { status, detail: body },
             TransportError::RequestTooLarge { size, limit } => Self::RequestTooLarge { size, limit },
             TransportError::Network(detail) => Self::Network { detail },
