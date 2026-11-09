@@ -230,6 +230,7 @@ impl OutboxState {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.sends += 1;
         operation.sent = true;
+        operation.pending_owned = true;
         operation.waiting_retry = false;
         let purpose = if matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
