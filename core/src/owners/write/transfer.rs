@@ -84,8 +84,8 @@ impl TransferState {
         let numbers: Vec<StoreOp> = leaving.into_iter().flat_map(|id| self.renumber_after(id)).collect();
         let ops: Vec<StoreOp> = ids
             .iter()
-            .filter_map(|id| self.transfers.get(id))
-            .flat_map(|transfer| {
+            .filter_map(|id| self.transfers.get(id).map(|transfer| (*id, transfer)))
+            .flat_map(|(id, transfer)| {
                 let kind = if kind == StoreKind::MixedOutcomes {
                     if transfer.stage == TransferStage::Removing { StoreKind::Removed } else { StoreKind::Failed }
                 } else { kind };
@@ -93,6 +93,9 @@ impl TransferState {
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                    if matches!(transfer.removal, Some(Removal::Cancel | Removal::Discarded)) {
+                        ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: OutboxOutcome::Discarded });
+                    }
                     if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: row_id.clone() });
                     }
