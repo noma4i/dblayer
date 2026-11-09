@@ -449,6 +449,8 @@ pub struct Transfer {
     pub discard_waiters: Vec<ReplyId>,
     pub discard_sent: bool,
     pub new_source: Option<ActiveSource>,
+    /// The state before a retry with a new source: the copy and the metadata stay until the new copy is committed.
+    pub previous: Option<Box<Transfer>>,
     pub closing: bool,
 }
 

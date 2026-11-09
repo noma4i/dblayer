@@ -213,6 +213,12 @@ impl FileDirectories {
         Ok(target)
     }
 
+    /// The file `from` takes the place of the file `to` in one step, in the directory and in the cache; a missing `from` changes nothing.
+    pub(crate) fn promote(&self, from: &str, to: &str) -> io::Result<()> {
+        if let (Some(from), Some(to)) = (self.path(from), self.path(to)) { swap_file(&from, &to)?; }
+        swap_file(&self.cache.join(from), &self.cache.join(to))
+    }
+
     pub(crate) fn discard(&self, ids: &[String]) -> io::Result<()> {
         for id in ids {
             #[cfg(test)] super::tests::directories_tests::record_io(id, "discard");
@@ -257,3 +263,5 @@ impl Drop for FileDirectories {
         }
     }
 }
+
+fn swap_file(from: &Path, to: &Path) -> io::Result<()> { ignore_missing(fs::rename(from, to)) }

@@ -134,6 +134,11 @@ impl TransferState {
                 self.start_source(id, source, TransferStage::Failed, rep, fx);
             }
             TransferStage::Failed if transfer.error.as_deref() == Some("RestoreFailed") => Self::refuse(fx, rep, Fault::RestoreFailed),
+            TransferStage::Failed if source.is_some() && transfer.source.is_some() && transfer.place.is_some() => {
+                let Some(source) = source else { return };
+                transfer.previous = Some(Box::new(transfer.clone()));
+                self.start_source(id, source, TransferStage::Failed, rep, fx);
+            }
             TransferStage::Failed => {
                 let all = transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts >= source.parts);
                 if transfer.aborted {

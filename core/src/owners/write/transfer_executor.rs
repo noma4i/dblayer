@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{file_id, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, staged_file_id, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -134,9 +134,9 @@ impl TransferExecutor {
         Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
-    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, source: Source) {
+    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool) {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), file_id(transfer_id), self.cache.clone());
+        let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), if staged { staged_file_id(transfer_id) } else { file_id(transfer_id) }, self.cache.clone());
         let running = self.wire.tasks.start_blocking(Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
             let input = if flag.load(Ordering::SeqCst) {
@@ -306,8 +306,11 @@ impl EffectRunner<Transfers> for TransferExecutor {
 
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         match effect {
-            TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
-            TransferEffect::PromoteStaged { .. } => {}
+            TransferEffect::Copy { transfer_id, attempt_id, source, staged, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged),
+            TransferEffect::PromoteStaged { transfer_id } => {
+                let _ = self.files.promote(&staged_file_id(transfer_id), &file_id(transfer_id));
+                back.reply(stamp, TransferInput::StagedPromoted { transfer_id });
+            }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
             TransferEffect::Step { transfer_id, attempt_id, key, operation, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);

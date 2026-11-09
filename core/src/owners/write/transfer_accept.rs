@@ -25,7 +25,7 @@ impl TransferState {
         let Some(body) = self.transfers.get(&id).and_then(|transfer| supplied_body(&transfer.mutation.body, &source)) else { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)) };
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let file = source.source.clone();
+        let (file, staged) = (source.source.clone(), transfer.previous.is_some());
         transfer.source = Some(file.clone());
         transfer.steps = Some(source.steps.clone());
         transfer.supply_values = source.values.clone();
@@ -35,7 +35,7 @@ impl TransferState {
         transfer.supply_reply = Some(rep);
         transfer.stage = TransferStage::Copying;
         transfer.attempt_id = attempt_id;
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged: false };
+        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged };
         run(fx, effect);
         self.rounds_needed(vec![id], fx);
     }
@@ -113,6 +113,7 @@ impl TransferState {
             discard_waiters: Vec::new(),
             discard_sent: false,
             new_source: None,
+            previous: None,
             closing: false,
         };
         self.transfers.insert(transfer_id, transfer);
@@ -329,6 +330,18 @@ impl TransferState {
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
     pub(super) fn copy_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
+        let swapping: Vec<TransferId> = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(|transfer| transfer.previous.is_some())).collect();
+        for &id in &swapping {
+            let Some(previous) = self.transfers.get_mut(&id).and_then(|transfer| transfer.previous.take()) else { continue };
+            if let Some(upload_id) = previous.upload_id {
+                self.orphans.insert(upload_id, previous.key);
+                self.send_orphans(false, fx);
+            }
+            run(fx, TransferEffect::PromoteStaged { transfer_id: id });
+        }
+        let ids: Vec<TransferId> = ids.iter().copied().filter(|id| !swapping.contains(id)).collect();
+        if ids.is_empty() { return; }
+        let ids = &ids[..];
         let mut receipts = Vec::new();
         let mut accepted = Vec::new();
         for &id in ids {
@@ -399,6 +412,14 @@ impl TransferState {
     pub(super) fn source_rejected(&mut self, id: TransferId, fault: Fault, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let Some(back) = transfer.supply_back.take() else { return };
+        if let Some(previous) = transfer.previous.take() {
+            let rep = transfer.supply_reply.take();
+            *transfer = *previous;
+            run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) });
+            self.rounds_idle(id, fx);
+            if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Err(fault)); }
+            return;
+        }
         transfer.stage = back;
         transfer.source = None;
         transfer.steps = None;

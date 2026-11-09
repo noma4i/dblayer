@@ -20,7 +20,7 @@ fn xfer_retry_source_replaces_copy() {
     assert_eq!((twin.stage(id), out.promotions(), out.all_replies()), (TransferStage::PersistingCopy, 1, 0), "the call waits for the swap of the copy");
     let out = twin.post(TransferInput::StagedPromoted { transfer_id: id });
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2), "{:?}", out.replies(reply));
-    assert_eq!(twin.stage(id), TransferStage::Ready);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt, "the swapped transfer starts its upload at once");
 }
 
 #[test]
