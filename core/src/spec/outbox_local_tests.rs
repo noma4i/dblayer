@@ -326,3 +326,38 @@ fn out_prop_local_write_orders() {
         }
     }
 }
+
+#[test]
+fn out_local_write_committed() {
+    let mut twin = Twin::new();
+    twin.post(write(LocalWriteKind::SetLocal));
+    let committed = commit_first(&mut twin);
+    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+    assert!(!committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "a plain local write schedules no expiry: {committed:?}");
+    let mut ephemeral = Twin::new();
+    ephemeral.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
+    let committed = commit_first(&mut ephemeral);
+    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "an ephemeral write schedules the expiry: {committed:?}");
+}
+
+#[test]
+fn out_local_write_rejected() {
+    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid] {
+        let mut twin = Twin::new();
+        twin.post(write(LocalWriteKind::SetLocal));
+        let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reason.clone() }));
+        assert_eq!(answers(&effects, WRITE), vec![OutboxAnswer::Err(Fault::Rejected(reason))], "the local write is refused with the reason");
+    }
+}
+
+#[test]
+fn out_ephemeral_expire() {
+    let mut twin = Twin::new();
+    twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
+    commit_first(&mut twin);
+    let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(50) });
+    assert!(stale.is_empty(), "a stale expiry leaves the row: {stale:?}");
+    let due = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });
+    assert_eq!(kinds(&due), vec![CommitKind::RemoveRow], "the matching expiry removes the row");
+}
