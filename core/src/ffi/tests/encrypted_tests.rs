@@ -372,7 +372,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn bridge_prop_bootstrap_reader_a_slow_reader_gets_the_newest_snapshot_and_delays_no_request() {
+async fn bridge_prop_bootstrap_reader() {
     use tokio::sync::watch;
 
     struct Failing(watch::Sender<usize>);
