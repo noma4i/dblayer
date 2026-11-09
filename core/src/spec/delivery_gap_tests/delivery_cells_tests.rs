@@ -9,7 +9,7 @@ fn dlv_cancelling_pull_twice() {
     take(&twin.log);
     twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))]);
-    assert_eq!(twin.step(Input::SinkClosed), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled))), Effect::Cancelled(7)]);
+    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "delivery.md Cancelling x SinkClosed: cancels first, then the waiting Pull");
 }
 
 #[test]

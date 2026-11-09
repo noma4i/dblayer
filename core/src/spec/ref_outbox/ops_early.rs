@@ -227,12 +227,9 @@ pub fn sending(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             if !slot_free(s) {
                 row(e, "out_sending_tick_no_slot");
                 requeue(op, e);
-            } else if s.online_now() && op.attempts < MAX_ATTEMPTS {
+            } else if s.online_now() {
                 row(e, "out_sending_tick");
                 persist_attempt(op, e);
-            } else if s.online_now() {
-                row(e, "out_sending_tick_exhausted");
-                mark_failed(op, ErrKind::Exhausted, e);
             } else {
                 row(e, "out_sending_tick_offline");
                 op.stage = Stage::Queued;

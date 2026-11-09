@@ -567,13 +567,13 @@ fn dlv_open_live() {
     assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 
-/// dlv_opening_committed (D-34): a commit of `All` models touches a stream whose tables it does not list; the empty set touches none.
+/// D-254: a reset commit of `All` models reads no row stream; `ModelsReset` re-reads them.
 #[test]
-fn dlv_committed_all_models_touch_every_stream() {
+fn dlv_committed_reset_reads_no_row_stream() {
     let mut twin = open_rows();
     take(&twin.log);
     twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], rows: None, models: Models::All, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
-    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(2)]);
+    assert_eq!(Twin::modelled(take(&twin.log)), []);
 }
 
 #[test]

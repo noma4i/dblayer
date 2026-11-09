@@ -682,14 +682,6 @@ fn out_sending_response_errors() {
 }
 
 #[test]
-fn out_sending_tick_exhausted() {
-    let mut twin = Twin::new();
-    let id = exhausted(&mut twin, Policy::Rollback);
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0), "the 41st attempt never goes out");
-}
-
-#[test]
 fn out_persisting_attempt_committed() {
     let mut twin = Twin::new();
     let id = persisting(&mut twin, false);

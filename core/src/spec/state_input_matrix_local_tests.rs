@@ -28,7 +28,7 @@ fn ref_tokens(effects: &[Effect]) -> (Vec<String>, Vec<String>) {
             Effect::Store { what, .. } if what.contains("basis=generations") => own.push("store write".to_string()),
             Effect::Store { what, .. } => own.push(format!("store {what}")),
             Effect::Schedule { .. } => own.push("schedule".to_string()),
-            Effect::Drained(_) => { if own.last().map(String::as_str) != Some("drained") { own.push("drained".to_string()); } }
+            Effect::Drained("LocalWrites") => { if own.last().map(String::as_str) != Some("drained") { own.push("drained".to_string()); } }
             Effect::Reply { what, to: Addr::Call, .. } => replies.push(format!("reply {what}")),
             _ => {}
         }

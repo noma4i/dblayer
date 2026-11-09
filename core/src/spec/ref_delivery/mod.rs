@@ -140,7 +140,6 @@ impl Val {
 pub(super) enum Pulled {
     Value(Val),
     Done,
-    Invalid,
     Interrupted,
 }
 
