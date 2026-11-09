@@ -148,7 +148,7 @@ pub fn marking_retry(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>)
                 send_mutate(op, e);
             } else {
                 row(e, "out_marking_retry_committed_queued");
-                op.stage = Stage::Queued;
+                requeue(op, e);
             }
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_marking_retry_storage"); op.stage = Stage::Failed; op.retry_waiter = 0; reply(e, Addr::Call, op.id, "Err(Storage)"); }
