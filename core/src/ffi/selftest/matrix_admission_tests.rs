@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Rig};
+use super::upload_stand::{plain, Stand, CREATE_MOMENT};
+use crate::ffi::upload_wire::{WireUploadRequest, WireUploadSource};
 use crate::ffi::{Database, DbError, FileBytes};
 use crate::test_matrix::{crate_dir, Matrix};
 
@@ -15,6 +17,8 @@ struct Args {
     local_path: String,
     local_value: String,
     values: String,
+    action: String,
+    source_path: String,
 }
 
 /// A database with a local model that has a file field and a local field: the calls of files and local values run on it.
@@ -33,6 +37,8 @@ async fn files_database(path: &Path) -> (Arc<Database>, u64, String) {
 }
 
 const FILE_CALLS: [&str; 6] = ["file", "read", "url", "attach", "detach", "set_local"];
+const UPLOAD_CALLS: [&str; 3] = ["upload", "supply_source", "fail_source"];
+const RELATION_CALLS: [&str; 4] = ["node", "nodes", "refresh", "edge_values"];
 
 fn exported_calls() -> Vec<String> {
     fn files(directory: &Path, found: &mut Vec<std::path::PathBuf>) {
@@ -107,7 +113,13 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "detach" => database.detach(epoch, model, row, field).await.map(|_| ()),
         "create" => database.create(epoch, model, args.values.clone(), "{}".into()).await.map(|_| ()),
         "cancel_upload" => database.cancel_upload(epoch, model, row, "upload".into()).await.map(|_| ()),
-        "supply_source" | "fail_source" | "upload" => return None,
+        "node" => database.node(epoch, model, "node".into(), row, false).await.map(|_| ()),
+        "nodes" => database.nodes(epoch, model, "node".into(), vec![row]).await.map(|_| ()),
+        "refresh" => database.refresh(epoch, model, Some("profile".into()), "{}".into()).await,
+        "edge_values" => database.edge_values(epoch, model, Some("profile".into()), "{}".into(), vec![row]).await.map(|_| ()),
+        "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { path: Some(args.source_path.clone()), name: None, mime: None, variables_json: "{}".into() }).await.map(|_| ()),
+        "supply_source" => database.supply_source(epoch, model, row, args.action.clone(), WireUploadSource { path: args.source_path.clone(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() }).await.map(|_| ()),
+        "fail_source" => database.fail_source(epoch, model, row, args.action.clone(), "preparation".into()).await,
         _ => return None,
     })
 }
@@ -155,14 +167,30 @@ async fn admission_group(group: usize) {
     let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
     let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
     let _ = closed_files.close_database().await;
+    let stand = Stand::new();
+    let uploads = stand.open(None, &[CREATE_MOMENT]).await;
+    let uploads_epoch = uploads.session_epoch();
+    let upload_row = bound(uploads.send(plain("Moment", r#"{"text":"intro"}"#, uploads_epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let closed_stand = Stand::new();
+    let closed_uploads = closed_stand.open(None, &[CREATE_MOMENT]).await;
+    let closed_uploads_epoch = closed_uploads.session_epoch();
+    let closed_upload_row = bound(closed_uploads.send(plain("Moment", r#"{"text":"intro"}"#, closed_uploads_epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let _ = closed_uploads.close_database().await;
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"video").unwrap();
     let target = |name: &str, closed: bool| -> (Arc<Database>, Args) {
+        if UPLOAD_CALLS.contains(&name) {
+            let (database, epoch, row) = if closed { (closed_uploads.clone(), closed_uploads_epoch, closed_upload_row.clone()) } else { (uploads.clone(), uploads_epoch, upload_row.clone()) };
+            return (database, Args { epoch, model: "Moment".into(), row, field: String::new(), local_path: String::new(), local_value: String::new(), values: String::new(), action: "upload_clip".into(), source_path: source.to_string_lossy().into_owned() });
+        }
         let (database, epoch, row) = match (FILE_CALLS.contains(&name), closed) {
             (true, false) => (files.clone(), files_epoch, files_row.clone()),
             (true, true) => (closed_files.clone(), closed_files_epoch, closed_files_row.clone()),
             (false, false) => (rig.database.clone(), epoch, present.clone()),
             (false, true) => (closed_rig.database.clone(), closed_epoch, closed_present.clone()),
         };
-        let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into() };
+        let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into(), action: "upload".into(), source_path: String::new() };
+        if RELATION_CALLS.contains(&name) { args.model = "User".into(); args.row = "user".into(); }
         if name == "set_ephemeral" { args.model = "User".into(); args.row = "user".into(); args.values = "{\"typing\":true}".into(); }
         (database, args)
     };
