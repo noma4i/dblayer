@@ -54,7 +54,7 @@ impl RoundJobs for RoundJobsSlot {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch) {
         if let Some(sink) = self.0.get() {
             crate::lock::assert_no_library_lock("RoundJobsSink::schedule_job");
-            sink.schedule_job(RoundJob { request_id, round_id: u32::try_from(crate::runtime::next_id(crate::runtime::Counter::Round)).unwrap_or(u32::MAX), epoch });
+            sink.schedule_job(RoundJob { request_id, round_id: crate::runtime::next_id(crate::runtime::Counter::Round) as u32, epoch });
         }
     }
 
