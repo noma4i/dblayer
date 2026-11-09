@@ -901,7 +901,7 @@ fn out_destroy_discards_chain() {
     assert_eq!(take_back_ops(&batch), chain(&[created, later, after, moved]), "{batch}");
     let destroy = *twin.state().ops.keys().max().expect("the destroy");
     let done = twin.commit_batch(rollback);
-    assert_eq!((discarded(&done), transfer_outcomes(&done), twin.stage(later), twin.stage(after), twin.stage(moved), sends(&done)), (3, vec![OutboxOutcome::Discarded], None, None, None, 0), "{done:?}");
+    assert_eq!((discarded(&done), transfer_outcomes(&done), twin.stage(later), twin.stage(after), twin.stage(moved), sends(&done)), (3, vec![OutboxOutcome::Discarded], Some(St::Done), Some(St::Done), Some(St::Done), 0), "out_destroy_unsent_create: every operation of the chain is Done");
     assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None, row_id: None }));
     let online = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!((discarded(&online), transfer_outcomes(&online)), (0, Vec::new()), "each operation is discarded once");
@@ -924,7 +924,7 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
         assert!(if committed { matches!(submit.as_slice(), [OutboxAnswer::Receipt(_)]) } else { matches!(submit.as_slice(), [OutboxAnswer::Err(_)]) }, "committed={committed}: {reply:?}");
         if committed { twin.waiter(later); }
         let done = twin.commit_batch(rollback_batch);
-        assert_eq!((discarded(&done), twin.stage(later), sends(&done)), (if committed { 2 } else { 1 }, None, 0), "committed={committed}: {done:?}");
+        assert_eq!((discarded(&done), twin.stage(later), sends(&done)), (if committed { 2 } else { 1 }, if committed { Some(St::Done) } else { None }, 0), "committed={committed}: a rejected submit leaves no operation: {done:?}");
         let rollbacks = done.iter().chain(reply.iter()).filter(|effect| kinds(std::slice::from_ref(effect)) == vec![CommitKind::Rollback]).count();
         assert_eq!(rollbacks, 0, "committed={committed}: the chain is taken back once");
     }
