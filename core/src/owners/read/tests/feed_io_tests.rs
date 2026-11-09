@@ -65,7 +65,7 @@ impl CableLine for Line {
 
     async fn next(&self) -> Incoming {
         let _wake = WakeOnDrop;
-        crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() })
+        crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: None, reason: None, failure: None })
     }
 
     async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }

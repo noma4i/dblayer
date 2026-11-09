@@ -3,7 +3,7 @@ use crate::transport::TransportError;
 
 pub enum SocketEvent {
     Text(String),
-    Closed { code: u16, reason: String },
+    Closed { code: Option<u16>, reason: Option<String>, failure: Option<crate::transport::RawFailure> },
 }
 
 #[async_trait]

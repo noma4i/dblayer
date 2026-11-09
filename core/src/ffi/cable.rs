@@ -10,7 +10,6 @@ const GOING_AWAY: u16 = 1001;
 const NORMAL: u16 = 1000;
 const UNSUPPORTED_DATA: u16 = 1003;
 const TRY_AGAIN_LATER: u16 = 1013;
-const ABNORMAL: u16 = 1006;
 
 /// One open platform socket. The core sends text and closes it, the platform does nothing else with it.
 #[uniffi::export(rust, foreign)]
@@ -77,7 +76,7 @@ impl Mailbox {
                 Push::Queued
             } else if queue.events.len() >= MAILBOX_FRAMES {
                 queue.ended = true;
-                queue.events.push_back(SocketEvent::Closed { code: TRY_AGAIN_LATER, reason: "the cable queue is full".into() });
+                queue.events.push_back(SocketEvent::Closed { code: Some(TRY_AGAIN_LATER), reason: Some("the cable queue is full".into()), failure: None });
                 Push::Overflow
             } else {
                 queue.events.push_back(event);
@@ -89,7 +88,7 @@ impl Mailbox {
     }
 
     fn end_with(&self, code: u16, reason: &str) -> bool {
-        let ended = matches!(self.push(SocketEvent::Closed { code, reason: reason.into() }), Push::Queued);
+        let ended = matches!(self.push(SocketEvent::Closed { code: Some(code), reason: Some(reason.into()), failure: None }), Push::Queued);
         if ended { self.close_connection(code, reason); }
         ended
     }
@@ -132,12 +131,7 @@ impl CableEvents for Mailbox {
     fn binary(&self, _: Vec<u8>) { self.end_with(UNSUPPORTED_DATA, "binary cable frames are not supported"); }
 
     fn ended(&self, close_code: Option<u16>, reason: Option<String>, failure: Option<RawFailure>) {
-        let event = match (close_code, failure) {
-            (Some(code), _) => SocketEvent::Closed { code, reason: reason.unwrap_or_default() },
-            (None, Some(failure)) => SocketEvent::Closed { code: ABNORMAL, reason: failure.message },
-            (None, None) => SocketEvent::Closed { code: ABNORMAL, reason: reason.unwrap_or_default() },
-        };
-        self.push(event);
+        self.push(SocketEvent::Closed { code: close_code, reason, failure });
     }
 }
 

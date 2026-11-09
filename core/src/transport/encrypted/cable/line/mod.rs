@@ -8,7 +8,7 @@ use super::{CableError, CableKeys, CableSocket, EncryptedConfig, SocketEvent};
 #[derive(Debug)]
 pub enum Incoming {
     Frame { counter: u64, body: Value },
-    Closed { code: u16, reason: String },
+    Closed { code: Option<u16>, reason: Option<String>, failure: Option<crate::transport::RawFailure> },
     Unreadable(CableError),
 }
 
@@ -59,7 +59,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     loop {
         let text = match socket.next().await {
             Some(SocketEvent::Text(text)) => text,
-            Some(SocketEvent::Closed { code, reason }) => return Err(TransportError::Network(format!("cable {code}: {reason}"))),
+            Some(SocketEvent::Closed { code, reason, failure }) => return Err(TransportError::Network(format!("cable {code:?}: {reason:?} {failure:?}"))),
             None => return Err(TransportError::Network("cable closed".into())),
         };
         let body: Value = serde_json::from_str(&text).map_err(decode_fault)?;
@@ -107,8 +107,8 @@ impl CableLine for SocketLine {
                         Err(error) => Incoming::Unreadable(error),
                     };
                 }
-                Some(SocketEvent::Closed { code, reason }) => return Incoming::Closed { code, reason },
-                None => return Incoming::Closed { code: 1006, reason: String::new() },
+                Some(SocketEvent::Closed { code, reason, failure }) => return Incoming::Closed { code, reason, failure },
+                None => return Incoming::Closed { code: None, reason: None, failure: None },
             }
         }
     }

@@ -146,8 +146,8 @@ impl FeedIo {
                         return;
                     }
                 }
-                Incoming::Closed { code, reason } => {
-                    return reply(if session_closed(code, &reason) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
+                Incoming::Closed { code, reason, .. } => {
+                    return reply(if session_closed(code.unwrap_or(1006), reason.as_deref().unwrap_or_default()) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
                 }
                 Incoming::Unreadable(_) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Decrypt }),
             }

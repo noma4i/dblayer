@@ -62,7 +62,7 @@ async fn raw_socket_bridge_preserves_ciphertext_and_close_codes() {
     assert_eq!(*crate::lock::lock(&link.sent), ["ciphertext"]);
     assert!(matches!(within(socket.next()).await, Some(SocketEvent::Text(text)) if text == "hello"));
     link.events().ended(Some(4503), Some("unavailable".into()), None);
-    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: 4503, reason }) if reason == "unavailable"));
+    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: Some(4503), reason: Some(reason), .. }) if reason == "unavailable"));
     assert!(within(socket.next()).await.is_none());
 }
 
@@ -71,7 +71,7 @@ async fn a_binary_frame_ends_the_cable_with_the_unsupported_data_code() {
     let (transport, link) = opened(None);
     let socket = transport.open_cable(URL).await.unwrap();
     link.events().binary(vec![1, 2]);
-    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: 1003, .. })));
+    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: Some(1003), .. })));
     assert_eq!(crate::lock::lock(&link.closes).iter().map(|(code, _)| *code).collect::<Vec<_>>(), [1003]);
 }
 
@@ -83,7 +83,7 @@ async fn a_full_mailbox_keeps_its_frames_then_ends_the_cable() {
     for number in 0..MAILBOX_FRAMES {
         assert!(matches!(within(socket.next()).await, Some(SocketEvent::Text(text)) if text == number.to_string()));
     }
-    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: 1013, .. })));
+    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: Some(1013), .. })));
     assert!(within(socket.next()).await.is_none());
     assert_eq!(crate::lock::lock(&link.closes).iter().map(|(code, _)| *code).collect::<Vec<_>>(), [1013]);
 }
@@ -126,11 +126,11 @@ async fn an_ended_socket_is_an_abnormal_close_by_its_raw_error_or_no_error() {
     let (transport, link) = opened(None);
     let socket = transport.open_cable(URL).await.unwrap();
     link.events().ended(None, None, Some(RawFailure { domain: "NSURLErrorDomain".into(), code: Some(-1005), message: "lost".into() }));
-    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: 1006, reason }) if reason == "lost"));
+    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: None, failure: Some(failure), .. }) if failure.message == "lost"));
     let (transport, link) = opened(None);
     let socket = transport.open_cable(URL).await.unwrap();
     link.events().ended(None, None, None);
-    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: 1006, .. })));
+    assert!(matches!(within(socket.next()).await, Some(SocketEvent::Closed { code: None, .. })));
 }
 
 #[tokio::test]
