@@ -502,3 +502,14 @@ fn boundary_round_orders() {
         assert_eq!((runs.len(), state.round), (0, Round::Stopped { epoch: 1 }), "the own end of the round still ends it in {order:?}");
     }
 }
+
+#[test]
+fn xfer_round_resume_old_epoch() {
+    for round in [Round::Refused { epoch: 1 }, Round::Stopped { epoch: 1 }] {
+        let mut state = state(2);
+        state.round = round;
+        busy(&mut state, 1, &[10]);
+        let (runs, sends) = step(&mut state, RoundsInput::Foreground);
+        assert_eq!((runs.len(), sends.len(), state.round), (0, 0, round), "{round:?}: a round of an old epoch is not resumed");
+    }
+}

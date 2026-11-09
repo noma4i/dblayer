@@ -85,3 +85,12 @@ fn xfer_staged_clear_rejected() {
     let out = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::PersistingAttempt, Vec::<String>::new()), "a rejected clear of the staged marker keeps the transfer, the marker stays for the next restart to clear");
 }
+
+/// xfer_retry_invalid_source (H08): a retry of a failed transfer with a source that has no file (empty path, zero parts) is refused with Invalid and stays Failed.
+#[test]
+fn xfer_retry_invalid_source() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    let (reply, out) = twin.retry(KEY, Some(Source { path: String::new(), parts: 0 }));
+    assert_eq!((Twin::fault(&out, reply), twin.stage(id)), (Some(Fault::Invalid), TransferStage::Failed), "an invalid source is refused and the transfer stays Failed: {out:?}");
+}

@@ -126,6 +126,20 @@ fn xfer_restoring_register() {
     assert_eq!(twin.stage(1), TransferStage::Ready, "the declaration of the Restoring phase counts");
 }
 
+/// xfer_calls_held_while_restoring: a call that arrives before RestoreReady is held and replayed on RestoreReady against the row the transfer was classified into.
+#[test]
+fn xfer_calls_held_while_restoring() {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    let reply = twin.reply();
+    let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
+    assert!(Twin::quiet(&held), "a call is held during Restoring: {held:?}");
+    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    assert!(restored.removed().is_empty(), "the held call waits for RestoreReady, not classification: {restored:?}");
+    let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(ready.removed(), vec![KEY.to_string()], "on RestoreReady the held cancel replays against the classified transfer");
+}
+
 #[test]
 fn xfer_prop_online_before_declaration() {
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -483,6 +497,28 @@ fn xfer_open_saved_outcome_discarded() {
     twin.commit();
     let (reply, out) = twin.outcome(1, 1);
     assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
+}
+
+/// xfer_open_retry_after_crash: a completed row of a later cycle with no intent and a saved outcome of a prior cycle (a crash after the Committed of a retry) reopens as PersistingBatchIntent and writes the intent of the final mutation on RestoreReady.
+#[test]
+fn xfer_open_retry_after_crash() {
+    let mut found = completed(1, KEY);
+    found.cycle_id = 2;
+    let (mut twin, out) = Twin::opened(vec![found], outcomes(1, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }));
+    assert_eq!((twin.stage(1), out.shows()), (TransferStage::PersistingBatchIntent, vec![Shown::Uploading { progress: 100 }]));
+    let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((ready.writes(), ready.batches.first().map(|batch| batch.intents)), (1, Some(1)), "RestoreReady writes the intent of the final mutation: {ready:?}");
+}
+
+/// xfer_open_saved_interrupted: a completed row whose saved outcome of the current cycle is Ended restores no live transfer; the Outcome call returns that interrupted outcome with no revision.
+#[test]
+fn xfer_open_saved_interrupted() {
+    let cause = crate::owners::read::deliveries::EndCause::SessionEnded;
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Ended(cause.clone())));
+    assert!(Twin::quiet(&out), "a saved interrupted outcome restores no live transfer: {out:?}");
+    assert_eq!(twin.stage(1), TransferStage::Done, "the cycle already ended");
+    let (reply, out) = twin.outcome(1, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None)], "the Outcome call gets the saved interrupted outcome, no revision");
 }
 
 #[test]

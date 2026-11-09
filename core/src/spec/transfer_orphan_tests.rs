@@ -336,6 +336,37 @@ fn xfer_minted_write_storage() {
     assert!(minted(&mut twin, id, "u1").runs.is_empty(), "the same id again is no new debt");
 }
 
+/// xfer_minted_write_interrupted: the Store refuses the write of the minted id with NoSession or Closed. The debt stays, nothing is scheduled or aborted, and the next network admission aborts it.
+#[test]
+fn xfer_minted_write_interrupted() {
+    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        twin.online(false);
+        let out = minted(&mut twin, id, "u1");
+        assert_eq!(out.writes(), 1, "{reason:?}");
+        let refused = twin.reject(reason.clone());
+        assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), refused.writes(), twin.t(id).upload_id.as_deref()), (0, 0, 0, 0, Some("u1")), "{reason:?}: nothing goes out, the debt of the id stays: {refused:?}");
+        assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "{reason:?}: the first network admission aborts the debt");
+    }
+}
+
+/// xfer_minted_write_other: a refused write of the minted id with StaleGeneration or Invalid behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
+#[test]
+fn xfer_minted_write_other() {
+    for reason in [RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 0 }, RejectReason::Invalid] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        twin.online(false);
+        let out = minted(&mut twin, id, "u1");
+        assert_eq!(out.writes(), 1, "{reason:?}");
+        let refused = twin.reject(reason.clone());
+        assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "{reason:?}: the debt is kept and scheduled, nothing is aborted: {refused:?}");
+        let again = minted_due(&mut twin, "u1");
+        assert_eq!(again.writes(), 1, "{reason:?}: the write goes again");
+    }
+}
+
 /// xfer_minted_write_retry (P-XFER-41, D-192): the tick of a refused write sends the write again with the current row, and Committed of the repeat settles the debt and keeps the id durable.
 #[test]
 fn xfer_minted_write_retry() {
