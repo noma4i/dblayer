@@ -80,9 +80,6 @@ impl Lifecycle {
         self.published.closed = true;
         self.publish(out, None, Vec::new());
         self.drop_restoring(out, Answer::Closed);
-        for publication in &mut self.publishing {
-            answer_all(out, std::mem::take(&mut publication.replies), Answer::Closed);
-        }
         if let Some(epoch) = end {
             self.ended(epoch);
             out.effects.push(Effect::EpochEnded(epoch, Cause::Close));
