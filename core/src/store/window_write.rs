@@ -79,7 +79,10 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         _ => None,
     };
     let model_key = ModelKey::new(model);
-    let plan = if plans_first || start_after.is_some() {
+    let covers_nothing = accepted.is_empty() && page.cursor.is_some() && !page.replace_all;
+    let plan = if covers_nothing {
+        crate::owners::read::codec::LandingPlan { entity_ops: Vec::new(), scope_ops: Vec::new() }
+    } else if plans_first || start_after.is_some() {
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
         request.replace_all = to_end;
         request.start_after = start_after;
