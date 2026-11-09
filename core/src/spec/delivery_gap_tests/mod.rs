@@ -233,7 +233,7 @@ impl Twin {
                 self.call(d::DeliveryInput::Pull { stream, outcome, reader: 1 });
             }
             Input::PullCancelled { matched } => {
-                let outcome = if *matched { self.pull.unwrap() } else { crate::runtime::OutcomeId::from_raw(u64::MAX) };
+                let outcome = if *matched && self.pull.is_some() { self.pull.unwrap() } else { crate::runtime::OutcomeId::from_raw(u64::MAX) };
                 self.call(d::DeliveryInput::PullCancelled { stream, outcome });
             }
             Input::Cancel { reply } => self.call(d::DeliveryInput::Cancel { stream, reply: *reply }),
