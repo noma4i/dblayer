@@ -163,6 +163,8 @@ at_red core/src/owners/swap_user.rs 'fn go() { let reason = DestroyReason::Repla
 at_red core/src/transport/watcher.rs 'fn go(connectivity: &Connectivity) {}'
 at_green core/src/transport/retry.rs 'fn go(connectivity: &Connectivity) {}'
 at_red core/src/transport/request.rs 'fn go(transport: &T) { transport.query(request); }'
+at_red core/src/ffi/upload.rs 'fn go(db: &Db) { db.plan_update(model, row, values, args); }'
+at_green core/src/ffi/write.rs 'fn go(db: &Db) { db.plan_update(model, row, values, args); }'
 at_red core/src/owners/body.rs 'fn make() { let body = graphql_body(&request, true); }'
 at_green core/src/owners/life/calls_runner.rs 'fn make() { let body = graphql_body(&request, true); }'
 at_red core/src/owners/hash.rs 'fn make() { let body = hash_only(text); }'

@@ -502,6 +502,12 @@ for path in files:
     if re.search(r"\bserver_contract\b|\bServerContract\b", contents[path]) and f"z38:{relative}" not in allowed:
         findings.append(f"Z38 the server contract of the test doubles is reached only from its export (ffi/contract.rs), tests and the platform doubles, no production path calls it: {path.relative_to(root)}")
 
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative in ("ffi/write.rs", "store/plan/write.rs"): continue
+    if re.search(r"\bplan_update\(", contents[path]) and f"z40:{relative}" not in allowed:
+        findings.append(f"Z40 values that carry local fields are planned by plan_supplied (the local part goes to the same transaction), plan_update drops them: {path.relative_to(root)}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:
