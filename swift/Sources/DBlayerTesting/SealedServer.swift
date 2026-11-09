@@ -103,7 +103,7 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     if lock.withLock({ refusing }) { return EncryptedReply(status: 500, body: "") }
     let wire = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
     if path.hasPrefix("/api/auth/"), request["sequence"] as? Int == 1 { contract.setLast(sequence: 0) }
-    switch contract.admit(scope: "sealed", requestJson: wire) {
+    switch try contract.admit(scope: "sealed", requestJson: wire) {
     case .stored(let sealed): return EncryptedReply(status: 200, body: sealed)
     case .twoBodies: throw DbError.Invalid(detail: "request ID reused with different content")
     case .refused(let refusal): return EncryptedReply(status: 200, body: try seal(request, try JSONSerialization.jsonObject(with: Data(refusal.utf8)) as! [String: Any], spending: false))
@@ -140,7 +140,7 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
       }
     }
     let sealed = try seal(request, reply)
-    contract.settle(scope: "sealed", requestJson: wire, token: sealed)
+    try contract.settle(scope: "sealed", requestJson: wire, token: sealed)
     let lose = lock.withLock { () -> Bool in
       let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
       guard filename != nil && filename == lostFile else { return false }

@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::DbError;
 use crate::server_contract::{Admission, Contract, Request};
 
 #[derive(uniffi::Object)]
@@ -21,8 +22,9 @@ pub enum ContractAdmission {
     Fresh,
 }
 
-fn request_of(scope: &str, request_json: &str) -> Request {
-    Request::from_wire(scope, &serde_json::from_str(request_json).unwrap_or_default())
+fn request_of(scope: &str, request_json: &str) -> Result<Request, DbError> {
+    let wire = serde_json::from_str(request_json).map_err(DbError::from)?;
+    Ok(Request::from_wire(scope, &wire))
 }
 
 impl ServerContract {
@@ -51,15 +53,18 @@ impl ServerContract {
     pub fn take(&self, operation: String) -> Option<String> { self.contract().take(&operation) }
 
     /// `request_json`: `{"requestId": text, "sequence": number or null, "body": {"operationName", "variables", "query"?, "extensions"?}}`.
-    pub fn admit(&self, scope: String, request_json: String) -> ContractAdmission {
-        match self.contract().admit(&request_of(&scope, &request_json)) {
+    pub fn admit(&self, scope: String, request_json: String) -> Result<ContractAdmission, DbError> {
+        Ok(match self.contract().admit(&request_of(&scope, &request_json)?) {
             Admission::Stored(token) => ContractAdmission::Stored { token },
             Admission::Refused(body) => ContractAdmission::Refused { body: body.to_string() },
             Admission::TwoBodies => ContractAdmission::TwoBodies,
             Admission::Fresh => ContractAdmission::Fresh,
-        }
+        })
     }
 
     /// The answer of the token reached the client: the pair is remembered and a sequence is spent.
-    pub fn settle(&self, scope: String, request_json: String, token: String) { self.contract().settle(&request_of(&scope, &request_json), token) }
+    pub fn settle(&self, scope: String, request_json: String, token: String) -> Result<(), DbError> {
+        self.contract().settle(&request_of(&scope, &request_json)?, token);
+        Ok(())
+    }
 }

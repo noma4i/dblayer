@@ -153,8 +153,8 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
   }
 
-  private func settle(_ scope: String, _ wire: String, _ reply: Reply) {
-    contract.settle(scope: scope, requestJson: wire, token: store(Reply(body: reply.body, failure: reply.failure)))
+  private func settle(_ scope: String, _ wire: String, _ reply: Reply) throws {
+    try contract.settle(scope: scope, requestJson: wire, token: store(Reply(body: reply.body, failure: reply.failure)))
   }
 
   private func answer(_ request: TransportRequest) async throws -> String {
@@ -164,17 +164,17 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     lock.withLock { recorded.append(request) }
     var reply: Reply?
     var twoBodies = false
-    switch contract.admit(scope: scope, requestJson: wire) {
+    switch try contract.admit(scope: scope, requestJson: wire) {
     case .stored(let token): reply = lock.withLock { replies[token] }
     case .twoBodies: twoBodies = true
     case .refused: break
     case .fresh:
       if let body = responder?(request) {
         reply = Reply(body: body, failure: nil)
-        settle(scope, wire, reply!)
+        try settle(scope, wire, reply!)
       } else if let token = contract.take(operation: request.operationName), let next = lock.withLock({ replies[token] }) {
         reply = next
-        if !Self.lostAnswer(next.failure) { settle(scope, wire, next) }
+        if !Self.lostAnswer(next.failure) { try settle(scope, wire, next) }
       }
     }
     TestPulse.shared.pulse()

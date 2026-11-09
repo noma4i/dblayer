@@ -53,12 +53,12 @@ struct MockContractTests {
       for call in entry["calls"] as! [[Any]] {
         let wire = text(["requestId": "\(call[1])", "sequence": NSNull(), "body": ["operationName": call[2], "variables": call[3]]])
         let scope = call[0] as! String
-        switch contract.admit(scope: scope, requestJson: wire) {
+        switch try contract.admit(scope: scope, requestJson: wire) {
         case .stored(let token): seen.append("data:\(token)")
         case .refused, .twoBodies: seen.append("refused")
         case .fresh:
           if let token = contract.take(operation: call[2] as! String) {
-            contract.settle(scope: scope, requestJson: wire, token: token)
+            try contract.settle(scope: scope, requestJson: wire, token: token)
             seen.append("data:\(token)")
           } else { seen.append("refused") }
         }

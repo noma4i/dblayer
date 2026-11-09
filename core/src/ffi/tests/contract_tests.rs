@@ -4,12 +4,12 @@ use serde_json::{json, Value};
 /// The loop every platform double runs: ask the contract, take a scripted token when the request is fresh, settle it.
 fn answer_of(contract: &ServerContract, scope: &str, request_id: u64, operation: &str, variables: &Value) -> String {
     let request = json!({ "requestId": request_id.to_string(), "sequence": null, "body": { "operationName": operation, "variables": variables } }).to_string();
-    match contract.admit(scope.into(), request.clone()) {
+    match contract.admit(scope.into(), request.clone()).unwrap() {
         ContractAdmission::Stored { token } => format!("data:{token}"),
         ContractAdmission::Refused { .. } | ContractAdmission::TwoBodies => "refused".into(),
         ContractAdmission::Fresh => match contract.take(operation.into()) {
             Some(token) => {
-                contract.settle(scope.into(), request, token.clone());
+                contract.settle(scope.into(), request, token.clone()).unwrap();
                 format!("data:{token}")
             }
             None => "refused".into(),
