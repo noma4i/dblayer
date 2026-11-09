@@ -192,4 +192,25 @@ if run; then echo "check_zoo_test: a line allow of Z18 covered a second line of 
 printf 'class Holder { @Volatile private var live: Int? = null }\n' > "$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
 run || { echo "check_zoo_test: the line allow of Z18 did not hold" >&2; exit 1; }
 /bin/rm -f "$work/scripts/zoo_allowlist.txt" "$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
+printf 'pub fn set_clock(&self) {}\n' > "$work/core/src/owners/clock_one.rs"
+at_red core/src/owners/clock_two.rs 'pub fn set_clock(&self) {}'
+/bin/rm -f "$work/core/src/owners/clock_one.rs"
+printf 'pub fn alone() {}\n' > "$work/core/src/owners/support.rs"
+at_red core/src/ffi/support.rs 'pub fn second() {}'
+/bin/rm -f "$work/core/src/owners/support.rs"
+printf 'pub struct EpochCounters;\n' > "$work/core/src/owners/counters_one.rs"
+at_red core/src/owners/counters_two.rs 'pub struct WindowStats;'
+/bin/rm -f "$work/core/src/owners/counters_one.rs"
+printf '[features]\ntest-support = []\n' > "$work/core/Cargo.toml"
+if run; then echo "check_zoo_test: Z22 did not catch the test-support feature" >&2; exit 1; fi
+: > "$work/core/Cargo.toml"
+at_red core/src/owners/gate.rs '#[cfg(feature = "test-support")] fn open() {}'
+at_red core/src/owners/mod.rs '#[cfg(test)]
+mod helpers;'
+at_red core/src/owners/stand.rs '#[path = "x.rs"]
+mod stand;'
+for wrapper in 'swift/Sources/DBlayer/Probe.swift|func again() { sleep(1) }' 'kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt|class A { val x = CableClient() }' 'kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt|val s = flow.buffer(Channel.UNLIMITED)' 'swift/Sources/DBlayer/Probe.swift|let name = "Yupi"'; do
+  at_red "${wrapper%%|*}" "${wrapper#*|}"
+done
+at_green swift/Sources/DBlayer/Probe.swift 'func fine() -> Int { 1 }'
 echo "check_zoo_test: ok"
