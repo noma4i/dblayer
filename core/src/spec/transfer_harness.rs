@@ -134,6 +134,8 @@ impl Out {
     /// The shown values that the batches wrote to `sync_upload`.
     pub fn stored_shows(&self) -> Vec<Shown> { self.shown.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadShown { shown, .. } = op { Some(shown.clone()) } else { None }).collect() }
 
+    pub fn shown_batches(&self) -> Vec<BatchId> { self.shown.iter().map(|batch| batch.id).collect() }
+
     pub fn staged_cleared(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadStaged { key } = op { Some(key.clone()) } else { None }).collect() }
 
     pub fn outcomes_written(&self) -> Vec<(u64, u64, OutboxOutcome)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } = op { Some((*transfer_id, *cycle_id, outcome.clone())) } else { None }).collect() }
@@ -351,6 +353,11 @@ impl Twin {
 
     /// `Committed` for the oldest batch the Store has not answered.
     pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
+
+    /// `Committed` for a batch of shown values: the Store answers them apart from the batches the tests answer in order.
+    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
+
+    pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.post(TransferInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) })) }
 
     pub fn has_pending(&self) -> bool { !self.unanswered.is_empty() }
 

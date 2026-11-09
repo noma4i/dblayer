@@ -18,9 +18,34 @@ fn xfer_every_show_is_stored() {
         twin.online(true),
         twin.step_ok(id, 1, None),
     ];
-    let shown: usize = steps.iter().map(|out| out.shows().len()).sum();
-    assert!(shown >= 2, "the steps show nothing: {shown}");
+    let mut shown = 0;
     for (index, out) in steps.iter().enumerate() {
-        assert_eq!(out.stored_shows(), live(out.shows()), "step {index}: the value the readers get is the value of the row");
+        let mut published = out.shows();
+        for batch in out.shown_batches() { published.extend(twin.commit_shown(batch).shows()); }
+        shown += published.len();
+        assert_eq!(out.stored_shows(), live(published), "step {index}: the value the readers get is the value of the row");
     }
+    assert!(shown >= 2, "the steps show nothing: {shown}");
+}
+
+#[test]
+fn xfer_show_publishes_after_committed() {
+    let mut twin = Twin::new();
+    twin.uploading(KEY, 3);
+    let out = twin.online(false);
+    let batches = out.shown_batches();
+    assert_eq!((batches.len(), out.shows()), (1, Vec::new()), "a value that waits for the Store is not published before Committed");
+    let committed = twin.commit_shown(batches[0]);
+    assert_eq!(committed.shows(), live(out.stored_shows()), "Committed publishes the value of its batch");
+}
+
+#[test]
+fn xfer_show_rejected_keeps_the_value_and_retries() {
+    let mut twin = Twin::new();
+    twin.uploading(KEY, 3);
+    let out = twin.online(false);
+    let rejected = twin.reject_shown(out.shown_batches()[0]);
+    assert_eq!(rejected.shows(), Vec::new(), "a refused value is not published");
+    let again = twin.online(false);
+    assert_eq!(again.stored_shows(), out.stored_shows(), "the next show writes the value again: the Store still has the old one");
 }
