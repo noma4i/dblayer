@@ -1,4 +1,4 @@
-//! Matrix A: a request path against a kind of answer of `wire.md` «Вид ответа». The cell runs one call through the public API on the server double with one scripted fault, drives the clock through the waits of the retries, and compares the public outcome and the number of sends with the table of the spec. Paths without a way to script the fault in this rig are listed as unclassified.
+//! Matrix A: a request path against a kind of answer of the `wire.md` answer kind table. The cell runs one call through the public API on the server double with one scripted fault, drives the clock through the waits of the retries, and compares the public outcome and the number of sends with the table of the spec. Paths without a way to script the fault in this rig are listed as unclassified.
 use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
