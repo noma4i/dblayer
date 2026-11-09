@@ -12,6 +12,17 @@ pub enum Incoming {
     Unreadable(CableError),
 }
 
+#[derive(Debug)]
+pub struct CableConnectError {
+    pub error: TransportError,
+    pub closed: Option<(Option<u16>, Option<String>, Option<crate::transport::RawFailure>)>,
+    pub socket_open: bool,
+}
+
+impl From<TransportError> for CableConnectError {
+    fn from(error: TransportError) -> Self { Self { error, closed: None, socket_open: false } }
+}
+
 /// One connection after its handshake. It holds a key and no counter: the owner of the counters gives the counter of every frame it sends.
 #[async_trait]
 pub trait CableLine: Send + Sync {
@@ -25,7 +36,7 @@ pub trait CableLine: Send + Sync {
 /// Opens a socket and runs the handshake of the cable. `cancel` ends the connection: the open outcome is awaited, then its socket is closed and the call fails with `Interrupted`.
 #[async_trait]
 pub trait CableLines: Send + Sync {
-    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, TransportError>;
+    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, CableConnectError>;
 }
 
 pub type CableCredential = Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>;
@@ -52,15 +63,15 @@ fn command(channel: &str, command: &str, data: Option<Value>) -> String {
 
 fn decode_fault(error: impl std::fmt::Display) -> TransportError { TransportError::Decode(error.to_string()) }
 
-async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str) -> Result<CableKeys, TransportError> {
+async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str) -> Result<CableKeys, CableConnectError> {
     config.validate()?;
-    if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
+    if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }.into()); }
     let mut agreed: Option<(CableKeys, String)> = None;
     loop {
         let text = match socket.next().await {
             Some(SocketEvent::Text(text)) => text,
-            Some(SocketEvent::Closed { code, reason, failure }) => return Err(TransportError::Network(format!("cable {code:?}: {reason:?} {failure:?}"))),
-            None => return Err(TransportError::Network("cable closed".into())),
+            Some(SocketEvent::Closed { code, reason, failure }) => return Err(CableConnectError { error: TransportError::Network("cable closed during handshake".into()), closed: Some((code, reason, failure)), socket_open: true }),
+            None => return Err(TransportError::Network("cable closed".into()).into()),
         };
         let body: Value = serde_json::from_str(&text).map_err(decode_fault)?;
         match body["type"].as_str() {
@@ -72,7 +83,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
                 let (_, hello) = agreed.as_ref().ok_or_else(|| decode_fault("confirmation before challenge"))?;
                 crate::lock::effect(|| socket.send(command(&config.cable_channel, "message", Some(json!({"action":"hello", "hello":hello}))))).await?;
             }
-            Some("reject_subscription") => return Err(TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: "cable subscription refused".into() }),
+            Some("reject_subscription") => return Err(TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: "cable subscription refused".into() }.into()),
             _ => if let Some(token) = body["message"]["frame"].as_str() {
                 let (keys, _) = agreed.take().ok_or_else(|| decode_fault("frame before challenge"))?;
                 let (counter, ready) = keys.open(token).map_err(decode_fault)?;
@@ -120,17 +131,18 @@ impl CableLine for SocketLine {
 
 #[async_trait]
 impl CableLines for EncryptedLines {
-    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
+    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, CableConnectError> {
         let credential = (self.credential)()?;
         let socket = self.transport.open_cable(&self.config.cable_url()?).await?;
         let keys = tokio::select! {
             biased;
-            () = cancel.cancelled() => Err(TransportError::Interrupted("the cable open was cancelled".into())),
+            () = cancel.cancelled() => Err(TransportError::Interrupted("the cable open was cancelled".into()).into()),
             keys = handshake(socket.as_ref(), &self.config, &credential) => keys,
         };
         match keys {
             Ok(keys) => Ok(Arc::new(SocketLine { socket, keys, channel: self.config.cable_channel.clone() })),
-            Err(error) => {
+            Err(mut error) => {
+                error.socket_open = true;
                 socket.close().await;
                 Err(error)
             }

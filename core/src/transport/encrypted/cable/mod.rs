@@ -6,7 +6,7 @@ mod keys;
 mod frame;
 mod schema;
 mod line;
-pub use line::{CableCredential, CableLine, CableLines, EncryptedLines, Incoming};
+pub use line::{CableConnectError, CableCredential, CableLine, CableLines, EncryptedLines, Incoming};
 mod wire;
 pub use wire::{CableSocket, SocketEvent};
 #[cfg(test)]

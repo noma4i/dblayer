@@ -163,7 +163,7 @@ impl FeedState {
         fx.push(Fx::CancelKeepalive { connection: connection.id });
         fx.push(Fx::CancelPong { connection: connection.id });
         let drain = drain && connection.goodbye();
-        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye(), drain }));
+        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye(), drain, intended: true }));
         if drain {
             fx.push(Fx::Drain { connection: connection.id });
         }

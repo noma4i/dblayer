@@ -124,10 +124,10 @@ impl Delivery {
     pub(super) fn compact(&mut self) {
         let (mut first, mut last, mut at) = (u64::MAX, 0u64, None);
         while self.journal.len() > JOURNAL_LIMIT - 1 {
-            let Some(index) = self.journal.iter().position(|kept| matches!(kept, Value::Event { .. } | Value::Lost { .. })) else { break };
+            let Some(index) = self.journal.iter().position(|kept| matches!(kept, Value::Event { .. } | Value::CableClose { .. } | Value::Lost { .. })) else { break };
             at.get_or_insert(index);
             match self.journal.remove(index) {
-                Some(Value::Event { position, .. }) => {
+                Some(Value::Event { position, .. } | Value::CableClose { position, .. }) => {
                     first = first.min(position);
                     last = last.max(position);
                 }

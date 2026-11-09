@@ -59,7 +59,7 @@ impl Delivery {
                 fx.push(Emit::WantPlus);
                 machine.interested = true;
             }
-            Kind::Changes => {
+            Kind::Changes | Kind::CableCloses => {
                 machine.stage = DeliveryStage::Live;
                 machine.push(Value::Ready, fx);
             }

@@ -71,6 +71,7 @@ pub enum ReadValue {
     Changes { revision: i64, rows: Vec<ChangedRow> },
     /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
     Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
+    CableClose { position: u64, event: crate::owners::read::feed::CableClose },
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, state: String, wait_reason: Option<String>, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
@@ -95,6 +96,7 @@ pub enum ReadRequest {
     Entity { model: String, id: String, fetch: ReadFetch },
     /// The events of a model after the stream opened.
     Events { model: String },
+    CableCloses,
     /// The status of the transfer of `uploads[action]` of a row.
     Blob { model: String, id: String, action: String },
     /// The queue of operations of the database.
@@ -184,6 +186,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::Ready => ReadValue::Ready,
         Value::Changes { revision, rows } => ReadValue::Changes { revision, rows: rows.into_iter().map(|(table, id)| ChangedRow { model: table.strip_prefix("row_").unwrap_or(&table).to_string(), id }).collect() },
         Value::Event { position, payload } => event_of(position, &payload, wire)?,
+        Value::CableClose { position, event } => ReadValue::CableClose { position, event },
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
@@ -352,7 +355,7 @@ impl Database {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
             }
-            ReadRequest::Changes => Ok(View { kind: Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
+            ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
             ReadRequest::Entity { model, id, fetch } => {
@@ -375,6 +378,7 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
+    pub fn cable_closes(&self) -> Arc<ReadStream> { self.subscribe_values(self.session_epoch(), ReadRequest::CableCloses) }
     /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
     pub fn session_epoch(&self) -> u64 { self.life.published().epoch }
 

@@ -77,7 +77,7 @@ struct Lines(Mutex<VecDeque<Arc<Line>>>);
 
 #[async_trait]
 impl CableLines for Lines {
-    async fn connect(&self, _: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
+    async fn connect(&self, _: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, crate::transport::CableConnectError> {
         let line = self.0.lock().unwrap_or_else(PoisonError::into_inner).pop_front().ok_or_else(|| TransportError::Network("no line".into()))?;
         Ok(line)
     }
@@ -99,6 +99,47 @@ fn line() -> (Arc<Line>, Peer) {
 fn confirmed(counter: u64) -> Incoming { Incoming::Frame { counter, body: json!({"t":"subscribed", "id":"1"}) } }
 
 fn next(counter: u64, payload: &str) -> Incoming { Incoming::Frame { counter, body: json!({"t":"next", "id":"1", "result":{"data":{"model":"Chat", "payload":payload}}}) } }
+
+#[test]
+fn feed_close_reaches_the_delivery_stream() {
+    use crate::owners::read::deliveries::{DeliveryInput, DeliveriesState, DeliveryPeers, Kind, Value, View};
+    for (code, failure, intended, broken) in [(Some(4001), None, false, false), (None, Some(crate::transport::RawFailure::of_kind(crate::transport::RawFailureKind::Io, "lost")), false, false), (None, None, true, false), (None, None, false, true)] {
+        let (line, peer) = line();
+        let runtime = runtime();
+        let (_, rest) = collector();
+        let io = FeedIo::new(Arc::new(Lines(Mutex::new(vec![line].into()))), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1));
+        let mut det = DetScheduler::new(1);
+        let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
+        let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
+        let feed_at = Address::<Feed>::new(2);
+        let deliveries_at = Address::<Deliveries>::new(3);
+        let peers = f::FeedPeers { store: Address::new(store.index()), windows: Address::new(windows.index()), deliveries: deliveries_at };
+        let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
+        let deliveries = det.add::<Deliveries>("deliveries", DeliveriesState::new(1, DeliveryPeers { windows: Address::new(windows.index()), feed: feed_at }), Discard);
+        det.start_epoch(EPOCH);
+        let view = View { kind: Kind::CableCloses, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: super::windows::WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None };
+        det.post(deliveries, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: 7, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
+        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
+        pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+        if intended || broken {
+            if broken { peer.frames.send(confirmed(9)).unwrap(); } else { det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 }); }
+            if broken { pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Draining { .. }))); }
+            det.run_until_quiet(10_000).unwrap();
+            det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
+        } else {
+            peer.frames.send(Incoming::Closed { code, reason: Some("closed".into()), failure }).unwrap();
+        }
+        pump(&mut det, |det| det.state(deliveries).is_some_and(|state| state.journal(7).iter().any(|value| matches!(value, Value::CableClose { .. }))));
+        let journal = det.state(deliveries).unwrap().journal(7);
+        let events: Vec<_> = journal.iter().filter_map(|value| if let Value::CableClose { event, .. } = value { Some(event) } else { None }).collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!((events[0].code, events[0].intended), (code, intended));
+        let expected = if intended || broken { f::CableCloseInitiator::Client } else if code.is_some() { f::CableCloseInitiator::Server } else { f::CableCloseInitiator::Network };
+        assert_eq!(events[0].initiator, expected);
+        if expected == f::CableCloseInitiator::Network { assert_eq!(events[0].failure.as_ref().unwrap().message, "lost"); }
+    }
+}
 
 fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) { rig_over(lines, super::rig::open_gate(1)) }
 
@@ -235,13 +276,13 @@ struct Hanging(Arc<AtomicUsize>, Arc<AtomicUsize>);
 
 #[async_trait]
 impl CableLines for Hanging {
-    async fn connect(&self, cancel: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
+    async fn connect(&self, cancel: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, crate::transport::CableConnectError> {
         self.1.fetch_add(1, Ordering::SeqCst);
         crate::runtime::wake_pumps();
         cancel.cancelled().await;
         self.0.fetch_add(1, Ordering::SeqCst);
         crate::runtime::wake_pumps();
-        Err(TransportError::Interrupted("cancelled".into()))
+        Err(TransportError::Interrupted("cancelled".into()).into())
     }
 }
 

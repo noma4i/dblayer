@@ -3,7 +3,7 @@
 //! counter the effect names. The counters and the protocol transitions belong to `Feed`. A closed connection gives no more inputs.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use super::feed::{Frame, FramedEvent, Outgoing, ProtocolReason};
+use super::feed::{CableClose, CableCloseInitiator, Frame, FramedEvent, Outgoing, ProtocolReason};
 use super::ports::{Admit, Rest};
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
@@ -34,6 +34,7 @@ struct Open {
     cancel: CancelToken,
     /// Set at a draining `Close`: the line closes when the queue is sent and the connection waits for `Cancel`.
     closing: CancelToken,
+    reason: Arc<AtomicU8>,
 }
 
 type Connections = HashMap<ConnectionId, Open>;
@@ -73,12 +74,14 @@ impl FeedIo {
         }
         let cancel = CancelToken::new();
         let closing = CancelToken::new();
+        let reason = Arc::new(AtomicU8::new(0));
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
         self.open.retain(|_, open| !open.cancel.is_cancelled());
-        self.open.insert(connection, Open { frames: Some(frames), cancel: cancel.clone(), closing: closing.clone() });
+        self.open.insert(connection, Open { frames: Some(frames), cancel: cancel.clone(), closing: closing.clone(), reason: reason.clone() });
         let (lines, codec, back, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
+        let report = back.clone();
         let reply = move |input: FeedInput| {
             if !token.is_cancelled() {
                 back.reply(stamp, input);
@@ -87,17 +90,27 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
-            Self::run(lines, codec, (gate, epoch), connection, (cancel, closing), queued, reply).await;
+            Self::run(lines, codec, (gate, epoch), connection, (cancel, closing), queued, reply, move |event| report.reply(stamp, FeedInput::CableClosed(event)), reason).await;
             ended.cancel();
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
+    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static, report: impl Fn(CableClose), reason: Arc<AtomicU8>) {
         {
-            let line = match crate::runtime::send_in_epoch(&gate, epoch, || lines.connect(&cancel)).await {
-                Ok(line) => line,
-                Err(TransportError::Session { .. }) => return reply(FeedInput::SubscriptionEnded { connection_id: connection }),
-                Err(TransportError::Decode(_)) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake }),
+            let line = match crate::runtime::send_in_epoch(&gate, epoch, || async { Ok(lines.connect(&cancel).await) }).await {
+                Ok(Ok(line)) => line,
+                Ok(Err(error)) => {
+                    if error.socket_open {
+                        let (code, detail, failure) = error.closed.unwrap_or_default();
+                        let initiator = if code.is_some() { CableCloseInitiator::Server } else if failure.is_some() { CableCloseInitiator::Network } else { CableCloseInitiator::Client };
+                        report(CableClose { connection_id: connection, code, reason: detail, failure, initiator, intended: matches!(error.error, TransportError::Interrupted(_)) });
+                    }
+                    return reply(match error.error {
+                        TransportError::Session { .. } => FeedInput::SubscriptionEnded { connection_id: connection },
+                        TransportError::Decode(_) => FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake },
+                        _ => FeedInput::Dropped { connection_id: connection },
+                    });
+                }
                 Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
@@ -107,7 +120,8 @@ impl FeedIo {
                 async move {
                     while let Some((counter, body)) = queued.recv().await {
                         if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
-                            return reply(FeedInput::Dropped { connection_id: connection });
+                            reply(FeedInput::Dropped { connection_id: connection });
+                            return false;
                         }
                     }
                     if closing.is_cancelled() {
@@ -115,15 +129,18 @@ impl FeedIo {
                         return std::future::pending().await;
                     }
                     cancel.cancel();
+                    true
                 }
             };
             let reader = Self::read(line.clone(), codec, connection, reply);
-            tokio::select! {
+            let event = tokio::select! {
                 biased;
-                () = cancel.cancelled() => {}
-                () = writer => {}
-                () = reader => {}
-            }
+                () = cancel.cancelled() => None,
+                sent = writer => if sent { None } else { Some(CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: false }) },
+                event = reader => Some(event),
+            };
+            let event = event.unwrap_or_else(|| CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: reason.load(Ordering::SeqCst) != 2 });
+            report(event);
             if !closed.swap(true, Ordering::SeqCst) { line.close().await; }
             if closing.is_cancelled() {
                 cancel.cancelled().await;
@@ -132,24 +149,26 @@ impl FeedIo {
         }
     }
 
-    async fn read(line: Arc<dyn CableLine>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, reply: impl Fn(FeedInput)) {
+    async fn read(line: Arc<dyn CableLine>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, reply: impl Fn(FeedInput)) -> CableClose {
         loop {
             match line.next().await {
                 Incoming::Frame { counter, body } => {
                     let frame = match Self::frame_of(&codec, &body) {
                         Ok(frame) => frame,
-                        Err(reason) => return reply(FeedInput::ProtocolError { connection_id: connection, reason }),
+                        Err(reason) => { reply(FeedInput::ProtocolError { connection_id: connection, reason }); return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: false }; },
                     };
                     let last = matches!(&frame, Frame::Ended | Frame::Error { id: None });
                     reply(FeedInput::FrameOpened { connection_id: connection, counter, frame });
                     if last {
-                        return;
+                        return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Server, intended: false };
                     }
                 }
-                Incoming::Closed { code, reason, .. } => {
-                    return reply(if session_closed(code.unwrap_or(1006), reason.as_deref().unwrap_or_default()) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
+                Incoming::Closed { code, reason, failure } => {
+                    reply(if session_closed(code.unwrap_or(1006), reason.as_deref().unwrap_or_default()) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
+                    let initiator = if code.is_some() { CableCloseInitiator::Server } else { CableCloseInitiator::Network };
+                    return CableClose { connection_id: connection, code, reason, failure, initiator, intended: false };
                 }
-                Incoming::Unreadable(_) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Decrypt }),
+                Incoming::Unreadable(_) => { reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Decrypt }); return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: false }; }
             }
         }
     }
@@ -200,7 +219,8 @@ impl FeedIo {
     }
 
     /// The frames sealed before the close still go out: the writer ends when its queue is empty and the sender is gone, then the line closes.
-    fn close(&mut self, connection: ConnectionId, goodbye: bool, drain: bool) {
+    fn close(&mut self, connection: ConnectionId, goodbye: bool, drain: bool, intended: bool) {
+        if let Some(open) = self.open.get(&connection) { open.reason.store(if intended { 1 } else { 2 }, Ordering::SeqCst); }
         if drain {
             if let Some(open) = self.open.get_mut(&connection) {
                 open.closing.cancel();
@@ -226,7 +246,7 @@ impl EffectRunner<Feed> for FeedIo {
         match effect {
             FeedEffect::Connect { connection } => self.connect(stamp, connection, back),
             FeedEffect::Seal { connection, counter, frame, .. } => self.seal(connection, counter, frame),
-            FeedEffect::Close { connection, goodbye, drain } => self.close(connection, goodbye, drain),
+            FeedEffect::Close { connection, goodbye, drain, intended } => self.close(connection, goodbye, drain, intended),
             FeedEffect::Cancel { connection } => self.cancel(connection),
             other => (self.rest)(stamp, other),
         }

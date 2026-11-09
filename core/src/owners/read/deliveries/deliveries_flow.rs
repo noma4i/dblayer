@@ -122,6 +122,12 @@ impl Delivery {
 
     pub(super) fn events_open(&self) -> bool { self.stage == DeliveryStage::Live && self.view.kind == Kind::Events }
 
+    pub(super) fn cable_closed(&mut self, event: crate::owners::read::feed::CableClose, fx: &mut Vec<Emit>) {
+        if self.stage != DeliveryStage::Live || self.view.kind != Kind::CableCloses { return; }
+        self.position += 1;
+        self.push(Value::CableClose { position: self.position, event }, fx);
+    }
+
     pub(super) fn joined(&mut self, position: u64, fx: &mut Vec<Emit>) {
         if self.events_open() && self.next_feed.is_none() {
             self.next_feed = Some(position + 1);

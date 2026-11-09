@@ -43,6 +43,7 @@ pub enum Kind {
     /// The queue of operations: the table `op`, read whole after every commit that touched it.
     Operations,
     Events,
+    CableCloses,
     Changes,
     Blob,
     RetryStatus,
@@ -186,6 +187,7 @@ pub enum Value {
     Ready,
     Changes { revision: i64, rows: Vec<(String, String)> },
     Event { position: u64, payload: String },
+    CableClose { position: u64, event: crate::owners::read::feed::CableClose },
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, blob: BlobStatus },
@@ -253,6 +255,7 @@ pub enum DeliveryInput {
     Joined { stream: StreamId, position: u64 },
     ModelReady { stream: StreamId },
     ModelEvent { stream: StreamId, position: u64, payload: String },
+    CableClosed(crate::owners::read::feed::CableClose),
     ModelLost { stream: StreamId, first: u64, last: u64 },
     ModelGap { stream: StreamId },
     /// The server refused the subscription of the model: the stream of events ends with `Invalid`.
@@ -516,6 +519,10 @@ impl StateOwner for Deliveries {
             DeliveryInput::Joined { stream, position } => on(state, stream, &mut out, |machine, fx| machine.joined(position, fx)),
             DeliveryInput::ModelReady { stream } => on(state, stream, &mut out, |machine, fx| machine.model_ready(fx)),
             DeliveryInput::ModelEvent { stream, position, payload } => on(state, stream, &mut out, |machine, fx| machine.model_event(position, payload, fx)),
+            DeliveryInput::CableClosed(event) => {
+                let streams: Vec<_> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::CableCloses).map(|(id, _)| *id).collect();
+                for stream in streams { on(state, stream, &mut out, |machine, fx| machine.cable_closed(event.clone(), fx)); }
+            }
             DeliveryInput::ModelLost { stream, first, last } => on(state, stream, &mut out, |machine, fx| machine.model_lost(first, last, fx)),
             DeliveryInput::ModelGap { stream } => on(state, stream, &mut out, |machine, fx| machine.model_gap(fx)),
             DeliveryInput::ModelInvalid { stream } => on(state, stream, &mut out, |machine, fx| machine.model_invalid(fx)),

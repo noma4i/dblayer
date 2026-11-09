@@ -95,6 +95,7 @@ fn val_of(value: &d::Value) -> Val {
         d::Value::Ready => Val::Ready,
         d::Value::Changes { revision, rows } => Val::Changes { revision: *revision, rows: rows.clone() },
         d::Value::Event { position, payload } => Val::Event { position: *position, payload: payload.clone() },
+        d::Value::CableClose { .. } => unreachable!("the reference models no cable close stream"),
         d::Value::Lost { first, last } => Val::Lost { first: *first, last: *last },
         d::Value::Gap => Val::Gap,
         d::Value::Status { revision, blob } => Val::Status { revision: *revision, state: blob.state.clone() },

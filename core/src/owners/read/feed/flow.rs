@@ -142,7 +142,7 @@ impl FeedState {
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         let goodbye = self.connection_mut(connection).is_some_and(|found| found.goodbye());
         if goodbye && self.mode == Mode::Live && self.active_connection() == Some(connection) {
-            fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: true }));
+            fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: true, intended: false }));
             fx.push(Fx::Drain { connection });
             self.flush_pending(fx);
             let lost = self.lose_held(None, fx);
@@ -151,7 +151,7 @@ impl FeedState {
             Self::stale_all(&lost, fx);
             return;
         }
-        fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false }));
+        fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false, intended: false }));
         self.dropped(connection, fx);
     }
 

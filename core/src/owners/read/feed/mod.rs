@@ -81,6 +81,19 @@ pub enum Resume {
     Reopen,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum CableCloseInitiator { Server, Client, Network }
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CableClose {
+    pub connection_id: u64,
+    pub code: Option<u16>,
+    pub reason: Option<String>,
+    pub failure: Option<crate::transport::RawFailure>,
+    pub initiator: CableCloseInitiator,
+    pub intended: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtocolReason {
     Handshake,
@@ -157,7 +170,7 @@ pub enum FeedEffect {
     /// The executor encrypts `frame` with the key `key_id` and the counter, both given by value.
     Seal { connection: ConnectionId, key_id: u64, counter: u64, frame: Outgoing },
     /// Transport `Unsubscribe(connection)`: `goodbye` is set for an established connection, its queued frames still go out before the line closes. `drain` keeps the connection until `Cancel`.
-    Close { connection: ConnectionId, goodbye: bool, drain: bool },
+    Close { connection: ConnectionId, goodbye: bool, drain: bool, intended: bool },
     /// Transport `cancel(connection)`: the drain is over.
     Cancel { connection: ConnectionId },
     Drained(Drained),
@@ -197,6 +210,7 @@ enum Fx {
 
 #[derive(Clone, Debug)]
 pub enum FeedInput {
+    CableClosed(CableClose),
     ActivateEpoch(Epoch),
     /// `stream` = the id is a stream `Events` of Deliveries: it gets `Joined` and `ModelReady`.
     WantPlus { model: String, id: SubscriptionId, stream: bool, scoped: Vec<ScopedChannel> },
@@ -410,6 +424,9 @@ impl StateOwner for Feed {
 
     fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
         let mut fx = Vec::new();
+        if let FeedInput::CableClosed(event) = input {
+            return vec![Effect::Send(Outbound::new(state.peers.deliveries, DeliveryInput::CableClosed(event)))];
+        }
         if let FeedInput::ActivateEpoch(epoch) = &input {
             *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels));
             return Vec::new();
@@ -433,6 +450,7 @@ impl StateOwner for Feed {
             return Self::lower(state, fx);
         }
         match input {
+            FeedInput::CableClosed(_) => {}
             FeedInput::ActivateEpoch(_) => {}
             FeedInput::EpochStarted(started) => {
                 state.epoch = started.epoch;

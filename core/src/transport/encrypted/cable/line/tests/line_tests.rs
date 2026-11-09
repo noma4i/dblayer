@@ -19,6 +19,7 @@ struct Socket {
     cancels: AtomicUsize,
     waiting: Notify,
     peer_ends: bool,
+    raw_close: bool,
 }
 
 #[async_trait]
@@ -27,6 +28,7 @@ impl CableSocket for Socket {
 
     async fn next(&self) -> Option<SocketEvent> {
         self.waiting.notify_one();
+        if self.raw_close { return Some(SocketEvent::Closed { code: Some(4401), reason: Some("expired".into()), failure: Some(crate::transport::RawFailure::of_kind(crate::transport::RawFailureKind::Io, "lost")) }); }
         if self.peer_ends { return None; }
         std::future::pending().await
     }
@@ -34,6 +36,14 @@ impl CableSocket for Socket {
     async fn close(&self) { self.closes.fetch_add(1, Ordering::SeqCst); }
 
     async fn cancel(&self) { self.cancels.fetch_add(1, Ordering::SeqCst); }
+}
+
+#[tokio::test]
+async fn feed_handshake_close_keeps_raw_event() {
+    let (_, lines) = lines(Socket { raw_close: true, ..Socket::default() }, false);
+    let outcome = within(lines.connect(&CancelToken::new())).await;
+    let Err(CableConnectError { closed: Some((code, reason, failure)), .. }) = outcome else { panic!("missing close event") };
+    assert_eq!((code, reason.as_deref(), failure.map(|failure| failure.message)), (Some(4401), Some("expired"), Some("lost".into())));
 }
 
 struct Platform {
@@ -77,7 +87,7 @@ async fn feed_open_after_abandon_closes() {
     assert_eq!(counts(&platform), (0, 0), "the socket does not exist before the open outcome");
     platform.release.as_ref().expect("held open").notify_one();
     let outcome = within(&mut connecting).await;
-    assert!(matches!(outcome, Err(TransportError::Interrupted(_))));
+    assert!(matches!(outcome, Err(CableConnectError { error: TransportError::Interrupted(_), .. })));
     assert_eq!(counts(&platform), (1, 0), "the socket that opened after the give-up is closed once and never cancelled");
 }
 
@@ -95,7 +105,7 @@ async fn feed_open_cable_close_orders() {
             cancel.cancel();
         }
         let outcome = within(&mut connecting).await;
-        let refused = if order == "peer ends the handshake" { matches!(outcome, Err(TransportError::Network(_))) } else { matches!(outcome, Err(TransportError::Interrupted(_))) };
+        let refused = if order == "peer ends the handshake" { matches!(outcome, Err(CableConnectError { error: TransportError::Network(_), .. })) } else { matches!(outcome, Err(CableConnectError { error: TransportError::Interrupted(_), .. })) };
         assert!(refused, "{order}: the connection did not open with the cause of the order");
         assert_eq!(counts(&platform), (1, 0), "{order}: 1 close, 0 cancel");
     }
