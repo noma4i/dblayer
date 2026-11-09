@@ -437,7 +437,7 @@ for path in files:
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
-test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig"}
+test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig", "server_contract"}
 for path in sorted(root.rglob("*.rs")):
     if any(part.startswith(("target", ".")) for part in path.relative_to(root).parts):
         continue

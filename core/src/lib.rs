@@ -13,6 +13,8 @@ mod check;
 pub(crate) mod schema_fixtures;
 #[cfg(test)]
 mod spec;
+#[cfg(test)]
+pub(crate) mod server_contract;
 pub mod runtime;
 pub mod owners;
 pub(crate) mod lock;
