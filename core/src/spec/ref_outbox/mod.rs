@@ -115,12 +115,16 @@ fn epoch_started(s: &mut State, epoch: Epoch, identity: bool, generations: &std:
     }
 }
 
-fn answer_held(s: &mut State, e: &mut Vec<Effect>) {
+fn answer_held(s: &mut State, cause: EndCause, e: &mut Vec<Effect>) {
+    let (outcome, reserved) = match cause {
+        EndCause::SessionEnded => ("Outcome:Ended(SessionEnded)", "OpReserved{Err(SessionEnded)}"),
+        EndCause::Closed => ("Outcome:Ended(Closed)", "OpReserved{Err(Closed)}"),
+    };
     for h in std::mem::take(&mut s.held) {
         match h {
-            Input::Submit { .. } | Input::Retry { .. } | Input::Discard { .. } => reply(e, Addr::Call, 0, "Err(Interrupted)"),
-            Input::Outcome { .. } => reply(e, Addr::Call, 0, "Outcome:Interrupted"),
-            Input::ReserveOp { .. } => e.push(Effect::Transfer { op: 0, what: "OpReserved{Err(Interrupted)}" }),
+            Input::Submit { .. } | Input::Retry { .. } | Input::Discard { .. } => reply(e, Addr::Call, 0, end_err(cause)),
+            Input::Outcome { .. } => reply(e, Addr::Call, 0, outcome),
+            Input::ReserveOp { .. } => e.push(Effect::Transfer { op: 0, what: reserved }),
             _ => {}
         }
     }
@@ -132,7 +136,7 @@ fn closing(s: &mut State, e: &mut Vec<Effect>) {
     match s.phase {
         Phase::Restoring => {
             row(e, "out_restoring_closing");
-            answer_held(s, e);
+            answer_held(s, EndCause::Closed, e);
         }
         Phase::Classified | Phase::Ready => {
             if s.ops.is_empty() { row(e, "out_done_closing"); } else { broadcast(s, &Input::Closing, e); }
@@ -154,7 +158,7 @@ fn epoch_ended(s: &mut State, ep: Epoch, e: &mut Vec<Effect>) {
     match s.phase {
         Phase::Restoring => {
             row(e, "out_restoring_epoch_ended");
-            answer_held(s, e);
+            answer_held(s, EndCause::SessionEnded, e);
             s.phase = Phase::Ended;
         }
         Phase::Classified | Phase::Ready => {

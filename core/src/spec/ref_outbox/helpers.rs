@@ -58,12 +58,17 @@ pub fn finish(op: &mut Op, o: Outcome, e: &mut Vec<Effect>) {
     op.outcome_waiters = 0;
 }
 
-/// Answers every waiter of the operation with `Err(Interrupted)` once.
-pub fn interrupt_waiters(op: &mut Op, e: &mut Vec<Effect>) {
-    if op.submit_reply { reply(e, Addr::Call, op.id, "Err(Interrupted)"); op.submit_reply = false; }
-    for _ in 0..op.retry_waiter { reply(e, Addr::Call, op.id, "Err(Interrupted)"); }
+/// Answers every waiter of the operation with the `Ended(cause)` of the input once.
+pub fn interrupt_waiters(op: &mut Op, cause: EndCause, e: &mut Vec<Effect>) {
+    let what = end_err(cause);
+    if op.submit_reply { reply(e, Addr::Call, op.id, what); op.submit_reply = false; }
+    for _ in 0..op.retry_waiter { reply(e, Addr::Call, op.id, what); }
     op.retry_waiter = 0;
-    for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, "Err(Interrupted)"); }
+    for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, what); }
+}
+
+pub fn end_err(cause: EndCause) -> &'static str {
+    match cause { EndCause::SessionEnded => "Err(SessionEnded)", EndCause::Closed => "Err(Closed)" }
 }
 
 pub fn send_mutate(op: &mut Op, e: &mut Vec<Effect>) {

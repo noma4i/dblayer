@@ -68,13 +68,13 @@ pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) 
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_rollback_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{Rollback,basis=generations}" }); }
         Input::Rejected { reason: Reason::NoSession, .. } => {
             row(e, "out_rollback_no_session");
-            interrupt_waiters(op, e);
+            interrupt_waiters(op, EndCause::SessionEnded, e);
             transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
             finish(op, Outcome::Ended(EndCause::SessionEnded), e);
         }
         Input::Rejected { reason: Reason::Closed, .. } => {
             row(e, "out_rollback_no_session");
-            interrupt_waiters(op, e);
+            interrupt_waiters(op, EndCause::Closed, e);
             transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
@@ -153,10 +153,11 @@ pub fn marking_retry(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>)
             }
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_marking_retry_storage"); op.stage = Stage::Failed; op.retry_waiter = 0; reply(e, Addr::Call, op.id, "Err(Storage)"); }
-        Input::Rejected { reason: Reason::NoSession | Reason::Closed, .. } => {
+        Input::Rejected { reason: reason @ (Reason::NoSession | Reason::Closed), .. } => {
             row(e, "out_marking_retry_no_session");
             op.retry_waiter = 0;
-            reply(e, Addr::Call, op.id, "Err(Interrupted)");
+            let cause = if matches!(reason, Reason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
+            reply(e, Addr::Call, op.id, end_err(cause));
             op.stage = Stage::Done;
         }
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_marking_retry_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{ClearMark,Intent,basis=generations}" }); }
@@ -246,7 +247,7 @@ pub fn epoch_ended(op: &mut Op, e: &mut Vec<Effect>) {
     if op.stage == Stage::Done { row(e, "out_done"); return; }
     row(e, "out_epoch_ended");
     if op.stage == Stage::Sending { e.push(Effect::Session { op: op.id, what: "Cancel{req_id}" }); }
-    interrupt_waiters(op, e);
+    interrupt_waiters(op, EndCause::SessionEnded, e);
     transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
     finish(op, Outcome::Ended(EndCause::SessionEnded), e);
 }
@@ -257,14 +258,14 @@ pub fn closing(op: &mut Op, e: &mut Vec<Effect>) {
         Stage::Done => row(e, "out_done_closing"),
         Stage::WaitingDeclaration | Stage::Queued | Stage::Failed => {
             row(e, "out_closing_queued");
-            interrupt_waiters(op, e);
+            interrupt_waiters(op, EndCause::Closed, e);
             transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         _ => {
             row(e, "out_closing");
             if op.stage == Stage::Sending { e.push(Effect::Session { op: op.id, what: "Cancel{req_id}" }); }
-            interrupt_waiters(op, e);
+            interrupt_waiters(op, EndCause::Closed, e);
             transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
