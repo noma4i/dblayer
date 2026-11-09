@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn life_closing_drained_duplicate() {
+    let mut twin = closing_session();
+    assert!(twin.feed(Event::Drained(RefOwner::Feed)).is_empty());
+    assert!(twin.feed(Event::Drained(RefOwner::Feed)).is_empty());
+    twin.feed_all(drain_all());
+    let before = twin.history.iter().filter(|effect| matches!(effect, LifecycleEffect::StoreClose)).count();
+    assert!(twin.feed(Event::Drained(RefOwner::Feed)).is_empty());
+    let after = twin.history.iter().filter(|effect| matches!(effect, LifecycleEffect::StoreClose)).count();
+    assert_eq!((twin.published().state, before, after), (PubState::Closing, 1, 1));
+}
+
+#[test]
+fn life_restoring_close_before_classified() {
+    for identity in [None, Some(3)] {
+        let mut twin = Twin::open(0, 0, identity, Some(7));
+        twin.feed(close(8));
+        assert_eq!(twin.published().state, PubState::Closing);
+        assert_eq!(twin.replies().iter().filter(|(id, _)| *id == 7).cloned().collect::<Vec<_>>(), vec![(7, Err(LifecycleError::Closed))]);
+        twin.feed_all(drain_all());
+        twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
+        assert_eq!(twin.replies().iter().filter(|(id, _)| *id == 7).count(), 1);
+    }
+}
+
+#[test]
 fn life_executor_failed() {
     let mut twin = Twin::open(0, 0, None, Some(7));
     twin.feed(Event::ExecutorFailed);
