@@ -8,6 +8,23 @@ use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 const EPOCH: u64 = 1;
 
+#[test]
+fn call_deadline_expired() {
+    for (operation, kind) in [("Op", CallKind::Query), ("Change", CallKind::Mutate)] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        twin.det.tick(crate::runtime::Time(29_999));
+        twin.det.run_until_quiet(100).unwrap();
+        assert!(take(&twin.log).is_empty());
+        twin.det.tick(crate::runtime::Time(30_000));
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        assert!(effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })));
+        assert_eq!(effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Query, .. })), kind == CallKind::Query);
+        assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Mutate, .. })));
+    }
+}
+
 fn kind_of(kind: Kind) -> CallKind {
     match kind {
         Kind::Query => CallKind::Query,
