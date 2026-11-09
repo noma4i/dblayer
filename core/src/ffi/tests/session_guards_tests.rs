@@ -94,6 +94,8 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
 
             if expected == SessionCode::Unauthenticated {
                 assert!(matches!(refused, DbError::Unauthorized { .. }), "{wire} confirmed={confirmed}: {refused:?}");
+            } else if expected == SessionCode::Other {
+                assert!(matches!(&refused, DbError::Graphql { messages, .. } if messages == &[wire.to_string()]), "{wire} confirmed={confirmed}: an unknown name is a GraphQL error, got {refused:?}");
             } else {
                 assert_eq!(code(refused), expected, "{wire} confirmed={confirmed}");
             }

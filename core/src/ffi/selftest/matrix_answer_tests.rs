@@ -22,7 +22,7 @@ enum Path {
 impl Path {
     fn name(self) -> &'static str { match self { Self::CallMutation => "call mutation", Self::CallQuery => "call query", Self::OutboxSend => "outbox send", Self::SessionCall => "session call", Self::WindowRead => "window read", Self::Node => "node", Self::UploadStep => "transfer step", Self::UploadFinal => "upload final mutation" } }
     fn operation(self) -> &'static str { match self { Self::CallMutation => "UnregisterDevice", Self::CallQuery => "MyProfile", Self::OutboxSend => "SendMessage", Self::SessionCall => "otp", Self::WindowRead => "MyProfile", Self::Node => "UserNode", Self::UploadStep => "CreateBlob", Self::UploadFinal => "CreateMoment" } }
-    fn sequenced(self) -> bool { matches!(self, Self::CallMutation | Self::OutboxSend | Self::SessionCall | Self::UploadStep | Self::UploadFinal) }
+    fn sequenced(self) -> bool { matches!(self, Self::CallMutation | Self::OutboxSend | Self::UploadStep | Self::UploadFinal) }
 }
 
 fn in_errors(code: &str) -> Value { json!({"errors": [{"message": code, "extensions": {"code": code}}]}) }
