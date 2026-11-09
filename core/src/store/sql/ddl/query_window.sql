@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS query_window (
   key TEXT PRIMARY KEY NOT NULL,
   cursor TEXT,
+  anchor TEXT,
   has_next INTEGER NOT NULL,
   total INTEGER,
   pages INTEGER NOT NULL,

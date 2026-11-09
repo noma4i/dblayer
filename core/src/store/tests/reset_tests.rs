@@ -38,6 +38,7 @@ fn seed_two_models(store: &Store) {
             .save_window(&WindowRecord {
                 key: window_key,
                 cursor: None,
+                anchor: None,
                 has_next: false,
                 total: None,
                 pages: 1,

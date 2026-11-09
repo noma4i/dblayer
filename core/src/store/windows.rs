@@ -9,6 +9,7 @@ use super::{Store, StoreError};
 pub struct WindowRecord {
     pub key: String,
     pub cursor: Option<String>,
+    pub anchor: Option<String>,
     pub has_next: bool,
     pub total: Option<i64>,
     pub pages: i64,
@@ -42,10 +43,10 @@ pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<W
     let found = connection.query_row(
         include_str!("sql/windows/read_window.sql"),
         params![key],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, i64>(7)?)),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, i64>(7)?, row.get::<_, Option<String>>(8)?)),
     ).optional()?;
-    let Some((key, cursor, has_next, issued, applied, generation, total, pages)) = found else { return Ok(None) };
-    Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
+    let Some((key, cursor, has_next, issued, applied, generation, total, pages, anchor)) = found else { return Ok(None) };
+    Ok(Some(WindowRecord { key, cursor, anchor, has_next: has_next != 0, total, pages, issued, applied, generation }))
 }
 
 pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<crate::store::WindowMarker>, StoreError> {
@@ -117,6 +118,7 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
             landed_at,
             record.total,
             record.pages,
+            record.anchor,
         ],
     )?;
     Ok(())

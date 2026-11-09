@@ -17,10 +17,11 @@ pub(crate) struct ReplaceRequest {
     pub scope: ScopeRef,
     pub coverage: Coverage,
     pub replace_all: bool,
+    pub start_after: Option<String>,
 }
 
 impl ReplaceRequest {
-    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false } }
+    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None } }
 }
 
 struct Member {
@@ -37,7 +38,10 @@ pub(crate) fn scope_membership(reader: &Reader<'_>, model: &str, scope_key: &str
 pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>], base_revision: i64) -> Result<LandingPlan, CoreError> {
     let model = &request.scope.model;
     let scope_key = request.scope.key.as_str();
-    let current: Vec<Member> = reader.scope_members(model.as_str(), scope_key)?.into_iter().map(|(id, order_key)| Member { id, order_key }).collect();
+    let whole: Vec<Member> = reader.scope_members(model.as_str(), scope_key)?.into_iter().map(|(id, order_key)| Member { id, order_key }).collect();
+    let split = request.start_after.as_ref().and_then(|start| whole.iter().position(|member| &member.id == start)).map_or(0, |at| at + 1);
+    let (before, current) = whole.split_at(split);
+    let before_ids: HashSet<&str> = before.iter().map(|member| member.id.as_str()).collect();
     let mut incoming: Vec<(RowId, Map<String, Value>)> = Vec::new();
     let mut incoming_ids: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
@@ -49,7 +53,7 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
         }
     }
     let membership = scope_membership(reader, model.as_str(), scope_key, base_revision)?;
-    incoming_ids.retain(|id| membership.get(id) != Some(&false));
+    incoming_ids.retain(|id| membership.get(id) != Some(&false) && !before_ids.contains(id.as_str()));
     let anchor = (request.coverage == Coverage::Page && !request.replace_all)
         .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))
         .flatten();
@@ -69,7 +73,8 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
     let entity_ops = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
     let mut scope_ops = Vec::new();
     for member in removed { scope_ops.push(ScopeOp::Detach { scope: request.scope.clone(), row: RowId::new(&member.id)? }); }
-    scope_ops.extend(order_ops(&request.scope, &current, &result)?);
+    let full: Vec<String> = before.iter().map(|member| member.id.clone()).chain(result).collect();
+    scope_ops.extend(order_ops(&request.scope, &whole, &full)?);
     Ok(LandingPlan { entity_ops, scope_ops })
 }
 

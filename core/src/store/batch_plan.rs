@@ -115,13 +115,6 @@ pub enum OperationTransition {
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct WindowTail {
-    pub anchor: String,
-    pub cursor: Option<String>,
-    pub has_next: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowMarker {
     pub sequence: i64,
@@ -138,7 +131,7 @@ pub struct WindowSave {
     pub has_next: bool,
     pub total: Option<i64>,
     pub pages: i64,
-    pub tail: Option<WindowTail>,
+    pub anchor: Option<String>,
     pub issued: i64,
     pub applied: i64,
     pub cleared_at: Option<i64>,

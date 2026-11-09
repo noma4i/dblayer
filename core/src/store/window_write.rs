@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::store::{BatchPlan, CommitResult, EntityOp, ScopeOp, ScopeRef, WindowMarker, WindowSave, WindowTail};
+use crate::store::{BatchPlan, CommitResult, EntityOp, ScopeOp, ScopeRef, WindowMarker, WindowSave};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
 use crate::owners::read::codec::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
@@ -72,15 +72,17 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let plans_first = first && (matches!(remote.shape, RemoteShape::Connection { .. }) || remote.coverage() == Coverage::Complete);
     let applied = if first { issued } else { stored.as_ref().map_or(issued, |window| window.applied) };
     let reader = Reader::new(writer.connection, writer.models);
-    let last = if plans_first && !page.replace_all && remote.coverage() == Coverage::Page && stored.is_some() { reader.scope_last_id(model, scope.key.as_str())? } else { None };
-    let tail = stored.as_ref().zip(last).and_then(|(window, last)| {
-        let listed = roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last));
-        (!listed).then(|| WindowTail { anchor: last, cursor: window.cursor.clone(), has_next: window.has_next })
-    });
+    let to_end = page.replace_all || page.cursor.is_none();
+    let covers_next = !first && matches!(remote.shape, RemoteShape::Connection { .. }) && remote.coverage() == Coverage::Page && !(accepted.is_empty() && page.cursor.is_some());
+    let start_after = match stored.as_ref().and_then(|window| window.anchor.clone()) {
+        Some(anchor) if covers_next && reader.scope_members_among(model, scope.key.as_str(), &[anchor.as_str()])?.iter().any(|id| id == &anchor) => Some(anchor),
+        _ => None,
+    };
     let model_key = ModelKey::new(model);
-    let plan = if plans_first {
+    let plan = if plans_first || start_after.is_some() {
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
-        request.replace_all = page.replace_all;
+        request.replace_all = to_end;
+        request.start_after = start_after;
         replace_plan(&reader, &request, &accepted, page.base_revision).map_err(fault)?
     } else {
         let ids: Vec<String> = incoming_ids(&accepted).iter().map(ToString::to_string).collect();
@@ -104,7 +106,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         marker: None, stale_since: None, key, scope, cursor: page.cursor.map(str::to_string), has_next: page.cursor.is_some(),
         total: page.total.or(stored.as_ref().filter(|_| remote.total_from.is_some()).and_then(|window| window.total)),
         pages: if first { 1 } else { stored.as_ref().map_or(1, |window| window.pages + 1) },
-        tail, issued, applied, cleared_at: first.then_some(writer.now),
+        anchor: incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())), issued, applied, cleared_at: first.then_some(writer.now),
     });
     envelope.validate(writer.generation)?;
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))

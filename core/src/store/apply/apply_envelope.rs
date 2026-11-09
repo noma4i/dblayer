@@ -190,15 +190,7 @@ pub(in super::super) fn apply_envelope_at(
 }
 
 pub(super) fn save_window(connection: &Connection, window: &WindowSave, generation: Generation, now_ms: i64) -> Result<(), StoreError> {
-    let kept = match &window.tail {
-        Some(tail) => connection.query_row(
-            include_str!("../sql/apply_envelope/save_window_select_scope_member.sql"),
-            params![window.scope.model.as_str(), window.scope.key.as_str(), tail.anchor], |_| Ok(()),
-        ).optional()?.map(|_| tail),
-        None => None,
-    };
-    let (cursor, has_next) = kept.map_or((window.cursor.clone(), window.has_next), |tail| (tail.cursor.clone(), tail.has_next));
-    let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, pages: window.pages, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
+    let record = WindowRecord { key: window.key.clone(), cursor: window.cursor.clone(), anchor: window.anchor.clone(), has_next: window.has_next, total: window.total, pages: window.pages, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
     if let Some(since) = window.stale_since {
         connection.execute(include_str!("../sql/apply_envelope/save_window_update_query_window.sql"), params![window.key, since])?;

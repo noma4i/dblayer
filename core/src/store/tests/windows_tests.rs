@@ -8,7 +8,7 @@ use crate::schema::PageDirection;
 fn saving_a_page_has_constant_sql_work() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use crate::store::{WindowSave, WindowTail};
+    use crate::store::WindowSave;
     let measure = |size| {
         let (store, _) = booted_store();
         let target = scope("messages", "thread");
@@ -17,13 +17,13 @@ fn saving_a_page_has_constant_sql_work() {
         store.commit(envelope(&store, rows, members)).unwrap();
         let mut page = envelope(&store, vec![upsert("messages", message("new", "1"))], vec![append(&target, "new", "z")]);
         page.window = Some(WindowSave { marker: None, stale_since: None, key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
-            tail: Some(WindowTail { anchor: "m00000".into(), cursor: Some("kept".into()), has_next: true }), issued: 1, applied: 1, cleared_at: None });
+            anchor: Some("new".into()), issued: 1, applied: 1, cleared_at: None });
         let steps = Arc::new(AtomicUsize::new(0));
         let counter = steps.clone();
         store.lock().connection.progress_handler(1, Some(move || { counter.fetch_add(1, Ordering::SeqCst); false })).unwrap();
         store.commit(page).unwrap();
         let writes = steps.swap(0, Ordering::SeqCst);
-        assert_eq!(store.window("page").unwrap().unwrap().cursor.as_deref(), Some("kept"));
+        assert_eq!(store.window("page").unwrap().unwrap().cursor.as_deref(), Some("new"));
         store.lock().connection.progress_handler(0, None::<fn() -> bool>).unwrap();
         (writes, steps.load(Ordering::SeqCst))
     };
@@ -33,7 +33,7 @@ fn saving_a_page_has_constant_sql_work() {
 }
 
 fn window(key: &str) -> WindowRecord {
-    WindowRecord { key: key.into(), cursor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 }
+    WindowRecord { key: key.into(), cursor: None, anchor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 }
 }
 
 fn key(model_name: &str, relation: &str, param: &str) -> String {
@@ -46,6 +46,7 @@ fn save_and_load_return_equal_record() {
     let record = WindowRecord {
         key: "messages:thread:1".into(),
         cursor: Some("c1".into()),
+        anchor: Some("a1".into()),
         has_next: true,
         total: Some(5),
         pages: 3,

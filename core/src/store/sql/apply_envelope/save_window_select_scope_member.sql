@@ -1,1 +1,0 @@
-SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3
