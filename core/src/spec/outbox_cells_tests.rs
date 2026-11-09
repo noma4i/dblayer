@@ -185,6 +185,17 @@ fn out_sending_retry() {
 }
 
 #[test]
+fn out_sending_stray() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    unchanged_by(&mut twin, id, St::Sending, vec![
+        OutboxInput::Response { op_id: id + 100, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        OutboxInput::TransportError { op_id: id + 100, temporary: true },
+        OutboxInput::Dropped { op_id: id + 100 },
+    ]);
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
