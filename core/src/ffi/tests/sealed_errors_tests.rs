@@ -83,6 +83,11 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     let case = format!("{wire} {entry} confirmed={confirmed}");
                     if code == SessionCode::Unauthenticated {
                         assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
+                    } else if code == SessionCode::SessionEnded {
+                        let (got, detail) = session(error);
+                        assert_eq!((got, detail.contains(wire)), (SessionCode::SessionEnded, true), "{case}: a revoked answer is Session(SessionEnded) with the body (lifecycle.md sess_calling_revoked)");
+                        assert_eq!(rig.credentials.inner.value(), None, "{case}: the server end erases the session");
+                        continue;
                     } else {
                         let (got, detail) = session(error);
                         let refusal = serde_json::from_str::<serde_json::Value>(&detail).ok().and_then(|body| body["error"].as_str().map(str::to_string));
@@ -109,9 +114,14 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
 
             let outcome = database.outcome(receipt).await.unwrap();
+            let case = format!("{wire} confirmed={confirmed}");
+            if code == SessionCode::SessionEnded {
+                assert!(matches!(outcome, super::WireOperationOutcome::Ended { cause: crate::owners::read::deliveries::EndCause::SessionEnded }), "{case}: a revoked answer ends the operation with the session, got {outcome:?}");
+                assert_eq!(rig.credentials.inner.value(), None, "{case}: the server end erases the session");
+                continue;
+            }
             let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
-            let case = format!("{wire} confirmed={confirmed}");
             let refusal = serde_json::from_str::<serde_json::Value>(&failure.message).ok().and_then(|body| body["error"].as_str().map(str::to_string));
             assert_eq!((failure.session_code, refusal.as_deref()), (Some(code), Some(wire)), "{case}: the failure carries the refusal body unchanged, got {:?}", failure.message);
             assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
