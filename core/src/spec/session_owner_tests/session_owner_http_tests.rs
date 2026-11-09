@@ -92,6 +92,24 @@ fn sess_calling_permanent() {
 }
 
 #[test]
+fn sess_calling_unknown_answer() {
+    let mut online = calling();
+    let (rid, aid) = (online.rid(), online.aid());
+    assert_eq!(online.feed(Input::Unknown { request_id: rid, attempt_id: aid }), vec![RefEffect::ScheduleTick { attempts: 1 }], "an unreadable 200 retries the same pair like Dropped");
+    assert!(online.in_phase(CallPhase::WaitingRetry), "the pair waits for its retry, pending and sequence untouched");
+    assert_eq!(online.reference.credential.map(|credential| credential.sequence), Some(0), "the unknown answer spends no sequence");
+    let mut author = calling_mutate();
+    let (rid, aid) = (author.rid(), author.aid());
+    assert_eq!(author.feed(Input::Unknown { request_id: rid, attempt_id: aid }), vec![answer(7, 11, Outcome::Dropped)], "the author hears Dropped, the pair is held");
+    assert!(matches!(author.reference.state, RefState::PendingHeld { .. }), "the stored pair is kept for the author to retry");
+    let mut offline = calling();
+    let (rid, aid) = (offline.rid(), offline.aid());
+    offline.feed(Input::Online(false));
+    assert!(offline.feed(Input::Unknown { request_id: rid, attempt_id: aid }).is_empty(), "offline the cancelled attempt gives no outcome");
+    assert!(offline.in_phase(CallPhase::WaitingNetwork), "the request waits for the network");
+}
+
+#[test]
 fn sess_calling_tick() {
     let mut twin = calling();
     let input = twin.http_error(true, false);

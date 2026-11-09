@@ -515,7 +515,7 @@ impl Session {
                 let fail = if auth { Fail::Unauthorized } else { Fail::Http };
                 self.land(pending, Err(fail), None, None, false, out);
             }
-            Input::Dropped { request_id, attempt_id } if mine(request_id, attempt_id) => {
+            Input::Dropped { request_id, attempt_id } | Input::Unknown { request_id, attempt_id } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Dropped });
                     self.state = State::PendingHeld { pending };

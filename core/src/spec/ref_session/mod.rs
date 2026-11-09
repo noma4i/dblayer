@@ -146,6 +146,7 @@ pub enum Input {
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
+    Unknown { request_id: RequestId, attempt_id: AttemptId },
     Committed(BatchId),
     Rejected(BatchId, Reason),
     Tick,

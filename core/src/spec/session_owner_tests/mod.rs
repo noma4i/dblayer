@@ -271,6 +271,7 @@ impl Twin {
             Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
+            Input::Unknown { request_id, attempt_id } => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: resolve(batch), reason: reject(reason) }),
             Input::Tick => SessionInput::Tick(Time(0)),
