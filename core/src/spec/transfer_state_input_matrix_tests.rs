@@ -167,6 +167,45 @@ fn xfer_open_saved_interrupted() {
     assert!(twin.state().transfers.is_empty());
 }
 
+fn failed_transfer_mutation(twin: &mut Twin) -> u64 {
+    let id = twin.mutating(KEY);
+    twin.mutation_outcome(KEY, OutboxOutcome::Failed { error: "error".into() });
+    twin.commit();
+    assert_eq!(twin.stage(id), crate::owners::write::transfer::TransferStage::Failed);
+    id
+}
+
+#[test]
+fn xfer_failed_discard_outcome() {
+    use crate::owners::write::outbox::Fault;
+    use crate::owners::write::transfer::{TransferAnswer, TransferInput, TransferStage};
+    for accepted in [false, true] {
+        let mut twin = Twin::new();
+        let id = failed_transfer_mutation(&mut twin);
+        let (reply, _) = twin.discard(KEY);
+        let result = if accepted { Ok(()) } else { Err(Fault::InFlight) };
+        let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result });
+        assert_eq!(twin.stage(id), TransferStage::Failed);
+        if accepted { assert!(Twin::quiet(&out)); }
+        else { assert_eq!((out.replies(reply), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::InFlight)], 1, 0)); }
+    }
+}
+
+#[test]
+fn xfer_failed_discarded() {
+    use crate::owners::write::transfer::{TransferAnswer, TransferStage};
+    for cancel in [false, true] {
+        let mut twin = Twin::new();
+        let id = failed_transfer_mutation(&mut twin);
+        let (reply, _) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+        let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
+        assert_eq!((twin.stage(id), out.removed(), out.rolled_back(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], Vec::<u64>::new(), 0));
+        let out = twin.commit();
+        let answer = if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
+        assert_eq!((twin.stage(id), out.replies(reply)), (TransferStage::Done, vec![answer]));
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
