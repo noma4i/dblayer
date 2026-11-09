@@ -117,7 +117,7 @@ impl Twin {
         reference.debounce = debounce;
         let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new() };
         if let Some(on) = online {
-            twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
+            twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on), now: crate::runtime::Time(0) });
             twin.reference.online = Some(on);
         }
         take(&twin.log);
@@ -174,16 +174,16 @@ impl Twin {
     fn owner_input(&mut self, input: &Input) -> Vec<FeedInput> {
         let reread = self.reread.clone();
         match input {
-            Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream, scoped: Vec::new() }],
-            Input::WantMinus { model, id } => vec![FeedInput::WantMinus { model: model.clone(), id: *id }],
+            Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream, scoped: Vec::new(), now: crate::runtime::Time(0) }],
+            Input::WantMinus { model, id } => vec![FeedInput::WantMinus { model: model.clone(), id: *id, now: crate::runtime::Time(0) }],
             Input::HandshakeDone => {
                 let opening = self.connection(To::Opening);
-                self.post(FeedInput::HandshakeDone { connection_id: opening, key_id: 7 });
+                self.post(FeedInput::HandshakeDone { connection_id: opening, key_id: 7, now: crate::runtime::Time(0) });
                 vec![FeedInput::ChannelConfirmed { connection_id: opening, channel: CHANNEL.into() }]
             }
             Input::FrameOpened { to, counter, events } => {
                 let connection = self.connection(*to);
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: CHANNEL.into(), events: events.iter().map(|(model, payload)| framed(model, payload, &reread, false)).collect() } }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: CHANNEL.into(), events: events.iter().map(|(model, payload)| framed(model, payload, &reread, false)).collect() }, now: crate::runtime::Time(0) }]
             }
             Input::Frame { to, counter, kind } => {
                 let connection = self.connection(*to);
@@ -193,7 +193,7 @@ impl Twin {
                     Kind::OtherId => Frame::Complete { id: "2".into() },
                     Kind::Quiet => Frame::Quiet,
                 };
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame, now: crate::runtime::Time(0) }]
             }
             Input::ProtocolError { to } => vec![FeedInput::ProtocolError { connection_id: self.connection(*to), reason: ProtocolReason::Decrypt }],
             Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), channel: CHANNEL.into(), event: framed(model, payload, &reread, false) }],
@@ -216,7 +216,7 @@ impl Twin {
             }
             Input::Refused { model } => {
                 let connection = self.connection(To::Active);
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, Counter::Expected), frame: Frame::Events { id: CHANNEL.into(), events: vec![framed(model, "refused", &Reread::None, true)] } }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, Counter::Expected), frame: Frame::Events { id: CHANNEL.into(), events: vec![framed(model, "refused", &Reread::None, true)] }, now: crate::runtime::Time(0) }]
             }
             Input::StrayRepeat => {
                 let batch = self.used.last().copied().unwrap_or(9_999);
@@ -232,7 +232,7 @@ impl Twin {
             }
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
-            Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
+            Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on), now: crate::runtime::Time(0) }],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],
             Input::Drain { own } => vec![FeedInput::Drain { connection_id: self.connection(if *own { To::Draining } else { To::Stray }) }],
             Input::EpochEnded | Input::Closing => Vec::new(),

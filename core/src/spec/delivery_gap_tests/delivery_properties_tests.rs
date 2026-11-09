@@ -309,7 +309,7 @@ fn dlv_prop_dictionary_bounded() {
     let mut rig = rig(Kind::List);
     for stream in 2..=40u64 {
         rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
-        rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Release { stream, reader: None });
+        rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time(0) });
         rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::SinkClosed { stream });
     }
     rig.det.run_until_quiet(10_000).expect("quiet");

@@ -101,7 +101,9 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         Arc::new(DbSnapshots::new(db.clone())),
         wiring.pulls.clone(),
         ports.executor.clone(),
-        Box::new(move |_stamp, effect| match effect {
+        Box::new(move |stamp, effect| match effect {
+            DeliveryEffect::WantPlus { model, id, stream, scoped } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantPlus { model, id, stream, scoped, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
+            DeliveryEffect::WantMinus { model, id } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantMinus { model, id, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
             DeliveryEffect::Stream { stream, effect: StreamEffect::CloseSink } => deliveries_wiring.to_deliveries(DeliveryInput::SinkClosed { stream }),
             DeliveryEffect::Stream { effect: StreamEffect::Cancelled { reply }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Cancelled);
@@ -139,7 +141,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
-            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, wiring.gate.clone()).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
+            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, wiring.gate.clone(), wiring.now.clone()).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.install(feed_at, "feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };
@@ -266,7 +268,7 @@ impl super::Life {
     }
 
     /// The last handle of the stream is gone.
-    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None }); }
+    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time((self.wiring.now)() as u64) }); }
 
     /// A reader takes the stream: the first claim wins and a later one is refused.
     pub async fn claim_reader(&self, stream: StreamId, reader: u64) -> bool {
@@ -277,5 +279,5 @@ impl super::Life {
     }
 
     /// The reader left the stream and its handle is still held: the interest of the stream ends.
-    pub fn release_reader(&self, stream: StreamId, reader: u64) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: Some(reader) }); }
+    pub fn release_reader(&self, stream: StreamId, reader: u64) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: Some(reader), now: crate::runtime::Time((self.wiring.now)() as u64) }); }
 }

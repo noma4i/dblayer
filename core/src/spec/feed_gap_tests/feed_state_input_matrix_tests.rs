@@ -22,10 +22,10 @@ fn feed_keepalive_stale() {
     let connection = twin.connection(To::Active);
     let counter = match twin.state().protocol(connection).unwrap() { Protocol::Established { send_counter, .. } => send_counter, _ => panic!("established") };
     for input in [
-        FeedInput::Keepalive { connection_id: connection + 100, counter },
-        FeedInput::Keepalive { connection_id: connection, counter: counter + 100 },
-        FeedInput::PongDeadline { connection_id: connection + 100, counter },
-        FeedInput::PongDeadline { connection_id: connection, counter },
+        FeedInput::Keepalive { connection_id: connection + 100, counter, now: crate::runtime::Time(0) },
+        FeedInput::Keepalive { connection_id: connection, counter: counter + 100, now: crate::runtime::Time(0) },
+        FeedInput::PongDeadline { connection_id: connection + 100, counter, now: crate::runtime::Time(0) },
+        FeedInput::PongDeadline { connection_id: connection, counter, now: crate::runtime::Time(0) },
     ] {
         take(&twin.log);
         twin.post(input);
@@ -46,7 +46,7 @@ fn ping_due() -> (Twin, ConnectionId, u64) {
 #[test]
 fn feed_keepalive_ping() {
     let (mut twin, connection, counter) = ping_due();
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter, now: crate::runtime::Time(25_000) });
     let emitted = take(&twin.log);
     assert_eq!(twin.state().mode(), f::Mode::Live);
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { connection: found, frame: Outgoing::Ping { ts: 25_000 }, .. }) if *found == connection)));
@@ -56,12 +56,12 @@ fn feed_keepalive_ping() {
 #[test]
 fn feed_keepalive_pong() {
     let (mut twin, connection, counter) = ping_due();
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter, now: crate::runtime::Time(25_000) });
     take(&twin.log);
     let recv_counter = twin.counter(connection, Counter::Expected);
-    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Pong });
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Pong, now: crate::runtime::Time(25_000) });
     take(&twin.log);
-    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    twin.post(FeedInput::PongDeadline { connection_id: connection, counter, now: crate::runtime::Time(25_000) });
     assert!(take(&twin.log).is_empty());
     assert_eq!(twin.state().mode(), f::Mode::Live);
 }
@@ -69,11 +69,11 @@ fn feed_keepalive_pong() {
 #[test]
 fn feed_keepalive_half_open() {
     let (mut twin, connection, counter) = ping_due();
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter, now: crate::runtime::Time(25_000) });
     take(&twin.log);
     twin.post(FeedInput::Tick(Time(35_000)));
     take(&twin.log);
-    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    twin.post(FeedInput::PongDeadline { connection_id: connection, counter, now: crate::runtime::Time(35_000) });
     let emitted = take(&twin.log);
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Cancel { connection: found }) if *found == connection)));
     assert_ne!(twin.state().mode(), f::Mode::Live);
@@ -86,7 +86,7 @@ fn feed_keepalive_rearm() {
     let recv_counter = twin.counter(connection, Counter::Expected);
     twin.post(FeedInput::Tick(Time(4_000)));
     take(&twin.log);
-    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Ping { ts: 4.into() } });
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Ping { ts: 4.into() }, now: crate::runtime::Time(4_000) });
     let emitted = take(&twin.log);
     assert_eq!(twin.state().mode(), f::Mode::Live);
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { connection: found, frame: Outgoing::Pong { .. }, .. }) if *found == connection)));
@@ -109,7 +109,7 @@ fn feed_frame_protocol_error() {
     let connection = twin.connection(To::Active);
     let counter = twin.counter(connection, Counter::Expected) + 1;
     take(&twin.log);
-    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Pong });
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Pong, now: crate::runtime::Time(0) });
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
     assert!(take(&twin.log).iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Close { .. }))));
     let mut twin = opening();

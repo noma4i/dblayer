@@ -179,8 +179,8 @@ impl Twin {
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPassive") => modelled.push(Effect::InterestPassive),
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => modelled.push(Effect::Load { force: input.contains("force: true") }),
                 Emitted::Send { to: WINDOWS, .. } => modelled.push(Effect::InterestMinus),
-                Emitted::Send { to: FEED, input } if input.starts_with("WantPlus") => modelled.push(Effect::WantPlus),
-                Emitted::Send { to: FEED, .. } => modelled.push(Effect::WantMinus),
+                Emitted::Run(DeliveryEffect::WantPlus { .. }) => modelled.push(Effect::WantPlus),
+                Emitted::Run(DeliveryEffect::WantMinus { .. }) => modelled.push(Effect::WantMinus),
                 _ => {}
             }
         }
@@ -238,7 +238,7 @@ impl Twin {
                 self.call(d::DeliveryInput::PullCancelled { stream, outcome });
             }
             Input::Cancel { reply } => self.call(d::DeliveryInput::Cancel { stream, reply: *reply }),
-            Input::Release => self.call(d::DeliveryInput::Release { stream, reader: None }),
+            Input::Release => self.call(d::DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time(0) }),
             Input::SinkClosed => self.call(d::DeliveryInput::SinkClosed { stream }),
             Input::EpochEnded { own } => {
                 self.det.end_epoch(if *own { EPOCH } else { EPOCH + 1 }, Ended::SessionReset);
@@ -349,7 +349,7 @@ fn dlv_wait_subscription_census() {
     assert_eq!(census_of(&mut twin), (1, 0), "an open stream of a window is observed");
     twin.step(Input::EpochEnded { own: true });
     assert_eq!(census_of(&mut twin), (0, 1), "an ended stream stays retained until its Release");
-    twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None });
+    twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None, now: crate::runtime::Time(0) });
     assert_eq!(census_of(&mut twin), (0, 0), "a released stream leaves the census");
 }
 

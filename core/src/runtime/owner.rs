@@ -57,6 +57,7 @@ pub trait StateOwner: Sized + 'static {
     fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self>;
     fn epoch_started(_epoch: Epoch) -> Option<Self::Input> { None }
     fn tick(now: Time) -> Self::Input;
+    fn due(input: Self::Input, now: Time) -> (Option<Self::Input>, Self::Input) { (Some(Self::tick(now)), input) }
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
     fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }

@@ -134,7 +134,7 @@ fn dlv_pull_unknown_stream() {
 #[test]
 fn dlv_cancel_unknown_stream() {
     let mut work = Work::new(1);
-    let effects = Deliveries::step(&mut work.state, DeliveryInput::Release { stream: 77, reader: None });
+    let effects = Deliveries::step(&mut work.state, DeliveryInput::Release { stream: 77, reader: None, now: crate::runtime::Time(0) });
     assert!(effects.is_empty(), "a Release of a stream that is gone does nothing: {effects:?}");
     let effects = Deliveries::step(&mut work.state, DeliveryInput::PullCancelled { stream: 77, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() });
     assert!(effects.is_empty(), "a PullCancelled of a stream that is gone does nothing: {effects:?}");

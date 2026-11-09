@@ -12,7 +12,7 @@ use crate::owners::read::diff::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
 use crate::identity::RowId;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};
-use crate::owners::read::feed::{Feed, FeedInput, ScopedChannel};
+use crate::owners::read::feed::{Feed, ScopedChannel};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
@@ -249,6 +249,8 @@ pub struct DeliveryPeers {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliveryEffect {
     Stream { stream: StreamId, effect: StreamEffect },
+    WantPlus { model: String, id: StreamId, stream: bool, scoped: Vec<ScopedChannel> },
+    WantMinus { model: String, id: StreamId },
     Drained(Drained),
     /// The answer of `Census`: the streams that read a window and the streams that ended without a `Release`.
     Census { reply: ReplyId, observed: usize, retained: usize },
@@ -280,7 +282,7 @@ pub enum DeliveryInput {
     Cancel { stream: StreamId, reply: ReplyId },
     ClaimReader { stream: StreamId, reader: u64, reply: ReplyId },
     /// `reader` is the reader that left the stream while its handle is held, `None` is the drop of the handle.
-    Release { stream: StreamId, reader: Option<u64> },
+    Release { stream: StreamId, reader: Option<u64>, now: Time },
     SinkClosed { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -482,8 +484,8 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision, now: machine.opened_at })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
-            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() })),
-            Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), id: stream })),
+            Emit::WantPlus => Effect::Run(DeliveryEffect::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() }),
+            Emit::WantMinus => Effect::Run(DeliveryEffect::WantMinus { model: machine.view.model.clone(), id: stream }),
         };
         out.push(effect);
     }
@@ -549,7 +551,7 @@ impl StateOwner for Deliveries {
                 let claimed = state.streams.get_mut(&stream).is_none_or(|machine| machine.claim(reader));
                 out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::ReaderClaimed { reply, claimed } }));
             }
-            DeliveryInput::Release { stream, reader } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
+            DeliveryInput::Release { stream, reader, .. } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
             DeliveryInput::SinkClosed { stream } => on(state, stream, &mut out, |machine, fx| machine.sink_closed(fx)),
             DeliveryInput::Pull { stream, outcome, reader } => {
                 if state.streams.contains_key(&stream) {

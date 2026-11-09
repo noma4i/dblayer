@@ -112,8 +112,9 @@ impl<O: StateOwner> Cell<O> {
         let Some(entry) = self.schedule.first_entry() else { return false };
         let scheduled = entry.remove();
         self.keys.remove(&scheduled.id);
-        self.push(EpochStamp::Control, O::tick(self.now));
-        self.push(scheduled.stamp, scheduled.input);
+        let (clock, input) = O::due(scheduled.input, self.now);
+        if let Some(clock) = clock { self.push(EpochStamp::Control, clock); }
+        self.push(scheduled.stamp, input);
         true
     }
 

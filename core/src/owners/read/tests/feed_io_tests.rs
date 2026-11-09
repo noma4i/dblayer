@@ -107,7 +107,7 @@ fn feed_close_reaches_the_delivery_stream() {
         let (line, peer) = line();
         let runtime = runtime();
         let (_, rest) = collector();
-        let io = FeedIo::new(Arc::new(Lines(Mutex::new(vec![line].into()))), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1));
+        let io = FeedIo::new(Arc::new(Lines(Mutex::new(vec![line].into()))), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1), Arc::new(|| 0));
         let mut det = DetScheduler::new(1);
         let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
         let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -119,11 +119,11 @@ fn feed_close_reaches_the_delivery_stream() {
         det.start_epoch(EPOCH);
         let view = View { kind: Kind::CableCloses, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: super::windows::WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None };
         det.post(deliveries, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: 7, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
-        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
+        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+        det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
         pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
         if intended || broken {
-            if broken { peer.frames.send(confirmed(9)).unwrap(); } else { det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 }); }
+            if broken { peer.frames.send(confirmed(9)).unwrap(); } else { det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1, now: crate::runtime::Time(0) }); }
             if broken { pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Draining { .. }))); }
             det.run_until_quiet(10_000).unwrap();
             det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
@@ -147,7 +147,7 @@ fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (Det
     let runtime = runtime();
     let batches = Batches::default();
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, gate);
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, gate, Arc::new(|| 0));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -155,8 +155,8 @@ fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (Det
     let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
     (det, feed, batches, runtime)
 }
 
@@ -204,7 +204,7 @@ fn feed_io_unsubscribe_closes() {
     let (line, peer) = line();
     let (mut det, feed, _batches, _runtime) = rig(vec![line.clone()]);
     pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1, now: crate::runtime::Time(0) });
     let closed = peer.closed.clone();
     pump(&mut det, |_| closed.load(Ordering::SeqCst) >= 1);
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
@@ -291,7 +291,7 @@ fn feed_io_close_cancels_handshake() {
     let runtime = runtime();
     let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1));
+    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1), Arc::new(|| 0));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -299,12 +299,12 @@ fn feed_io_close_cancels_handshake() {
     let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
     let began = started.clone();
     pump(&mut det, |_| began.load(Ordering::SeqCst) >= 1);
     assert_eq!(dropped.load(Ordering::SeqCst), 0, "the open waits");
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1, now: crate::runtime::Time(0) });
     let seen = dropped.clone();
     pump(&mut det, |_| seen.load(Ordering::SeqCst) >= 1);
 }
@@ -332,7 +332,7 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
     let gate = super::rig::open_gate(1);
-    let io = FeedIo::new(Arc::new(Hanging(dropped, started.clone())), Arc::new(Models), runtime.handle().clone(), rest, gate.clone());
+    let io = FeedIo::new(Arc::new(Hanging(dropped, started.clone())), Arc::new(Models), runtime.handle().clone(), rest, gate.clone(), Arc::new(|| 0));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -341,8 +341,8 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
     gate.close(EPOCH);
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
     pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
     assert_eq!(started.load(Ordering::SeqCst), 0, "a connect reached the old lines after the close");
 }
@@ -356,7 +356,7 @@ fn rt_prop_close_against_send_no_old_connection_feed() {
     let sent = peer.sent.clone();
     pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live) && sent.lock().unwrap_or_else(PoisonError::into_inner).len() == 1);
     gate.close(EPOCH);
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1, now: crate::runtime::Time(0) });
     pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
     let late: Vec<_> = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).iter().skip(1).map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or("").to_string())).collect();
     assert!(late.is_empty(), "late frames reached the old connection after the close: {late:?}");

@@ -283,7 +283,7 @@ impl EffectRunner<Network> for NetworkRunner {
         match effect {
             NetworkEffect::Broadcast { online, online_seq } => {
                 wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() });
-                wiring.to_feed(FeedInput::Online { online: Online(online), online_seq });
+                wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) });
                 wiring.to_outbox(OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
@@ -301,7 +301,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 }
                 match owner {
                     Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() }),
-                    Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq }),
+                    Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) }),
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Snapshot(Online(online))),
                     Peer::Outbox => {
                         wiring.to_outbox_at(stamp, OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));

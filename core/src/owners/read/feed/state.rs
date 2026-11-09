@@ -1,10 +1,17 @@
 use super::*;
 
 impl FeedState {
+    pub(super) fn frames_sent(&mut self, now: Option<Time>, fx: &[Fx]) {
+        let Some(now) = now else { return };
+        for effect in fx {
+            if let Fx::Run(FeedEffect::Seal { connection, .. }) = effect {
+                if let Some(found) = self.connection_mut(*connection) { found.last_sent = now; }
+            }
+        }
+    }
     pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>, channels: BTreeMap<String, Vec<Channel>>) -> Self {
         Self {
             epoch,
-            now: Time(0),
             mode: Mode::Off { gap: false },
             online: None,
             online_seq: 0,
@@ -121,7 +128,7 @@ impl FeedState {
     pub(super) fn fresh_connection(&mut self) -> Connection {
         let id = self.next_connection;
         self.next_connection += 1;
-        Connection { id, protocol: Protocol::Handshake, pong: None }
+        Connection { id, protocol: Protocol::Handshake, pong: None, last_sent: Time(0), pong_due: None }
     }
 
     /// Transport `Subscribe(want)` on a new connection.

@@ -217,6 +217,8 @@ where
 
     fn tick(now: Time) -> O::Input { O::tick(now) }
 
+    fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
+
     fn epoch_started(epoch: Epoch) -> Option<O::Input> { O::epoch_started(epoch) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
@@ -259,6 +261,8 @@ impl<O: StateOwner> StateOwner for Sink<O> {
     }
 
     fn tick(now: Time) -> O::Input { O::tick(now) }
+
+    fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
 

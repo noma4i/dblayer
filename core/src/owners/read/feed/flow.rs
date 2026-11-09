@@ -171,18 +171,18 @@ impl FeedState {
         }
     }
 
-    pub(super) fn keepalive(&mut self, connection: ConnectionId, counter: u64, fx: &mut Vec<Fx>) {
+    pub(super) fn keepalive(&mut self, connection: ConnectionId, counter: u64, now: Time, fx: &mut Vec<Fx>) {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) { return; }
-        let now = self.now.0;
         let Some(found) = self.active.as_mut() else { return };
-        if found.pong.is_some() || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
-        Self::seal(found, Outgoing::Ping { ts: now }, fx);
+        if found.pong.is_some() || now.0.saturating_sub(found.last_sent.0) < KEEPALIVE.as_millis() as u64 || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
+        Self::seal(found, Outgoing::Ping { ts: now.0 }, fx);
         found.pong = Some(counter);
+        found.pong_due = Some(Time(now.0.saturating_add(PONG_DEADLINE.as_millis() as u64)));
         fx.push(Fx::PongDeadline { connection, counter });
     }
 
-    pub(super) fn pong_deadline(&mut self, connection: ConnectionId, counter: u64, fx: &mut Vec<Fx>) {
-        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.active.as_ref().is_some_and(|found| found.pong == Some(counter)) { return; }
+    pub(super) fn pong_deadline(&mut self, connection: ConnectionId, counter: u64, now: Time, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.active.as_ref().is_some_and(|found| found.pong == Some(counter) && found.pong_due.is_some_and(|due| now >= due)) { return; }
         fx.push(Fx::Run(FeedEffect::Cancel { connection }));
         self.dropped(connection, fx);
     }
@@ -204,6 +204,7 @@ impl FeedState {
             Frame::Pong => {
                 if let Some(found) = self.connection_mut(connection) {
                     found.pong = None;
+                    found.pong_due = None;
                     fx.push(Fx::CancelPong { connection });
                 }
             }
@@ -231,7 +232,7 @@ impl FeedState {
             return;
         }
         if let Some(found) = self.opening.as_mut() {
-            *found = Connection { id: connection, protocol: Protocol::Handshake, pong: None };
+            *found = Connection { id: connection, protocol: Protocol::Handshake, pong: None, last_sent: Time(0), pong_due: None };
         }
         fx.push(Fx::Run(FeedEffect::Connect { connection }));
         fx.push(Fx::HandshakeDeadline { connection });
@@ -383,9 +384,9 @@ impl FeedState {
                 self.closing_asked = true;
                 self.mode = Mode::Draining { connection, then: Resume::End };
             }
-            FeedInput::WantPlus { model, id, stream, scoped } if then != Resume::End => self.want_plus(model, id, stream, scoped, fx),
-            FeedInput::WantMinus { model, id } if then != Resume::End => self.want_minus(&model, id, fx),
-            FeedInput::Online { online: Online(online), online_seq } if then != Resume::End => self.online_changed(online, online_seq, fx),
+            FeedInput::WantPlus { model, id, stream, scoped, .. } if then != Resume::End => self.want_plus(model, id, stream, scoped, fx),
+            FeedInput::WantMinus { model, id, .. } if then != Resume::End => self.want_minus(&model, id, fx),
+            FeedInput::Online { online: Online(online), online_seq, .. } if then != Resume::End => self.online_changed(online, online_seq, fx),
             _ => {}
         }
     }
