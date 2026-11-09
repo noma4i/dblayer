@@ -132,7 +132,7 @@ impl Database {
     }
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        if self.life.is_shut() { return Err(super::command::closed()); }
+        self.account_call(epoch)?;
         self.mutation_needs_transport(&model, "create")?;
         let db = self.db.clone();
         let planned = self.offload(move || Ok(db.plan_create(&model, parse_json(&values_json)?, parse_json(&args_json)?)?)).await?;
@@ -147,7 +147,7 @@ impl Database {
     }
 
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         self.mutation_needs_transport(&model, "update")?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
@@ -156,7 +156,7 @@ impl Database {
     }
 
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         self.mutation_needs_transport(&model, &action)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
@@ -165,7 +165,7 @@ impl Database {
     }
 
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         self.mutation_needs_transport(&model, "destroy")?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());

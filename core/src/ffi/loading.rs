@@ -121,13 +121,13 @@ pub(super) fn relation_named(model: &str, relation: Option<String>) -> Result<St
 impl Database {
     /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
     pub fn begin_load(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::First, force: false })
     }
 
     pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await?;
         self.finish_load(call).await.map(drop)
@@ -135,20 +135,20 @@ impl Database {
 
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::All, force })
     }
 
     pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await?;
         self.finish_load(call).await
     }
 
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;

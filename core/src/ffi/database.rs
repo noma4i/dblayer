@@ -273,7 +273,7 @@ impl Database {
         Ok(found)
     }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let relation = super::loading::relation_named(&model, relation)?;
         self.read_in_epoch(epoch, "edge values", move |database| {
             let params = parse_json(&params_json)?;
@@ -298,17 +298,17 @@ impl Database {
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
     }
     pub async fn read(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read_file(&model, &row_id, &field)?)).await
     }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
@@ -350,7 +350,7 @@ impl Database {
         uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
     }
     pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         let Some(returns) = self.returns.get(&operation).cloned() else {
             return Err(DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") });
         };
@@ -358,7 +358,7 @@ impl Database {
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
-        self.not_closed()?;
+        self.account_call(epoch)?;
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };
             return self.retry_transfer(epoch, model, row_id, action, source).await;
