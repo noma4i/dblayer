@@ -537,6 +537,29 @@ fn xfer_open_mutating() {
     assert_eq!((twin.stage(1), out.submits(), out.writes(), out.shows()), (TransferStage::Mutating, 0, 0, vec![Shown::Uploading { progress: 100 }]), "the outcome comes from Outbox");
 }
 
+/// xfer_calls_held_cancel_wins (K1, D-221 F16, transfer.md:467): a Cancel held during restore replays on
+/// RestoreReady against the state the transfer was classified into (Ready). With the network up, the Cancel must
+/// be applied before any attempt starts: the transfer goes to Removing, no network request ever starts and the
+/// cancel reply is Ok. Prod runs start_in_order before replay_held, so the Ready transfer moves to
+/// PersistingAttempt first and the held Cancel then meets it with Err(InFlight), while the committed attempt
+/// starts the network the caller cancelled before the open finished.
+#[test]
+fn xfer_calls_held_cancel_wins() {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    let reply = twin.reply();
+    let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
+    assert!(Twin::quiet(&held), "a call during Restoring is held: {held:?}");
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(
+        (twin.stage(1), out.removed(), Twin::fault(&out, reply)),
+        (TransferStage::Removing, vec![KEY.to_string()], None),
+        "the held cancel wins over the restore start: Removing, no attempt, no InFlight: {out:?}",
+    );
+}
+
 #[test]
 fn xfer_open_failed() {
     let mut found = partly(1, KEY);
