@@ -141,7 +141,7 @@ fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
                     let mut header = member.to_string();
                     let mut last = at;
                     while header.matches('(').count() > header.matches(')').count() && last + 1 < end { last += 1; header.push(' '); header.push_str(lines[last].trim()); }
-                    shape.cases.push((identifier(nested), payload(&header).into_iter().map(|(field, field_type)| (field.trim_start_matches("val ").trim_start_matches("var ").trim().to_string(), field_type)).collect()));
+                    shape.cases.push((identifier(nested), payload(&header).into_iter().map(|(field, field_type)| (field.trim_start().trim_start_matches("override ").trim_start_matches("val ").trim_start_matches("var ").trim().to_string(), field_type)).collect()));
                     at = last;
                 }
                 at += 1;
