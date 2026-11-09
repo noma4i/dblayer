@@ -298,7 +298,7 @@ impl OutboxState {
                         let following: Vec<OpId> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage != Stage::Done).map(|other| other.op_id).collect();
                         for id in following {
                             if self.ops[&id].stage == Stage::Submitting {
-                                self.answer_waiters(id, &OutboxAnswer::Err(Fault::Internal), fx);
+                                self.answer_waiters(id, &OutboxAnswer::Err(Fault::Invalid), fx);
                                 if let Some(operation) = self.ops.get_mut(&id) { operation.stage = Stage::Done; }
                             } else if let Some(operation) = self.ops.get_mut(&id) {
                                 if let Some(previous) = operation.before_cancel.take() { operation.stage = previous; }
