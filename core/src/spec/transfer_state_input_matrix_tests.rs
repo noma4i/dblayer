@@ -4,7 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use super::ref_transfer::{step, Answer as RefAnswer, Cached, Check, Effect, Failure, Input as RefInput, Item, MutOut, Source as RefSource, St, State, Target, TransferKey, ErrKind};
 use super::transfer_harness::{Out, Twin};
 use crate::owners::write::outbox::OutboxOutcome;
-use crate::owners::write::transfer::{TransferAnswer, TransferEffect};
+use crate::owners::write::transfer::{AbortFault, TransferAnswer, TransferEffect};
 use crate::test_matrix::Matrix;
 
 static LOCATION: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
@@ -167,7 +167,7 @@ fn xfer_orphan_remove_committed() {
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
-    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: true });
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Ok(()) });
     assert_eq!(out.orphans_removed(), vec!["u9".to_string()]);
     let out = twin.commit();
     assert!(Twin::quiet(&out), "{out:?}");
@@ -184,7 +184,7 @@ fn xfer_orphan_abort_refused_keeps_debt() {
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
-    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(AbortFault { temporary: true, status: None }) });
     assert!(Twin::quiet(&out), "{out:?}");
     twin.online(false);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);

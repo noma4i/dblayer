@@ -259,10 +259,10 @@ impl TransferState {
         id
     }
 
-    pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {
+    pub(super) fn abort_done(&mut self, upload_id: String, result: Result<(), AbortFault>, fx: &mut Fx) {
         let owed = self.orphan_owed.remove(&upload_id);
-        if !answered {
-            let key = self.orphans.get(&upload_id).filter(|_| owed && self.online == Some(true) && !self.ended).cloned();
+        if let Some(fault) = result.err().filter(|fault| !matches!(fault.status, Some(404 | 410))) {
+            let key = self.orphans.get(&upload_id).filter(|_| fault.temporary && owed && self.online == Some(true) && !self.ended).cloned();
             match key {
                 Some(key) => run(fx, TransferEffect::AbortOrphan { key, upload_id }),
                 None => { self.orphan_flight.remove(&upload_id); }
@@ -559,7 +559,7 @@ impl TransferState {
             TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
             TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(*joint), reply, now, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
-            TransferInput::AbortDone { upload_id, answered } => self.abort_done(upload_id, answered, fx),
+            TransferInput::AbortDone { upload_id, result } => self.abort_done(upload_id, result, fx),
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),

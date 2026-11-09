@@ -356,11 +356,13 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
 }
 
 #[test]
-fn exec_xfer_abort_answered_only_by_success_or_missing_upload() {
-    use super::transfer_executor::abort_answered;
+fn exec_xfer_abort_result_carries_the_status_class() {
+    use super::transfer_executor::abort_result;
+    use super::transfer::AbortFault;
     let http = |status: u16| Err(TransportError::Http { status, body: String::new() });
-    let table = [(Ok(()), true), (http(404), true), (http(410), true), (http(403), false), (http(500), false), (Err(TransportError::Network("down".into())), false)];
-    for (result, answered) in table {
-        assert_eq!(abort_answered(&result), answered, "{result:?}");
+    let refused = |temporary, status| Err(AbortFault { temporary, status });
+    let table = [(Ok(()), Ok(())), (http(404), refused(false, Some(404))), (http(410), refused(false, Some(410))), (http(403), refused(false, Some(403))), (http(500), refused(true, Some(500))), (Err(TransportError::Network("down".into())), refused(true, None))];
+    for (result, expected) in table {
+        assert_eq!(abort_result(&result), expected, "{result:?}");
     }
 }

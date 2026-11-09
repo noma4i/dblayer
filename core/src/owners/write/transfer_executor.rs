@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{file_id, staged_file_id, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -279,13 +279,13 @@ impl TransferExecutor {
 
     fn abort_orphan(&self, stamp: EpochStamp, back: &Back<Transfers>, key: String, upload_id: String) {
         let Some(link) = self.link(stamp) else {
-            back.reply(stamp, TransferInput::AbortDone { upload_id, answered: false });
+            back.reply(stamp, TransferInput::AbortDone { upload_id, result: Err(AbortFault { temporary: true, status: None }) });
             return;
         };
         let (codec, back) = (self.codec.clone(), back.clone());
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let answered = abort_answered(&codec.discard_upload(&link, &key, Some(&upload_id)).await);
-            back.reply(stamp, TransferInput::AbortDone { upload_id, answered });
+            let result = abort_result(&codec.discard_upload(&link, &key, Some(&upload_id)).await);
+            back.reply(stamp, TransferInput::AbortDone { upload_id, result });
         }));
     }
 
@@ -321,12 +321,11 @@ fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::store::fi
     }
 }
 
-/// The server answered the abort: success or no such upload (404, 410).
-pub(super) fn abort_answered(result: &Result<(), TransportError>) -> bool {
+/// The outcome of the abort: success is `Ok`, any other answer is the fault with its HTTP status and class.
+pub(super) fn abort_result(result: &Result<(), TransportError>) -> Result<(), AbortFault> {
     match result {
-        Ok(()) => true,
-        Err(TransportError::Http { status, .. }) => matches!(status, 404 | 410),
-        Err(_) => false,
+        Ok(()) => Ok(()),
+        Err(error) => Err(AbortFault { temporary: temporary(error), status: if let TransportError::Http { status, .. } = error { Some(*status) } else { None } }),
     }
 }
 

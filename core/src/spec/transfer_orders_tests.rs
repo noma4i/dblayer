@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::transfer_harness::*;
 use crate::owners::contract::ReplyId;
 use crate::owners::write::outbox::OutboxOutcome;
-use crate::owners::write::transfer::{StoredTransfer, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
+use crate::owners::write::transfer::{AbortFault, StoredTransfer, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;
 use crate::test_wait::{orders_of, permutations};
 use crate::store::files::Location;
@@ -546,10 +546,10 @@ fn xfer_orders_orphan_abort() {
                     twin.online(true)
                 }
                 Lost | Answered if sent == 0 => Out::default(),
-                Lost => twin.post(TransferInput::AbortDone { upload_id: "u1".into(), answered: false }),
+                Lost => twin.post(TransferInput::AbortDone { upload_id: "u1".into(), result: Err(AbortFault { temporary: true, status: None }) }),
                 Answered => {
                     answered = true;
-                    twin.post(TransferInput::AbortDone { upload_id: "u1".into(), answered: true })
+                    twin.post(TransferInput::AbortDone { upload_id: "u1".into(), result: Ok(()) })
                 }
             };
             assert!(online || out.orphan_aborts().is_empty(), "{order:?} at {event:?}: no abort offline");

@@ -211,13 +211,20 @@ pub struct BatchItem {
     pub row_exists: bool,
 }
 
+/// The refusal of an `abort`: `status` is the HTTP status of the answer, `None` when the call dropped before an answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AbortFault {
+    pub temporary: bool,
+    pub status: Option<u16>,
+}
+
 #[derive(Clone, Debug)]
 pub enum TransferInput {
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
     AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId, now: Time },
     Restored { uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, orphans: Vec<(String, String)>, batches: BTreeMap<u64, StoredGroup> },
-    /// The answer to `abort` of a removed transfer: `answered` is false for a temporary failure.
-    AbortDone { upload_id: String, answered: bool },
+    /// The answer to `abort` of a removed transfer: `Ok` when the server removed the upload or has none, else the refusal.
+    AbortDone { upload_id: String, result: Result<(), AbortFault> },
     RestoreFailed { error: String },
     RegisterOperations { declarations: Vec<(String, String)> },
     RestoreReady { epoch: Epoch },
