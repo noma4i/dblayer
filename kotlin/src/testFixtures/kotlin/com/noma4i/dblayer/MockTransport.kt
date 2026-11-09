@@ -180,6 +180,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         put("body", kotlinx.serialization.json.buildJsonObject {
             put("operationName", request.operationName)
             put("variables", kotlinx.serialization.json.Json.parseToJsonElement(request.variablesJson))
+            put("query", request.document)
         })
     }.toString()
 

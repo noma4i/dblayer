@@ -144,6 +144,7 @@ class TransferTest {
     private suspend fun openStand(transport: HoldSecondFile, path: String, encrypted: EncryptedConfig, credential: TransferCredential, server: SealedServer, operations: String, onlineAtOpen: Boolean) {
         closeForCleanup()
         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server, observers = if (onlineAtOpen) null else SilentPlatform())
+        server.registerDocuments(operations)
         DBlayer.database.registerOperations(operations)
         if (!onlineAtOpen) DBlayer.database.setOnline(true)
     }

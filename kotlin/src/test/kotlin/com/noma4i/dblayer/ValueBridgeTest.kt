@@ -79,7 +79,9 @@ class ValueBridgeTest {
         transport.cable = EncryptedCablePeer(server)
         DBlayer.openTesting(transport, withRawCalls(modelsJSON), encrypted = encrypted, credentials = BridgeCredential(), http = server)
         DBlayer.database.setOnline(true)
-        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]""")
+        val fixtureOperations = """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]"""
+        server.registerDocuments(fixtureOperations)
+        DBlayer.database.registerOperations(fixtureOperations)
     }
 
     private fun text(value: String): JsonObject = buildJsonObject { put("text", value) }

@@ -39,6 +39,7 @@ suspend fun adopt(database: Database): Database {
 }
 
 private class StandCredential : CredentialStore {
+    val contract = ServerContract()
     @Volatile var current: String? = null
     override fun get(): String? = current
     override fun set(credential: String) { current = credential }
@@ -114,10 +115,11 @@ suspend fun loginAgain() {
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. By default the operations are declared at open and online follows in the sign-in. With `onlineAtOpen` the platform reports online at open and the operations are declared after it, except the upload steps the core requires at open. */
 suspend fun openSigned(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", onlineAtOpen: Boolean = false): Database {
     val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
-    val server = SealedServer(answer = bridgeToTransport(mock, withUploadSteps(operations, modelsJson)))
+    val credential = credentialOf(config)
+    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(mock, withUploadSteps(operations, modelsJson)))
+    server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)
-    val credential = credentialOf(config)
     val restored = credential.get() != null
     val database = if (onlineAtOpen) {
         val declared = kotlinx.serialization.json.Json.parseToJsonElement(withUploadSteps(operations, modelsJson)) as kotlinx.serialization.json.JsonArray
@@ -137,14 +139,15 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
 /** The same session stand on a clock that only `advance` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations. */
 @OptIn(DBlayerTestingApi::class)
 suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null): TestClock {
-    val server = SealedServer(answer = bridgeToTransport(transport, withUploadSteps(operations, modelsJson)))
+    val credential = credentialOf(Config(path, null))
+    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(transport, withUploadSteps(operations, modelsJson)))
+    server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
     transport.cable = EncryptedCablePeer(server)
     try {
         DBlayer.close()
     } catch (_: DbException.Closed) {
     } catch (_: DbException.NotOpen) {
     }
-    val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
     val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = observers ?: if (onlineAtOpen) null else SilentPlatform())
     if (onlineAtOpen) DBlayer.database.setOnline(true)
