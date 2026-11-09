@@ -339,10 +339,9 @@ impl TransferState {
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
     pub(super) fn expire(&mut self, fx: &mut Fx) {
-        let old: Vec<TransferId> = self.scan().filter(|transfer| matches!(transfer.stage, TransferStage::Failed | TransferStage::AwaitingSource) && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
+        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
-            if self.stage_of(id) == Some(TransferStage::AwaitingSource) { self.begin_cancel(id, None, Some(TransferStage::AwaitingSource), fx); }
-            else { self.discard_failed(id, None, fx); }
+            self.discard_failed(id, None, fx);
         }
     }
 
