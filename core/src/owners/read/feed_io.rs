@@ -158,7 +158,7 @@ impl FeedIo {
                         Ok(frame) => frame,
                         Err(reason) => { reply(FeedInput::ProtocolError { connection_id: connection, reason }); return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: false }; },
                     };
-                    let last = matches!(&frame, Frame::Ended | Frame::Error { id: None });
+                    let last = matches!(&frame, Frame::Ended | Frame::Error { id: None, .. });
                     reply(FeedInput::FrameOpened { connection_id: connection, counter, frame, now: crate::runtime::Time(now() as u64) });
                     if last {
                         return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Server, intended: false };
@@ -181,7 +181,7 @@ impl FeedIo {
             Some("ping") => Frame::Ping { ts: body["ts"].as_number().cloned().ok_or(ProtocolReason::Frame)? },
             Some("pong") => Frame::Pong,
             Some("closing") => Frame::Ended,
-            Some("error") => Frame::Error { id },
+            Some("error") => Frame::Error { id, retryable: body["retryable"].as_bool().ok_or(ProtocolReason::Frame)? },
             Some("complete") => Frame::Complete { id: id.unwrap_or_default() },
             Some("subscribed") => Frame::Confirmed { id: id.unwrap_or_default() },
             Some("next") => {

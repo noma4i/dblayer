@@ -129,8 +129,8 @@ pub enum Frame {
     Complete { id: String },
     /// The server closes the connection.
     Ended,
-    /// An `error` frame: `id` names the subscription it is for, none = the whole connection.
-    Error { id: Option<String> },
+    /// An `error` frame: `id` names the subscription it is for, none = the whole connection; `retryable` is the flag of the server.
+    Error { id: Option<String>, retryable: bool },
     /// `ready`, `pong`: nothing for the owner.
     Quiet,
 }

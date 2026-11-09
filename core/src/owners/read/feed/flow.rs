@@ -228,8 +228,8 @@ impl FeedState {
             }
             Frame::Confirmed { id } => self.channel_confirmed(connection, id, fx),
             Frame::Complete { id } => self.channel_ended(connection, id, None, fx),
-            Frame::Error { id: Some(id) } => self.channel_ended(connection, id, Some(ChannelError { retryable: false }), fx),
-            Frame::Ended | Frame::Error { id: None } => self.dropped(connection, fx),
+            Frame::Error { id: Some(id), retryable } => self.channel_ended(connection, id, Some(ChannelError { retryable }), fx),
+            Frame::Ended | Frame::Error { id: None, .. } => self.dropped(connection, fx),
             Frame::Quiet => {}
         }
     }
