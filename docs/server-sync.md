@@ -445,7 +445,7 @@ The core sends a GraphQL read as its SHA-256 hash first, without the document. T
 The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations behave as before and return the answer of the last send.
 
 - A query is sent again as a new request: new request id, new response key. The server reports the miss before it records the request id, so nothing is spent.
-- Writes always send the full document: a request with a sequence (mutation, `sessionCall`, the final mutation of an upload) goes with `query` and the hash on every attempt, with the same bytes after a retry, a release and a restart. The hash-first send is for reads only.
+- A request with a sequence (mutation, call, the final mutation of an upload) goes first with the hash alone. If the server does not know the document, the core sends the full document under the same number and a new request id. Each pair keeps its bytes after a retry, a release and a restart.
 - An answer without `sequence` (for example `PERSISTED_QUERY_NOT_FOUND` or `INVALID_INPUT`, which the server answers before it checks the sequence) did not spend the number: the core removes the pending request, returns the answer and sends the next call under the same number.
 
 The server registry fills itself. The first read of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later read of that document, from any device, is one hash-only request. If the server registers the documents in advance through its deployment tooling, there are no misses and every read is one hash-only request.
