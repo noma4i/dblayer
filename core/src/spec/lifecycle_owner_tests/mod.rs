@@ -458,3 +458,48 @@ pub(crate) fn resetting_published() -> crate::owners::contract::Published {
     let twin = resetting();
     twin.det.state(twin.addr).expect("the owner state").published().clone()
 }
+
+#[test]
+fn matrix_owner_state_input_lifecycle() {
+    use crate::test_matrix::{state_input_pairs, Matrix};
+    let mut matrix = Matrix::new("S-lifecycle");
+    fn signed_out() -> Twin { Twin::new() }
+    fn one_session() -> Twin { session(1) }
+    let mut alphabet: Vec<(&str, Event)> = vec![
+        ("Credential 1", credential(1)), ("Credential 2", credential(2)), ("SessionReset", reset(5)), ("SessionReset without a reply", Event::SessionReset(None)), ("ServerEnded", Event::ServerEnded(1)),
+        ("ResetModels Moment", reset_models(&["Moment"], 6)), ("Cleared stray", Event::Cleared(999)), ("ModelsCleared stray", Event::ModelsCleared(9, 999)), ("ClearFailed stray", Event::ClearFailed(999)),
+        ("Saved 1", Event::Saved(1)), ("Saved stray", Event::Saved(99)), ("SaveFailed 1", Event::SaveFailed(1)), ("StoreClosed", Event::StoreClosed), ("ObserversStopped", Event::ObserversStopped), ("ExecutorFailed", Event::ExecutorFailed),
+        ("Close", close(7)),
+    ];
+    for owner in [RefOwner::Window, RefOwner::Outbox, RefOwner::Session] {
+        alphabet.push((Box::leak(format!("Started {owner:?}").into_boxed_str()), Event::Started(owner, 1)));
+        alphabet.push((Box::leak(format!("RestoreClassified {owner:?}").into_boxed_str()), Event::RestoreClassified(owner, 1)));
+        alphabet.push((Box::leak(format!("Drained {owner:?}").into_boxed_str()), Event::Drained(owner)));
+    }
+    state_input_pairs(&mut matrix, "reference ref_lifecycle", vec![("open, no session", signed_out), ("session 1", one_session), ("ending", ending), ("resetting models", resetting), ("resetting signed out", resetting_signed_out), ("closing a session", closing_session)], alphabet, |twin: &mut Twin, event| { twin.feed(event); });
+    matrix.finish();
+}
+
+/// The restart oracle: `open` with every combination of what the Store saved gives the effects of the `Restored` rows of the table.
+#[test]
+fn matrix_restart_lifecycle() {
+    use crate::test_matrix::Matrix;
+    let mut matrix = Matrix::new("S-lifecycle-restart");
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    for epoch in [0u64, 4] {
+        for generation in [0u64, 2] {
+            for identity in [None, Some(3u64)] {
+                for pending in [false, true] {
+                    for reply in [None, Some(7u64)] {
+                        let outcome = std::panic::catch_unwind(|| { Twin::open_pending(epoch, generation, identity, pending, reply); });
+                        let observed = match &outcome { Ok(()) => "owner and reference agree".to_string(), Err(payload) => payload.downcast_ref::<String>().cloned().unwrap_or_default().lines().next().unwrap_or("").chars().take(140).collect() };
+                        matrix.check(&format!("epoch {epoch} generation {generation} identity {identity:?}"), "restart", &format!("unowned pending {pending}, reply {reply:?}"), "owner and reference agree", &observed);
+                    }
+                }
+            }
+        }
+    }
+    std::panic::set_hook(hook);
+    matrix.finish();
+}
