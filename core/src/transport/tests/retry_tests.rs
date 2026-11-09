@@ -4,7 +4,8 @@ use super::*;
 fn retry_class_follows_code() {
     assert_eq!(RetryClass::classify(true, None, &[]), RetryClass::Network);
     assert_eq!(RetryClass::classify(false, Some(503), &[]), RetryClass::Server);
-    assert_eq!(RetryClass::classify(false, Some(400), &["TIMEOUT"]), RetryClass::Retriable);
+    assert_eq!(RetryClass::classify(false, Some(400), &["TIMEOUT"]), RetryClass::Fatal);
+    assert_eq!(RetryClass::classify(false, Some(425), &[]), RetryClass::Retriable);
     assert_eq!(RetryClass::classify(false, Some(400), &[]), RetryClass::Fatal);
     assert_eq!(RetryClass::classify(false, Some(500), &[]), RetryClass::Server);
     assert_eq!(RetryClass::classify(false, Some(599), &[]), RetryClass::Server);
