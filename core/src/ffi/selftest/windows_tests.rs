@@ -169,7 +169,7 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
 
     let refused = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap_err();
 
-    assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
+    assert!(matches!(refused, DbError::Unauthorized { .. }), "UNAUTHENTICATED on the refresh path is Unauthorized (D-01): {refused:?}");
     rig.settle().await;
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
     assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::tests::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
