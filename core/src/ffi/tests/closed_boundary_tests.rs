@@ -34,3 +34,23 @@ async fn boundary_closed_call_precedence() {
     assert_eq!(answers.len(), 15);
     assert_eq!(transport.calls().len(), 0, "a closed database sends nothing");
 }
+
+#[tokio::test]
+async fn call_refusal_order_table() {
+    let mut model = crate::schema::ModelSpec::new("Note", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
+    model.storage = crate::schema::Storage::Local;
+    let database = super::Database::open(super::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), super::OpenPorts::default()).await.unwrap();
+    let receipt = database.create(database.session_epoch(), "Note".into(), "{}".into(), "{}".into()).await.unwrap();
+    let epoch = database.session_epoch();
+    let answers = [
+        database.attach(epoch, "Note".into(), "missing".into(), "unknown".into(), super::FileBytes { bytes: vec![1], name: "x".into(), mime: "image/png".into() }).await.map(drop),
+        database.detach(epoch, "Note".into(), "missing".into(), "unknown".into()).await.map(drop),
+    ];
+    for answer in answers { assert!(matches!(answer, Err(DbError::Invalid { .. }))); }
+    let mut changed = receipt.clone();
+    changed.epoch += 1;
+    database.close_database().await.unwrap();
+    for receipt in [receipt, changed] {
+        assert!(matches!(database.outcome(receipt).await, Err(DbError::Closed { .. })));
+    }
+}
