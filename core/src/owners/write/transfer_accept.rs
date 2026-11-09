@@ -356,6 +356,7 @@ impl TransferState {
     /// The rename of the temporary file failed: the old copy and its metadata stay, only the temporary file goes, the call that waits for the swap learns it.
     pub(super) fn staged_promote_failed(&mut self, id: TransferId, detail: String, fx: &mut Fx) {
         self.source_rejected(id, Fault::Rejected(RejectReason::Storage(detail)), fx);
+        if self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed) { self.store(&[id], StoreKind::Failed, fx); }
     }
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
