@@ -4,6 +4,18 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use super::*;
 use crate::test_matrix::Matrix;
 
+#[test]
+fn feed_proto_error_established() {
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    take(&twin.log);
+    twin.post(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Decrypt });
+    let emitted = take(&twin.log);
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { connection: found, then: f::Resume::Reopen } if found == connection));
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Close { connection: found, .. }) if *found == connection)));
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == f::CLOSE_DRAIN && input.starts_with("Drain"))));
+}
+
 fn alphabet() -> Vec<(&'static str, Input)> {
     vec![
         ("WantPlus Chat", plus("Chat")),
