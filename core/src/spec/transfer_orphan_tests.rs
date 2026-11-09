@@ -444,12 +444,12 @@ fn xfer_orphan_remove_rejected() {
 
 #[test]
 fn xfer_upload_minted_rejected() {
-    for reason in [RejectReason::Closed, RejectReason::NoSession, RejectReason::Storage("disk".into())] {
+    for reason in [RejectReason::Closed, RejectReason::NoSession] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         twin.online(false);
         minted(&mut twin, id, "u1");
         twin.reject(reason.clone());
-        assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "{reason:?}: the refused write of the id leaves it in the orphans of the process and the next network aborts it");
+        assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "{reason:?}: an epoch end leaves the minted id in the orphans of the process and the next network aborts it (a storage refusal keeps the live transfer and its debt: xfer_minted_write_storage)");
     }
 }
