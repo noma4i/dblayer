@@ -270,21 +270,14 @@ fn xfer_pending_stray() {
 }
 
 #[test]
-fn xfer_pending_not_expired() {
+fn xfer_pending_never_expires() {
     let mut twin = Twin::offline();
     let (id, _) = pending(&mut twin);
     twin.commit();
-    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY), kind: crate::owners::write::transfer::TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.writes()), (TransferStage::AwaitingSource, 0));
-}
-
-#[test]
-fn xfer_pending_expired() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY + 1), kind: crate::owners::write::transfer::TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.removed(), out.rolled_back()), (TransferStage::Removing, vec![KEY.to_string()], vec![id]));
+    for now in [7 * DAY, 7 * DAY + 1, 60 * DAY] {
+        let out = twin.post(TransferInput::Tick { now: Time(now), kind: crate::owners::write::transfer::TransferTick::Expire });
+        assert_eq!((twin.stage(id), out.writes()), (TransferStage::AwaitingSource, 0), "a waiting source has no expiry (owner decision)");
+    }
 }
 
 #[test]
