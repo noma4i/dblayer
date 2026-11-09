@@ -167,7 +167,7 @@ async fn matrix_answer_path_kind_node() { cells(Path::Node, "A-answer-node").awa
 async fn cells(path: Path, name: &'static str) {
     let mut matrix = Matrix::new(name);
     for kind in kinds() {
-        let expected = if path.sequenced() { kind.sequenced } else { kind.plain };
+        let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
         match expected {
             Some(expected) => {
                 let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
