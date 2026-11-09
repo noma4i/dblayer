@@ -87,7 +87,7 @@ async fn call_refusal_order_table() {
         let result = database.upload(at, model.into(), row_id.into(), action.into(), request(Some(&source))).await.map(drop);
         table.push((format!("upload stale={stale} model={model} row={row_id} action={action}"), expected, kind(result)));
         let result = database.cancel_upload(at, model.into(), row_id.into(), action.into()).await.map(drop);
-        table.push((format!("cancel_upload stale={stale} model={model} row={row_id} action={action}"), if expected == "Invalid" && model == "Moment" { "NotFound" } else { expected }, kind(result)));
+        table.push((format!("cancel_upload stale={stale} model={model} row={row_id} action={action}"), expected, kind(result)));
     }
     for (pending, bad_element) in [(false, None), (true, None), (false, Some(2)), (true, Some(2))] {
         for (stale, model, operation, expected) in [
