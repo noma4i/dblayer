@@ -136,4 +136,58 @@ if run; then
   echo "check_zoo_test: an unwrap in a non-test module was not caught" >&2
   exit 1
 fi
+at_red() {
+  local file="$work/$1"
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$2" > "$file"
+  if run; then echo "check_zoo_test: not caught in $1: $2" >&2; exit 1; fi
+  /bin/rm -f "$file"
+}
+at_green() {
+  local file="$work/$1"
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$2" > "$file"
+  run || { echo "check_zoo_test: a clean source failed in $1: $2" >&2; CHECK_ZOO_ROOT="$work" bash "$root/scripts/check_zoo.sh" >&2 || true; exit 1; }
+  /bin/rm -f "$file"
+}
+: > "$probe"
+printf 'mod spec;\n' > "$work/core/src/lib.rs"
+
+mkdir -p "$work/core/src/owners"
+printf 'pub struct Twin;\n' > "$work/core/src/owners/first.rs"
+/bin/rm -rf "$work/core/src/spec" "$work/core/src/lib.rs"
+at_red core/src/owners/second.rs 'pub struct Twin;'
+/bin/rm -f "$work/core/src/owners/first.rs"
+at_red core/src/owners/merge_user.rs 'fn go(spec: &Spec) { spec.merged(None, &row); }'
+at_red core/src/owners/swap_user.rs 'fn go() { let reason = DestroyReason::Replaced { by: id }; }'
+at_red core/src/transport/watcher.rs 'fn go(connectivity: &Connectivity) {}'
+at_green core/src/transport/retry.rs 'fn go(connectivity: &Connectivity) {}'
+at_red core/src/transport/request.rs 'fn go(transport: &T) { transport.query(request); }'
+at_red core/src/owners/body.rs 'fn make() { let body = graphql_body(&request, true); }'
+at_green core/src/owners/life/calls_runner.rs 'fn make() { let body = graphql_body(&request, true); }'
+at_red core/src/owners/hash.rs 'fn make() { let body = hash_only(text); }'
+at_red core/src/ffi/selftest/own_pair_tests.rs 'impl FakeHttp for Own { fn rule(&self) -> bool { sequence == last + 1 } }'
+at_red core/src/ffi/selftest/own_code_tests.rs 'impl FakeTransport for Own { fn code(&self) -> &str { "SEQUENCE_CONFLICT" } }'
+at_red core/src/owners/contract_user.rs 'use crate::server_contract::Contract;'
+at_green core/src/ffi/contract.rs 'use crate::server_contract::Contract;'
+at_red core/src/owners/effect.rs 'fn go(tx: &Tx) { tx.send(1); }'
+at_red core/src/owners/spawned.rs 'fn go() { tokio::spawn(async {}); }'
+at_red gen/src/probe.rs '#[allow(dead_code)] fn unused() {}'
+at_green gen/src/probe.rs 'fn used() {}'
+
+mkdir -p "$work/scripts"
+printf 'x = ("owners/exists.rs", "owners/gone.rs")\n' > "$work/scripts/check_zoo.sh"
+printf 'fn exists() {}\n' > "$work/core/src/owners/exists.rs"
+if run; then echo "check_zoo_test: Z39 did not catch a rule that names a missing file" >&2; exit 1; fi
+printf 'x = ("owners/exists.rs",)\n' > "$work/scripts/check_zoo.sh"
+run || { echo "check_zoo_test: Z39 refused rules whose files exist" >&2; exit 1; }
+/bin/rm -f "$work/scripts/check_zoo.sh" "$work/core/src/owners/exists.rs"
+
+printf 'z18:kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt:@Volatile private var live\n' > "$work/scripts/zoo_allowlist.txt"
+mkdir -p "$work/kotlin/src/main/kotlin/com/noma4i/dblayer"
+printf 'class Holder { @Volatile private var live: Int? = null }\nclass Other { @Volatile private var other: Int? = null }\n' > "$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
+if run; then echo "check_zoo_test: a line allow of Z18 covered a second line of the file" >&2; exit 1; fi
+printf 'class Holder { @Volatile private var live: Int? = null }\n' > "$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
+run || { echo "check_zoo_test: the line allow of Z18 did not hold" >&2; exit 1; }
+/bin/rm -f "$work/scripts/zoo_allowlist.txt" "$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
 echo "check_zoo_test: ok"

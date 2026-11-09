@@ -57,13 +57,6 @@ if len(diagnostics) > 1 and "diagnostics" not in allowed:
 
 for path in files:
     relative = str(path.relative_to(root))
-    if "/store/" in relative or relative.endswith(("db/commit.rs", "fixtures.rs")):
-        continue
-    if re.search(r"\.commit_with\(|\bstore\s*\.commit\(", contents[path]) and f"commit:{relative}" not in allowed:
-        findings.append(f"Z7 commit outside db/commit.rs skips the parent pointer: {relative}")
-
-for path in files:
-    relative = str(path.relative_to(root))
     if relative.endswith("store/merge.rs") or "/schema/" in relative:
         continue
     if re.search(r"(?<!\bdb)(?<!\bself)\.merged\(", contents[path]):
@@ -76,19 +69,8 @@ for path in files:
     if re.search(r"Replaced \{ by:", contents[path]):
         findings.append(f"Z9 a temp row is replaced in core/src/store/swap.rs only: {relative}")
 
-for path in files:
-    relative = str(path.relative_to(root))
-    if "/sync/invalidate/" in relative:
-        continue
-    if re.search(r"\binvalidate_model\(", contents[path]):
-        findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
-
 effect = re.compile(r"\.\s*(notify_one|notify_waiters|send|send_replace|send_modify|send_if_modified|abort)\s*\(")
 non_effects = {
-    ("ffi/entity_machine.rs", "self", "send"),
-    ("db/upload_round.rs", "self", "send"),
-    ("sync/send/flush.rs", "self", "send"),
-    ("sync/resume.rs", "inner.resume", "abort"),
     ("ffi/transport/mod.rs", "self", "send"),
     ("transport/encrypted/cable/wire.rs", "socket", "send"),
 }
@@ -110,7 +92,7 @@ for text in contents.values():
 
 for path in files:
     relative = str(path.relative_to(source))
-    if relative.startswith("sync/stress/") or relative in ("transport/mock.rs", "test_wait.rs"):
+    if relative in ("transport/mock.rs", "test_wait.rs"):
         continue
     text = contents[path]
     code = code_only(text)
@@ -127,7 +109,7 @@ for path in files:
     for match in re.finditer(r"\bstruct\s+(\w+)(?:<[^;{]*>)?\s*([({])", code):
         end = end_of(code, match.end() - 1, match[2], ")" if match[2] == "(" else "}")
         traits = set(re.findall(r"\b(?:Arc|Box)\s*<\s*dyn\s+(\w+)\b(?!\s*::)", code[match.end():end]))
-        if relative in ("sync/mod.rs", "transport/encrypted/graphql.rs"):
+        if relative == "transport/encrypted/graphql.rs":
             traits.discard("Transport")
         if not traits.intersection(foreign_traits):
             continue
@@ -147,7 +129,7 @@ for path in files:
         if seen and re.search(r"\.wake\(|\blistener\.changed\(", line) and not re.search(r"lock-ok:\s*\S", line):
             findings.append(f"Z17 review callback after guard: {path.relative_to(root)}:{number}: {line.strip()}")
 
-task_support = ("sync/stress/", "test_wait.rs", "transport/mock.rs", "/fixtures.rs", "/rig.rs", "/spec_fixtures.rs", "/invariants/")
+task_support = ("test_wait.rs", "transport/mock.rs", "/fixtures.rs", "/rig.rs", "/spec_fixtures.rs", "/invariants/")
 spawn_forms = [
     re.compile(r"(?<![\w:.])(?:tokio::(?:task::)?)?spawn(?:_blocking|_local)?\s*\("),
     re.compile(r"\.\s*(?:spawn|spawn_blocking|spawn_local|spawn_on|spawn_blocking_on)\s*\("),
@@ -247,7 +229,6 @@ for path in files:
     for match in re.finditer(r'feature\s*=\s*"test-support"', contents[path]):
         findings.append(f"Z22 a Cargo feature that changes who may write is not allowed: {path.relative_to(root)}:{contents[path].count(chr(10), 0, match.start()) + 1}")
 
-dedicated_threads = ("db/lock.rs", "db/reads.rs", "db/listeners.rs", "db/ephemeral.rs", "db/dispatch.rs")
 blocking_call = re.compile(r"\.(?:wait|wait_timeout|wait_while|wait_timeout_while|recv_timeout|blocking_recv)\(|\.recv\(\)|\bthread::sleep\(")
 
 def spans_of(code, opener):
@@ -265,7 +246,7 @@ def test_regions(code):
 
 for path in files:
     relative = str(path.relative_to(source))
-    if relative in dedicated_threads or any(marker in "/" + relative for marker in task_support):
+    if any(marker in "/" + relative for marker in task_support):
         continue
     code = code_only(contents[path])
     inside = spans_of(code, r"\bblocking_unit\s*\(") + test_regions(code)
@@ -278,7 +259,7 @@ for path in files:
         number = code.count("\n", 0, match.start()) + 1
         findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {contents[path].splitlines()[number - 1].strip()}")
 
-test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs", "/ffi/selftest/")
+test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs", "/ffi/selftest/")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
 for path in files:
@@ -286,8 +267,6 @@ for path in files:
     if any(marker in "/" + relative for marker in test_only):
         continue
     for number, line in enumerate(contents[path].splitlines(), 1):
-        if relative == "core/src/db/lock.rs" and number < contents[path].splitlines().index("pub(crate) use debug::{assert_no_library_lock, holds, lock, lock_as, try_lock, wait, wait_timeout, wait_timeout_while, Guard};") + 1:
-            continue
         calls = panic_call.findall(line)
         if not calls:
             continue
@@ -296,9 +275,14 @@ for path in files:
             continue
         findings.append(f"Z11 a phone library never panics on the environment, return an error or a degraded answer: {relative}:{number}: {line.strip()}")
 
+z18_entries = [entry[len("z18:"):].split(":", 1) for entry in allowed if entry.startswith("z18:")]
+
+def z18_allowed(relative, line):
+    return any(len(entry) == 2 and entry[0] == relative and entry[1] in line for entry in z18_entries)
+
 for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblayer.swift"), ("kotlin/src/main/kotlin/com/noma4i/dblayer", "*.kt", "dblayer.kt")]:
     for path in (root / directory).rglob(suffix):
-        if path.name in (generated, "MockTransport.kt"):
+        if path.name == generated:
             continue
         relative = str(path.relative_to(root))
         text = path.read_text()
@@ -320,12 +304,12 @@ for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblay
                 inside = text[body.end():end_of(text, body.end() - 1, "{", "}")]
                 for member in re.finditer(r"^" + body[1] + r" {4}(?:(?:private|internal|public|lateinit)\s+)*var\b[^\n]*", inside, re.M):
                     number = text.count("\n", 0, body.end()) + inside.count("\n", 0, member.start()) + 1
-                    if f"z18:{relative}" not in allowed:
+                    if not z18_allowed(relative, member.group()):
                         findings.append(f"{global_state}: {relative}:{number}: {member.group().strip()}")
         for label, expression in rules:
             for match in re.finditer(expression, text, re.M):
                 number = text.count("\n", 0, match.start()) + 1
-                if label == global_state and f"z18:{relative}" in allowed:
+                if label == global_state and z18_allowed(relative, text.splitlines()[number - 1]):
                     continue
                 findings.append(f"{label}: {relative}:{number}: {match.group()}")
 
@@ -334,7 +318,7 @@ sending = re.compile(r"\bsend_in_epoch\s*\(")
 kind_from_text = re.compile(r'starts_with\(\s*"(?:mutation|query|subscription)\b')
 for path in files:
     relative = str(path.relative_to(source))
-    if any(marker in "/" + relative for marker in task_support) or relative.startswith(("transport/", "runtime/gate")):
+    if any(marker in "/" + relative for marker in task_support) or relative.startswith("runtime/gate"):
         continue
     text = contents[path]
     code = code_only(text)
@@ -427,10 +411,25 @@ for path in files:
         if suppressed and f"z29:{relative}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (spawn lives in task.rs): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
-before_open = {"ffi/encrypted.rs", "ffi/transport/mod.rs"}
+generated_tool = [path for path in (root / "gen" / "src").rglob("*.rs") if "tests" not in path.relative_to(root / "gen" / "src").parts and not path.name.endswith("_tests.rs")]
+for path in generated_tool:
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        suppressed = re.search(r"#!?\[allow\(([^)]*)\)\]", line)
+        if suppressed and f"z29:{path.relative_to(root)}:{suppressed.group(1)}" not in allowed:
+            findings.append(f"Z29 a lint is fixed at its cause, not suppressed (gen): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
+
+dead_names = re.compile(r'"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:rs|kt|swift))"')
+rule_text = (root / "scripts" / "check_zoo.sh").read_text() if (root / "scripts" / "check_zoo.sh").exists() else ""
+everything = [str(path.relative_to(source)) for path in source.rglob("*.rs")]
+for name in sorted(set(dead_names.findall(rule_text))):
+    if name.startswith("_") or name in ("dblayer.kt", "dblayer.swift", "main.rs") or any(listed == name or listed.endswith("/" + name) for listed in everything) or (root / name).exists():
+        continue
+    findings.append(f"Z39 a zoo rule names a file that does not exist, so it guards nothing: {name}")
+
+before_open = {"ffi/encrypted.rs", "ffi/transport/mod.rs", "transport/online.rs", "transport/mod.rs", "transport/retry.rs", "transport/encrypted/bootstrap.rs"}
 for path in files:
     relative = str(path.relative_to(source))
-    if not (relative.startswith(("ffi/", "owners/", "store/", "runtime/"))) or relative in before_open:
+    if not (relative.startswith(("ffi/", "owners/", "store/", "runtime/", "transport/"))) or relative in before_open:
         continue
     for number, line in enumerate(contents[path].splitlines(), 1):
         if "connectivity" in line.lower():
