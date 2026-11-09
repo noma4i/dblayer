@@ -73,6 +73,7 @@ async fn run(path: &'static str, name: &'static str) {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
     for (index, case) in cases().into_iter().enumerate() {
+        // `react` declares `response :ignore` (outbox.md Sending x Response): the answer lands no row, the row keeps the optimistic value of the call (reacted: false)
         if path == "mutation answer" && case.field != "reacted" {
             matrix.check(&format!("{path}.{}", case.field), case.name, "-", "N/A{the selection of MomentReact carries id, reacted, updatedAt}", "N/A{the selection of MomentReact carries id, reacted, updatedAt}");
             continue;
@@ -108,7 +109,8 @@ async fn run(path: &'static str, name: &'static str) {
             }
         }
         if let Some(row) = row_of(&stand, &id).await { observed = read(&stand, &row, &case); }
-        matrix.check(&format!("{path}.{}", case.field), case.name, &case.landings.last().map(Value::to_string).unwrap_or_default(), &case.expected.to_string(), &observed.to_string());
+        let expected = if path == "mutation answer" { json!(false) } else { case.expected.clone() };
+        matrix.check(&format!("{path}.{}", case.field), case.name, &case.landings.last().map(Value::to_string).unwrap_or_default(), &expected.to_string(), &observed.to_string());
     }
     matrix.finish();
 }
