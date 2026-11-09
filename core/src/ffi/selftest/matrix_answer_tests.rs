@@ -131,7 +131,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
     let result = loop {
         tokio::select! {
             result = &mut call => break result.unwrap_or_else(|error| format!("task failed: {error}")),
-            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(120_000); }
+            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
         }
     };
     let sent = rig.world.log().iter().filter(|entry| entry.operation == path.operation()).count() - hits;
