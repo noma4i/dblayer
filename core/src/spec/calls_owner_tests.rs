@@ -83,6 +83,48 @@ fn call_deadline_before_snapshot() {
 }
 
 #[test]
+fn call_awaiting_snapshot_stray() {
+    let mut twin = Twin::with(None);
+    twin.feed(run(1));
+    for input in [
+        CallsInput::Response { call_id: 1, body: Some("late".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } },
+        CallsInput::TransportError { call_id: 1, error: CallError::Network },
+        CallsInput::Dropped { call_id: 1 },
+        CallsInput::RetryDue { call_id: 1, attempt: 1 },
+    ] {
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), input);
+        twin.det.run_until_quiet(100).unwrap();
+        assert!(take(&twin.log).is_empty());
+    }
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
+#[test]
+fn call_awaiting_snapshot_declare() {
+    let mut twin = Twin::with(None);
+    twin.feed(run(1));
+    twin.det.post(twin.addr, EpochStamp::Control, CallsInput::Declare(vec![("Op".into(), CallKind::Query)]));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
+#[test]
+fn call_awaiting_snapshot_run() {
+    let mut twin = Twin::with(None);
+    twin.feed(run(1));
+    let second = twin.feed(run(2));
+    assert!(second.effects.is_empty() && second.replies.is_empty());
+    let out = twin.feed(Input::Snapshot(true));
+    assert_eq!(out.effects.len(), 2);
+    assert!(out.replies.is_empty());
+}
+
+#[test]
 fn call_cancel_before_snapshot() {
     let mut twin = Twin::with(None);
     twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
