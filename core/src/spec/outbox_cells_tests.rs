@@ -454,6 +454,39 @@ fn out_queued_discard() {
 }
 
 #[test]
+fn out_queued_wait() {
+    let mut twin = Twin::new();
+    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
+    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(true))]);
+}
+
+#[test]
+fn out_queued_models_reset() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    let effects = twin.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }));
+    assert_eq!((twin.stage(id), effects.len(), twin.state().ops.contains_key(&id)), (Some(St::Queued), 0, true));
+}
+
+#[test]
+fn out_queued_stray() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    let batch = twin.batches[&id];
+    unchanged_by(&mut twin, id, St::Queued, vec![
+        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        OutboxInput::TransportError { op_id: id, temporary: true },
+        OutboxInput::Dropped { op_id: id },
+        OutboxInput::RetryDue { op_id: id, cycle_id: 1 },
+        OutboxInput::Rejected(Rejected { batch, reason: RejectReason::Invalid }),
+    ]);
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
