@@ -407,6 +407,7 @@ impl Delivery {
             (Stage::Nothing, Input::Open { kind, epoch_current: false }) => { self.kind = kind; self.dead_on_open(Cause::SessionEnded, fx); }
             (Stage::Nothing, Input::OpenNoSession) => self.dead_on_open(Cause::SessionEnded, fx),
             (Stage::Nothing, Input::OpenInvalid) => self.dead_on_open(Cause::Invalid, fx),
+            (Stage::Nothing, Input::Pull) => fx.push(Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))),
             (Stage::Opening, input @ (Input::ReadDone { .. } | Input::CountDone { .. })) if self.interested && self.held_state.is_none() && self.kind.reads_rows() => self.pending_read = Some(input),
             (Stage::Opening, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 self.read_seen = self.read_seen.max(revision);
@@ -420,6 +421,7 @@ impl Delivery {
                 if missing { fx.push(Effect::Load { force: false }); }
             }
             (Stage::Opening, Input::CountDone { revision, count }) if self.kind == Kind::Count => {
+                self.read_seen = self.read_seen.max(revision);
                 let state = self.state_at(revision);
                 self.count = Some(count);
                 self.revision = revision;
@@ -478,7 +480,7 @@ impl Delivery {
                 if !rows.is_empty() || reset { self.append(Val::Changes { revision, rows }, fx); }
             }
             (Stage::Live, Input::Committed { revision, touches }) => {
-                if touches && self.kind.reads_rows() { self.read_revision = revision; fx.push(Effect::Read(revision)); }
+                if touches && self.kind.reads_rows() && revision > self.read_seen { self.read_revision = revision; fx.push(Effect::Read(revision)); }
             }
             (Stage::Live, Input::ReadOverflow { revision }) if self.kind.reads_rows() => {
                 if revision >= self.read_seen { fx.push(Effect::Read(self.read_revision)); }
@@ -506,6 +508,7 @@ impl Delivery {
                 self.revision = shown;
                 self.append(Val::Count { revision: shown, count, state }, fx);
             }
+            (Stage::Live, Input::CountDone { revision, .. }) if self.kind.reads_rows() => self.read_seen = self.read_seen.max(revision),
             (Stage::Live, Input::ReadFailed { .. }) if self.kind.reads_rows() => {
                 if self.resync_pending {
                     if self.resync_failed { self.end_now(Cause::Storage, fx); return; }
@@ -513,6 +516,7 @@ impl Delivery {
                     let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
                     self.window = Ws { phase, error: true, loaded: self.window.loaded };
                     self.append(Val::State { revision: self.revision, state: self.window.clone() }, fx);
+                    self.read_revision = self.revision;
                     fx.push(Effect::Read(self.revision));
                     return;
                 }
@@ -524,6 +528,7 @@ impl Delivery {
             }
             (Stage::Live, Input::WindowState(state)) if self.kind.reads_rows() => {
                 if state.visible_after() > self.read_seen {
+                    self.read_revision = state.visible_after();
                     fx.push(Effect::Read(state.visible_after()));
                     self.held_state = Some(state);
                 }
@@ -547,13 +552,14 @@ impl Delivery {
             (Stage::Live, Input::Transfer { state }) if self.kind == Kind::Blob => self.status(state, fx),
             (Stage::Live, Input::Retry { attempts }) if self.kind == Kind::Retry => self.retry(attempts, fx),
             (Stage::Live, Input::ModelsReset { own_model }) => {
-                if own_model && self.kind.reads_rows() { fx.push(Effect::Read(self.revision)); }
+                if own_model && self.kind.reads_rows() { self.read_revision = self.revision; fx.push(Effect::Read(self.revision)); }
             }
             (Stage::Live, Input::Resync) if matches!(self.kind, Kind::List | Kind::Entity(_)) => {
                 self.acknowledged = None;
                 self.resync_failed = false;
                 self.resync_pending = true;
                 self.journal.retain(|v| !matches!(v, Val::Snapshot { .. } | Val::Delta { .. } | Val::State { .. }));
+                self.read_revision = self.revision;
                 fx.push(Effect::Read(self.revision));
             }
             (Stage::Live, Input::Pull) => {
