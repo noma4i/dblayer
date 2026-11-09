@@ -428,6 +428,15 @@ impl TransferState {
             return;
         }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+            let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
+                (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
+                (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
+                (None, None) => None,
+            };
+            if let (StoreKind::UploadId, Some((upload_id, key))) = (pending.kind, minted) {
+                self.orphans.insert(upload_id, key);
+                self.send_orphans(false, fx);
+            }
             if matches!(rejected.reason, RejectReason::Storage(_)) {
                 self.owe_minted(&pending, fx);
             }
