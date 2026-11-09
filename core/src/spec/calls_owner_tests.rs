@@ -439,11 +439,17 @@ fn call_epoch_started_resets_online() {
 
 #[test]
 fn call_run_before_snapshot_waits() {
+    let mut armed = Twin::with(None);
+    assert!(armed.feed(run(1)).replies.is_empty(), "no answer and no request before the snapshot");
+    armed.det.tick(crate::runtime::Time(29_999));
+    armed.det.run_until_quiet(100).unwrap();
+    assert!(take(&armed.log).is_empty(), "before CALL_DEADLINE the armed timer does not fire");
+    armed.det.tick(crate::runtime::Time(30_000));
+    armed.det.run_until_quiet(100).unwrap();
+    assert!(take(&armed.log).iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })), "accepting the run into AwaitingSnapshot arms Deadline(call) at once (D-227)");
+
     let mut twin = Twin::with(None);
     assert!(twin.feed(run(1)).replies.is_empty(), "no answer and no request before the snapshot");
-    twin.det.tick(crate::runtime::Time(30_000));
-    twin.det.run_until_quiet(100).unwrap();
-    assert!(take(&twin.log).is_empty(), "a call awaiting the snapshot has no deadline timer (D-133)");
     let out = twin.feed(Input::Snapshot(true));
     assert_eq!(out.effects.len(), 1, "the snapshot releases the call as a run with online");
     let mut offline = Twin::with(None);
@@ -454,6 +460,42 @@ fn call_run_before_snapshot_waits() {
     ended.feed(run(3));
     let out = ended.feed(Input::EpochEnded);
     assert_eq!(out.replies, vec![(3, Err(Fail::Interrupted))], "the end of the epoch answers a waiting call");
+}
+
+#[test]
+fn call_deadline_before_snapshot() {
+    let mut twin = Twin::with(None);
+    twin.feed(run(1));
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.run_until_quiet(100).unwrap();
+    let effects = take(&twin.log);
+    assert!(effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })), "no snapshot ever arrives: the deadline ends the call Err(Network)");
+    assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Request { .. })), "no attempt is answered: the call starts no request");
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().all(|effect| !matches!(effect, CallsEffect::Request { .. })), "a snapshot after the deadline starts no request");
+}
+
+#[test]
+fn call_deadline_timer_lifecycle() {
+    let mut awaiting = Twin::with(None);
+    awaiting.feed(run(1));
+    awaiting.det.tick(crate::runtime::Time(30_000));
+    awaiting.det.run_until_quiet(100).unwrap();
+    assert!(take(&awaiting.log).iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })), "the deadline armed at the AwaitingSnapshot acceptance fires");
+
+    let mut sending = Twin::new();
+    sending.feed(run(1));
+    sending.det.tick(crate::runtime::Time(30_000));
+    sending.det.run_until_quiet(100).unwrap();
+    assert!(take(&sending.log).iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })), "the deadline armed at the Sending acceptance fires");
+
+    let mut done = Twin::new();
+    done.feed(run(1));
+    done.feed(response(1));
+    done.det.tick(crate::runtime::Time(30_000));
+    done.det.run_until_quiet(100).unwrap();
+    assert!(take(&done.log).is_empty(), "the deadline is unscheduled once the call reaches Done");
 }
 
 #[test]
