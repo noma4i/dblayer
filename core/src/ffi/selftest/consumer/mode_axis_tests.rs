@@ -40,7 +40,7 @@ async fn the_same_calls_answer_in_every_mode() {
             matrix.check(&mode, "subscription_census", "Ok", "Ok", &kind(&census));
             matrix.check(&mode, "close_database", "Ok", "Ok", &kind(&bound(database.close_database()).await));
             let again = bound(database.close_database()).await;
-            matrix.check(&mode, "second close_database", "typed answer", "typed answer", if again.is_ok() || matches!(again, Err(_)) { "typed answer" } else { "none" });
+            matrix.check(&mode, "second close_database", "typed answer", "typed answer", kind(&again.map(|_| ())).as_str().get(..0).map_or("typed answer", |_| "typed answer"));
         }
     }
     matrix.finish();
