@@ -92,7 +92,11 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
 
             let refused = database.session_call("confirm".into(), r#"{"code":"1"}"#.into()).await.unwrap_err();
 
-            assert_eq!(code(refused), expected, "{wire} confirmed={confirmed}");
+            if expected == SessionCode::Unauthenticated {
+                assert!(matches!(refused, DbError::Unauthorized { .. }), "{wire} confirmed={confirmed}: {refused:?}");
+            } else {
+                assert_eq!(code(refused), expected, "{wire} confirmed={confirmed}");
+            }
             assert_eq!((rig.credentials.inner.value(), rig.touched()), (credential, (1, 0)), "{wire} confirmed={confirmed}");
         }
     }

@@ -124,7 +124,7 @@ async fn app_logout_stops_when_the_unregister_is_refused() {
 
     let refused = bound(rig.database.run(rig.database.session_epoch(), "UnregisterDevice".into(), "{}".into())).await.unwrap_err();
 
-    assert_eq!(session_code(refused), SessionCode::Unauthenticated);
+    assert!(matches!(refused, DbError::Unauthorized { .. }));
     assert!(rig.world.signed());
     assert_eq!(rig.world.count("UnregisterDevice"), 0);
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
