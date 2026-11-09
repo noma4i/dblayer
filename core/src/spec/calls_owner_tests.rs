@@ -70,19 +70,6 @@ fn call_deadline_after_done() {
 }
 
 #[test]
-fn call_deadline_before_snapshot() {
-    let mut twin = Twin::with(None);
-    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
-    twin.det.tick(crate::runtime::Time(30_000));
-    twin.det.run_until_quiet(100).unwrap();
-    let effects = take(&twin.log);
-    assert!(matches!(effects.as_slice(), [CallsEffect::Reply { id: 1, answer: Err(CallError::Network) }]));
-    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
-    twin.det.run_until_quiet(100).unwrap();
-    assert!(take(&twin.log).is_empty());
-}
-
-#[test]
 fn call_awaiting_snapshot_stray() {
     let mut twin = Twin::with(None);
     twin.feed(run(1));
@@ -453,6 +440,9 @@ fn call_epoch_started_resets_online() {
 fn call_run_before_snapshot_waits() {
     let mut twin = Twin::with(None);
     assert!(twin.feed(run(1)).replies.is_empty(), "no answer and no request before the snapshot");
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty(), "a call awaiting the snapshot has no deadline timer (D-133)");
     let out = twin.feed(Input::Snapshot(true));
     assert_eq!(out.effects.len(), 1, "the snapshot releases the call as a run with online");
     let mut offline = Twin::with(None);
