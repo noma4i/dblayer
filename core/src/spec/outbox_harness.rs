@@ -185,11 +185,13 @@ pub(super) fn out_of(outcome: &o::OutboxOutcome) -> Out {
 }
 
 
-pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
+pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp { model_op_as(row, policy, transfer, "update") }
+
+pub(super) fn model_op_as(row: &str, policy: Policy, transfer: bool, action: &str) -> NewOp {
     NewOp {
         model: "Moment".into(),
         row_id: row.into(),
-        action: "update".into(),
+        action: action.into(),
         on_failure: if policy == Policy::Keep { OnFailure::Keep } else { OnFailure::Rollback },
         origin: if transfer { OpSource::Transfer { transfer_id: 1, cycle_id: 1 } } else { OpSource::Api },
         created_at: 0, expires_after: None,
@@ -285,6 +287,11 @@ impl Twin {
         let reply = if before == 0 { SUBMIT_REPLY } else { self.reply += 1; self.reply };
         self.post(OutboxInput::Submit { epoch: EPOCH, op: model_op(row, policy, transfer), reply });
         *self.state().ops.keys().max().expect("the operation exists")
+    }
+
+    pub(super) fn submit_as(&mut self, row: &str, policy: Policy, transfer: bool, action: &str) {
+        let reply = { self.reply += 1; self.reply };
+        self.post(OutboxInput::Submit { epoch: EPOCH, op: model_op_as(row, policy, transfer, action), reply });
     }
 
     pub(super) fn committed(&mut self, id: OpId) -> Vec<OutboxEffect> {

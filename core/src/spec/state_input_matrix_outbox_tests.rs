@@ -29,18 +29,29 @@ enum Step {
     RetryAny,
     DiscardAny,
     ModelsReset,
+    SubmitAct { keep: bool, transfer: bool, act: Act },
+    ResponseNotFound(u64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Act { Update, Create, Destroy }
+
+impl Act {
+    fn name(self) -> &'static str { match self { Act::Update => "update", Act::Create => "create", Act::Destroy => "destroy" } }
 }
 
 pub(super) fn row_name(row: u8) -> String { if row == 1 { "r".to_string() } else { format!("r{row}") } }
 
-pub(super) fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
-    OpSpec { op_id: None, model: "Moment".into(), row_id: row_name(row), action: "update".into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
+pub(super) fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec { spec_act(row, keep, transfer, Act::Update) }
+
+fn spec_act(row: u8, keep: bool, transfer: bool, act: Act) -> OpSpec {
+    OpSpec { op_id: None, model: "Moment".into(), row_id: row_name(row), action: act.name().into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: act == Act::Destroy, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
 }
 
 fn kind_name(what: &str) -> &'static str {
     if what.contains("ClearMark") { "ClearMark" }
     else if what.contains("MarkFailed") { "ErrorMark" }
-    else if what.contains("rows,") || what.contains("items,") || what.contains("Land") || what.contains("Swap") { "Land" }
+    else if what.contains("rows,") || what.contains("delete row") || what.contains("items,") || what.contains("Land") || what.contains("Swap") { "Land" }
     else if what.contains("Rollback") || what.contains("RemoveIntent") { "Rollback" }
     else if what.contains("status=pending") { "Requeue" }
     else if what.contains("attempts+1") { "Attempt" }
@@ -159,6 +170,8 @@ impl Reference {
             Step::RetryAny => self.select(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
             Step::DiscardAny => self.select(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
             Step::ModelsReset => self.feed(RIn::ModelsReset { models: vec!["Moment".into()], generations: [("Moment".to_string(), 1)].into_iter().collect() }),
+            Step::SubmitAct { keep, transfer, act } => self.feed(RIn::Submit { epoch: 1, op: spec_act(1, keep, transfer, act), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
+            Step::ResponseNotFound(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::NotFound, swap: None, pending_retained: None }) }
             Step::ResponseSwap(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::Data(LandFacts { root_present: true, ..LandFacts::default() }), swap: Some(("temp-1".into(), "real-1".into())), pending_retained: None }) }
         };
         let mut tokens = ref_tokens(&effects);
@@ -218,6 +231,8 @@ impl Owner {
             Step::RetryAny => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 903 }),
             Step::DiscardAny => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 904 }),
             Step::ModelsReset => self.twin.post(I::ModelsReset(crate::owners::contract::ModelsReset { epoch: super::outbox_harness::EPOCH, generation: 1, models: vec!["Moment".into()] })),
+            Step::SubmitAct { keep, transfer, act } => { self.twin.submit_as("r", if keep { Policy::Keep } else { Policy::Rollback }, transfer, act.name()); self.twin.last.clone() }
+            Step::ResponseNotFound(op) => { let destroy = self.twin.state().ops.get(&op).is_some_and(|found| found.op.action == "destroy"); self.twin.post(I::Response { op_id: op, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: if destroy { None } else { Some(false) } }) }
             Step::ResponseSwap(op) => self.twin.post(I::Response { op_id: op, rows: super::outbox_harness::server_rows(), swaps: vec![("temp-1".to_string(), "real-1".to_string())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
         };
         let mut tokens = own_tokens(&effects);
@@ -239,6 +254,7 @@ enum Base { Fresh, Restored { attempts: u32, pending: bool } }
 const R1: Step = Step::Submit { row: 1, keep: false, transfer: false };
 
 struct Context {
+    act: Act,
     name: &'static str,
     base: Base,
     prefix: Vec<Step>,
@@ -247,14 +263,17 @@ struct Context {
 }
 
 fn contexts() -> Vec<Context> {
-    let fresh = |name, prefix, target| Context { name, base: Base::Fresh, prefix, target, restored: false };
+    let fresh = |name, prefix, target| Context { act: Act::Update, name, base: Base::Fresh, prefix, target, restored: false };
     vec![
         fresh("online", vec![], 1),
         fresh("offline", vec![Step::Online(false)], 1),
         fresh("row busy", vec![Step::Submit { row: 1, keep: false, transfer: false }, Step::Commit(1)], 2),
         fresh("slot taken", vec![Step::Submit { row: 2, keep: false, transfer: false }, Step::Commit(1)], 2),
-        Context { name: "attempts exhausted", base: Base::Restored { attempts: 39, pending: false }, prefix: vec![], target: 1, restored: true },
-        Context { name: "restored with pending pair", base: Base::Restored { attempts: 1, pending: true }, prefix: vec![], target: 1, restored: true },
+        Context { act: Act::Update, name: "attempts exhausted", base: Base::Restored { attempts: 39, pending: false }, prefix: vec![], target: 1, restored: true },
+        Context { act: Act::Update, name: "restored with pending pair", base: Base::Restored { attempts: 1, pending: true }, prefix: vec![], target: 1, restored: true },
+        Context { act: Act::Destroy, name: "destroy action", base: Base::Fresh, prefix: vec![], target: 1, restored: false },
+        Context { act: Act::Create, name: "create action", base: Base::Fresh, prefix: vec![], target: 1, restored: false },
+        Context { act: Act::Destroy, name: "destroy of an unsent create", base: Base::Fresh, prefix: vec![Step::Online(false), Step::SubmitAct { keep: false, transfer: false, act: Act::Create }, Step::Commit(1)], target: 2, restored: false },
     ]
 }
 
@@ -313,7 +332,7 @@ fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
         ("-", None), ("Commit", Some(Commit(target))), ("Response", Some(Response(target))),
         ("TransportError temporary", Some(Error { op: target, temporary: true })), ("TransportError permanent", Some(Error { op: target, temporary: false })),
         ("Dropped", Some(Dropped(target))), ("Tick", Some(Tick(target))), ("Offline", Some(Online(false))), ("Online", Some(Online(true))),
-        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Response with temporary errors", Some(ResponseError { op: target, temporary: true })), ("Response with permanent errors", Some(ResponseError { op: target, temporary: false })), ("Response with a swap", Some(ResponseSwap(target))), ("Retry without an action", Some(RetryAny)), ("Discard without an action", Some(DiscardAny)), ("ModelsReset", Some(ModelsReset)), ("Submit with another epoch", Some(SubmitStale)),
+        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Response NotFound", Some(ResponseNotFound(target))), ("Response with temporary errors", Some(ResponseError { op: target, temporary: true })), ("Response with permanent errors", Some(ResponseError { op: target, temporary: false })), ("Response with a swap", Some(ResponseSwap(target))), ("Retry without an action", Some(RetryAny)), ("Discard without an action", Some(DiscardAny)), ("ModelsReset", Some(ModelsReset)), ("Submit with another epoch", Some(SubmitStale)),
     ]
 }
 
@@ -327,6 +346,13 @@ pub(super) fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
     payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default().lines().next().unwrap_or("").chars().take(110).collect()
 }
 
+fn retarget(step: Step, act: Act) -> Step {
+    match step {
+        Step::Submit { row: 1, keep, transfer } if act != Act::Update => Step::SubmitAct { keep, transfer, act },
+        other => other,
+    }
+}
+
 fn run(index: usize) {
     let _ = OutboxInput::Online;
     let mut matrix = Matrix::new(Box::leak(format!("S-outbox-v2-{index}").into_boxed_str()));
@@ -338,7 +364,7 @@ fn run(index: usize) {
             let path = format!("{} / {name}", context.name);
             let reach = catch_unwind(AssertUnwindSafe(|| {
                 let (mut reference, mut owner) = (Reference::new(context.base), Owner::new(context.base));
-                for what in context.prefix.iter().copied().chain(script.iter().copied()) { reference.apply(what); owner.apply(what); }
+                for what in context.prefix.iter().copied().chain(script.iter().copied().map(|step| retarget(step, context.act))) { reference.apply(what); owner.apply(what); }
                 (reference.state.ops.get(&target).map_or(String::new(), |op| format!("{:?}", op.stage)), owner.twin.stage(target).map_or(String::new(), |stage| format!("{stage:?}").split('(').next().unwrap_or("").to_string()))
             }));
             let wanted = goal(name);
@@ -354,7 +380,7 @@ fn run(index: usize) {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
                     let (mut reference, mut owner) = (Reference::new(context.base), Owner::new(context.base));
                     let mut seen: Vec<(String, String, String)> = Vec::new();
-                    for what in context.prefix.iter().copied().chain(script.iter().copied()).chain(second).chain(second.map(|_| Step::Commit(target))) {
+                    for what in context.prefix.iter().copied().chain(script.iter().copied().map(|step| retarget(step, context.act))).chain(second).chain(second.map(|_| Step::Commit(target))) {
                         let (left, right) = (reference.apply(what), owner.apply(what));
                         seen.push((format!("{what:?}"), split_line(&reference.stages(), &left), split_line(&owner.stages(), &right)));
                     }
@@ -392,3 +418,12 @@ fn matrix_owner_state_input_outbox_attempts_exhausted() { run(4) }
 
 #[test]
 fn matrix_owner_state_input_outbox_restored_pending() { run(5) }
+
+#[test]
+fn matrix_owner_state_input_outbox_destroy() { run(6) }
+
+#[test]
+fn matrix_owner_state_input_outbox_create() { run(7) }
+
+#[test]
+fn matrix_owner_state_input_outbox_destroy_unsent_create() { run(8) }
