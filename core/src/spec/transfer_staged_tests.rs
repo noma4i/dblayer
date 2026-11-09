@@ -109,6 +109,27 @@ fn xfer_staged_promote_failure_restart() {
     );
 }
 
+/// xfer_staged_clear_rejected_keeps_upload (K1, D-226, transfer.md:27): the retry reply is handed out and the
+/// transfer started before the Committed of the batch that clears staged. On Rejected(Storage) of that clear
+/// the accepted upload and its file must stay, with no network started before Committed and the marker left for
+/// the next restart to clear.
+#[test]
+fn xfer_staged_clear_rejected_keeps_upload() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    twin.retry(KEY, Some(fresh()));
+    twin.copy_done(id);
+    twin.commit();
+    twin.post(TransferInput::StagedPromoted { transfer_id: id });
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt, "after the swap the transfer uploads the new copy");
+    let out = twin.reject(RejectReason::Storage("disk".into()));
+    assert_eq!(
+        (twin.stage(id), out.removed(), out.deleted(), out.steps().len()),
+        (TransferStage::PersistingAttempt, Vec::<String>::new(), Vec::<String>::new(), 0),
+        "a rejected staged-clear keeps the accepted upload and its file, starts no network before Committed: {out:?}",
+    );
+}
+
 /// xfer_retry_invalid_source (H08): a retry of a failed transfer with a source that has no file (empty path, zero parts) is refused with Invalid and stays Failed.
 #[test]
 fn xfer_retry_invalid_source() {
