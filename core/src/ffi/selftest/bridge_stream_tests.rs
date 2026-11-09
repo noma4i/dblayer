@@ -338,7 +338,7 @@ async fn a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoc
     gate.release();
 
     let answer = bound(late).await.unwrap();
-    assert!(matches!(answer, Err(DbError::Interrupted { .. })), "the late call of the old epoch ended as {answer:?}");
+    assert!(matches!(answer, Err(DbError::NoSession { .. })), "the late call of the old epoch ended as {answer:?}");
     settle(&rig).await;
     assert!(!second.ever_showed("A"), "the late answer of A reached the projection of B");
     assert!(second.shows("B"));

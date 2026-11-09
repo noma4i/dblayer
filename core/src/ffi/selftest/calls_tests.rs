@@ -96,7 +96,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     if matches!(transition, Transition::Close) {
         gate.release();
         let result = bound(running).await.unwrap();
-        let ended = if matches!(call, Call::SignIn) { matches!(result, Err(DbError::Closed { .. })) } else { matches!(result, Err(DbError::Interrupted { .. })) };
+        let ended = if matches!(call, Call::Run) { matches!(result, Err(DbError::Interrupted { .. })) } else { matches!(result, Err(DbError::Closed { .. })) };
         assert!(ended, "{case}: the call ended the close with {result:?}");
         return;
     }
@@ -145,7 +145,7 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
         rig.database.close_now();
 
         let result = bound(running).await.unwrap();
-        let ended = if matches!(call, Call::SignIn) { matches!(result, Err(DbError::Closed { .. })) } else { matches!(result, Err(DbError::Interrupted { .. })) };
+        let ended = if matches!(call, Call::Run) { matches!(result, Err(DbError::Interrupted { .. })) } else { matches!(result, Err(DbError::Closed { .. })) };
         assert!(ended, "{call:?}: the call ended the close with {result:?}");
         rig.database.close_now();
     }
