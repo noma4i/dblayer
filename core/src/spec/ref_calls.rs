@@ -125,7 +125,16 @@ impl Calls {
                 self.awaiting.retain(|(_, found)| *found != reply);
             }
             Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
-            Input::Online(online) if self.online.is_some() => self.online = Some(online),
+            Input::Online(online) if self.online.is_some() => {
+                self.online = Some(online);
+                if online {
+                    let waiting: Vec<_> = self.retries.iter().filter_map(|(id, (attempt, _, waiting, _))| waiting.then_some((*id, *attempt))).collect();
+                    for (id, attempt) in waiting {
+                        if let Some(entry) = self.retries.get_mut(&id) { entry.2 = false; }
+                        self.retry(id, attempt - 1, &mut out);
+                    }
+                }
+            }
             Input::Online(_) => {}
             Input::Snapshot(online) => {
                 self.online = Some(online);
@@ -138,6 +147,7 @@ impl Calls {
                 self.online = None;
                 self.calls.clear();
                 self.awaiting.clear();
+                self.retries.clear();
                 out.effects.push(Effect::SnapshotRequest { epoch });
             }
             Input::EpochEnded => self.interrupt(&mut out),

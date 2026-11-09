@@ -667,7 +667,7 @@ fn matrix_owner_state_input_calls() {
         ("Declare other", Input::Declare(vec![("Other".into(), Kind::Query)])), ("Declare none", Input::Declare(vec![])),
         ("Response body", response(1)), ("Response without body", Input::Response { call_id: 1, body: None, errors: vec![] }), ("Response errors", Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }), ("Response stray call", response(9)),
         ("TransportError network", Input::TransportError { call_id: 1, error: Fail::Network }), ("TransportError http", Input::TransportError { call_id: 1, error: Fail::Http }), ("TransportError stray", Input::TransportError { call_id: 9, error: Fail::Network }),
-        ("Dropped", Input::Dropped { call_id: 1 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
+        ("Dropped", Input::Dropped { call_id: 1 }), ("RetryDue", Input::RetryDue { call_id: 1, attempt: 1 }), ("Deadline", Input::Deadline { call_id: 1 }), ("CallerCancel", Input::CallerCancel { reply: 10 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
         ("EpochEnded", Input::EpochEnded), ("Closing", Input::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
