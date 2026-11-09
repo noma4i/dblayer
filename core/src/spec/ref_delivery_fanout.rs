@@ -29,10 +29,10 @@ pub(crate) struct Write {
     pub(crate) queue: bool,
 }
 
-/// What the broadcast says: every stream, or the tables and the rows of the write.
+/// What the broadcast says: a reset (no row stream reads on Committed, D-254: the re-read comes with ModelsReset), or the tables and the rows of the write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Notice {
-    All,
+    Reset,
     Of { tables: BTreeSet<String>, rows: Option<BTreeSet<(String, String)>> },
 }
 
@@ -51,12 +51,7 @@ pub(crate) fn notice_of_write(write: &Write) -> Notice {
     Notice::Of { tables, rows: Some(rows) }
 }
 
-pub(crate) fn notice_of_reset(models: Option<&[&str]>) -> Notice {
-    match models {
-        None => Notice::All,
-        Some(models) => Notice::Of { tables: models.iter().map(|model| table_of(model)).collect(), rows: None },
-    }
-}
+pub(crate) fn notice_of_reset(_: Option<&[&str]>) -> Notice { Notice::Reset }
 
 /// The index of the streams: by table for rows kinds and link targets, by `(table, row)` for the own row of an Entity.
 #[derive(Default)]
@@ -81,7 +76,7 @@ impl Fanout {
 
     pub(crate) fn affected(&self, notice: &Notice) -> BTreeSet<StreamId> {
         match notice {
-            Notice::All => self.by_table.values().chain(self.by_row.values()).flatten().copied().collect(),
+            Notice::Reset => BTreeSet::new(),
             Notice::Of { tables, rows } => {
                 let tabled = tables.iter().filter_map(|table| self.by_table.get(table)).flatten();
                 let rowed = self.by_row.iter().filter(|((table, id), _)| tables.contains(table) && rows.as_ref().is_none_or(|rows| rows.contains(&(table.clone(), id.clone())))).flat_map(|(_, streams)| streams);

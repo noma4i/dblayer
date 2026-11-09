@@ -283,7 +283,7 @@ T04		core	attached_files_survive_reopen_and_detaching_one_keeps_the_other	regres
 T20		core	a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id	regression	-	Transfer owner through Database
 T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regression	-	Transfer owner through Database
 T20		core	a_cancelled_upload_sends_nothing	regression	-	Transfer owner through Database
-T20		core	a_send_with_a_file_confirms_the_row_the_server_answers	regression	-	Transfer owner through Database
+T20		core	a_send_with_a_file_confirms_through_the_declared_steps	regression	-	Transfer owner through Database
 S300		core	a_fresh_profile_is_read_again_after_expiry	green	-	library
 S208	K4-destroy	core	a_missing_destroyed_row_causes_one_reread_of_the_open_list	unrun	-	arch-audit fable K4
 S208	K4-destroy	swift	BridgeProbeTests.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
