@@ -198,7 +198,7 @@ async fn a_panic_in_the_window_read_ends_the_refresh_with_an_error_and_closes_th
     let (db, transport) = open(false).await;
     db.db.panic_reads.store(crate::store::PANIC_WINDOW_READ, Ordering::SeqCst);
     let result = crate::test_wait::within(refresh(&db)).await;
-    assert!(matches!(result, Err(DbError::Interrupted { .. })), "{result:?}");
+    assert!(matches!(result, Err(DbError::Closed { .. })), "the panic closes the database, the wait ends Closed (D-263, P-RT-12): {result:?}");
     assert_eq!(transport.requests(), 0, "the failed window read sent nothing");
     crate::test_wait::settled(&db, "Lifecycle did not close after the window read panic", || db.life.published().closed).await;
 }

@@ -102,7 +102,7 @@ async fn a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_t
     let old = tokio::spawn({ let database = database.clone(); async move { load(&database, "Profile", "profile").await } });
     within(transport.entered.notified()).await;
     database.session_reset().await.unwrap();
-    assert!(matches!(within(old).await.unwrap(), Err(DbError::Interrupted { .. })), "a call of the old epoch survived the reset");
+    assert!(matches!(within(old).await.unwrap(), Err(DbError::NoSession { .. })), "a load of the old epoch survived the reset (D-263: session end = NoSession)");
     assert!(matches!(within(load(&database, "Profile", "profile")).await, Err(DbError::NoSession { .. })), "a load without a session waits instead of failing");
     hold.add_permits(1);
     within(transport.ended.notified()).await;

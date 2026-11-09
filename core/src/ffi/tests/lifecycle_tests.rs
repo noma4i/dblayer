@@ -162,8 +162,12 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         }
         pause.release.add_permits(1);
         let ended = within(work).await.unwrap();
-        let expected_close = end == "close" && session_call;
-        assert!(if expected_close { matches!(ended, Err(DbError::Closed { .. })) } else { matches!(ended, Err(DbError::Interrupted { .. })) }, "old response was accepted: session_call={session_call}, end={end}: {ended:?}");
+        let accepted = match (session_call, end == "close") {
+            (_, true) => matches!(ended, Err(DbError::Closed { .. })),
+            (true, false) => matches!(ended, Err(DbError::Interrupted { .. })),
+            (false, false) => matches!(ended, Err(DbError::NoSession { .. })),
+        };
+        assert!(accepted, "old response was accepted (D-263: close = Closed, session end of a load = NoSession, session_call keeps Interrupted): session_call={session_call}, end={end}: {ended:?}");
         if !close {
             if end == "session_reset" { assert!(database.signed_in_digest().is_none()); }
             server.forbid(true);
@@ -250,7 +254,7 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     within(database.refresh(database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
     let old = within(old).await.unwrap();
-    assert!(matches!(old, Err(DbError::Interrupted { .. })), "the refresh of the old data waited for its request after the reset: {old:?}");
+    assert!(matches!(old, Err(DbError::NoSession { .. })), "the refresh of the old data waited for its request after the reset (D-263: a session end is NoSession): {old:?}");
     pause.release.add_permits(1);
     database.close_now();
 }
@@ -272,8 +276,8 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     crate::test_wait::settled(&database, "the load joined the flight", || database.life.waiting_calls() > waiting).await;
     within(database.session_reset()).await.unwrap();
     let (owner, joined) = (within(owner).await.unwrap(), within(joined).await.unwrap());
-    assert!(matches!(owner, Err(DbError::Interrupted { .. })), "the owner of the old flight waited for its request: {owner:?}");
-    assert!(matches!(joined, Err(DbError::Interrupted { .. })), "a call joined to the old flight waited for its request: {joined:?}");
+    assert!(matches!(owner, Err(DbError::NoSession { .. })), "the owner of the old flight waited for its request (D-263): {owner:?}");
+    assert!(matches!(joined, Err(DbError::NoSession { .. })), "a call joined to the old flight waited for its request (D-263): {joined:?}");
     pause.release.add_permits(1);
     database.close_now();
 }
