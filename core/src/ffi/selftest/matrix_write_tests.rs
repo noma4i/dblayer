@@ -135,9 +135,10 @@ async fn matrix_write_path_kind() {
             matrix.check(&format!("create.{field}"), "omitted", "field absent", &defaults(field).to_string(), &named(&stored, &order, field).to_string());
         }
     }
-    // unknown enum from the app
-    let result = create(json!({"title": "t", "mood": "weird"})).await.map(|receipt| receipt.optimistic_value.unwrap());
-    matrix.check("create.mood", "unknown enum case", "\"weird\"", "Invalid", &invalid_names(&result, "mood"));
+    // unknown enum text from the app is accepted and kept on create and update (M54)
+    let created = create(json!({"title": "t", "mood": "weird"})).await.map(|receipt| receipt.optimistic_value);
+    let observed = match created { Ok(Some(row)) => read(row.id).await.ok().flatten().map(|stored| named(&stored, &order, "mood").to_string()).unwrap_or_default(), other => format!("not created: {other:?}") };
+    matrix.check("create.mood", "unknown enum case", "\"weird\"", "\"weird\"", &observed);
     // the file field is not writable by create; the local field (note) is excluded from create and update and written only by set_local
     let result = create(json!({"title": "t", "photo": "x"})).await.map(|receipt| receipt.optimistic_value.unwrap());
     matrix.check("create.photo", "file", "\"x\"", "Invalid", &invalid_names(&result, "photo"));
@@ -153,6 +154,9 @@ async fn matrix_write_path_kind() {
                 matrix.check(&format!("update.{field}"), "invalid", &bad.to_string(), "Invalid", &invalid_names(&result, field));
             }
         }
+        let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({"mood": "weird"}).to_string(), "{}".into())).await;
+        let observed = match result { Ok(_) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, "mood").to_string()).unwrap_or_default(), Err(error) => format!("{error:?}") };
+        matrix.check("update.mood", "unknown enum case", "\"weird\"", "\"weird\"", &observed);
         // set_local: the local key and the local field
         for (path, value, expected) in [("note", json!("local"), json!("local")), ("box.stamp", json!("s"), json!(["L", "s", [2, ["v"]]]))] {
             let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), path.into(), value.to_string())).await;
