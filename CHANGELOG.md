@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 6.19.0 - 2026-11-09
+
+### Changed
+
+- `DBModel` requires `rowRevision` and `estimatedBytes`: regenerate the models with the new generator.
+- `FileInfo.size` is `ULong` on Kotlin.
+- `OperationFailure` takes `sessionCode`, `requestSize` and `requestLimit` before `message`.
+- `RetryProgress` is read by pull, the callback listener is gone.
+- A stream accepts one reader, a second reader ends with `Invalid`.
+- `upload` on a missing row fails with `NotFound` for every model.
+- `MockTransport` needs one scripted reply per PUT.
 
 ### Fixed
 
