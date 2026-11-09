@@ -327,6 +327,41 @@ fn out_outcome_wait() {
 }
 
 #[test]
+fn out_outcome_stale() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: WAITER });
+    assert_eq!((twin.stage(id), answers(&effects, WAITER), effects.len()), (Some(St::Sending), vec![OutboxAnswer::Err(Fault::NoSession)], 1));
+}
+
+#[test]
+fn out_outcome_done() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.committed(id);
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER });
+    assert_eq!(twin.stage(id), Some(St::Done));
+    assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]));
+    assert_eq!(effects.len(), 1);
+}
+
+#[test]
+fn out_done_refuses() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.committed(id);
+    for input in [
+        OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY },
+        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY },
+    ] {
+        let effects = twin.post(input);
+        assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::Done), vec![OutboxAnswer::Err(Fault::NotFound)], 1));
+    }
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
