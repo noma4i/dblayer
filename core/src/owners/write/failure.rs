@@ -9,6 +9,9 @@ fn text(failure: &OperationFailure) -> String { serde_json::to_string(failure).u
 
 /// A refusal of Session: its code when it has one, the class of the error otherwise.
 pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
+    if let SessionError::Revoked { body } = error {
+        return text(&OperationFailure::new(FailureKind::Session(SessionCode::SessionEnded), body.clone()));
+    }
     if let SessionError::TooLarge { size, limit } = error {
         return text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, format!("the request is {size} bytes, the limit is {limit} bytes")));
     }
