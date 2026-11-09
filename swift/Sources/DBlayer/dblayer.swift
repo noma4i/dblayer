@@ -4507,6 +4507,266 @@ public func FfiConverterTypeRoundJobsSink_lower(_ value: RoundJobsSink) -> UInt6
 
 
 
+public protocol ServerContractProtocol: AnyObject, Sendable {
+    
+    /**
+     * `request_json`: `{"requestId": text, "sequence": number or null, "body": {"operationName", "variables", "query"?, "extensions"?}}`.
+     */
+    func admit(scope: String, requestJson: String)  -> ContractAdmission
+    
+    func cacheEverything() 
+    
+    func forget() 
+    
+    func last()  -> Int64
+    
+    func register(hash: String) 
+    
+    func script(operation: String, token: String) 
+    
+    func setLast(sequence: Int64) 
+    
+    /**
+     * The answer of the token reached the client: the pair is remembered and a sequence is spent.
+     */
+    func settle(scope: String, requestJson: String, token: String) 
+    
+    func standing(token: String) 
+    
+    /**
+     * The next scripted token of the operation. Nothing scripted: `None`, the double fails the test.
+     */
+    func take(operation: String)  -> String?
+    
+}
+open class ServerContract: ServerContractProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_dblayer_fn_clone_servercontract(self.handle, $0) }
+    }
+    /**
+     * A server that knows its session number: the first sequenced request must carry 1.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_constructor_servercontract_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_dblayer_fn_free_servercontract(handle, $0) }
+    }
+
+    
+    /**
+     * A server that takes the number of the first sequenced request as its session number.
+     */
+public static func adopting() -> ServerContract  {
+    return try!  FfiConverterTypeServerContract_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_constructor_servercontract_adopting(uniffiCallStatus
+    )
+})
+}
+    
+
+    
+    /**
+     * `request_json`: `{"requestId": text, "sequence": number or null, "body": {"operationName", "variables", "query"?, "extensions"?}}`.
+     */
+open func admit(scope: String, requestJson: String) -> ContractAdmission  {
+    return try!  FfiConverterTypeContractAdmission_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_admit(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(scope),
+        FfiConverterString.lower(requestJson),uniffiCallStatus
+    )
+})
+}
+    
+open func cacheEverything()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_cache_everything(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func forget()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_forget(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func last() -> Int64  {
+    return try!  FfiConverterInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_last(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func register(hash: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_register(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hash),uniffiCallStatus
+    )
+}
+}
+    
+open func script(operation: String, token: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_script(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(operation),
+        FfiConverterString.lower(token),uniffiCallStatus
+    )
+}
+}
+    
+open func setLast(sequence: Int64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_set_last(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(sequence),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The answer of the token reached the client: the pair is remembered and a sequence is spent.
+     */
+open func settle(scope: String, requestJson: String, token: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_settle(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(scope),
+        FfiConverterString.lower(requestJson),
+        FfiConverterString.lower(token),uniffiCallStatus
+    )
+}
+}
+    
+open func standing(token: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_standing(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(token),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The next scripted token of the operation. Nothing scripted: `None`, the double fails the test.
+     */
+open func take(operation: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_take(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(operation),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServerContract: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ServerContract
+
+    public static func lift(_ handle: UInt64) throws -> ServerContract {
+        return ServerContract(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ServerContract) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServerContract {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ServerContract, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerContract_lift(_ handle: UInt64) throws -> ServerContract {
+    return try FfiConverterTypeServerContract.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerContract_lower(_ value: ServerContract) -> UInt64 {
+    return FfiConverterTypeServerContract.lower(value)
+}
+
+
+
+
+
+
 public protocol TestClockProtocol: AnyObject, Sendable {
     
     func advance(millis: UInt64) 
@@ -8897,6 +9157,104 @@ public func FfiConverterTypeConfigCode_lower(_ value: ConfigCode) -> RustBuffer 
 
 
 
+
+public enum ContractAdmission: Equatable, Hashable {
+    
+    /**
+     * The pair was answered before with the same body: the token of that answer.
+     */
+    case stored(token: String
+    )
+    /**
+     * The server refuses the request without a sequence: the answer body.
+     */
+    case refused(body: String
+    )
+    /**
+     * The pair came again with another body.
+     */
+    case twoBodies
+    /**
+     * The server executes the request: take a scripted token and settle it.
+     */
+    case fresh
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ContractAdmission: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeContractAdmission: FfiConverterRustBuffer {
+    typealias SwiftType = ContractAdmission
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ContractAdmission {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .stored(token: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 2: return .refused(body: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .twoBodies
+        
+        case 4: return .fresh
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ContractAdmission, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .stored(token):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(token, into: &buf)
+            
+        
+        case let .refused(body):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(body, into: &buf)
+            
+        
+        case .twoBodies:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .fresh:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeContractAdmission_lift(_ buf: RustBuffer) throws -> ContractAdmission {
+    return try FfiConverterTypeContractAdmission.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeContractAdmission_lower(_ value: ContractAdmission) -> RustBuffer {
+    return FfiConverterTypeContractAdmission.lower(value)
+}
+
+
+
 public 
 enum DbError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -12776,6 +13134,36 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_platformsocket_cancel() != 64921) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_servercontract_admit() != 55575) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_cache_everything() != 24971) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_forget() != 6253) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_last() != 35923) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_register() != 2309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_script() != 19786) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_set_last() != 8307) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_settle() != 42816) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_standing() != 20873) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_take() != 18043) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_send() != 27931) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13038,6 +13426,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_connectivity_set_online() != 50865) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_constructor_servercontract_adopting() != 26620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_constructor_servercontract_new() != 17920) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_constructor_testclock_new() != 18293) {
