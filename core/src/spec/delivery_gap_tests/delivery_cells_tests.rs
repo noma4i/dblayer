@@ -51,10 +51,10 @@ fn dlv_opening_pull() {
 fn dlv_pull_twice() {
     let mut opening = open_rows();
     opening.step(Input::Pull);
-    assert_eq!(opening.step(Input::Pull), [Effect::Answer(Pulled::Invalid)]);
+    assert_eq!(opening.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))]);
     let mut live = live_rows();
     live.step(Input::Pull);
-    assert_eq!(live.step(Input::Pull), [Effect::Answer(Pulled::Invalid)], "the first Pull keeps waiting");
+    assert_eq!(live.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))], "the first Pull keeps waiting");
     assert_eq!(live.step(Input::Committed { revision: 2, touches: true }), [Effect::Read(2)]);
     assert_eq!(live.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }).len(), 1, "the waiting Pull is answered");
 }
@@ -156,7 +156,7 @@ fn dlv_cancel_sink_closed() {
     twin.step(Input::Cancel { reply: 7 });
     twin.step(Input::Pull);
     assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "the waiting Pull gets Ended");
-    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Done)]);
+    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "a Pull after the read end gets the same cause again");
     let mut first = live_rows();
     first.step(Input::Cancel { reply: 7 });
     assert_eq!(first.step(Input::SinkClosed), [Effect::Cancelled(7)]);
@@ -540,7 +540,7 @@ fn dlv_ended_pull() {
 fn dlv_ended_pull_none() {
     let mut twin = ended_by_epoch();
     twin.step(Input::Pull);
-    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Done)]);
+    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::SessionEnded)))], "a Pull after the read end gets the same cause again");
 }
 
 #[test]

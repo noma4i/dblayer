@@ -448,7 +448,7 @@ impl Delivery {
                 if let Some(read) = self.pending_read.take() { self.apply(read, fx); }
             }
             (Stage::Opening, Input::Pull) => {
-                if self.waiting { fx.push(Effect::Answer(Pulled::Invalid)); } else { self.waiting = true; }
+                if self.waiting { fx.push(Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))); } else { self.waiting = true; }
             }
             (Stage::Opening, Input::ModelsReset { own_model }) => {
                 if own_model && self.kind.reads_rows() { fx.push(Effect::Read(self.read_revision)); }
@@ -558,13 +558,13 @@ impl Delivery {
                 fx.push(Effect::Read(self.revision));
             }
             (Stage::Live, Input::Pull) => {
-                if self.waiting { fx.push(Effect::Answer(Pulled::Invalid)); }
+                if self.waiting { fx.push(Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))); }
                 else if self.journal.is_empty() { self.waiting = true; }
                 else { let answer = self.take(); fx.push(Effect::Answer(answer)); }
             }
             (Stage::Cancelling, Input::Cancel { reply }) => self.replies.push(reply),
             (Stage::Cancelling, Input::Pull) => {
-                if self.waiting { fx.push(Effect::Answer(Pulled::Invalid)); } else { self.waiting = true; }
+                if self.waiting { fx.push(Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))); } else { self.waiting = true; }
             }
             (Stage::Cancelling, Input::EpochEnded { own: true }) => self.cause = Cause::SessionEnded,
             (Stage::Cancelling, Input::Closing) => self.cause = Cause::Closed,
@@ -583,7 +583,7 @@ impl Delivery {
                 }
             }
             (Stage::Ended, Input::Pull) => {
-                if self.journal.is_empty() { fx.push(Effect::Answer(Pulled::Done)); } else { let answer = self.take(); fx.push(Effect::Answer(answer)); }
+                if self.journal.is_empty() { fx.push(Effect::Answer(Pulled::Value(Val::Ended(self.cause)))); } else { let answer = self.take(); fx.push(Effect::Answer(answer)); }
             }
             (Stage::Ended, Input::Release) => self.released = true,
             (Stage::Ended, Input::SinkClosed) => {
