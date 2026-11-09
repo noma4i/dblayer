@@ -53,5 +53,6 @@ async fn a_planted_difference_is_found_minimized_saved_and_reproduced() {
 #[tokio::test]
 async fn a_seeded_long_trace_finds_what_the_depth_does_not_reach() {
     let buggy = CounterOwner::new(Some(Bug::CountsOtherEpochAtTwo));
-    assert!(find(&buggy, 2, &[1, 2, 3, 4, 5], 60).await.is_some());
+    let found = find(&buggy, 2, &[1, 2, 3, 4, 5], 60).await.expect("a divergence exists");
+    assert!(found.inputs.len() > 2, "the divergence needs more inputs than the depth: {:?}", found.inputs);
 }

@@ -23,7 +23,7 @@ fn boundary_failure_orders() {
     ];
     for (error, kind) in cases {
         let shown = format!("{:?}", DbError::from(error.clone()));
-        assert!(shown.starts_with(kind), "{error:?} reached the caller as {shown}");
+        assert_eq!(shown.split(|letter: char| !letter.is_alphanumeric()).next(), Some(kind), "{error:?} reached the caller as {shown}");
     }
 }
 

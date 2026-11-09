@@ -347,7 +347,7 @@ async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
     drop(life.session_reset());
     settled(&life, "the secret was never cleared", || slot.memory.get().unwrap().is_none()).await;
     let threads = slot.threads.lock().unwrap().clone();
-    assert!(threads.len() >= 3, "the open read, the store and the clear: {threads:?}");
+    assert_eq!(threads.iter().map(|(call, _)| *call).collect::<Vec<_>>(), ["get", "set", "get", "clear"], "the open read, the store, the read after it and the clear: {threads:?}");
     let owners = ["lifecycle", "store", "network", "calls", "session", "outbox", "transfer"];
     assert!(threads.iter().all(|(_, name)| name.as_deref().is_none_or(|name| !owners.contains(&name))), "{threads:?}");
 }

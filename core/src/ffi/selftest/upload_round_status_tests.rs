@@ -45,7 +45,8 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     sink.enter_foreground(registration);
     settled(&database, "the next round clears the refusal", || refusal(&rows).is_none()).await;
     let rounds = jobs.rounds.lock().unwrap().clone();
-    assert!(rounds.len() >= 2 && rounds.iter().collect::<std::collections::BTreeSet<_>>().len() == rounds.len(), "every round asked in the process has its own id: {rounds:?}");
+    assert_eq!(rounds.len(), 2, "one round before the refusal and one after it: {rounds:?}");
+    assert_eq!(rounds.iter().collect::<std::collections::BTreeSet<_>>().len(), 2, "every round asked in the process has its own id: {rounds:?}");
     database.close_now();
 }
 
