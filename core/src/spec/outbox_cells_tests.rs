@@ -297,6 +297,36 @@ fn out_rollback_tick() {
 }
 
 #[test]
+fn out_rollback_stale_generation() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    let effects = twin.rejected(id, RReason::StaleGeneration);
+    assert_eq!(twin.stage(id), Some(St::RollingBack(RWhy::Rejected)));
+    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Rollback, generation, .. }] if *generation == NEW_GENERATION));
+}
+
+#[test]
+fn out_rollback_retry() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
+    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
+}
+
+#[test]
+fn out_outcome_wait() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER });
+    assert_eq!((twin.stage(id), effects.len()), (Some(St::Sending), 0));
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let effects = twin.committed(id);
+    assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
