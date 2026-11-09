@@ -188,7 +188,7 @@ fn xfer_ready_retry() {
 fn xfer_ready_other() {
     let (mut twin, id) = ready(2);
     let mut inputs = twin.stray_results(id);
-    inputs.push(TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } });
+    inputs.push(TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } });
     twin.ignores(id, inputs);
 }
 
@@ -446,7 +446,7 @@ fn xfer_uploading_other() {
         vec![
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
             TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() },
-            TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
+            TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         ],
     );
 }
@@ -619,7 +619,7 @@ fn xfer_completing_other() {
         vec![
             TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
             TransferInput::StepError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() },
-            TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
+            TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
             TransferInput::SlotFreed,
             TransferInput::Online(Online(true)),
             TransferInput::PowerSaving(false),

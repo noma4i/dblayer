@@ -477,12 +477,14 @@ impl Twin {
 
     pub fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome) -> Out {
         if let Some(group) = key.strip_prefix("batch:").and_then(|value| value.parse::<u64>().ok()) {
-            let outcomes = self.state().transfers.values().filter(|transfer| transfer.batch_id == Some(group) && transfer.stage == TransferStage::Mutating).map(|transfer| (transfer.transfer_id, outcome.clone())).collect();
+            let members = self.state().transfers.values().filter(|transfer| transfer.batch_id == Some(group) && transfer.stage == TransferStage::Mutating).map(|transfer| (transfer.transfer_id, transfer.cycle_id, outcome.clone())).collect();
             let intent_removed = matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Rejected { .. } | OutboxOutcome::Discarded);
-            return self.post(TransferInput::MutationOutcomes { batch_id: group, outcomes, intent_removed });
+            return self.post(TransferInput::MutationOutcomes { batch_id: group, members, intent_removed });
         }
         let id = *self.seen_ids.get(key).expect("transfer for outcome");
-        self.post(TransferInput::MutationOutcome { transfer_id: id, outcome })
+        let cycle_id = self.t(id).cycle_id;
+        let intent_removed = matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Rejected { .. } | OutboxOutcome::Discarded);
+        self.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id, outcome, intent_removed })
     }
 
     pub fn end_epoch(&mut self) -> Out {

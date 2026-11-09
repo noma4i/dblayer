@@ -375,12 +375,11 @@ impl OutboxState {
         let outcomes = Self::transfer_outcomes(operation, outcome);
         match &operation.op.origin {
             OpSource::Api => {}
-            OpSource::Transfer { .. } => if let Some((transfer_id, _, outcome)) = outcomes.into_iter().next() {
-                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { transfer_id, outcome })));
+            OpSource::Transfer { .. } => if let Some((transfer_id, cycle_id, outcome)) = outcomes.into_iter().next() {
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed })));
             },
             OpSource::TransferGroup { batch_id, .. } => {
-                let outcomes = outcomes.into_iter().map(|(id, _, outcome)| (id, outcome)).collect();
-                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcomes { batch_id: *batch_id, outcomes, intent_removed })));
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcomes { batch_id: *batch_id, members: outcomes, intent_removed })));
             }
         }
     }

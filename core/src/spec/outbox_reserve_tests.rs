@@ -120,7 +120,7 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 37, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
     assert_eq!(events.len(), 1);
-    assert!(events[0].1.contains("MutationOutcomes { batch_id: 9") && events[0].1.contains("11: Confirmed { revision: 37") && events[0].1.contains("12: Failed") && events[0].1.contains("intent_removed: true"), "{events:?}");
+    assert!(events[0].1.contains("MutationOutcomes { batch_id: 9") && events[0].1.contains("(11, 2, Confirmed { revision: 37") && events[0].1.contains("(12, 4, Failed") && events[0].1.contains("intent_removed: true"), "{events:?}");
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn out_group_rollback_outcome() {
     assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 1, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 1, outcome: Rejected"), "{store}");
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
-    assert!(matches!(events.as_slice(), [(_, input)] if input.contains("11: Rejected") && input.contains("12: Rejected")), "{events:?}");
+    assert!(matches!(events.as_slice(), [(_, input)] if input.contains("(11, 1, Rejected") && input.contains("(12, 1, Rejected")), "{events:?}");
 }
 
 /// A TransferGroup on the root row `a` and the member `member`: its intent is written by Transfer under the reserved `op_id`.
@@ -329,7 +329,7 @@ fn out_group_member_removal_rejected() {
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::NoSession }));
     let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("11: Ended(SessionEnded)") && text.contains("12: Ended(SessionEnded)")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
+    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(SessionEnded))") && text.contains("(12, 1, Ended(SessionEnded))")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
 
     let mut twin = Twin::new();
     let group = group_on_rows(&mut twin, "b", Policy::Rollback);
@@ -338,7 +338,7 @@ fn out_group_member_removal_rejected() {
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Closed }));
     let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("11: Ended(Closed)") && text.contains("12: Ended(Closed)")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
+    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(Closed))") && text.contains("(12, 1, Ended(Closed))")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
 }
 
 #[test]

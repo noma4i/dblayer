@@ -312,7 +312,7 @@ fn xfer_failed_other() {
     inputs.extend([
         TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
+        TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Online(Online(false)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,

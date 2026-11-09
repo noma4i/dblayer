@@ -84,7 +84,7 @@ impl OutboxState {
             }
             (CommitKind::Land, Stage::Landing) => {
                 if let Some(pending) = self.member_removals.remove(&op_id) {
-                    if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, outcome: OutboxOutcome::Discarded }))); }
+                    if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: true }))); }
                 }
                 for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
                     self.swap_row(op_id, &temp, &real);

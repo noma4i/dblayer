@@ -390,7 +390,7 @@ fn xfer_waiting_declaration_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::MutationOutcome { transfer_id: 1, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
+        TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
         TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
     twin.ignores(1, inputs);

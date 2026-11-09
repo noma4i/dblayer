@@ -256,7 +256,7 @@ impl OutboxState {
         if let Some(operation) = self.ops.get_mut(&op_id) {
             if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
         }
-        if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, outcome: OutboxOutcome::Discarded }))); }
+        if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: false }))); }
         for input in pending.deferred { self.handle(input, fx); }
     }
 

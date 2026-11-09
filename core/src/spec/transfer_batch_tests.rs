@@ -250,7 +250,7 @@ fn xfer_batch_ready_other() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
-    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } }]);
+    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } }]);
     twin.ignores(ids[0], inputs);
 }
 
@@ -388,8 +388,8 @@ fn xfer_batch_element_without_a_row_fails_before_the_batch_confirms() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     file_done(&mut twin, ids[1]);
-    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None }), (ids[1], OutboxOutcome::Failed { error: "protocol".into() })].into();
-    twin.post(TransferInput::MutationOutcomes { batch_id: 1, outcomes, intent_removed: true });
+    let members = vec![(ids[0], 1, OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None }), (ids[1], 1, OutboxOutcome::Failed { error: "protocol".into() })];
+    twin.post(TransferInput::MutationOutcomes { batch_id: 1, members, intent_removed: true });
     assert_eq!(twin.stage(ids[1]), TransferStage::PersistingFailure, "the element the answer lacks keeps its failure, the confirmation of the batch skips it");
     assert_ne!(twin.stage(ids[0]), TransferStage::PersistingFailure, "the others are confirmed");
 }
