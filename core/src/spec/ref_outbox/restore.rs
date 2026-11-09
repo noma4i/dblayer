@@ -1,4 +1,4 @@
-//! Opening: `Restored`, `RegisterOperations`, `RestoreReady`, the classes of the section "Открытие".
+//! Opening: `Restored`, `RegisterOperations`, `RestoreReady`, the classes of the opening section.
 
 use super::helpers::*;
 use super::types::*;

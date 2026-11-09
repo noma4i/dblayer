@@ -23,7 +23,7 @@ fn folded(base: i64, revision: i64, rows: &[&str], removed: &[&str]) -> Folded {
     Folded::Delta { base, revision, rows: rows.iter().map(|id| id.to_string()).collect(), removed: removed.iter().map(|id| id.to_string()).collect(), state: state(revision) }
 }
 
-/// Requirement: corpus.md "Шаг раннера" п. 5 (D-198), a `pull` shows the unread journal of a stream folded by "the last wins".
+/// Requirement: corpus.md runner step, item 5 (D-198), a `pull` shows the unread journal of a stream folded by "the last wins".
 /// Observable: the folded values. Assert: equal to the expected list for each journal.
 #[test]
 fn the_unread_journal_folds_by_the_last_wins() {

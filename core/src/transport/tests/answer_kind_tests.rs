@@ -12,7 +12,7 @@ fn same(kind: AnswerKind, expected: &AnswerKind) -> bool {
     }
 }
 
-/// Every row of the table «Вид ответа» of `wire.md`, with and without a `sequence` on the pair.
+/// Every row of the answer kind table of `wire.md`, with and without a `sequence` on the pair.
 #[test]
 fn wire_classify_table() {
     let cases: Vec<(&str, WireOutcome, bool, AnswerKind)> = vec![
