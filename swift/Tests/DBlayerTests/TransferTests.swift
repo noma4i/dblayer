@@ -145,7 +145,7 @@ extension BridgeProbeTests {
       let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: directory) }
-      let server = try SealedServer(deduplicate: true) { path, body in
+      let server = try SealedServer { path, body in
         if path == "/api/auth/login_link" { return ["sessionId": "A"] }
         switch body["operationName"] as? String {
         case "CreateBlob":

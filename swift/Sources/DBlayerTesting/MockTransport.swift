@@ -23,7 +23,9 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   }
 
   private let lock = NSLock()
-  private var replies: [String: [Reply]] = [:]
+  private let contract = ServerContract()
+  private var replies: [String: Reply] = [:]
+  private var tokens = 0
   private var recorded: [TransportRequest] = []
   private var responders: [String: @Sendable (TransportRequest) -> String?] = [:]
   private var puts: [String: [PutScript]] = [:]
@@ -77,12 +79,25 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
 
+  /// The server contract holds the order of the scripted replies: the transport keeps the reply behind each token.
+  private func script(_ operation: String, _ reply: Reply) {
+    contract.script(operation: operation, token: store(reply))
+  }
+
+  private func store(_ reply: Reply) -> String {
+    lock.withLock {
+      tokens += 1
+      replies["r\(tokens)"] = reply
+      return "r\(tokens)"
+    }
+  }
+
   public func enqueue(_ operation: String, reply: String) {
-    lock.withLock { replies[operation, default: []].append(Reply(body: reply, failure: nil)) }
+    script(operation, Reply(body: reply, failure: nil))
   }
 
   public func enqueue(_ operation: String, failure: DbError) {
-    lock.withLock { replies[operation, default: []].append(Reply(body: nil, failure: failure)) }
+    script(operation, Reply(body: nil, failure: failure))
   }
 
   /// Queues the answer to the next PUT of `url`: each PUT takes one, a PUT without one is refused like a call without a reply.
@@ -100,7 +115,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   /// Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`.
   public func hold(_ operation: String, reply: String = "{}", failure: DbError? = nil) -> Hold {
     let hold = Hold()
-    lock.withLock { replies[operation, default: []].append(Reply(body: failure == nil ? reply : nil, failure: failure, hold: hold)) }
+    script(operation, Reply(body: failure == nil ? reply : nil, failure: failure, hold: hold))
     return hold
   }
 
@@ -131,27 +146,39 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return PutReply(status: 200, etag: script.etag)
   }
 
-  /// The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one.
-  private var settled: [String: Reply] = [:]
+  /// The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. The server contract decides: a repeat of a pair gets the reply of the first send, a second body under one pair and a request nobody scripted are refused.
+  private static func wire(_ request: TransportRequest) -> String {
+    let variables = (try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8), options: [.fragmentsAllowed])) ?? NSNull()
+    let object: [String: Any] = ["requestId": "\(request.requestId)", "sequence": NSNull(), "body": ["operationName": request.operationName, "variables": variables]]
+    return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+  }
+
+  private func settle(_ scope: String, _ wire: String, _ reply: Reply) {
+    contract.settle(scope: scope, requestJson: wire, token: store(Reply(body: reply.body, failure: reply.failure)))
+  }
 
   private func answer(_ request: TransportRequest) async throws -> String {
-    let identity = "\(request.author)#\(request.requestId)"
+    let scope = "\(request.author)"
+    let wire = Self.wire(request)
     let responder = lock.withLock { responders[request.operationName] }
-    let reply = lock.withLock { () -> Reply? in
-      recorded.append(request)
-      if let known = settled[identity] { return known }
+    lock.withLock { recorded.append(request) }
+    var reply: Reply?
+    var twoBodies = false
+    switch contract.admit(scope: scope, requestJson: wire) {
+    case .stored(let token): reply = lock.withLock { replies[token] }
+    case .twoBodies: twoBodies = true
+    case .refused: break
+    case .fresh:
       if let body = responder?(request) {
-        let answered = Reply(body: body, failure: nil)
-        settled[identity] = answered
-        return answered
+        reply = Reply(body: body, failure: nil)
+        settle(scope, wire, reply!)
+      } else if let token = contract.take(operation: request.operationName), let next = lock.withLock({ replies[token] }) {
+        reply = next
+        if !Self.lostAnswer(next.failure) { settle(scope, wire, next) }
       }
-      guard var queue = replies[request.operationName], !queue.isEmpty else { return nil }
-      let next = queue.removeFirst()
-      replies[request.operationName] = queue
-      if !Self.lostAnswer(next.failure) { settled[identity] = Reply(body: next.body, failure: next.failure) }
-      return next
     }
     TestPulse.shared.pulse()
+    if twoBodies { throw await refuse(request, detail: "MockTransport got the pair \(scope)#\(request.requestId) with a second body: \(request.operationName) variables=\(request.variablesJson)") }
     guard let reply else { throw await refuse(request) }
     if let hold = reply.hold { await hold.pass() }
     try Task.checkCancellation()
@@ -180,14 +207,14 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     }
   }
 
-  private func refuse(_ request: TransportRequest) async -> DbError {
+  private func refuse(_ request: TransportRequest, detail given: String? = nil) async -> DbError {
     switch unanswered {
-    case .networkError:
+    case .networkError where given == nil:
       return .Network(detail: "no reply queued for \(request.operationName)")
-    case .strict:
+    default:
       lock.withLock { missed.append(request) }
       TestPulse.shared.pulse()
-      let detail = "MockTransport has no reply queued for \(request.operationName) variables=\(request.variablesJson)"
+      let detail = given ?? "MockTransport has no reply queued for \(request.operationName) variables=\(request.variablesJson)"
       await withCheckedContinuation { done in
         if case .terminated = reports.yield(Report(message: detail, done: done)) { done.resume() }
       }

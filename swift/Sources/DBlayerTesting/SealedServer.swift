@@ -21,8 +21,11 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   private var parked: [CheckedContinuation<Void, Never>] = []
   private let arrivals = AsyncStream<Void>.makeStream()
   private let lostAnswers = AsyncStream<Void>.makeStream()
-  private let deduplicate: Bool
-  private var cached: [String: (Data, String)] = [:]
+  private let contract: ServerContract = {
+    let contract = ServerContract.adopting()
+    contract.cacheEverything()
+    return contract
+  }()
   private var executed: [[String: Any]] = []
   private var lostFile: String?
   private var lost = false
@@ -30,9 +33,8 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   private let bridge: (@Sendable (String, [String: Any]) async throws -> [String: Any])?
   @TaskLocal public static var purpose: NetworkPurpose = .standard
 
-  /// `answer` maps the path and the request body of a signed-in request to the answer body.
-  public init(deduplicate: Bool = false, answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
-    self.deduplicate = deduplicate
+  /// The server contract decides repeats of a pair, a second body under one pair, a missing sequence number. `answer` maps the path and the request body of a signed-in request to the answer body.
+  public init(answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
     self.answer = answer
     self.bridge = nil
     var error: Unmanaged<CFError>?
@@ -42,7 +44,6 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
 
   /// A server whose answers come from an async closure, such as a mock transport behind the encrypted session.
   public init(bridge: @escaping @Sendable (String, [String: Any]) async throws -> [String: Any]) throws {
-    self.deduplicate = false
     self.answer = { _, _ in [:] }
     self.bridge = bridge
     var error: Unmanaged<CFError>?
@@ -100,13 +101,13 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     let sent = request["body"] as! [String: Any]
     lock.withLock { received.append((path, sent)); routed.append((sent["operationName"] as? String, purpose)) }
     if lock.withLock({ refusing }) { return EncryptedReply(status: 500, body: "") }
-    let requestId = request["requestId"] as! String
-    var stable = request
-    stable.removeValue(forKey: "issuedAt")
-    let digest = try JSONSerialization.data(withJSONObject: stable, options: [.sortedKeys])
-    if deduplicate, let prior = lock.withLock({ cached[requestId] }) {
-      guard prior.0 == digest else { throw DbError.Invalid(detail: "request ID reused with different content") }
-      return EncryptedReply(status: 200, body: prior.1)
+    let wire = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+    if path.hasPrefix("/api/auth/"), request["sequence"] as? Int == 1 { contract.setLast(sequence: 0) }
+    switch contract.admit(scope: "sealed", requestJson: wire) {
+    case .stored(let sealed): return EncryptedReply(status: 200, body: sealed)
+    case .twoBodies: throw DbError.Invalid(detail: "request ID reused with different content")
+    case .refused(let refusal): return EncryptedReply(status: 200, body: try seal(request, try JSONSerialization.jsonObject(with: Data(refusal.utf8)) as! [String: Any], spending: false))
+    case .fresh: break
     }
     let reply: [String: Any]
     if let bridge {
@@ -139,8 +140,8 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
       }
     }
     let sealed = try seal(request, reply)
+    contract.settle(scope: "sealed", requestJson: wire, token: sealed)
     let lose = lock.withLock { () -> Bool in
-      if deduplicate { cached[requestId] = (digest, sealed) }
       let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
       guard filename != nil && filename == lostFile else { return false }
       lostFile = nil
@@ -164,10 +165,10 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     return try JSONSerialization.jsonObject(with: plain) as! [String: Any]
   }
 
-  public func seal(_ request: [String: Any], _ body: [String: Any]) throws -> String {
+  public func seal(_ request: [String: Any], _ body: [String: Any], spending: Bool = true) throws -> String {
     let header = Self.encode(Data(#"{"alg":"dir","enc":"A256GCM"}"#.utf8))
     var answer: [String: Any] = ["requestId": request["requestId"]!, "body": body]
-    answer["sequence"] = request["sequence"] is NSNull ? NSNull() : request["sequence"]
+    answer["sequence"] = request["sequence"] is NSNull || !spending ? NSNull() : request["sequence"]
     let plain = try JSONSerialization.data(withJSONObject: answer)
     let box = try AES.GCM.seal(plain, using: SymmetricKey(data: Self.decode(request["responseKey"] as! String)), nonce: AES.GCM.Nonce(data: Data(repeating: 7, count: 12)), authenticating: Data(header.utf8))
     return "\(header)..\(Self.encode(Data(box.nonce)))" + ".\(Self.encode(box.ciphertext)).\(Self.encode(box.tag))"
