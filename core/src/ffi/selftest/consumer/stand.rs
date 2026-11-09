@@ -30,13 +30,14 @@ impl FakeTransport for Cable {
 struct Server {
     answers: StdMutex<HashMap<String, Value>>,
     asked: StdMutex<Vec<(String, Value)>>,
+    sequenced: StdMutex<Vec<(String, i64)>>,
     held: tokio::sync::watch::Sender<HashSet<String>>,
     answered: tokio::sync::watch::Sender<usize>,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        Server { answers: StdMutex::default(), asked: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -45,10 +46,14 @@ impl FakeHttp for Server {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let answer = if path == "/api/auth/login_link" {
+            self.sequenced.lock().unwrap().push(("login_link".into(), request["sequence"].as_i64().unwrap_or(0)));
             json!({"sessionId": request["body"]["account"]})
+        } else if path == "/api/auth/otp" {
+            json!({"sent": true})
         } else {
             let operation = request["body"]["operationName"].as_str().unwrap().to_string();
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
+            self.sequenced.lock().unwrap().push((operation.clone(), request["sequence"].as_i64().unwrap_or(0)));
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
             let answer = self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}));
@@ -75,15 +80,19 @@ impl Stand {
     }
 
     /// The core with its operations declared and the network up, before the session: the preload of the app starts at `sign_in`.
-    pub(super) async fn prepare() -> Stand {
+    pub(super) async fn prepare() -> Stand { Stand::prepare_on(None, Arc::new(WatchedHeld::default()) as Arc<dyn crate::ffi::CredentialStore>).await }
+
+    /// The same core on a file and a credential store that outlive the process: `reopen` is the next launch of the app.
+    pub(super) async fn prepare_on(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>) -> Stand {
         let server = Arc::new(Server::default());
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("otp".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         let (opened, subscribed) = tokio::sync::mpsc::unbounded_channel();
         let peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
         let cable = Arc::new(Cable { peer });
-        let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
-        let database = bound(Database::open_with_clock(Config { path: None, data_version: None }, SPEC.into(), ports, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+        let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+        let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(true).unwrap();
         Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed) }
@@ -95,6 +104,9 @@ impl Stand {
 
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }
+
+    /// Every request the server received, in order: the operation and its `sequence`.
+    pub(super) fn sequenced(&self) -> Vec<(String, i64)> { self.server.sequenced.lock().unwrap().clone() }
 
     /// How many times the core asked the server for the operation.
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
