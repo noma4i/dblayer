@@ -390,32 +390,67 @@ fn camel(name: &str) -> String {
     out
 }
 
-fn last_segment(name: &str) -> &str { name.rsplit("::").next().unwrap_or(name) }
-
-fn mapped(rust: &str, swift: bool) -> Option<String> {
-    let rust = rust.trim();
-    let generic = |prefix: &str| rust.strip_prefix(prefix).and_then(|rest| rest.strip_suffix('>'));
-    if let Some(inner) = generic("Option<") { return Some(format!("{}?", mapped(inner, swift)?)); }
-    if let Some(inner) = generic("Arc<") { return mapped(inner, swift); }
-    if rust == "Vec<u8>" { return Some(if swift { "Data" } else { "kotlin.ByteArray" }.into()); }
-    if let Some(inner) = generic("Vec<") { let inner = mapped(inner, swift)?; return Some(if swift { format!("[{inner}]") } else { format!("List<{inner}>") }); }
-    if let Some(inner) = generic("HashMap<") {
-        let parts = split_top(inner);
-        let (key, value) = (mapped(parts.first()?, swift)?, mapped(parts.get(1)?, swift)?);
-        return Some(if swift { format!("[{key}: {value}]") } else { format!("Map<{key}, {value}>") });
+/// The lowercased case names of the enum `name` in a wrapper source: a Swift `enum` (single or multi line), a Kotlin `enum class` or a Kotlin `sealed` type whose cases are its nested types.
+fn enum_cases(text: &str, name: &str, swift: bool) -> Vec<String> {
+    let declaration = if swift {
+        text.find(&format!("enum {name}"))
+    } else {
+        ["enum class ", "sealed interface ", "sealed class "].iter().find_map(|keyword| text.find(&format!("{keyword}{name}")))
+    };
+    let Some(at) = declaration else { return Vec::new() };
+    let Some(body) = block(text, at) else { return Vec::new() };
+    let mut cases = Vec::new();
+    if swift {
+        for line in body.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("case ") else { continue };
+            for part in rest.split('(').next().unwrap_or("").split(',') {
+                let case = identifier(part.trim());
+                if !case.is_empty() { cases.push(case.to_lowercase()); }
+            }
+        }
+    } else if body.contains("class ") || body.contains("object ") {
+        for marker in ["data class ", "data object ", "class ", "object "] {
+            for piece in body.split(marker).skip(1) {
+                let case = identifier(piece.trim_start());
+                if !case.is_empty() { cases.push(case.to_lowercase()); }
+            }
+        }
+    } else {
+        let constants = strip_annotations(body.split(';').next().unwrap_or(body));
+        for part in constants.split(',') {
+            let case = identifier(part.trim());
+            if !case.is_empty() { cases.push(case.to_lowercase()); }
+        }
     }
-    let table: [(&str, &str, &str); 14] = [
-        ("u8", "UInt8", "kotlin.UByte"), ("u16", "UInt16", "kotlin.UShort"), ("u32", "UInt32", "kotlin.UInt"), ("u64", "UInt64", "kotlin.ULong"),
-        ("i8", "Int8", "kotlin.Byte"), ("i16", "Int16", "kotlin.Short"), ("i32", "Int32", "kotlin.Int"), ("i64", "Int64", "kotlin.Long"),
-        ("f32", "Float", "kotlin.Float"), ("f64", "Double", "kotlin.Double"), ("bool", "Bool", "kotlin.Boolean"), ("String", "String", "kotlin.String"),
-        ("Duration", "TimeInterval", "java.time.Duration"), ("usize", "UInt64", "kotlin.ULong"),
-    ];
-    if let Some((_, swift_name, kotlin_name)) = table.iter().find(|(name, _, _)| *name == rust) { return Some(if swift { *swift_name } else { *kotlin_name }.into()); }
-    (!rust.contains(['<', '(', '[', '&']) && !rust.is_empty()).then(|| last_segment(rust).to_string())
+    cases.sort();
+    cases.dedup();
+    cases
 }
 
+/// The top-level arguments of the first construction `name(` in a wrapper source, so a `wire` mapping can be read for the fields it carries.
+fn call_args(text: &str, name: &str) -> Option<Vec<String>> {
+    let needle = format!("{name}(");
+    let at = text.match_indices(&needle).find(|(at, _)| text[..*at].chars().next_back().is_none_or(|previous| !(previous.is_alphanumeric() || previous == '_'))).map(|(at, _)| at)?;
+    let open = at + needle.len() - 1;
+    let mut depth = 0i32;
+    let mut end = None;
+    for (offset, character) in text[open..].char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => { depth -= 1; if depth == 0 { end = Some(open + offset); break; } }
+            _ => {}
+        }
+    }
+    Some(split_top(&text[open + 1..end?]))
+}
 
-/// The records of the core that have a public wrapper type of the same name (without the `Wire` prefix) against that type, member by member, on both platforms.
+enum Projection {
+    Enum,
+    Produced,
+    Decoded,
+}
+
+/// Each `Wire*` export of the core (BREC) against its platform projection, matched through the typed DSL `wire` mapping (bridge.md group B), not by name: an enum by its case set, a produced record by the fields its `wire` constructor carries, a decoded record by the projection type the platform declares (its projected `Model` values keep their cross-platform parity in T-value-platform). The generated bindings carry the `Wire*` types verbatim but are regenerated at build and not reliably present or current in the tree, so the committed wrappers are the comparison.
 #[test]
 fn matrix_value_core_wrapper() {
     let mut matrix = Matrix::new("T-value-core-wrapper");
@@ -423,41 +458,56 @@ fn matrix_value_core_wrapper() {
     let (mut swift_files, mut kotlin_files) = (Vec::new(), Vec::new());
     files(&root.join("swift/Sources/DBlayer"), "swift", "dblayer.swift", &mut swift_files);
     files(&root.join("kotlin/src/main/kotlin/com/noma4i/dblayer"), "kt", "dblayer.kt", &mut kotlin_files);
-    let (mut swift, mut kotlin) = (BTreeMap::new(), BTreeMap::new());
-    for file in &swift_files { swift.extend(swift_types(&std::fs::read_to_string(file).unwrap_or_default())); }
-    for file in &kotlin_files { kotlin.extend(kotlin_types(&std::fs::read_to_string(file).unwrap_or_default())); }
-    let shapes = core_shapes();
-    if shapes.len() < 20 { matrix.unclassified("core", "-", "-", &format!("the source scan found only {} bridge types", shapes.len())); }
-    let mut compared = 0;
-    for (name, shape) in &shapes {
-        let public = name.strip_prefix("Wire").unwrap_or(name);
-        let CoreShape::Record(fields) = shape else {
-            if let CoreShape::Enum(variants) = shape {
-                for (platform, found) in [("swift", swift.get(public)), ("kotlin", kotlin.get(public))] {
-                    let Some(found) = found.filter(|found| found.is_enum) else { continue };
-                    compared += 1;
-                    let (mut wanted, mut seen): (Vec<String>, Vec<String>) = (variants.iter().map(|variant| variant.to_lowercase()).collect(), found.cases.iter().map(|case| case.0.to_lowercase()).collect());
+    let swift_text: String = swift_files.iter().filter_map(|file| std::fs::read_to_string(file).ok()).collect::<Vec<_>>().join("\n");
+    let kotlin_text: String = kotlin_files.iter().filter_map(|file| std::fs::read_to_string(file).ok()).collect::<Vec<_>>().join("\n");
+    if swift_text.is_empty() || kotlin_text.is_empty() { matrix.unclassified("wrappers", "-", "-", "the hand-written wrapper sources are not readable"); matrix.finish(); return; }
+    let shapes: BTreeMap<String, CoreShape> = core_shapes().into_iter().collect();
+
+    let projections: [(&str, &str, Projection); 11] = [
+        ("WireSyncState", "SyncState", Projection::Enum),
+        ("WireUploadStatus", "UploadStatus", Projection::Enum),
+        ("WireOperationOutcome", "OperationOutcome", Projection::Enum),
+        ("WireUploadRequest", "UploadRequest", Projection::Produced),
+        ("WireUploadItem", "UploadItem", Projection::Produced),
+        ("WireUploadSource", "UploadSource", Projection::Produced),
+        ("WireUploadBatch", "UploadBatchRequest", Projection::Produced),
+        ("WireOperationReceipt", "MutationReceipt", Projection::Decoded),
+        ("WireBatchReceipt", "OperationReceipt", Projection::Decoded),
+        ("WireItemReceipt", "ItemReceipt", Projection::Decoded),
+        ("WireModelEvent", "ModelEvent", Projection::Decoded),
+    ];
+
+    for &(wire, projection, ref kind) in &projections {
+        let Some(shape) = shapes.get(wire) else { matrix.unclassified(wire, "-", "-", "the core no longer exports this Wire type"); continue };
+        for (platform, text, swift_side) in [("swift", swift_text.as_str(), true), ("kotlin", kotlin_text.as_str(), false)] {
+            match kind {
+                Projection::Enum => {
+                    let CoreShape::Enum(variants) = shape else { matrix.unclassified(wire, platform, "-", "the core type is not an enum"); continue };
+                    let mut wanted: Vec<String> = variants.iter().map(|variant| variant.to_lowercase()).collect();
                     wanted.sort();
-                    seen.sort();
-                    matrix.check(public, platform, "enum cases", &wanted.join(","), &seen.join(","));
+                    matrix.check(wire, platform, "enum cases", &wanted.join(","), &enum_cases(text, projection, swift_side).join(","));
                 }
-            }
-            continue;
-        };
-        for (platform, found, swift_side) in [("swift", swift.get(public), true), ("kotlin", kotlin.get(public), false)] {
-            let Some(found) = found else { continue };
-            compared += 1;
-            for (field, rust_type) in fields {
-                let wanted = mapped(rust_type, swift_side);
-                let seen = found.fields.iter().find(|(seen_name, _)| *seen_name == camel(field)).map(|(_, seen_type)| squash(seen_type));
-                match (wanted, seen) {
-                    (Some(wanted), Some(seen)) => matrix.check(&format!("{public}.{field}"), platform, rust_type, &squash(&wanted), &seen),
-                    (Some(wanted), None) => matrix.check(&format!("{public}.{field}"), platform, rust_type, &squash(&wanted), "member missing in the public type"),
-                    (None, _) => matrix.unclassified(&format!("{public}.{field}"), platform, rust_type, "no mapping rule for this core type"),
+                Projection::Produced => {
+                    let CoreShape::Record(fields) = shape else { matrix.unclassified(wire, platform, "-", "the core type is not a record"); continue };
+                    let mut wanted: Vec<String> = fields.iter().map(|(field, _)| camel(field)).collect();
+                    wanted.sort();
+                    match call_args(text, wire) {
+                        Some(arguments) if swift_side => {
+                            let mut labels: Vec<String> = arguments.iter().filter_map(|argument| argument.split_once(':').map(|(label, _)| identifier(label.trim()))).collect();
+                            labels.sort();
+                            matrix.check(wire, platform, "fields carried by the wire mapping", &wanted.join(","), &labels.join(","));
+                        }
+                        Some(arguments) => matrix.check(wire, platform, "fields carried by the wire mapping", &wanted.len().to_string(), &arguments.len().to_string()),
+                        None => matrix.check(wire, platform, "fields carried by the wire mapping", &wanted.join(","), "no wire construction in the wrapper"),
+                    }
+                }
+                Projection::Decoded => {
+                    let keywords: &[&str] = if swift_side { &["struct", "class", "enum", "protocol", "actor", "typealias"] } else { &["class", "interface", "object", "typealias"] };
+                    let found = declared(text, projection, keywords);
+                    matrix.check(wire, platform, "decoded into the projection type", projection, if found { projection } else { "projection type missing" });
                 }
             }
         }
     }
-    if compared == 0 { matrix.unclassified("core", "-", "-", "no core record has a public wrapper type of the same name"); }
     matrix.finish();
 }
