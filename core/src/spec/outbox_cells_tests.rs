@@ -107,6 +107,118 @@ pub(super) fn unchanged_by(twin: &mut Twin, id: OpId, stage: St, inputs: Vec<Out
 }
 
 #[test]
+fn out_submit_stale() {
+    let mut twin = Twin::new();
+    let effects = twin.post(OutboxInput::Submit { epoch: EPOCH + 1, op: model_op("r", Policy::Rollback, false), reply: 901 });
+    assert_eq!(answers(&effects, 901), vec![OutboxAnswer::Err(Fault::NoSession)]);
+    assert!(twin.state().ops.is_empty());
+    assert_eq!(effects.len(), 1);
+}
+
+#[test]
+fn out_sending_temp() {
+    for dropped in [false, true] {
+        let mut twin = Twin::new();
+        let id = sending(&mut twin, Policy::Rollback, false);
+        let input = if dropped { OutboxInput::Dropped { op_id: id } } else { OutboxInput::TransportError { op_id: id, temporary: true } };
+        let effects = twin.post(input);
+        assert_eq!((twin.stage(id), twin.state().ops[&id].waiting_retry, timers(&effects), effects.len()), (Some(St::Sending), true, 1, 1));
+    }
+}
+
+#[test]
+fn out_sending_tick() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
+    let effects = tick(&mut twin, id);
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::PersistingAttempt), vec![CommitKind::Attempt], 1));
+}
+
+#[test]
+fn out_sending_offline() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    unchanged_by(&mut twin, id, St::Sending, vec![OutboxInput::Online(Online(false))]);
+}
+
+#[test]
+fn out_sending_online() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    unchanged_by(&mut twin, id, St::Sending, vec![OutboxInput::Online(Online(true))]);
+}
+
+#[test]
+fn out_sending_discard() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(St::Sending), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
+}
+
+#[test]
+fn out_sending_reject_rollback() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![CommitKind::Rollback], 1));
+    assert!(twin.store_text.contains("RemoveAnswer"));
+}
+
+#[test]
+fn out_sending_reject_keep() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Keep, false);
+    let effects = twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 1));
+}
+
+#[test]
+fn out_sending_retry() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
+    assert_eq!(twin.stage(id), Some(St::Sending));
+    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(_)]));
+    assert_eq!(effects.len(), 1);
+}
+
+#[test]
+fn out_sending_tick_not_waiting() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let effects = tick(&mut twin, id);
+    assert_eq!((twin.stage(id), effects.len()), (Some(St::Sending), 0));
+}
+
+#[test]
+fn out_queued_offline() {
+    let mut twin = Twin::new();
+    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
+    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(false))]);
+}
+
+#[test]
+fn out_queued_models_other() {
+    let mut twin = Twin::new();
+    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
+    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Chat".into()] })]);
+}
+
+#[test]
+fn out_queued_retry() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
+    assert_eq!(twin.stage(id), Some(St::Queued));
+    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id && receipt.cycle_id == twin.state().ops[&id].cycle_id));
+    assert_eq!(effects.len(), 1);
+}
+
+#[test]
 fn out_destroy_unsent_create() {
     let mut twin = Twin::new();
     let created = queued_behind_blocker(&mut twin, NewOp { action: "create".into(), ..model_op("r", Policy::Rollback, false) });
