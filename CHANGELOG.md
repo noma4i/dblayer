@@ -1,17 +1,21 @@
 # Changelog
 
-## Unreleased
+## 6.20.0 - 2026-11-09
 
 ### Added
 
 - Uploads accept a deferred source and publish their rows before file preparation.
 - `UploadSource`, `supplySource`, and `failSource` provide or fail a deferred source.
 
+### Changed
+
+- `retry` of an upload takes an `UploadSource` instead of an `UploadRequest`.
+
 ### Fixed
 
-- A write, an upload mutation and a call send the document hash first and resend the full document under the same number when the server does not know it.
-- A sign-in answered without a sequence fails with a typed error and erases its provisional credential.
-- A nested field with a declared type took the nullability of a same-named field of the model root type: `versions[].requires` was `Optional` in Swift and Kotlin. It now follows its own schema path.
+- Sequenced requests send the document hash first and the full document only on a miss.
+- A sign-in answered without a sequence fails and erases its provisional credential.
+- A nested field follows its own schema nullability, not a same-named root field.
 
 ## 6.19.0 - 2026-11-09
 
