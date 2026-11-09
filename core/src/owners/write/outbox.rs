@@ -478,7 +478,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn interrupt_all(&mut self, closing: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn interrupt_all(&mut self, fx: &mut Effects<Outbox>) {
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
             let Some(stage) = self.stage_of(op_id) else { continue };
@@ -493,9 +493,7 @@ impl OutboxState {
                 operation.stage = Stage::Done;
                 operation.outcome = Some(OutboxOutcome::Interrupted);
             }
-            if !closing {
-                self.tell_transfer(op_id, &OutboxOutcome::Interrupted, false, fx);
-            }
+            self.tell_transfer(op_id, &OutboxOutcome::Interrupted, false, fx);
             self.give_outcome(op_id, &OutboxOutcome::Interrupted, fx);
         }
         self.waiting.clear();
@@ -551,9 +549,9 @@ impl OutboxState {
                     self.generation.insert(model, reset.generation);
                 }
             }
-            OutboxInput::EpochEnded(_) => self.interrupt_all(false, fx),
+            OutboxInput::EpochEnded(_) => self.interrupt_all(fx),
             OutboxInput::Closing => {
-                self.interrupt_all(true, fx);
+                self.interrupt_all(fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }
