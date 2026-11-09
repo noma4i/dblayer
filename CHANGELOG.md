@@ -6,6 +6,10 @@
 
 - Test doubles refuse unscripted requests and a second body under one pair.
 
+### Fixed
+
+- The local values of a supplied source reach the row in the transaction of the file copy.
+
 ## 6.20.0 - 2026-11-09
 
 ### Added
