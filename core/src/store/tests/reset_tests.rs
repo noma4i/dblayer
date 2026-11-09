@@ -151,3 +151,13 @@ fn resets_advance_the_revision_and_tell_the_hook() {
     assert_eq!(store.revision_seq().unwrap(), 3);
     assert_eq!(*seen.lock().unwrap(), vec![(2, Some(vec!["messages".to_string()])), (3, None)]);
 }
+
+#[test]
+fn xfer_orphan_debt_survives_the_retire_of_the_operations() {
+    let (store, _) = booted_store();
+    let inner = store.lock();
+    inner.connection.execute("INSERT INTO upload_orphan (upload_id, key) VALUES ('up1', 'Moment:r1:upload')", []).unwrap();
+    super::reset::retire_operations(&inner.connection, None, None).unwrap();
+    let kept: i64 = inner.connection.query_row("SELECT COUNT(*) FROM upload_orphan", [], |row| row.get(0)).unwrap();
+    assert_eq!(kept, 1, "the abort debt of a multipart upload survives the end of the session (owner decision)");
+}
