@@ -1,5 +1,8 @@
 //! D-263 (class K-ENDCAUSE): every public wait of the bridge that ends by a cause carries that cause to the caller by one mapping; a cancelled upload ends with the outcome `Discarded` of its removal (transfer.md Removing x Committed{Cancel}). `pull`, the load wait, the write and upload outcome waits map `Closed` -> `Closed`, `SessionEnded` -> `NoSession`, `Cancelled`/`Discarded` -> `Interrupted` with the cause in the detail. `call` and `session_call` are excluded (D-253 keeps `Interrupted`). The table drives each wait to each cause through the public API on the Rig and the upload Stand.
 use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Wake, Waker};
 
 use super::rig_tests::{bound, Rig, BOUND};
 use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
@@ -223,4 +226,88 @@ async fn boundary_end_cause_per_wait() {
     matrix.check("stream pull", kind, "Cancelled", &cause_tag(&EndCause::Cancelled), &stream_cancelled().await);
 
     matrix.finish();
+}
+
+struct AnswerWake(tokio::sync::Notify);
+
+impl Wake for AnswerWake {
+    fn wake(self: Arc<Self>) { self.0.notify_one(); }
+    fn wake_by_ref(self: &Arc<Self>) { self.0.notify_one(); }
+}
+
+fn poll_pending<F: Future>(future: Pin<&mut F>, wake: &Arc<AnswerWake>) {
+    let waker = Waker::from(wake.clone());
+    assert!(future.poll(&mut Context::from_waker(&waker)).is_pending());
+}
+
+async fn answer_woke(wake: &AnswerWake) { within_named(BOUND, "owner answered the public call", wake.0.notified()).await; }
+
+async fn command_after_answer() -> String {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    rig.database.set_online(false).unwrap();
+    let epoch = rig.database.session_epoch();
+    let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
+    let mut call = Box::pin(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3)));
+    poll_pending(call.as_mut(), &wake);
+    answer_woke(&wake).await;
+    let writer = rig.database.db.lock();
+    poll_pending(call.as_mut(), &wake);
+    drop(writer);
+    answer_woke(&wake).await;
+    rig.database.close_now();
+    result_tag(bound(call).await)
+}
+
+async fn read_after_answer() -> String {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
+    let writer = rig.database.db.lock();
+    let mut call = Box::pin(rig.database.read_row(epoch, "User".into(), "1".into()));
+    poll_pending(call.as_mut(), &wake);
+    drop(writer);
+    answer_woke(&wake).await;
+    rig.database.close_now();
+    result_tag(bound(call).await)
+}
+
+async fn load_after_answer() -> String {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("MyProfile");
+    let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
+    let mut call = Box::pin(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()));
+    poll_pending(call.as_mut(), &wake);
+    answer_woke(&wake).await;
+    poll_pending(call.as_mut(), &wake);
+    gate.entered().await;
+    gate.release();
+    answer_woke(&wake).await;
+    rig.database.close_now();
+    result_tag(bound(call).await)
+}
+
+async fn outcome_after_answer() -> String {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    let receipt = bound(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3))).await.unwrap();
+    let row = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
+    let mut call = Box::pin(rig.database.outcome(receipt));
+    poll_pending(call.as_mut(), &wake);
+    bound(rig.database.discard(epoch, "Message".into(), row, None)).await.unwrap();
+    answer_woke(&wake).await;
+    rig.database.close_now();
+    outcome_tag(bound(call).await)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn boundary_close_after_owner_answer() {
+    let actual = (command_after_answer().await, read_after_answer().await, load_after_answer().await, outcome_after_answer().await);
+    assert_eq!(actual, ("Closed".into(), "Closed".into(), "Closed".into(), "Closed".into()));
 }
