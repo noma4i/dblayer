@@ -19,7 +19,7 @@ pub enum WireOutcome {
     Answer { sequence: Option<i64>, body: Value },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnswerKind {
     Transient { reason: String },
     Unknown,
@@ -28,6 +28,8 @@ pub enum AnswerKind {
     DocumentMissing,
     Answered { sequence: Option<i64> },
     NotConsumed { code: SessionCode },
+    PermanentSession { code: SessionCode },
+    PermanentGraphql,
     Permanent { status: Option<u16> },
 }
 
@@ -47,18 +49,23 @@ pub fn refusal(body: &Value) -> Option<SessionCode> {
 const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";
 pub(crate) const RETRYABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 
-fn answered(sequence: Option<i64>, body: &Value, sequenced: bool) -> AnswerKind {
+fn answered(sequence: Option<i64>, body: &Value, sequenced: bool, has_document: bool) -> AnswerKind {
     let name = refusal_name(body);
     let name = name.as_deref();
     if body.get("revoked") == Some(&Value::Bool(true)) || name == Some("SESSION_ENDED") {
         return AnswerKind::Revoked;
     }
     match name {
-        Some(DOCUMENT_MISSING) if sequence.is_none() => return AnswerKind::DocumentMissing,
+        Some(DOCUMENT_MISSING) if sequence.is_none() && !has_document => return AnswerKind::DocumentMissing,
+        Some(DOCUMENT_MISSING) if sequence.is_none() => return AnswerKind::PermanentGraphql,
         Some("UNAUTHENTICATED") => return AnswerKind::Refused { code: SessionCode::Unauthenticated },
         Some("REPLAYED_REQUEST") => return if sequenced { AnswerKind::Refused { code: SessionCode::ReplayedRequest } } else { AnswerKind::Transient { reason: "REPLAYED_REQUEST".into() } },
         Some("SEQUENCE_CONFLICT") if sequenced => return AnswerKind::Refused { code: SessionCode::SequenceConflict },
+        Some("SEQUENCE_CONFLICT") => return AnswerKind::PermanentSession { code: SessionCode::SequenceConflict },
         _ => {}
+    }
+    if let Some(name) = name.filter(|name| sequence.is_none() && RETRYABLE_CODES.contains(name)) {
+        return AnswerKind::Transient { reason: name.into() };
     }
     if sequenced {
         return match (sequence, name) {
@@ -67,29 +74,28 @@ fn answered(sequence: Option<i64>, body: &Value, sequenced: bool) -> AnswerKind 
             (None, None) => AnswerKind::NotConsumed { code: SessionCode::Other },
         };
     }
-    match name {
-        Some(name) if RETRYABLE_CODES.contains(&name) => AnswerKind::Transient { reason: name.into() },
-        _ => AnswerKind::Answered { sequence },
-    }
+    AnswerKind::Answered { sequence }
 }
 
-pub fn classify(outcome: &WireOutcome, sequenced: bool) -> AnswerKind {
+pub fn classify(outcome: &WireOutcome, sequenced: bool, has_document: bool) -> AnswerKind {
     match outcome {
+        WireOutcome::Unsent(_) if sequenced => AnswerKind::Unknown,
         WireOutcome::Unsent(reason) => AnswerKind::Transient { reason: reason.clone() },
         WireOutcome::Lost if sequenced => AnswerKind::Unknown,
         WireOutcome::Lost => AnswerKind::Transient { reason: "no answer".into() },
         WireOutcome::Unreadable if sequenced => AnswerKind::Unknown,
         WireOutcome::Unreadable => AnswerKind::Permanent { status: None },
         WireOutcome::Status(401) => AnswerKind::Refused { code: SessionCode::Unauthenticated },
+        WireOutcome::Status(408 | 425 | 429 | 500..=599) if sequenced => AnswerKind::Unknown,
         WireOutcome::Status(408 | 425 | 429 | 500..=599) => AnswerKind::Transient { reason: "http status".into() },
         WireOutcome::Status(status) => AnswerKind::Permanent { status: Some(*status) },
-        WireOutcome::Answer { sequence, body } => answered(*sequence, body, sequenced),
+        WireOutcome::Answer { sequence, body } => answered(*sequence, body, sequenced, has_document),
     }
 }
 
 /// The failure of a body the server answered with a retryable code on a pair without a `sequence`; `None` when the answer is final.
 pub fn transient_failure(body: &Value) -> Option<super::TransportError> {
-    match classify(&WireOutcome::Answer { sequence: None, body: body.clone() }, false) {
+    match classify(&WireOutcome::Answer { sequence: None, body: body.clone() }, false, true) {
         AnswerKind::Transient { reason } => Some(super::TransportError::Graphql { messages: vec![reason], extensions: None }),
         _ => None,
     }

@@ -319,7 +319,11 @@ impl OutboxState {
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         if self.removed.contains(&op_id) { return; }
         match outcome {
-            AuthorOutcome::Response(body) => {
+            AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. } } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }
+                self.transport_failed(op_id, true, fx);
+            }
+            AuthorOutcome::Response { body, .. } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.pending_owned = false;
                     operation.stage = Stage::Landing;

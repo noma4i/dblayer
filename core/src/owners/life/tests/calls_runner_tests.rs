@@ -47,5 +47,5 @@ fn call_transport_error_keeps_the_type_and_the_fields() {
     assert_eq!(session(SessionError::Security { code: SecurityCode::TlsTrust, detail: "pin".into() }), CallError::Failed(DbError::Security { code: SecurityCode::TlsTrust, detail: "pin".into() }));
     assert_eq!(session(SessionError::TooLarge { size: 9, limit: 4 }), CallError::Failed(DbError::RequestTooLarge { size: 9, limit: 4 }));
     assert!(matches!(session(SessionError::Rejected(crate::owners::contract::RejectReason::Storage("full".into()))), CallError::Failed(DbError::Storage { .. })));
-    assert!(matches!(typed(AuthorOutcome::Response("not json".into())), CallError::Failed(DbError::Invalid { .. })));
+    assert!(matches!(typed(AuthorOutcome::Response { body: "not json".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } }), CallError::Failed(DbError::Invalid { .. })));
 }

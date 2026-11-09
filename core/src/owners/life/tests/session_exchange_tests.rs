@@ -118,7 +118,7 @@ async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_th
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let reply = mutate_once(&life, json!({}).to_string()).await;
-    assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{reply:?}");
+    assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { .. })), "{reply:?}");
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (2, true));
     assert_eq!(world.server.seen().iter().map(|request| request["sequence"].clone()).collect::<Vec<Value>>(), [json!(1), json!(2)]);
@@ -131,7 +131,7 @@ async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let reply = mutate_once(&life, json!({}).to_string()).await;
-    let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(body)) = reply else { panic!("{reply:?}") };
+    let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { body, .. }) = reply else { panic!("{reply:?}") };
     let (_, pending) = rows(&db);
     let answers = {
         let inner = db.lock();
@@ -152,7 +152,7 @@ async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() 
     let lost = attempt(&life, req_id, json!({}).to_string()).await;
     assert!(matches!(lost, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Dropped | crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network | crate::owners::contract::ErrorClass::Server, .. })), "{lost:?}");
     let reply = attempt(&life, req_id, json!({}).to_string()).await;
-    assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{reply:?}");
+    assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { .. })), "{reply:?}");
     let seen = world.server.seen();
     assert_eq!(seen.len(), 3, "the sign-in, the request and its repeat");
     assert_eq!(seen[1]["requestId"], seen[2]["requestId"], "the repeat carries the request id of the first send");
@@ -170,7 +170,7 @@ async fn a_request_over_the_size_limit_is_refused_and_spends_no_sequence() {
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (1, true), "the refused request left no pending and spent no sequence");
     let next = mutate_once(&life, json!({}).to_string()).await;
-    assert!(matches!(next, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{next:?}");
+    assert!(matches!(next, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { .. })), "{next:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -362,7 +362,7 @@ async fn request_ids_are_random_uuid_v4_and_do_not_repeat_after_a_reopen() {
         let (client, life) = world.open(&db).await;
         if rows(&db).0.is_none() { sign_in(&client).await; }
         let reply = mutate_once(&life, json!({}).to_string()).await;
-        assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
+        assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response { .. })), "{reply:?}");
         let _ = crate::test_wait::within(life.close().wait()).await;
     }
     let ids: Vec<String> = world.server.seen().iter().map(|request| request["requestId"].as_str().unwrap().to_string()).collect();
@@ -496,7 +496,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
     drop(life.foreground());
     let reply = crate::test_wait::within(waiting).await.unwrap();
-    assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
+    assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response { .. })), "{reply:?}");
     assert_eq!(world.server.seen().len(), sent + 1, "one request, with the pair it was stored with");
     slot.memory.set("a-foreign-secret").unwrap();
     let lost = mutate_once(&life, json!({}).to_string()).await;
@@ -510,9 +510,9 @@ fn only_a_revoked_logout_answer_is_revoked() {
     use crate::transport::encrypted::Answer;
     let answer = |body: Value| Ok(Answer { sequence: Some(2), body });
     let revoked = json!({ "revoked": true });
-    assert!(matches!(super::session_runner::session_input(1, 1, true, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, false, true, answer(revoked)), SessionInput::Response { .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, true, true, answer(json!({}))), SessionInput::Response { .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, false, true, true, answer(revoked)), SessionInput::Response { .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answer(json!({}))), SessionInput::Response { .. }));
 }
 
 #[test]
@@ -520,7 +520,7 @@ fn session_http_auth_status() {
     use crate::owners::session::SessionInput;
     use crate::transport::TransportError;
     for status in [401, 403] {
-        let input = super::session_runner::session_input(1, 1, false, true, Err(TransportError::Http { status, body: "refused".into() }));
+        let input = super::session_runner::session_input(1, 1, false, true, true, Err(TransportError::Http { status, body: "refused".into() }));
         match (status, input) {
             (401, SessionInput::HttpError { auth: true, .. }) => {},
             (403, SessionInput::HttpError { auth: false, status: 403, temporary: false, .. }) => {},

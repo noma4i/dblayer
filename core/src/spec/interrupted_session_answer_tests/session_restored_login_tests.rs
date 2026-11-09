@@ -12,7 +12,7 @@ pub(super) fn commit_landing(rig: &mut Rig, effects: &[SessionEffect]) -> Vec<Se
 }
 
 pub(super) fn login_response(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> {
-    let landing = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None });
+    let landing = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
     commit_landing(rig, &landing)
 }
 

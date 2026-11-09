@@ -117,7 +117,7 @@ fn queued_of(queued: &Queued) -> RefQueued {
 
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {
-        AuthorOutcome::Response(body) => Outcome::Response(body.clone()),
+        AuthorOutcome::Response { body, .. } => Outcome::Response(body.clone()),
         AuthorOutcome::Error { class, error, pending_retained } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error), *pending_retained),
         AuthorOutcome::Dropped => Outcome::Dropped,
     }
@@ -255,7 +255,7 @@ impl Twin {
             Input::RestoreReady { epoch } => SessionInput::RestoreReady { epoch },
             Input::RestoreFailed { epoch, error } => SessionInput::RestoreFailed { epoch, error },
             Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
-            Input::Response { request_id, attempt_id, body, sequence, refusal } => SessionInput::Response { request_id, attempt_id, body, sequence, refusal },
+            Input::Response { request_id, attempt_id, body, sequence, refusal } => SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind: crate::transport::AnswerKind::Answered { sequence: sequence.and_then(|value| i64::try_from(value).ok()) } },
             Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },

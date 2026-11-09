@@ -42,10 +42,7 @@ impl EncryptedTransport {
 
     async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
-        let mut answer = self.exchange_once(&credential, path, &body, wire).await?;
-        if crate::transport::refusal_name(&answer.body).as_deref() == Some("REPLAYED_REQUEST") {
-            answer = self.exchange_once(&credential, path, &body, crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?;
-        }
+        let answer = self.exchange_once(&credential, path, &body, wire).await?;
         match transient_failure(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
     }
 
@@ -60,7 +57,7 @@ impl EncryptedTransport {
         let waiter = life.mutate_for_call(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
-                crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
+                crate::owners::session::AuthorOutcome::Response { body, .. } => Ok(Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }),
                 crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Server, pending_retained: true, .. } => Err(TransportError::Network("the server asked to retry".into())),
                 crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
                 crate::owners::session::AuthorOutcome::Dropped => Err(TransportError::Network("the answer was not received".into())),

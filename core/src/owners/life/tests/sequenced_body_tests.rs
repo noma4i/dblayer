@@ -57,7 +57,7 @@ struct LifeOutcome(String);
 
 fn answer_text(outcome: &crate::runtime::Outcome<LifeReply>) -> LifeOutcome {
     match outcome {
-        crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(text))) => LifeOutcome(text.clone()),
+        crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response { body: text, .. })) => LifeOutcome(text.clone()),
         other => panic!("no answer: {other:?}"),
     }
 }
@@ -87,7 +87,7 @@ async fn signed_in() -> (World, Arc<Store>, Arc<crate::owners::life::Life>, Arc<
 async fn sess_prop_sequenced_body_one_per_pair() {
     let (world, _db, life, _client) = signed_in().await;
     let first = crate::test_wait::within(life.mutate_answered(None, 1 << 42, GRAPHQL.into(), mutation("First"), 0).wait()).await;
-    assert!(matches!(first, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(ref text))) if text.contains("done")), "{first:?}");
+    assert!(matches!(first, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response { body: ref text, .. })) if text.contains("done")), "{first:?}");
     let sent = sequenced(&world);
     let pairs = at_number(&sent, 2);
     assert_eq!(pairs.len(), 2, "an empty registry: the hash-only pair, then the full pair with the same number: {sent:?}");
@@ -97,7 +97,7 @@ async fn sess_prop_sequenced_body_one_per_pair() {
     assert_eq!(pairs[1].2["query"], json!(document_of("First")));
     world.server.register(&document_of("Second"));
     let second = crate::test_wait::within(life.mutate_answered(None, (1 << 42) + 1, GRAPHQL.into(), mutation("Second"), 0).wait()).await;
-    assert!(matches!(second, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(_)))), "{second:?}");
+    assert!(matches!(second, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response { .. }))), "{second:?}");
     let sent = sequenced(&world);
     let pairs = at_number(&sent, 3);
     assert_eq!(pairs.len(), 1, "a registered document: one hash-only pair: {sent:?}");
@@ -117,7 +117,7 @@ async fn sess_prop_sequenced_body_one_per_pair_retry() {
     let lost = crate::test_wait::within(life.mutate_answered(None, req_id, GRAPHQL.into(), mutation("Retry"), 0).wait()).await;
     assert!(matches!(lost, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Dropped | AuthorOutcome::Error { .. }))), "{lost:?}");
     let again = crate::test_wait::within(life.mutate_answered(None, req_id, GRAPHQL.into(), mutation("Retry"), 0).wait()).await;
-    assert!(matches!(again, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(_)))), "{again:?}");
+    assert!(matches!(again, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response { .. }))), "{again:?}");
     let sent = sequenced(&world);
     let pairs = at_number(&sent, 2);
     assert_eq!(pairs.len(), 2, "the pair went twice: {sent:?}");

@@ -21,7 +21,7 @@ use crate::transport::{classify_answer, AnswerKind, WireOutcome};
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
-use crate::transport::{NetworkPurpose, SessionCode, TransportError};
+use crate::transport::{NetworkPurpose, TransportError};
 
 struct Wire {
     id: String,
@@ -187,23 +187,19 @@ fn secret_for(credentials: &dyn CredentialSlot, expected: Option<&str>) -> Resul
     }
 }
 
-pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout: bool, sequenced: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
+pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout: bool, sequenced: bool, has_document: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
-            if let Some(code) = crate::transport::refusal(&answer.body).filter(|code| *code != SessionCode::Other) {
-                return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
-            }
-            if matches!(classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced), AnswerKind::Transient { .. }) {
-                return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: Some(answer.body.to_string()) };
-            }
+            let kind = classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced, has_document);
+            let refusal = match kind { AnswerKind::Refused { code } | AnswerKind::PermanentSession { code } => Some(code), _ => None };
             if logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
                 return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
             }
-            SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: None }
+            SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal, kind }
         }
         Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
         Err(TransportError::Http { status: 401, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
-        Err(error) if matches!(&error, TransportError::Http { status, .. } if matches!(classify_answer(&WireOutcome::Status(*status), true), AnswerKind::Permanent { .. })) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
+        Err(error) if matches!(&error, TransportError::Http { status, .. } if matches!(classify_answer(&WireOutcome::Status(*status), sequenced, has_document), AnswerKind::Permanent { .. })) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
                 TransportError::RequestTooLarge { size, limit } => (0, Some((*size, *limit))),
@@ -297,6 +293,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 };
                 let (exchange, back, credentials) = (self.exchange.clone(), back.clone(), self.secret.slot());
                 let logout = pending.class == OperationClass::Logout;
+                let has_document = pending.document.is_none();
                 let body: Value = serde_json::from_str(&pending.body).unwrap_or(Value::Null);
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
@@ -312,7 +309,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     };
                     let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
                     back.reply(EpochStamp::Control, match sent {
-                        Ok(result) => session_input(request_id, attempt_id, logout, sequence.is_some(), result),
+                        Ok(result) => session_input(request_id, attempt_id, logout, sequence.is_some(), has_document, result),
                         Err(_) => SessionInput::GateClosed { request_id, attempt_id },
                     });
                 }));

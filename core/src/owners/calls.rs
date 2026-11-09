@@ -129,7 +129,7 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
         CallError::Graphql { messages, extensions } if kind == CallKind::Query => {
             let code = extensions.as_ref().and_then(|extension| extension.code.as_deref()).or_else(|| messages.first().map(String::as_str));
             let body = serde_json::json!({ "error": code });
-            matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false), crate::transport::AnswerKind::Transient { .. }).then_some(RetryPolicy::QueryServer)
+            matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false, true), crate::transport::AnswerKind::Transient { .. }).then_some(RetryPolicy::QueryServer)
         }
         _ => None,
     }

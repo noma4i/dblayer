@@ -109,7 +109,7 @@ fn sess_resume_login_epoch_started() {
     rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     let attempt = rig.start();
     rig.send(ask_answer(1));
-    let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None });
+    let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
     rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionStarted })).is_empty());
@@ -149,7 +149,7 @@ fn sess_prop_resume_once() {
     let mut rig = Rig::new();
     rig.restore();
     let attempt = rig.start();
-    let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None });
+    let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
     let batch = response.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, sequence: Some(1), .. } => Some(*batch), _ => None }).unwrap();
     let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(!committed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
@@ -171,7 +171,7 @@ fn sess_wait_resume() {
     let attempt = rig.start();
     rig.send(ask_answer(1));
     rig.send(ask_answer(2));
-    let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None });
+    let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
     let batch = response.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
     let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
     let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));

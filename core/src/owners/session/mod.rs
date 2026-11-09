@@ -187,7 +187,7 @@ pub struct Landed {
 /// What the author of a `Mutate` hears: `Transport{req_id, Response(body) / Error{class, X} / Dropped}`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthorOutcome {
-    Response(String),
+    Response { body: String, kind: crate::transport::AnswerKind },
     Error { class: ErrorClass, error: SessionError, pending_retained: bool },
     Dropped,
 }
@@ -259,7 +259,7 @@ pub enum SessionInput {
     RestoreFailed { epoch: Epoch, error: String },
     /// The snapshot of `ReadIntents`: Session classifies `pending`; `answers` go to the authors, `pending_lost` is the dropped `encrypted_pending` (also `Open.dropped_pending`).
     Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
-    Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
+    Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode>, kind: crate::transport::AnswerKind },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
@@ -293,6 +293,7 @@ struct AnswerAfterPublish {
 pub struct SessionState {
     phase: SessionPhase,
     credential: Option<Credential>,
+    answer_kind: Option<crate::transport::AnswerKind>,
     queue: VecDeque<Queued>,
     online: Option<bool>,
     epoch: Epoch,
@@ -361,13 +362,13 @@ fn pending_of(phase: &SessionPhase) -> Option<PendingCall> {
 }
 
 /// The result of the pending request goes to its call (`reply`) and to its `Mutate` author.
-fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) { finish_retained(fx, pending, result, false); }
+fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) { finish_retained(fx, pending, result, false, None); }
 
-fn finish_retained(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer, pending_retained: bool) {
+fn finish_retained(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer, pending_retained: bool, kind: Option<crate::transport::AnswerKind>) {
     if let Some(id) = pending.reply { reply(fx, id, result.clone()); }
     if let Some(author) = pending.author {
         let outcome = match result {
-            Ok(body) => AuthorOutcome::Response(body),
+            Ok(body) => AuthorOutcome::Response { body, kind: kind.unwrap_or(crate::transport::AnswerKind::Answered { sequence: None }) },
             Err(error) => AuthorOutcome::Error { class: ErrorClass::Permanent, error, pending_retained },
         };
         fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });

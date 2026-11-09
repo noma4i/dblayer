@@ -19,7 +19,7 @@ fn out_answer_releases_slot_before_decoding() {
     twin.committed(second);
     assert_eq!(twin.stage(second), Some(St::Queued));
     let request_id = twin.state().ops[&first].request_id;
-    let effects = twin.post(OutboxInput::Answered { req_id: request_id, outcome: crate::owners::session::AuthorOutcome::Response("{}".into()) });
+    let effects = twin.post(OutboxInput::Answered { req_id: request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: "{}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
     assert_eq!((twin.stage(first), twin.stage(second), sent_ids(&effects)), (Some(St::Landing), Some(St::Sending), vec![second]));
 }
 

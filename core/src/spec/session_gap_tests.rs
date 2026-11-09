@@ -38,7 +38,7 @@ fn sess_epoch_ended_kept() {
                 let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
                 let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
                 let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
-                let input = if phase == 2 { SessionInput::Dropped { request_id: 11, attempt_id: attempt } } else { SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(5), refusal: None } };
+                let input = if phase == 2 { SessionInput::Dropped { request_id: 11, attempt_id: attempt } } else { SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(5), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(5) } } };
                 send(&mut det, address, &log, input);
             }
             let before = det.state(address).unwrap().phase().clone();
@@ -67,7 +67,7 @@ fn sess_generating_other() {
         assert!(matches!(before, SessionPhase::Generating { .. } | SessionPhase::Storing { .. }));
         let inputs = [
             SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick(Time(0)),
-            SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None },
+            SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: None } },
             SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into() },
             SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None },
             SessionInput::Dropped { request_id: 9, attempt_id: 9 },

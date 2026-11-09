@@ -494,7 +494,18 @@ impl SessionState {
             SessionInput::GateClosed { request_id, attempt_id } if mine(request_id, attempt_id) => {
                 self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
             }
-            SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
+            SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } if mine(request_id, attempt_id) => {
+                if matches!(kind, crate::transport::AnswerKind::Transient { .. }) {
+                    if let Some(author) = pending.author {
+                        fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind } });
+                        self.phase = SessionPhase::PendingHeld { pending };
+                    } else if self.is_online() {
+                        fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
+                        self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
+                    } else { self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork }; }
+                    return;
+                }
+                self.answer_kind = Some(kind);
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
                     let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session(code) };
@@ -526,7 +537,7 @@ impl SessionState {
             SessionInput::HttpError { request_id, attempt_id, temporary: true, status, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     match body {
-                        Some(_) => author_error_retained(fx, author, pending.request_id, ErrorClass::Server, SessionError::Http { status }, true),
+                        Some(body) => fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { reason: "server".into() } } }),
                         None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
                     }
                     self.phase = SessionPhase::PendingHeld { pending };

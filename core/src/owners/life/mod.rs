@@ -281,7 +281,7 @@ impl Wiring {
             super::session::OUTBOX_AUTHOR => self.to_outbox(OutboxInput::Answered { req_id, outcome }),
             super::session::CALLS_AUTHOR => { self.calls_answers.settle(OutcomeId::from_raw(req_id), outcome); }
             WAITER_AUTHOR.. => {
-                if !matches!(&outcome, AuthorOutcome::Dropped | AuthorOutcome::Error { pending_retained: true, .. }) { self.settle_request(req_id); }
+                if !matches!(&outcome, AuthorOutcome::Dropped | AuthorOutcome::Error { pending_retained: true, .. } | AuthorOutcome::Response { kind: crate::transport::AnswerKind::Transient { .. }, .. }) { self.settle_request(req_id); }
                 self.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome));
             }
             _ => self.fault(format!("no author {author} for the answer to request {req_id}")),
