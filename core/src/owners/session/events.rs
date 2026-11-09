@@ -497,7 +497,8 @@ impl SessionState {
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
-                    self.land(pending, Err(SessionError::Session(code)), None, confirmed, false, fx);
+                    let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session(code) };
+                    self.land(pending, Err(error), None, confirmed, false, fx);
                 } else if pending.class == OperationClass::Sessionless {
                     self.land(pending, Ok(body), None, None, false, fx);
                 } else if sequence == Some(pending.sequence) {
