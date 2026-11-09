@@ -243,5 +243,5 @@ fn out_group_member_removed() {
     twin.commit_batch(batch);
     let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"member\":\"{row}\"}}") }).collect())];
     twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!((twin.store_text.contains("\\\"member\\\":\\\"a\\\""), twin.store_text.contains("\\\"member\\\":\\\"b\\\""), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")), (true, false, true, false), "the answer of the pair lands without the removed row: {} {removed:?}", twin.store_text);
+    assert_eq!((twin.store_text.contains("\\\"member\\\":\\\"a\\\""), twin.store_text.contains("\\\"member\\\":\\\"b\\\""), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")), (true, true, true, false), "the answer of the pair lands with every received row, the tombstone of the removed member is kept by Store (D-258d): {} {removed:?}", twin.store_text);
 }
