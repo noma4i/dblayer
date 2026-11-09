@@ -432,7 +432,11 @@ impl Session {
                 }
             }
             Queued::Mutate { author, owner, req_id, epoch, path, body, purpose } => {
-                if self.pub_state == PubState::Closing || epoch != self.epoch || self.credential.is_none() {
+                if self.pub_state == PubState::Closing {
+                    out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::Closed));
+                    return;
+                }
+                if epoch != self.epoch || self.credential.is_none() {
                     out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::NoSession));
                     return;
                 }

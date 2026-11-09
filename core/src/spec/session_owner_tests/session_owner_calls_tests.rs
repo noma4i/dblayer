@@ -229,7 +229,7 @@ fn sess_idle_mutate_stale() {
     let stale = Input::Mutate { author: 7, owner: None, req_id: 11, epoch: EPOCH + 1, path: OTP.into(), body: "{}".into(), purpose: 0 };
     assert_eq!(twin.feed(stale), vec![answer(7, 11, permanent(Fail::NoSession))]);
     twin.feed(published(PubState::Closing));
-    assert_eq!(twin.feed(mutate(7, 12)), vec![answer(7, 12, permanent(Fail::NoSession))]);
+    assert_eq!(twin.feed(mutate(7, 12)), vec![answer(7, 12, permanent(Fail::Closed))]);
 }
 
 #[test]
