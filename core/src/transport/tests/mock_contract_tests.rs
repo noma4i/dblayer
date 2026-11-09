@@ -29,3 +29,32 @@ async fn mock_contract_pairs_table() {
         assert_eq!(json!(seen), case["expect"], "{}", case["name"]);
     }
 }
+
+/// C0: rows of the server contract that the pairs table does not carry: the reply follows the operation, not the order of the calls; a PUT nobody scripted is refused; an error without a code reaches the client unchanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn mock_contract_operation_put_and_extensions_rows() {
+    let mock = MockTransport::new();
+    mock.enqueue("Ping", Reply::data(json!(1)));
+    mock.enqueue("Pong", Reply::data(json!(2)));
+    let call = |name: &str, id: u64| GraphQLRequest::new(format!("mutation {name} {{ x }}"), name, json!({})).by(super::WireIds::new(super::Author::Outbox, id, 1));
+    let pong = mock.mutate(call("Pong", 1)).await.unwrap();
+    let ping = mock.mutate(call("Ping", 2)).await.unwrap();
+    assert_eq!((pong.data, ping.data), (Some(json!(2)), Some(json!(1))), "a reply belongs to its operation, whatever the call order");
+
+    mock.enqueue("Bare", Reply::graphql_error_without_code("no code"));
+    let answer = mock.mutate(call("Bare", 3)).await.unwrap();
+    assert_eq!(answer.errors.len(), 1);
+    assert!(answer.errors[0].extensions.is_none() && answer.errors[0].code().is_none(), "the double neither invents nor drops extensions");
+
+    let file = std::env::temp_dir().join(format!("c0-put-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&file, b"x").unwrap();
+    let request = PutRequest {
+        url: "https://s3/unscripted".into(),
+        headers: Vec::new(),
+        file: PutFile { path: file.to_string_lossy().into_owned(), offset: 0, length: 1 },
+        identity: TransferIdentity { operation_id: 1, item_id: "i".into(), step: TransferStep::Part { number: 1 } },
+        cancel: CancelToken::new(),
+        sent: std::sync::Arc::new(|_| {}),
+    };
+    assert!(matches!(mock.put(request).await, Err(TransportError::Unscripted(_))), "a PUT nobody scripted is refused");
+}
