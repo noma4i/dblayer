@@ -224,6 +224,39 @@ fn win_ended() {
 // Waits: every call of the platform ends with one outcome on every terminal cell.
 
 #[test]
+fn win_wait_refresh_result() {
+    let mut success = fresh();
+    let effects = success.step(Input::Load { id: 9, goal: Goal::First, force: true });
+    assert_eq!(requests(&effects), 1);
+    assert!(!success.outcomes.iter().any(|(id, _)| *id == 9));
+    success.finish(None);
+    assert!(success.outcomes.contains(&(9, Result3::Loaded)));
+
+    let mut failed = fresh();
+    failed.step(Input::Load { id: 9, goal: Goal::First, force: true });
+    failed.fail(Failure::Permanent);
+    assert!(failed.outcomes.contains(&(9, Result3::Failed)));
+
+    let mut offline = fresh();
+    offline.step(Input::Online(false));
+    offline.step(Input::Load { id: 9, goal: Goal::First, force: true });
+    assert!(offline.outcomes.contains(&(9, Result3::Failed)));
+
+    for closing in [false, true] {
+        let mut twin = fresh();
+        twin.step(Input::Load { id: 9, goal: Goal::First, force: true });
+        take(&twin.log);
+        if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, Ended::SessionReset); }
+        twin.run();
+        let effects = take(&twin.log);
+        let answers: Vec<_> = effects.iter().filter_map(|effect| match effect { Emitted::Run(WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome }, .. }) => Some(format!("{outcome:?}")), _ => None }).collect();
+        let cause = if closing { "Closed" } else { "SessionEnded" };
+        assert_eq!(answers.len(), 1);
+        assert!(answers[0].contains(cause), "{:?}", answers);
+    }
+}
+
+#[test]
 fn win_wait_load() {
     let mut loaded = loading();
     loaded.finish(None);
