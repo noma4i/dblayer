@@ -12,7 +12,6 @@ try await DB.sessionReset()
 DBlayer.sessionReset()
 ```
 
-The sign-out also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
 
 A write applies to the local database at once, so every open stream updates immediately. Every write that reaches the server (`create`, `update`, `act`, `destroy`, a send and a media upload) is also placed in a durable queue in the same commit. The queue keeps it while the network is away and after the app closes.
 
@@ -93,7 +92,7 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), 
 
 ## Temporary ids
 
-A created row joins, at the front, the list of every remote scope whose parameters it carries and that has no constant variable filter, so a live list shows it at once. A loaded scope without parameters takes a created row when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`). A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
+A created row joins, at the front, the list of every remote scope whose parameters it carries and that has no constant variable filter, so a live list shows it at once. A loaded scope without parameters takes a created row when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`). A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Readers receive the swap as a `rewrite` edit that carries the `temporary` id, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
 Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `outcome()` waits for that operation alone.
 
@@ -121,7 +120,7 @@ val receipt = Note.create(groupId = group.id, body = "hi", account = scope)
 val noteId = receipt.outcome().confirmedValue?.id
 ```
 
-A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
+A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: readers get a `rewrite` edit with the `temporary` id, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
 
 ## Rolling back
 
@@ -143,11 +142,10 @@ This rule is the same for Swift and Kotlin, including the final upload mutation.
 
 [Batch uploads](files.md#create-several-records-with-uploads) create several local records in one operation and submit one ordered list after every remaining file finishes.
 Their `match_by` attributes match each server record to its temporary record, independently of response order.
-With `on_failure: :keep`, the errors `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY` keep the row in `failed`.
-`retry(action)` repeats the stored key. A response with a server row confirms success.
-The server defines how long it keeps the result. After that period, the key no longer guarantees a repeated successful response.
+With `on_failure: :keep`, a refusal such as `IN_PROGRESS` or `DUPLICATE_CLIENT_KEY` keeps the row in `failed`.
+`retry(action)` repeats the stored key.
 
-- If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. `on_failure: :rollback` applies only to confirmed server refusals, while 40 undelivered attempts always retain `failed` and the edit.
+- If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits until the network returns. `on_failure: :rollback` applies only to confirmed server refusals, while 40 undelivered attempts always retain `failed` and the edit.
 - If the connection breaks after the transfer started, or no readable answer arrives, the library sends the same saved request again with the same request id, so the server applies it once.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
 - A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry(action)` hides it again and sends the destroy, `discard(action)` keeps the record and drops the destroy. `discard(action)` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
@@ -246,7 +244,7 @@ group.mute(mute = true)
 
 ## Changes beyond the row
 
-An operation writes its own row. It does not write other rows, lists or scopes on the device before the server answers.
+An operation writes its own row. Before the server answers it changes other rows and lists only through the four effects `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope` (see [models](models.md#effects-of-an-operation-before-the-answer)).
 The rows the server answers with arrive through `upsert Model, from: "path"` and `response from:`. A scope that the answer changes is read again with `refetch :scope`.
 
 ```ruby

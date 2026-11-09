@@ -24,12 +24,8 @@ Every record knows whether the server has seen it. The state is live like everyt
 
 The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
 
-Corrupt stored rollback data, revisions, sync states, and pending requests produce errors instead of empty or synced results.
-An upload stops when its durable state cannot be saved.
-If recording that failure also fails, database calls report a storage error and wake waiting operations.
-
 GraphQL `extensions.code` and `extensions.transactionDisposition` use the same types as [operation errors](models.md#graphql-errors) on Swift and Kotlin.
-They persist in SQLite node tables for queued operations, record sync state and upload failures. Retrying clears them with the previous failure.
+They persist for queued operations, record sync state and upload failures. Retrying clears them with the previous failure.
 
 ## Example: a moment that is still being sent
 
@@ -62,22 +58,20 @@ fun MomentRow(moment: Moment) {
 }
 ```
 
-State changes arrive like any other change: the row is delivered again with its new state, and the diff marks it `updated`.
+State changes arrive like any other change: the row is delivered again with its new state, as a `rewrite` edit of the stream.
 
 ## Queries by state
 
-`sync` works in queries, and every model has ready-made lists:
+A query can filter on the sync state of the rows with the field name `sync`, whose values are `pending`, `sending`, `failed` and `synced`:
 
 ```swift
-Moment.where(Moment.sync == .pending)
-Moment.unsynced        // everything not yet confirmed
-Moment.failed          // records waiting for a decision
+let failed = Query<Moment>().where(.equal("sync", .string("failed")))
+let unsent = Query<Moment>().where(.inList("sync", [.string("pending"), .string("sending")]))
 ```
 
 ```kotlin
-Moment.where(Moment.sync eq SyncState.Pending)
-Moment.unsynced        // everything not yet confirmed
-Moment.failed          // records waiting for a decision
+val failed = Query("Moment", Moment).where(Condition.equal("sync", JsonPrimitive("failed")))
+val unsent = Query("Moment", Moment).where(Condition.inList("sync", listOf(JsonPrimitive("pending"), JsonPrimitive("sending"))))
 ```
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
@@ -189,7 +183,7 @@ Later changes to the same record wait behind a `failed` change and are sent afte
 ## Online and offline
 
 Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The bindings hand one observer object of the platform to the core: it starts with the database and the core stops it before `close` returns. Each OS value (network path, app foreground, power saving mode) goes to the core as one input. An app calls nothing for them.
-Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, an action that needs the server fails at once with `Offline`, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
+Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
 
 ## Refreshing
 
@@ -204,7 +198,7 @@ When a mutation reloads watched lists, its result reports all failed reloads and
 - The whole `sync` value is part of every delivery: a change of `state`, `actions`, `dirtyFields` or `error` without a data change still reaches observers, in order. The parent of an included row is delivered when the sync of that row changes.
 - The state is written in the same commit that changes the queue, so a reader never sees a queued change without its state.
 - Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is sent again with the same request id after the restart.
-- When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Observers see the swap as `replaced`.
+- When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Readers see the swap as a `rewrite` edit with the `temporary` id.
 - Rows and queued changes of other models that point at the temporary id through a declared association are updated in the same commit.
 - A rollback restores the state saved in the change itself and only the parts the change still owns, see [writing data](writing-data.md#rolling-back).
 

@@ -307,9 +307,9 @@ end
 | `null: true` | the default is null |
 | `reset_after: 5.seconds` | after this time without a write the value returns to `default`. Needs `default:` |
 
-- Reads see the values: `user.typing` is part of the row, and `select` returns it.
+- Reads see the values: `user.typing` is part of the row.
 - A write restarts the timer. When the time is up the value returns to `default`.
-- A write and a reset reach observers as a normal change with the row in `diff.updated`. Neither creates a database revision.
+- A write and a reset reach readers as a change of the row in a delta of their stream.
 - Deleting a row removes its values. Writing the value a field already holds delivers nothing.
 - A write for a row that is not stored yet is kept and shows when the row arrives. The timer starts at the write, so a value for a row that never arrives lapses by `reset_after`.
 - `where`, `order`, `index` and `scope` cannot use an ephemeral field, because those run in SQL. `dblayer-gen` reports it with file and line.
@@ -345,7 +345,7 @@ model Presence, storage: :memory, expires_in: 1.minute do
 end
 ```
 
-- `expires_in:` is optional. A row that has not been written for that time is deleted, and observers receive it in `diff.removed`.
+- `expires_in:` is optional. A row that has not been written for that time is deleted, and readers receive its removal in a delta.
 - Every write renews the time: a local `create` or `update`, a subscription event or a response that lands the row. A write of equal values renews it too and sends no change to observers.
 - A memory model has no `:file` attributes and no model `operation` blocks, so it has no outbox.
 - Use it for search results, prices and other data that is fetched, shown and dropped.
@@ -465,7 +465,7 @@ A `query "Operation"` line connects a scope to the server. A scope that depends 
 
 `parameter :afterSequence, :int` and `parameter :includeRewards, :bool` declare parameters that are sent as a JSON integer or boolean. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin: `:int` is `Long` in every Kotlin output, like the attribute), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :parameter`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
 
-Names of attributes, parameters, scopes, associations and operations start with a lowercase letter and do not end with `_`. A scope, association or operation cannot take `id`, `find`, `where`, `save`, `count`, `exists`, `first`, `observe`, `order`, `retry`, `discard` or a generated member (`sync`, `uploads`, `modelName`, `layout`, `wireLayout`, `singleton`): the generator and `Database.open` read one list in the core. The generator also reads its own Swift and Kotlin output and refuses a model whose names print one member twice, such as an operation `upload_clip` beside a scope `uploadClipVariables`. The generator refuses, with the model and the function, a name that clashes with generated code: `account` in every function that takes an account, `id` in a `*Edge` read, `self`, `sync`, `uploads`, `modelName`, `layout`, `wireLayout` and `singleton` as fields, and the names of calls the generated code writes bare (`jsonValue`, `mapOf`, `onAccount` and the like). A model, type or enum named like a type the generated code imports (`Query`, `Condition`, `Order`, `Column`) and a GraphQL input field with such a name are refused too; `read`, `put` and `act` stay free names. Rename the attribute or parameter; the server name stays in `from:` or `variables`.
+Names of attributes, parameters, scopes, associations and operations start with a lowercase letter and do not end with `_`. A scope, association or operation cannot take `id`, `find`, `where`, `save`, `count`, `exists`, `first`, `observe`, `order`, `retry`, `discard` or a generated member (`sync`, `uploads`, `modelName`, `layout`, `wireLayout`, `singleton`, `rowRevision`, `estimatedBytes`): the generator and `Database.open` read one list in the core. The generator also reads its own Swift and Kotlin output and refuses a model whose names print one member twice, such as an operation `upload_clip` beside a scope `uploadClipVariables`. The generator refuses, with the model and the function, a name that clashes with generated code: `account` in every function that takes an account, `id` in a `*Edge` read, `self`, `sync`, `uploads`, `modelName`, `layout`, `wireLayout` and `singleton` as fields, and the names of calls the generated code writes bare (`jsonValue`, `mapOf`, `onAccount` and the like). A model, type or enum named like a type the generated code imports (`Query`, `Condition`, `Order`, `Column`) and a GraphQL input field with such a name are refused too; `read`, `put` and `act` stay free names. Rename the attribute or parameter; the server name stays in `from:` or `variables`.
 
 ```ruby
 scope :since do
@@ -589,7 +589,7 @@ val audio = Message.audioSince(chatId, afterSequence = 120)
 | `freshness expires_in: 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |
 | `preload`, `preload channel: ["lobby", "stage"]`, `preload vibeId: { from: "Vibe.list" }, limit: 40` | Automatically after session, reset, network return and leaving power saving. For `from`, a positive `limit` is required. The limit applies to unique windows of the parameter product. Parameters follow declaration order, ids follow the source scope. SQLite reads a bounded prefix, and source changes add incoming windows and cancel unneeded requests. Fresh windows are not requested again, errors go to the snapshot | no preload |
-| `scope :chat_members, members_complete: true do` | Automatic page chain, without `max_pages`. `settled` with `hasMore == false` only after the final `hasNextPage == false`. Initial window `tail: 50`, maximum 200 rows. Full membership is in SQLite, the window has no Ranked of all keys. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, the list is not complete | ordinary paged loading |
+| `scope :chat_members, members_complete: true do` | Automatic page chain, without `max_pages`. `settled` with `hasMore == false` only after the final `hasNextPage == false`. Full membership is stored in SQLite. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, the list is not complete | ordinary paged loading |
 | `refresh_on_foreground: true` (on the `scope` line, needs `query`) | a window that has a reader reloads on every foreground event, fresh or not | reloads only when stale |
 | `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
 | `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND | every row of the `where` columns |
@@ -668,7 +668,6 @@ edge?.rank                                                // FeedRank?
 - The answer of the same connection replaces the values of its rows, also with null. A row that leaves the connection loses its values. An answer without edges (a node read, a mutation, an event, a list, another connection) leaves them as they are.
 - The values live in the cache. A database that is rebuilt or reset loses them, and the next load of the connection brings them back.
 - A change of an edge value alone does not change the row or a live list. Read the value when the row is shown.
-- A read takes one row by key from the reader connection. It does not wait for a write and costs the same at 20 and at 2000 rows.
 - `edge` needs `paginate`, and each edge attribute needs `null: true` or `optional: true`. With `--schema` the key must exist on the edge type of the connection, the operation must select it, and the type must match the schema (`Int` is `:int`, `Float` is `:num`).
 - Edges of a connection nested inside an association give no values. `cursor` and `sequenceNumber` of the edge are not read.
 
@@ -714,7 +713,7 @@ model WalletTransaction do
 end
 ```
 
-Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `ready`, `event`, `lost` or `failed`.
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `ready`, `event`, `lost`, `gap` or `ended`.
 
 Any model with `changed_by` has an events stream (`scope.events(Model)`), whichever model declares the `changes` source. Opening it prepares the reader. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. The first item is `ready` once the source is open: every event after it reaches the stream, also before iteration or collection reads it. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
 
@@ -859,7 +858,7 @@ Filters run before normalization, deletion and writes for every effect.
 Declarations with the same operation, variables and account share one incoming stream.
 A scope with `variables` sends its subscription with the variables of the open window, and windows with equal variables share one subscription. When such a scope writes `id:`, each entry names a variable of the scope, or generation fails.
 All matching row declarations apply in one commit. `ephemeral` and `reread` effects run separately before that commit.
-Model-level subscriptions also expose generated `events()` without replay.
+Model-level subscriptions are read with `scope.events(Model)`, without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
 `effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
 `effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if:` for a payload path that deletes the row when it is true and `delete_unless:` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
@@ -874,9 +873,9 @@ Observers receive 1 change for the removal.
 Observing a model opens the shared subscription. The last cancel releases it.
 After a reconnect, only observed reads whose answers have expired are reread.
 Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
-A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving and never runs on a low-RAM Android device.
+A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving.
 The library reloads every `preload` scope when the window of the scope is stale. There is no call to reload all scopes at once.
-A `preload` scope yields to the app. It starts no request while an observed read of the app has not delivered its first snapshot or while a load the app asked for is in flight. At most 3 preload requests run at once, and each one waits until no load the app asked for is in flight. The library starts and resumes this itself, the app calls nothing.
+A `preload` scope yields to the app. It starts no request while an observed read of the app has not delivered its first snapshot or while a load the app asked for is in flight. Each preload request waits until no load the app asked for is in flight. The library starts and resumes this itself, the app calls nothing.
 Expiration alone starts no request. A later reconnect or read checks freshness again.
 Received events reread immediately. The first `Ready` does not trigger an extra reread.
 The full exchange is described in [Cable protocol](cable-protocol.md).

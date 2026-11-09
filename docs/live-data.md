@@ -79,7 +79,7 @@ val one = Moment.recent.readRow(id)
 
 ## Ephemeral values
 
-Ephemeral fields (see [models](models.md)) arrive in the same stream. A write or a timed reset puts the row in a delta and `revision` moves, because the value is part of the row the reader holds.
+Ephemeral fields (see [models](models.md)) arrive in the same stream. A write or a timed reset puts the row in a delta, because the value is part of the row the reader holds.
 An ephemeral value of an included row reaches the stream of its parent too.
 
 ```swift
@@ -187,7 +187,7 @@ val uuid = Moment.feedEdge(id)?.impressionUuid
 
 ## Remote relations are live too
 
-Opening a stream on a scope that has a `query` declaration loads it when its data is stale, keeps it fresh through its `subscribe` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
+Opening a stream on a scope that has a `query` declaration loads it when its data is stale, keeps it fresh through its `subscribe` subscription while someone reads it, and lets go after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
 
 | Call | Request | Keeps a subscription | Use it for |
 | ---- | ------- | -------------------- | ---------- |
@@ -210,7 +210,5 @@ Moment.byUser(userId = 5).load()
 val request = Moment.feed.beginLoad()
 request.cancel()
 ```
-
-A row that does not fit the generated model is skipped and logged as `Row of <Model> failed to decode`. An empty list with this line in the log means the model and the server schema disagree.
 
 See [server sync](server-sync.md) and [threading](threading.md).

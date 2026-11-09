@@ -184,7 +184,6 @@ Recovery depends on the response and whether it confirms the sequence:
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
-The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
 The [retry owner](#retries) preserves Pending across temporary failures.
 HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
@@ -201,9 +200,7 @@ A new encrypted request gets the old key of the operation. A new operation gets 
 An app value in `input.clientMutationId` takes priority, including an explicit `null`.
 The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
 
-The server stores the result by user, mutation name and key for its configured retention period. A retry with a live key gets the earlier successful result.
-`IN_PROGRESS` with `on_failure: :keep` leaves the row in `failed`. A manual `retry` repeats the same key.
-`DUPLICATE_CLIENT_KEY` with `on_failure: :keep` also keeps the row in `failed`.
+A refusal with `on_failure: :keep`, for example the server codes `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY`, leaves the row in `failed`. A manual `retry` repeats the same key.
 The library does not declare success without a server row. It does not try to find the row through an incomplete list.
 The app sets the keys `messageAlbumSend.items[].clientKey`. The library does not change them.
 
@@ -289,7 +286,6 @@ Redirects are refused. HTTP implementations do not reuse added application heade
 The core sets empty Accept and Accept-Language values to suppress system defaults, and both platforms send the headers as given.
 Bootstrap sends exactly one User-Agent with the library token and no application products.
 Each attempt creates a UUID, a response key and an issuedAt timestamp from the core clock. No sequence or pending request is stored.
-The server accepts issuedAt from 30 seconds ahead through 120 seconds old and returns `Cache-Control: no-store`.
 
 The request JWE uses RSA-OAEP and A256GCM. Its plaintext contains audience, kid, method, path, requestId, issuedAt, responseKey and body.
 The body contains platform, version and optional build.
@@ -425,40 +421,24 @@ Rules of the session:
 - Changes to the session tables migrate their stored values within the same transaction that recreates the database tables.
 - Missing sequence state for a stored credential returns the typed session error above before sending. Its detail remains `lost session sequence state for the stored credential`.
 - This error preserves the credential and pending request. The application decides how to recover. The core never guesses sequence numbers.
-- Only an absent credential creates a new credential. Explicit `sessionReset()` and confirmed logout clear the credential, session row and pending request.
+- Only an absent credential creates a new credential. `sessionReset()` and a `revoked` answer clear the credential, session row and pending request.
 - HTTP 503 and a lost connection wait for automatic retry. HTTP 400 returns immediately.
 
 The JWE size is checked before the pending row is saved and before the HTTP send.
 If the size exceeds 256 KiB, Swift gets `DbError.RequestTooLarge(size:limit:)` and Kotlin gets `DbException.RequestTooLarge` with the fields `size` and `limit`.
 This local refusal does not change the sequence of the existing session and creates no pending row.
 The next short request is sent without `sessionReset()`.
-The check applies to reads, `sessionCall`, logout and the repeated APQ request with the full document.
+The check applies to reads, `sessionCall`, the `logout` call and the repeated APQ request with the full document.
 On an APQ miss, the hash-only request already confirmed its sequence. A local refusal of the full document does not use the next sequence.
 A real HTTP 413 returns `Http` and removes Pending without spending its sequence.
 
 ### Upload failures
 
-File transfer steps also retry when the GraphQL error has `extensions.retryable: true`.
-The rule applies to upload creation, multipart init, presign and complete.
-Abort keeps its earlier behavior: after a refusal the uploadId stays, and the next start repeats the cleanup.
-The final content mutation follows the [write rules](files.md#rules-1): a confirmed refusal keeps `Failed` without an automatic retry.
-
-| Code with retryable:true | Transfer step | Final and plain mutation |
-| --- | --- | --- |
-| `UPLOAD_STORAGE_FAILURE` | retry with a pause | `Failed` |
-| `IN_PROGRESS` | retry with a pause | `Failed` |
-| `RATE_LIMITED` | retry with a pause | `Failed` |
-| `INVALID_RECEIPT` | retry with a pause if the step returned this code | `Failed`, transactionDisposition is kept |
-| `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
-| `SERVICE_UNAVAILABLE` | retry with a pause | retry with a pause |
-- `sessionReset()` ends the session without contacting the server. It ends the work of the old session, deletes the credential and the stored state, and clears the data of the account. It returns after the clearing. Signing out of the app is this one call.
-- Sign-in returns after the new session identity is visible to subsequent calls.
-- A receipt's `outcome()` returns `Interrupted` if session reset ends its epoch while the wait starts.
-- The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
+A transfer step retries network errors and the temporary GraphQL codes listed above under the upload budget. The final content mutation follows the [write rules](files.md#rules-1): a confirmed refusal keeps `Failed` without an automatic retry.
 
 ### Persisted queries
 
-The core sends a GraphQL call as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field (for a 545 byte document the body drops from 724 to 162 bytes before encryption).
+The core sends a GraphQL call as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field.
 
 | Server answer | Core |
 | ------------- | ---- |
@@ -812,7 +792,7 @@ end
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
 - Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
-- The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default). A reader that leaves from any thread starts that wait, so a reader that arrives within it reuses the open subscription.
+- The subscription starts when the first reader connects, is shared by all readers and closes after the last reader leaves.
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
 - A WebSocket close frame ends the current subscription even without a GraphQL `complete` message.
 - Bursts of events are merged into one commit.
@@ -850,10 +830,10 @@ val query = Document.bySlug("intro", DocumentSource.Web)   // a screen that read
 ```
 
 - Each set of values has its own subscription. Readers with the same canonical values (the key of the scope window) share one. A reader with other values opens another.
-- The subscription closes some time after the last reader of its set leaves. The other sets stay open.
+- The subscription closes after the last reader of its set leaves. The other sets stay open.
 - The application only reads the relation. It never opens or closes the subscription.
 - With `--schema`, the generator compares the arguments of the subscription document with the scope parameters by name and type. A required argument without a scope parameter, or an argument of another type, stops the generator with the file and line of `subscribe`. A scope parameter without an argument is allowed. Without `--schema` the arguments are not checked.
-- `subscribe` on a model (`listen`) takes no arguments.
+- `subscribe` on a model takes no arguments.
 
 ### Model-level subscriptions
 
@@ -882,7 +862,7 @@ You never write "if the mutation worked, reload the list".
 
 ## State for the UI
 
-Load phase (`LoadPhase`, error with its kind, has more pages, last loaded time) and the outbox (pending writes, send errors) are live too.
+The load state of a stream (`phase`, `error`, `hasMore`, `settled`, `total`, `loaded`) and the queue of operations (`scope.operations()`, pending writes and send errors) are live too.
 
 ### Application protocol configuration
 
@@ -930,6 +910,5 @@ val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVe
 DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson, uploadNotification = notification)
 ```
 
-`DBlayer.open` and `DBlayer.serverConfig` require Android Context first. Swift calls keep their argument lists.
-Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
+`DBlayer.open` and `DBlayer.serverConfig` take the Android `Context` first. Applications supply every protocol value before opening or fetching config.
 `UrlSessionTransport` and `OkHttpTransport` take no cable path. The core builds the WebSocket address from `EncryptedConfig` and passes it to `openCable`; the platform opens it and reports raw frames to `CableEvents`.
