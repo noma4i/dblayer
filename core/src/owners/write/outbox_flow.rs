@@ -81,6 +81,7 @@ impl OutboxState {
         if self.ops.get(&op_id).is_none_or(|operation| operation.cycle_id != cycle_id) {
             return;
         }
+        if self.ops[&op_id].cancels.is_some_and(|created| created != op_id) && self.stage_of(op_id) == Some(Stage::RollingBack(Why::Discarded)) { return; }
         if self.removed.contains(&op_id) {
             return self.remove_row_operation(op_id, fx);
         }
@@ -262,7 +263,13 @@ impl OutboxState {
         self.submit_replies.insert(op_id, reply);
         if let Some(created) = unsent_create {
             if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = Some(created); }
-            if let Some(operation) = self.ops.get_mut(&created) { operation.stage = Stage::RollingBack(Why::Discarded); }
+            let sequence = self.ops[&created].sequence;
+            let model = self.ops[&created].op.model.clone();
+            for operation in self.ops.values_mut().filter(|other| other.op_id != op_id && other.sequence >= sequence && other.stage != Stage::Done && other.op.model == model && other.op.row_id == row) {
+                operation.cancels = Some(created);
+                operation.before_cancel = Some(operation.stage);
+                operation.stage = Stage::RollingBack(Why::Discarded);
+            }
             self.store(created, CommitKind::Rollback, fx);
         } else {
             self.store(op_id, CommitKind::Intent, fx);

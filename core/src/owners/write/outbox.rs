@@ -45,6 +45,7 @@ pub struct OutboxState {
     pub(super) next_sequence: u64,
     pub(super) next_schedule: u64,
     pub(super) batches: BTreeMap<BatchId, Batch>,
+    pub(super) cancelled_commits: BTreeMap<OpId, i64>,
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
@@ -94,6 +95,7 @@ impl OutboxState {
             next_sequence: 1,
             next_schedule: 1,
             batches: BTreeMap::new(),
+            cancelled_commits: BTreeMap::new(),
             submit_replies: BTreeMap::new(),
             retry_waiters: Vec::new(),
             discard_waiters: Vec::new(),
@@ -190,6 +192,7 @@ impl OutboxState {
                 retry_uploads: Vec::new(),
                 reject_error: None,
                 cancels: None,
+                before_cancel: None,
                 restore_element: None,
                 rows_pending: false,
             },
@@ -257,6 +260,23 @@ impl OutboxState {
         };
         if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
             ops.extend(Self::transfer_outcomes(operation, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+        }
+        if kind == CommitKind::Rollback && operation.cancels == Some(op_id) {
+            let mut earlier = Vec::new();
+            let mut following: Vec<_> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage == Stage::RollingBack(Why::Discarded)).collect();
+            following.sort_by_key(|other| std::cmp::Reverse(other.sequence));
+            for other in following {
+                if let Some((table, key)) = &other.restore_element {
+                    earlier.push(StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() });
+                } else {
+                    earlier.extend([StoreOp::RollBack { op_id: other.op_id }, StoreOp::RemoveAnswer { request_id: other.request_id }]);
+                }
+                earlier.push(StoreOp::RemoveIntent { op_id: other.op_id });
+                if other.pending_owned { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
+                earlier.extend(Self::transfer_outcomes(other, &OutboxOutcome::Discarded).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+            }
+            earlier.append(&mut ops);
+            ops = earlier;
         }
         let intents = u64::from(kind == CommitKind::Intent);
         let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
