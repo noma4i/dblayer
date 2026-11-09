@@ -29,3 +29,12 @@ fn server_contract_object_pairs_table() {
         assert_eq!(json!(seen), case["expect"], "{}", case["name"]);
     }
 }
+
+#[test]
+fn sess_invalid_wire_request() {
+    let contract = ServerContract::new();
+    let admitted = contract.admit("ios".into(), "not a request".into());
+    let settled = contract.settle("ios".into(), "{\"requestId\": 1".into(), "token".into());
+    assert!(matches!(admitted, Err(crate::ffi::DbError::Invalid { .. })), "an unreadable wire request is refused, not treated as an empty one: {:?}", admitted.as_ref().err());
+    assert!(matches!(settled, Err(crate::ffi::DbError::Invalid { .. })), "{settled:?}");
+}
