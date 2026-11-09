@@ -75,9 +75,9 @@ pub struct Committed {
 }
 
 impl CommittedBroadcast {
-    /// The input of `Deliveries`: `All` touches every stream, a `Set` touches the streams of `tables` and `rows`.
+    /// The input of `Deliveries`: a reset (`rows` none) is `All` and reads no row stream, a write touches the streams of `tables` and `rows`.
     pub fn for_deliveries(self) -> Committed {
-        let models = if self.models == Models::All { Models::All } else { Models::default() };
+        let models = if self.models == Models::All || self.rows.is_none() { Models::All } else { Models::default() };
         Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position, shown: Vec::new(), files_removed: 0 }
     }
 }
