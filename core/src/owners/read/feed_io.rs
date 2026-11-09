@@ -188,7 +188,7 @@ impl FeedIo {
                 let response = serde_json::from_value::<Response>(body["result"].clone()).map_err(|_| ProtocolReason::Frame)?;
                 match response.shape() {
                     ResponseShape::Empty => return Err(ProtocolReason::Frame),
-                    ResponseShape::ErrorsOnly | ResponseShape::DataWithErrors => return Err(ProtocolReason::Errors),
+                    ResponseShape::ErrorsOnly | ResponseShape::DataWithErrors => return Ok(Frame::Error { id, retryable: body["retryable"].as_bool().unwrap_or(false) }),
                     _ => {}
                 }
                 let id = id.unwrap_or_default();

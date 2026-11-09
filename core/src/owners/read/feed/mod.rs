@@ -100,8 +100,6 @@ pub enum ProtocolReason {
     Decrypt,
     /// A frame that passed the schema of the cable but is no valid frame of the subscription.
     Frame,
-    /// A `next` frame whose result carries GraphQL errors, with or without data.
-    Errors,
 }
 
 /// The name of a channel: the subscription of the `.dbl` the server runs for a model. A frame carries it as its `id`.
