@@ -1,11 +1,11 @@
 //! Owner-level tests of the `outbox` machine: the ends of the operations (`Closing`, `EpochEnded`), the terminal `Done` and `Failed`, and the ignored live `EpochStarted`. Names are the `Test` column.
 
-use super::outbox_cells_tests::{answers, sending, transfer_outcomes, unchanged_by};
+use super::outbox_cells_tests::{sending, transfer_outcomes, unchanged_by};
 use super::outbox_harness::*;
 use super::outbox_harness::{In, Policy, RWhy, St};
 use crate::ffi::EndCause;
 use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, Rejected, RejectReason};
-use crate::owners::write::outbox::{OutboxAnswer, OutboxInput, OutboxOutcome};
+use crate::owners::write::outbox::{OutboxInput, OutboxOutcome};
 use crate::runtime::Time;
 
 fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
@@ -18,10 +18,13 @@ fn transfer() -> Ctx { Ctx { transfer: true, ..ready() } }
 fn out_closing() {
     let cause = EndCause::Closed;
     for state in [St::Submitting, St::PersistingAttempt, St::Sending, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
-        let (mut twin, id) = reach(state, &transfer());
-        let effects = input_of(&mut twin, id, &transfer(), In::Closing);
-        assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects), drained(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(cause.clone()))], vec![OutboxOutcome::Ended(cause.clone())], 1), "{state:?}: Closing ends the operation Closed to the waiter and Transfer, Drained once");
-        assert_eq!(cancels(&effects), usize::from(state == St::Sending), "{state:?}: the request is cancelled only when it is in flight");
+        let origin_transfer = state != St::MarkingRetry;
+        let ctx = Ctx { transfer: origin_transfer, ..ready() };
+        let (mut twin, id) = reach(state, &ctx);
+        let effects = input_of(&mut twin, id, &ctx, In::Closing);
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), drained(&effects), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), 1, usize::from(state == St::Sending)), "{state:?}: Closing ends the operation Closed, Drained once, the request is cancelled only when in flight");
+        let want = if origin_transfer { vec![OutboxOutcome::Ended(cause.clone())] } else { Vec::new() };
+        assert_eq!(transfer_outcomes(&effects), want, "{state:?}: a transfer operation gets the Ended outcome");
     }
 }
 
@@ -32,7 +35,7 @@ fn out_closing_queued() {
         let ctx = if state == St::Queued { Ctx { online: false, ..transfer() } } else { transfer() };
         let (mut twin, id) = reach(state, &ctx);
         let effects = input_of(&mut twin, id, &ctx, In::Closing);
-        assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects), drained(&effects), cancels(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(cause.clone()))], vec![OutboxOutcome::Ended(cause.clone())], 1, 0), "{state:?}: Closing ends the waiting operation Closed, Drained once, no request to cancel");
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects), drained(&effects), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), vec![OutboxOutcome::Ended(cause.clone())], 1, 0), "{state:?}: Closing ends the waiting operation Closed, Drained once, no request to cancel");
     }
 }
 
@@ -40,11 +43,13 @@ fn out_closing_queued() {
 fn out_epoch_ended() {
     let cause = EndCause::SessionEnded;
     for state in [St::WaitingDeclaration, St::Submitting, St::Queued, St::PersistingAttempt, St::Sending, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry, St::Failed] {
-        let ctx = if state == St::Queued { Ctx { online: false, ..transfer() } } else { transfer() };
+        let origin_transfer = state != St::MarkingRetry;
+        let ctx = Ctx { online: state != St::Queued, transfer: origin_transfer, ..ready() };
         let (mut twin, id) = reach(state, &ctx);
         let effects = input_of(&mut twin, id, &ctx, In::EpochEnded);
-        assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(cause.clone()))], vec![OutboxOutcome::Ended(cause.clone())]), "{state:?}: EpochEnded ends the operation SessionEnded to the waiter and Transfer");
-        assert_eq!(cancels(&effects), usize::from(state == St::Sending), "{state:?}: the request is cancelled only when it is in flight");
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), usize::from(state == St::Sending)), "{state:?}: EpochEnded ends the operation SessionEnded, the request is cancelled only when in flight");
+        let want = if origin_transfer { vec![OutboxOutcome::Ended(cause.clone())] } else { Vec::new() };
+        assert_eq!(transfer_outcomes(&effects), want, "{state:?}: a transfer operation gets the Ended outcome");
     }
 }
 

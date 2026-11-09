@@ -139,7 +139,8 @@ fn out_queued_drain_limit_api() {
     let committed = twin.committed(second);
     assert_eq!((twin.stage(second), sends(&committed)), (Some(St::Queued), 0), "the second operation waits for the slot, no request");
     assert!(matches!(answers(&committed, 30).as_slice(), [OutboxAnswer::Receipt(_)]), "the caller still gets a receipt: {committed:?}");
-    twin.post(OutboxInput::Response { op_id: first, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let drained = twin.committed(first);
-    assert_eq!((twin.stage(first), twin.stage(second), sends(&drained)), (Some(St::Done), Some(St::Sending), 1), "the freed slot sends the second, one request at a time");
+    let landed = twin.post(OutboxInput::Response { op_id: first, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!((twin.stage(first), twin.stage(second), sends(&landed)), (Some(St::Landing), Some(St::Sending), 1), "the freed slot sends the second, one request at a time");
+    twin.committed(first);
+    assert_eq!(twin.stage(first), Some(St::Done), "the first operation lands");
 }
