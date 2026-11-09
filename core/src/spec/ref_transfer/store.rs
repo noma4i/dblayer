@@ -9,17 +9,18 @@ pub fn tx_store(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
     }
 }
 
-pub fn end_interrupted(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, name: &'static str) {
+pub fn end_interrupted(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, name: &'static str, cause: EndCause) {
     row(e, name);
     free_held(t, e);
     t.st = St::Done;
-    interrupt_all(g, t, e);
+    interrupt_all(g, t, e, cause);
     let c = t.cycle_id;
     t.outcomes.entry(c).or_insert(Outcome::Interrupted);
 }
 
 pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &mut Vec<Effect>) {
     let ended = matches!(reason, Reason::NoSession | Reason::Closed);
+    let cause = if matches!(reason, Reason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
     match st {
         St::Accepting { closing } => {
             let interrupted = closing || ended || matches!(reason, Reason::StaleGeneration(_));
@@ -29,7 +30,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             t.st = St::Done;
         }
         St::PersistingAttempt { .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_attempt_ended"); }
+            if ended { end_interrupted(g, t, e, "xfer_attempt_ended", cause); }
             else if matches!(reason, Reason::Storage | Reason::Invalid) {
                 row(e, "xfer_attempt_rejected");
                 let error = if *reason == Reason::Storage { fail(ErrKind::Storage, "storage") } else { fail(ErrKind::InternalInvalid, "invalid") };
@@ -38,7 +39,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingCopy { supply: Some(back), .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_supply_end"); }
+            if ended { end_interrupted(g, t, e, "xfer_supply_end", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_supply_rejected");
                 e.push(Effect::DeleteFile { transfer_id: t.id });
@@ -51,7 +52,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingCopy { .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_removing_no_session"); }
+            if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_copy_rejected");
                 let prior = t.st.clone();
@@ -66,7 +67,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingRetry { .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_removing_no_session"); }
+            if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_retry_rejected");
                 t.st = St::Failed;
@@ -78,7 +79,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingPart { .. } | St::PersistingComplete => {
-            if ended { end_interrupted(g, t, e, "xfer_removing_no_session"); }
+            if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_storage_failure");
                 t.st = St::PersistingFailure { error: fail(ErrKind::Storage, "storage"), abort: None };
@@ -90,7 +91,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingFailure { error, abort } => {
-            if ended { end_interrupted(g, t, e, "xfer_removing_no_session"); }
+            if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_failure_storage");
                 let na = g.next_attempt;
@@ -107,7 +108,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::Removing { prior, .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_removing_no_session"); reply_none(); }
+            if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); reply_none(); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_removing_rejected");
                 if let Some((r, _)) = t.replies.cancel.take() { reply(e, r, Answer::Err(Fault::Storage)); }
@@ -121,7 +122,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             }
         }
         St::PersistingBatchIntent { single, .. } => {
-            if ended { end_interrupted(g, t, e, "xfer_batch_intent_ended"); }
+            if ended { end_interrupted(g, t, e, "xfer_batch_intent_ended", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_batch_intent_rejected");
                 let na = g.next_attempt;

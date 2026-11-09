@@ -41,8 +41,11 @@ pub enum ErrKind { Exhausted, MissingFile, SourceFailed, RestoreFailed, Storage,
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Failure { pub kind: ErrKind, pub message: String }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndCause { SessionEnded, Closed }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome { Confirmed { revision: u64 }, Discarded, Interrupted, Failed { error: Failure }, Rejected { error: Failure } }
+pub enum Outcome { Confirmed { revision: u64 }, Discarded, Interrupted, Ended(EndCause), Failed { error: Failure }, Rejected { error: Failure } }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MutOut { Confirmed { revision: u64 }, Rejected { error: Failure }, Failed { error: Failure }, Discarded, Interrupted }

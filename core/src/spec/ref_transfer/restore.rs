@@ -109,7 +109,7 @@ pub fn classify_completed(g: &mut G, t: &mut Transfer, r: &StoredTransfer, outs:
             t.st = St::PersistingFailure { error, abort: None };
             commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
         }
-        Some(Outcome::Interrupted) => {
+        Some(Outcome::Interrupted) | Some(Outcome::Ended(_)) => {
             row(e, "xfer_open_saved_interrupted");
             t.st = St::Done;
         }

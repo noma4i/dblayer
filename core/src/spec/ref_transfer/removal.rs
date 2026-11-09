@@ -433,7 +433,8 @@ pub fn tx_end(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, closing: bool) {
     }
     free_held(t, e);
     t.st = St::Done;
-    interrupt_all(g, t, e);
+    let cause = if closing { EndCause::Closed } else { EndCause::SessionEnded };
+    interrupt_all(g, t, e, cause);
     let c = t.cycle_id;
     t.outcomes.entry(c).or_insert(Outcome::Interrupted);
     t.local_url = false;
