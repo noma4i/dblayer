@@ -60,7 +60,7 @@ impl OutboxState {
                         StoredAnswer::Unauthorized => SessionError::Unauthorized,
                         StoredAnswer::Security { code, detail } => SessionError::Security { code, detail },
                         StoredAnswer::Revoked { body } => SessionError::Revoked { body },
-                        StoredAnswer::Session(code) => SessionError::Session(code),
+                        StoredAnswer::Session { code, body } => SessionError::Session { code, body },
                         StoredAnswer::Ok(_) => return,
                     };
                     self.answered(request_id, AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: false }, fx);

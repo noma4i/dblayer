@@ -8,7 +8,7 @@ use super::failure::{expired, of_graphql, of_session, parse};
 #[test]
 fn a_refusal_keeps_its_kind_code_and_extensions_in_the_text_outbox_stores() {
     for code in [SessionCode::Unauthenticated, SessionCode::AccountUnavailable, SessionCode::RateLimited] {
-        let failure = parse(&of_session(&SessionError::Session(code), ErrorClass::Permanent));
+        let failure = parse(&of_session(&SessionError::Session { code, body: code.name().into() }, ErrorClass::Permanent));
         assert_eq!((failure.kind, failure.message), (FailureKind::Session(code), code.name().to_string()));
     }
     let extensions = GraphqlExtensions { code: Some("REFUSED".into()), transaction_disposition: Some(TransactionDisposition::Keep), fields: Default::default() };

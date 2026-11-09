@@ -30,7 +30,7 @@ pub enum StoredAnswer {
     Unauthorized,
     Security { code: crate::transport::SecurityCode, detail: String },
     Revoked { body: String },
-    Session(crate::transport::SessionCode),
+    Session { code: crate::transport::SessionCode, body: String },
 }
 
 pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
@@ -131,7 +131,7 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
         StoredAnswer::Unauthorized => ("unauthorized", None),
         StoredAnswer::Security { code, detail } => ("security", Some(format!("{}:{detail}", match code { crate::transport::SecurityCode::ServerKeyMismatch => "server_key_mismatch", crate::transport::SecurityCode::ResponseAuthentication => "response_authentication", crate::transport::SecurityCode::TlsTrust => "tls_trust" }))),
         StoredAnswer::Revoked { body } => ("revoked", Some(body.clone())),
-        StoredAnswer::Session(code) => ("session", Some(code.name().to_string())),
+        StoredAnswer::Session { code, body } => ("session", Some(format!("{}:{body}", code.name()))),
     };
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
     connection.execute(include_str!("sql/session_state/store_answer.sql"), params![request_id, outcome, detail, operation])?;
@@ -180,7 +180,10 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
                 StoredAnswer::Security { code, detail: detail.into() }
             }
             ("revoked", Some(body)) => StoredAnswer::Revoked { body },
-            ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),
+            ("session", Some(detail)) => {
+                let (name, body) = detail.split_once(':').unwrap_or((&detail, &detail));
+                StoredAnswer::Session { code: crate::transport::SessionCode::from_wire(name).ok_or_else(|| invalid("an unknown session code"))?, body: body.to_string() }
+            },
             _ => return Err(invalid("an outcome that does not match its detail")),
         };
         found.push((u64::try_from(request_id).map_err(|_| invalid("a negative request id"))?, operation, answer));

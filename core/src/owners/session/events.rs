@@ -511,7 +511,7 @@ impl SessionState {
                 self.answer_kind = Some(kind);
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
-                    let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session(code) };
+                    let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session { code, body: body.clone() } };
                     self.land(pending, Err(error), None, confirmed, false, fx);
                 } else if pending.class == OperationClass::Sessionless {
                     self.land(pending, Ok(body), None, None, false, fx);
@@ -524,7 +524,7 @@ impl SessionState {
                     self.persist(PendingCall { body: document.unwrap_or_default(), document: None, ..pending }, None, fx);
                 } else if sequence.is_none() && pending.class == OperationClass::Login {
                     let code = answer_code(&body);
-                    self.land(pending, Err(SessionError::Session(code)), None, None, false, fx);
+                    self.land(pending, Err(SessionError::Session { code, body }), None, None, false, fx);
                 } else if sequence.is_none() {
                     self.land(pending, Ok(body), None, None, false, fx);
                 } else {

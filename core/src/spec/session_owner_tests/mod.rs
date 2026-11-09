@@ -54,7 +54,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Rejected(RejectReason::Storage(_)) => Fail::Reason(Reason::Storage),
         SessionError::Rejected(RejectReason::Closed) => Fail::Reason(Reason::Closed),
         SessionError::Rejected(other) => panic!("the Session table has no {other:?}"),
-        SessionError::Session(code) => Fail::Session(*code),
+        SessionError::Session { code, .. } => Fail::Session(*code),
         SessionError::Storage(_) => Fail::Storage,
         SessionError::SessionExists => Fail::SessionExists,
         SessionError::NoCredential => Fail::NoCredential,

@@ -31,7 +31,7 @@ pub fn author_of(owner: &MutateOwner) -> Option<AuthorId> {
 pub enum SessionError {
     Invalid,
     Rejected(RejectReason),
-    Session(crate::transport::SessionCode),
+    Session { code: crate::transport::SessionCode, body: String },
     Storage(String),
     SessionExists,
     NoCredential,
@@ -58,7 +58,7 @@ pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
         Err(SessionError::Unauthorized) => Some(StoredAnswer::Unauthorized),
         Err(SessionError::Security { code, detail }) => Some(StoredAnswer::Security { code: *code, detail: detail.clone() }),
         Err(SessionError::Revoked { body }) => Some(StoredAnswer::Revoked { body: body.clone() }),
-        Err(SessionError::Session(code)) => Some(StoredAnswer::Session(*code)),
+        Err(SessionError::Session { code, body }) => Some(StoredAnswer::Session { code: *code, body: body.clone() }),
         Err(_) => None,
     }
 }
