@@ -7,6 +7,7 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::ffi::tests::session_guards_tests::WatchedHeld;
+use crate::server_contract::{Admission, Contract, Request};
 use crate::ffi::{
     ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, EncryptedSessionOperation, OpenDatabase, PutReply,
     TestClock, Transport, TransportRequest,
@@ -67,8 +68,8 @@ pub(super) struct Entry {
     pub(super) marks_before: usize,
 }
 
-#[derive(Default)]
 struct State {
+    contract: Contract<Value>,
     account: String,
     signed: bool,
     profile_empty: bool,
@@ -91,6 +92,14 @@ async fn pass_gate(fault: Option<Fault>) -> Option<Fault> {
         Some(Fault::Hold(gate)) => { gate.pass().await; None }
         Some(Fault::HoldThen(gate, inner)) => { gate.pass().await; Some(*inner) }
         other => other,
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let mut contract = Contract::adopting();
+        contract.cache_everything();
+        State { contract, account: String::new(), signed: false, profile_empty: false, forbidden: false, calls: BTreeMap::new(), violations: Vec::new(), log: Vec::new(), marks: Vec::new(), script: Vec::new(), messages: Vec::new(), group_members: BTreeMap::new(), profile: Map::new(), blocked: Vec::new(), canned: BTreeMap::new() }
     }
 }
 
@@ -314,6 +323,15 @@ impl FakeHttp for World {
             "/api/logout" => "logout".to_string(),
             _ => request["body"]["operationName"].as_str().unwrap().to_string(),
         };
+        let contract_request = Request::from_wire(&self.label, &request);
+        if matches!(operation.as_str(), "login_link" | "social") { if let Some(sequence) = sequence { self.state.lock().unwrap().contract.set_last(sequence - 1); } }
+        let admission = self.state.lock().unwrap().contract.admit(&contract_request);
+        match admission {
+            Admission::Stored(stored) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) }),
+            Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
+            Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
+            Admission::Fresh => {}
+        }
         let Some((mut answer, fault)) = self.enter(&operation, sequence, &request["body"]) else {
             return Ok(EncryptedReply { status: 400, body: String::new() });
         };
@@ -329,6 +347,7 @@ impl FakeHttp for World {
             }
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
+        if sealed_sequence == sequence { self.state.lock().unwrap().contract.settle(&contract_request, answer.clone()); }
         Ok(EncryptedReply { status: 200, body: seal_response(&request, sealed_sequence, answer) })
     }
 }
