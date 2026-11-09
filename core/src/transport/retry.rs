@@ -45,7 +45,7 @@ impl RetryClass {
 
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, uniffi::Enum)]
 pub enum RetryOwner { Bootstrap, Session, Window, Calls, Outbox, Transfer, Feed }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
