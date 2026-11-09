@@ -1,4 +1,4 @@
-//! Matrix E: every exported call of `Database` that names a model and a row, against every subset of the violated admission conditions (stale epoch, unknown model, missing row) and against a closed database. Oracle: `bridge.md` «Допуск публичного вызова (D-207)»: closed -> `Closed`, stale epoch -> `NoSession`, arguments -> `Invalid`, row -> `NotFound`; the first violated step answers.
+//! Matrix E: every exported call of `Database` that names a model and a row, against every subset of the violated admission conditions (stale epoch, unknown model, missing row) and against a closed database. Oracle: `bridge.md` the admission section of bridge.md�the admission section of bridge.md�the admission section of bridge.md�the admission section of bridge.md�the admission section of bridge.mdD-207)the admission section of bridge.mdclosed -> `Closed`, stale epoch -> `NoSession`, arguments -> `Invalid`, row -> `NotFound`; the first violated step answers.
 use std::path::Path;
 use std::sync::Arc;
 
