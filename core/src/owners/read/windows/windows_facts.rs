@@ -44,6 +44,7 @@ pub(super) struct Facts {
     pub(super) landed_revision: i64,
     pub(super) store_seen: i64,
     pub(super) request_base: std::cell::Cell<i64>,
+    pub(super) end_cause: EndCause,
     pub(super) stale_marked: std::cell::Cell<bool>,
     pub(super) stale_owed: std::cell::Cell<bool>,
     /// The window has a marker and a tail (`media` in the `.dbl`).
@@ -58,6 +59,8 @@ pub(super) struct Facts {
 impl Facts {
     pub(super) fn env(&mut self, event: &Ev) {
         match event {
+            Ev::EpochEnded { cause } => self.end_cause = cause.clone(),
+            Ev::Closing => self.end_cause = EndCause::Closed,
             Ev::Online { online, online_seq, .. } => {
                 self.online = Some(*online);
                 if *online {
@@ -291,7 +294,7 @@ impl Facts {
     }
 
     pub(super) fn finish(&mut self, request: Option<(RequestId, u32)>) -> Outcome<WinState> {
-        self.answer_all(&WindowOutcome::Interrupted);
+        self.answer_all(&WindowOutcome::Ended { cause: self.end_cause.clone() });
         if let Some((request, attempt)) = request {
             self.push_fx(WindowEffect::Cancel { request, attempt });
         }

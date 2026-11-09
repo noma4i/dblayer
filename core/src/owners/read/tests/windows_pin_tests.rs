@@ -1,4 +1,4 @@
-use crate::owners::read::deliveries::Deliveries;
+use crate::owners::read::deliveries::{Deliveries, EndCause};
 use crate::owners::contract::{EpochEnded, EpochStarted, Online};
 use crate::runtime::Cause;
 use crate::owners::read::windows::{WindowOutcome, AnswerPage, Goal, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
@@ -80,7 +80,7 @@ fn win_load_nowait_before_snapshot_waits() {
     assert!(!effects.is_empty(), "the load of the window starts");
     let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
     no_wait(&mut state);
-    assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing)), Some(WindowOutcome::Interrupted), "a waiting call ends with the owner");
+    assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing)), Some(WindowOutcome::Ended { cause: EndCause::Closed }), "a waiting call ends with the owner");
 }
 
 /// win_load_nowait_before_snapshot_waits over every order of the second epoch: EpochStarted(0), the addressed snapshot (1), the broadcast (2), the call (3).

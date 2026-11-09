@@ -60,6 +60,7 @@ impl Window {
             landed_revision: 0,
             store_seen: 0,
             request_base: std::cell::Cell::new(0),
+            end_cause: EndCause::SessionEnded,
             stale_marked: std::cell::Cell::new(false),
             stale_owed: std::cell::Cell::new(false),
             media,
@@ -75,10 +76,11 @@ impl Window {
     pub(super) fn handle(&mut self, event: Ev, ids: (&mut RequestIds, &mut u32)) -> Vec<Emit> {
         if let Some(opening) = &mut self.opening {
             match event {
-                Ev::EpochEnded | Ev::Closing => {
+                Ev::EpochEnded { .. } | Ev::Closing => {
+                    let cause = if let Ev::EpochEnded { cause } = &event { cause.clone() } else { EndCause::Closed };
                     let held = std::mem::take(&mut opening.held);
                     self.opening = None;
-                    let mut effects: Vec<Emit> = held.iter().filter_map(|held| if let Ev::Load { id, .. } = held { Some(Emit::Run(WindowEffect::Outcome { id: *id, outcome: WindowOutcome::Interrupted })) } else { None }).collect();
+                    let mut effects: Vec<Emit> = held.iter().filter_map(|held| if let Ev::Load { id, .. } = held { Some(Emit::Run(WindowEffect::Outcome { id: *id, outcome: WindowOutcome::Ended { cause: cause.clone() } })) } else { None }).collect();
                     effects.extend(self.run(event, ids));
                     return effects;
                 }
@@ -383,12 +385,12 @@ impl Windows {
         out
     }
 
-    fn interrupt_held(state: &mut WindowsState, out: &mut Effects<Self>) {
+    fn interrupt_held(state: &mut WindowsState, cause: EndCause, out: &mut Effects<Self>) {
         state.reserved.clear();
         state.held_leaves.clear();
         for held in std::mem::take(&mut state.held_loads).into_values().chain(std::mem::take(&mut state.held_nowait)) {
             if let WindowsInput::LoadNoWait { key, id, .. } | WindowsInput::Load { key, id, .. } = held {
-                out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Interrupted } }));
+                out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Ended { cause: cause.clone() } } }));
             }
         }
     }
@@ -592,10 +594,11 @@ impl StateOwner for Windows {
             }
             WindowsInput::EpochEnded(ended) => {
                 if ended.epoch == state.epoch { state.identity = false; }
-                Self::interrupt_held(state, &mut out);
+                let cause = EndCause::of(ended.cause);
+                Self::interrupt_held(state, cause.clone(), &mut out);
                 let keys: Vec<WindowKey> = state.windows.iter().filter(|(_, window)| window.machine.epoch == ended.epoch).map(|(key, _)| key.clone()).collect();
                 for key in keys {
-                    Self::on(state, &key, Ev::EpochEnded, &mut out);
+                    Self::on(state, &key, Ev::EpochEnded { cause: cause.clone() }, &mut out);
                 }
             }
             WindowsInput::ModelsReset(reset) => {
@@ -605,7 +608,7 @@ impl StateOwner for Windows {
                 Self::every(state, &Ev::ModelsReset { generation: reset.generation, models: reset.models }, &mut out);
             }
             WindowsInput::Closing => {
-                Self::interrupt_held(state, &mut out);
+                Self::interrupt_held(state, EndCause::Closed, &mut out);
                 Self::every(state, &Ev::Closing, &mut out);
                 out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "windows" })));
             }

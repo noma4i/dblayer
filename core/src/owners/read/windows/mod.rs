@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use statig::prelude::*;
 
-use crate::owners::read::deliveries::{DeliveryInput, Deliveries};
+use crate::owners::read::deliveries::{DeliveryInput, Deliveries, EndCause};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::runtime::RetryPolicy;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, WindowPhase as Phase, WindowState};
@@ -71,7 +71,7 @@ impl Facts {
                 self.fresh = false;
                 if self.watched() { self.begin(context, 1, false, self.is_online()) } else { Handled }
             }
-            Ev::EpochEnded | Ev::Closing => self.finish(None),
+            Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
         }
     }
@@ -189,7 +189,7 @@ impl Facts {
                 load.basis = self.basis();
                 Handled
             }
-            Ev::EpochEnded | Ev::Closing => {
+            Ev::EpochEnded { .. } | Ev::Closing => {
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.finish((!load.retry).then_some((load.step, load.attempt)))
             }
@@ -215,7 +215,8 @@ impl Facts {
                     }
                 }
                 RejectReason::NoSession | RejectReason::Closed => {
-                    self.answer_all(&WindowOutcome::Interrupted);
+                    self.end_cause = if matches!(reason, RejectReason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
+                    self.answer_all(&WindowOutcome::Ended { cause: self.end_cause.clone() });
                     Transition(WinState::ended())
                 }
                 RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
@@ -248,7 +249,7 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::EpochEnded | Ev::Closing => self.finish(None),
+            Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
         }
     }
@@ -300,7 +301,7 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::EpochEnded | Ev::Closing => self.finish(None),
+            Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
         }
     }
@@ -308,7 +309,7 @@ impl Facts {
     #[state]
     fn ended(&mut self, event: &Ev) -> Outcome<WinState> {
         if let Ev::InterestPlus { id, .. } | Ev::Load { id, .. } = event {
-            self.answer(*id, WindowOutcome::Interrupted);
+            self.answer(*id, WindowOutcome::Ended { cause: self.end_cause.clone() });
         }
         Handled
     }

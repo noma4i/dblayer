@@ -111,7 +111,7 @@ fn result_of(outcome: &WindowOutcome) -> Result3 {
         WindowOutcome::Loaded { .. } => Result3::Loaded,
         WindowOutcome::Failed { .. } | WindowOutcome::Offline { .. } => Result3::Failed,
         WindowOutcome::PageLimit => Result3::PageLimit,
-        WindowOutcome::Interrupted => Result3::Interrupted,
+        WindowOutcome::Ended { .. } => Result3::Interrupted,
     }
 }
 

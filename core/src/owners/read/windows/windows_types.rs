@@ -136,7 +136,7 @@ pub enum WindowOutcome {
     Failed { failure: crate::ffi::DbError },
     PageLimit,
     Offline { message: String },
-    Interrupted,
+    Ended { cause: crate::owners::read::deliveries::EndCause },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,7 +289,7 @@ pub(super) enum Ev {
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
     Saved(Option<SavedWindow>),
     ModelsReset { generation: u64, models: Vec<String> },
-    EpochEnded,
+    EpochEnded { cause: crate::owners::read::deliveries::EndCause },
     Closing,
 }
 

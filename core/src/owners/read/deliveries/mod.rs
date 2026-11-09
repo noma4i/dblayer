@@ -111,6 +111,11 @@ impl StreamRow {
     pub fn new(id: &str, stamp: i64) -> Self { Self { id: id.to_string(), stamp, row: None } }
 }
 
+impl EndCause {
+    /// `Close` ends every stream and call as `Closed`, every other cause of an epoch end as `SessionEnded` (D-249).
+    pub(crate) fn of(cause: crate::runtime::Cause) -> Self { if cause == crate::runtime::Cause::Close { Self::Closed } else { Self::SessionEnded } }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum EndCause {
     SessionEnded,

@@ -269,7 +269,7 @@ impl Database {
             WindowOutcome::Failed { failure } => Err(failure),
             WindowOutcome::Offline { message } => Err(DbError::Offline { detail: message }),
             WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
-            WindowOutcome::Interrupted => Err(super::command::ended()),
+            WindowOutcome::Ended { cause } => Err(if cause == crate::owners::read::deliveries::EndCause::Closed { super::command::closed() } else { super::command::ended() }),
         }
     }
 }
