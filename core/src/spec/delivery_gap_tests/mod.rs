@@ -409,7 +409,7 @@ fn dlv_open_status() {
 fn dlv_opening_status() {
     let mut blob = open_as(Kind::Blob);
     assert_eq!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }), [Effect::Available]);
-    assert_eq!(blob.read_all(), [Val::Status { revision: 1, state: "uploading".into() }]);
+    assert_eq!(blob.read_all(), [Val::Status { revision: 11, state: "uploading".into() }]);
     let mut retry = open_as(Kind::Retry);
     assert_eq!(retry.step(Input::Retry { attempts: 2 }), [Effect::Available]);
     assert_eq!(retry.read_all(), [Val::Retry { attempts: 2 }]);
@@ -421,10 +421,10 @@ fn dlv_live_status() {
     twin.step(Input::Transfer { state: "uploading".into(), revision: 12 });
     twin.read_all();
     assert_eq!(twin.step(Input::Transfer { state: "done".into(), revision: 13 }), [Effect::Available]);
-    assert_eq!(twin.read_all(), [Val::Status { revision: 2, state: "done".into() }]);
+    assert_eq!(twin.read_all(), [Val::Status { revision: 13, state: "done".into() }]);
     twin.step(Input::Transfer { state: "failed".into(), revision: 14 });
     twin.step(Input::Transfer { state: "retrying".into(), revision: 15 });
-    assert_eq!(twin.read_all(), [Val::Status { revision: 4, state: "retrying".into() }], "an unread status gives way to the last one");
+    assert_eq!(twin.read_all(), [Val::Status { revision: 15, state: "retrying".into() }], "an unread status gives way to the last one");
 }
 
 #[test]
