@@ -17,6 +17,7 @@ use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
 use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
+use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
@@ -32,6 +33,7 @@ const STEPS: [(&str, &str); 6] = [
     ("CreateAsset", "mutation CreateAsset { createAsset { asset { id clientKey size position } } }"),
 ];
 
+#[derive(Clone)]
 pub(super) enum Answer {
     Data(String),
     Status(u16),
@@ -66,40 +68,36 @@ pub(super) struct Call {
     pub(super) purpose: NetworkPurpose,
 }
 
-#[derive(Default)]
 pub(super) struct Script {
-    queues: Mutex<HashMap<String, VecDeque<Answer>>>,
+    contract: Mutex<Contract<Answer>>,
     calls: Mutex<Vec<Call>>,
-    settled: Mutex<HashMap<Pair, Answer>>,
     wires: Mutex<Vec<(crate::transport::Author, u64, u32)>>,
 }
 
-type Pair = (String, String, Option<i64>);
+impl Default for Script {
+    fn default() -> Self {
+        let mut contract = Contract::adopting();
+        contract.cache_everything();
+        Script { contract: Mutex::new(contract), calls: Mutex::default(), wires: Mutex::default() }
+    }
+}
 
 fn settled_of(answer: &Answer) -> Option<Answer> {
     match answer {
         Answer::Data(text) => Some(Answer::Data(text.clone())),
-        Answer::Status(status) => Some(Answer::Status(*status)),
+        Answer::Status(_) => None,
         Answer::Held(_, next) => settled_of(next),
         Answer::Lost => None,
     }
 }
 
 impl Script {
-    pub(super) fn enqueue(&self, operation: &str, answer: Answer) { self.queues.lock().unwrap().entry(operation.into()).or_default().push_back(answer) }
+    pub(super) fn enqueue(&self, operation: &str, answer: Answer) { self.contract.lock().unwrap().script(operation, answer) }
     pub(super) fn data(&self, operation: &str, body: &str) { self.enqueue(operation, Answer::Data(body.into())) }
     pub(super) fn hold(&self, operation: &str, reply: &str) -> Arc<Hold> {
         let hold = Arc::new(Hold::default());
         self.enqueue(operation, Answer::Held(hold.clone(), Box::new(Answer::Data(reply.into()))));
         hold
-    }
-    /// The server answers a repeated pair `(request id, sequence)` of an operation with the answer it gave the first time. A different pair takes the next scripted answer. A lost answer settles nothing.
-    pub(super) fn answer(&self, operation: &str, request_id: &str, sequence: Option<i64>) -> Option<Answer> {
-        let pair = (operation.to_string(), request_id.to_string(), sequence);
-        if let Some(known) = self.settled.lock().unwrap().get(&pair) { return settled_of(known); }
-        let answer = self.queues.lock().unwrap().get_mut(operation).and_then(VecDeque::pop_front)?;
-        if let Some(known) = settled_of(&answer) { self.settled.lock().unwrap().insert(pair, known); }
-        Some(answer)
     }
     pub(super) fn wires(&self) -> Vec<(crate::transport::Author, u64, u32)> { self.wires.lock().unwrap().clone() }
     pub(super) fn names(&self) -> Vec<String> { self.calls.lock().unwrap().iter().map(|call| call.operation.clone()).collect() }
@@ -122,7 +120,19 @@ impl FakeHttp for ScriptedHttp {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
         self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), pair: (request["requestId"].as_str().unwrap_or_default().to_string(), request["sequence"].as_i64()), variables: request["body"]["variables"].clone(), purpose });
-        let mut answer = self.script.answer(&operation, request["requestId"].as_str().unwrap_or_default(), request["sequence"].as_i64());
+        let contract_request = Request::from_wire("upload", &request);
+        let admission = self.script.contract.lock().unwrap().admit(&contract_request);
+        let mut answer = match admission {
+            Admission::Stored(stored) => Some(stored),
+            Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
+            Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
+            Admission::Fresh => {
+                let mut contract = self.script.contract.lock().unwrap();
+                let taken = contract.take(&operation);
+                if let Some(known) = taken.as_ref().and_then(settled_of) { contract.settle(&contract_request, known); }
+                taken
+            }
+        };
         loop {
             match answer {
                 Some(Answer::Held(hold, next)) => {
