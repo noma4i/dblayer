@@ -12,6 +12,8 @@ pub enum TransportError {
     RequestTooLarge { size: u64, limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<super::GraphqlExtensions> },
+    #[error("graphql answer: {response:?}")]
+    GraphqlAnswer { response: Box<super::Response> },
     #[error("session {code:?}: {detail}")]
     Session { code: super::SessionCode, detail: String },
     #[error("interrupted: {0}")]

@@ -97,17 +97,22 @@ pub fn response_from_answer(answer: Answer) -> Result<Response, TransportError> 
 }
 
 pub(crate) fn response_from_answer_with_kind(answer: Answer, kind: crate::transport::AnswerKind) -> Result<Response, TransportError> {
-    match kind {
+    match &kind {
         crate::transport::AnswerKind::Refused { code: crate::transport::SessionCode::Unauthenticated } => return Err(TransportError::Http { status: 401, body: answer.body.to_string() }),
-        crate::transport::AnswerKind::Refused { code } | crate::transport::AnswerKind::NotConsumed { code } | crate::transport::AnswerKind::PermanentSession { code } => return Err(TransportError::Session { code, detail: answer.body.to_string() }),
+        crate::transport::AnswerKind::Refused { code } | crate::transport::AnswerKind::NotConsumed { code } | crate::transport::AnswerKind::PermanentSession { code } => return Err(TransportError::Session { code: *code, detail: answer.body.to_string() }),
         crate::transport::AnswerKind::Revoked => return Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail: answer.body.to_string() }),
         _ => {}
     }
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
         let error = GraphQLError { message: code.to_string(), path: None, extensions: json!({ "code": code }).as_object().cloned() };
-        return Ok(Response { data: None, errors: vec![error] });
+        let mut response: Response = serde_json::from_value(answer.body).map_err(|error| TransportError::Decode(error.to_string()))?;
+        response.errors.insert(0, error);
+        response.kind = Some(kind);
+        return Ok(response);
     }
-    serde_json::from_value(answer.body).map_err(|error| TransportError::Decode(error.to_string()))
+    let mut response: Response = serde_json::from_value(answer.body).map_err(|error| TransportError::Decode(error.to_string()))?;
+    response.kind = Some(kind);
+    Ok(response)
 }
 
 fn response_from_read(answer: Answer) -> Result<Response, TransportError> {

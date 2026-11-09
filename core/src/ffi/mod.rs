@@ -189,6 +189,7 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail } => Self::Unauthorized { detail },
             TransportError::Session { code, detail } => Self::Session { code, detail },
             TransportError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
+            TransportError::GraphqlAnswer { response } => Self::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() },
             TransportError::Unscripted(detail) | TransportError::Internal(detail) => Self::Internal { detail },
             TransportError::Storage(detail) => Self::Storage { detail },
         }

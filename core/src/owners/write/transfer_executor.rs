@@ -50,7 +50,10 @@ impl Link {
             }
         }
         let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
-        let response = self.gate.mutate(self.epoch, request).await?;
+        let mut response = self.gate.mutate(self.epoch, request).await?;
+        if response.kind.is_none() {
+            response.kind = Some(response.answer_kind().map_err(|error| TransportError::Decode(error.to_string()))?);
+        }
         (self.ids.settle)(id);
         Ok(response)
     }
@@ -97,10 +100,10 @@ type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
 
 /// What a step asks of the codec.
 /// The saved answer of the pair of a restored step as the response its first request gets.
-fn seeded_response(seeded: Option<(u64, String)>) -> Option<(u64, Response)> {
-    let (id, body) = seeded?;
+fn seeded_response(seeded: Option<(u64, String, crate::transport::AnswerKind)>) -> Option<(u64, Response)> {
+    let (id, body, kind) = seeded?;
     let body = serde_json::from_str(&body).ok()?;
-    Some((id, crate::transport::response_from_answer(crate::transport::Answer { sequence: None, body }).ok()?))
+    Some((id, crate::transport::encrypted::response_from_answer_with_kind(crate::transport::Answer { sequence: None, body }, kind).ok()?))
 }
 
 struct StepAsk {
@@ -110,7 +113,7 @@ struct StepAsk {
     source: Source,
     steps: Steps,
     key: String,
-    seeded: Option<(u64, String)>,
+    seeded: Option<(u64, String, crate::transport::AnswerKind)>,
 }
 
 /// What the owner asks of Lifecycle and Network.
@@ -248,7 +251,7 @@ impl TransferExecutor {
         );
     }
 
-    fn complete(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), key: String, (upload_id, parts): (Option<String>, Vec<(u32, Option<String>)>), seeded: Option<(u64, String)>) {
+    fn complete(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), key: String, (upload_id, parts): (Option<String>, Vec<(u32, Option<String>)>), seeded: Option<(u64, String, crate::transport::AnswerKind)>) {
         self.task(
             stamp,
             back,

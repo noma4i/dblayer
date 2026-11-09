@@ -31,7 +31,8 @@ fn shape_of_response_counts_data_and_errors() {
     let errors = Response {
         data: None,
         errors: vec![GraphQLError { message: "x".into(), path: None, extensions: None }],
+        kind: None,
     };
     assert_eq!(errors.shape(), ResponseShape::ErrorsOnly);
-    assert_eq!(Response { data: None, errors: vec![] }.shape(), ResponseShape::Empty);
+    assert_eq!(Response { data: None, errors: vec![], kind: None }.shape(), ResponseShape::Empty);
 }

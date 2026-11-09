@@ -38,6 +38,7 @@ impl RetryClass {
                 let codes: Vec<_> = extensions.iter().filter_map(|value| value.code.as_deref()).chain(messages.iter().map(String::as_str)).collect();
                 RetryClass::classify(false, Some(200), &codes)
             }
+            TransportError::GraphqlAnswer { response } => if matches!(response.kind, Some(super::AnswerKind::Transient { .. })) { RetryClass::Retriable } else { RetryClass::Fatal },
             TransportError::RequestTooLarge { .. } | TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) | TransportError::Storage(_) | TransportError::Internal(_) => RetryClass::Fatal,
         }
     }
@@ -112,6 +113,7 @@ impl<'a> Retrying<'a> {
             TransportError::Network(_) => "network".to_string(),
             TransportError::Http { status, .. } => format!("HTTP {status}"),
             TransportError::Graphql { messages, extensions } => extensions.as_ref().and_then(|value| value.code.clone()).or_else(|| messages.first().cloned()).unwrap_or_default(),
+            TransportError::GraphqlAnswer { response } => response.errors.first().and_then(|error| error.code()).unwrap_or_default().to_string(),
             _ => return Err(self.refused(error)),
         };
         self.attempt = self.attempt.saturating_add(1);

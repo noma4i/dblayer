@@ -41,7 +41,7 @@ impl GraphQLRequest {
 
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphQLError {
     pub message: String,
     #[serde(default)]
@@ -56,17 +56,25 @@ impl GraphQLError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Response {
     #[serde(default)]
     pub data: Option<Value>,
     #[serde(default)]
     pub errors: Vec<GraphQLError>,
+    #[serde(skip)]
+    pub kind: Option<super::AnswerKind>,
 }
 
 impl Response {
     pub fn data(value: Value) -> Self {
-        Self { data: Some(value), errors: Vec::new() }
+        Self { data: Some(value), errors: Vec::new(), kind: None }
+    }
+
+    pub fn answer_kind(&self) -> Result<super::AnswerKind, serde_json::Error> {
+        if let Some(kind) = &self.kind { return Ok(kind.clone()); }
+        let body = serde_json::to_value(self)?;
+        Ok(super::classify_answer(&super::WireOutcome::Answer { sequence: None, body }, false, true))
     }
 
     pub fn shape(&self) -> ResponseShape {

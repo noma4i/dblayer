@@ -45,13 +45,13 @@ impl Reply {
             path: None,
             extensions: json!({ "code": code }).as_object().cloned(),
         };
-        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error] }) }
+        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error], kind: None }) }
     }
 
     /// An error of the server that names no code: `extensions` stay absent.
     pub fn graphql_error_without_code(message: &str) -> Self {
         let error = GraphQLError { message: message.to_string(), path: None, extensions: None };
-        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error] }) }
+        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error], kind: None }) }
     }
 
     pub fn fail(error: TransportError) -> Self {

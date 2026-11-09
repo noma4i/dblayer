@@ -26,8 +26,7 @@ pub(super) struct CallsRunner {
 pub(super) fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
     match result {
         Ok(response) => {
-            let Ok(raw) = serde_json::to_value(&response) else { return CallsInput::TransportError { call_id, error: CallError::InvalidResponse } };
-            let kind = crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: raw }, false, true);
+            let Ok(kind) = response.answer_kind() else { return CallsInput::TransportError { call_id, error: CallError::InvalidResponse } };
             response_input(call_id, root, response, kind)
         }
         Err(error) => CallsInput::TransportError { call_id, error: call_error(crate::ffi::DbError::from(error)) },

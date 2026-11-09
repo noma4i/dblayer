@@ -44,6 +44,7 @@ pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> Str
 pub fn of_transport(error: &TransportError) -> String {
     match error {
         TransportError::Graphql { messages, extensions } => of_graphql(messages.join("; "), extensions.clone()),
+        TransportError::GraphqlAnswer { response } => of_graphql(response.errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>().join("; "), response.extensions()),
         TransportError::Session { code, detail } => text(&OperationFailure::new(FailureKind::Session(*code), if detail.is_empty() { code.name().to_string() } else { detail.clone() })),
         TransportError::RequestTooLarge { size, limit } => text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, error.to_string())),
         TransportError::Network(_) | TransportError::Interrupted(_) => text(&OperationFailure::new(FailureKind::Network, error.to_string())),

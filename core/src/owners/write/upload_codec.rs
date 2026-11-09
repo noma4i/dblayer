@@ -138,8 +138,7 @@ fn unreadable(error: std::io::Error) -> TransportError { TransportError::Graphql
 /// The root of a committed answer, or the error of the server as a transport error: the class of the error decides a repeat.
 fn answered(name: &str, root: &str, response: Response) -> Result<Value, TransportError> {
     if !response.errors.is_empty() {
-        let extensions = response.extensions();
-        return Err(TransportError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions });
+        return Err(TransportError::GraphqlAnswer { response: Box::new(response) });
     }
     response.data.and_then(|data| root_value(&data, root).cloned()).filter(|value| !value.is_null()).ok_or_else(|| TransportError::Decode(format!("{name} answered without {root}")))
 }

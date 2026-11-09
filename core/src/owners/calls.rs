@@ -241,7 +241,7 @@ impl StateOwner for Calls {
             }
             CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), None, &mut fx, &mut deadlines, &mut finished),
             CallsInput::Response { call_id, body, data, errors, kind } if state.sending(call_id) => {
-                let response = crate::transport::Response { data, errors };
+                let response = crate::transport::Response { data, errors, kind: Some(kind.clone()) };
                 let answer = match (&kind, response.errors.is_empty(), body) {
                     (crate::transport::AnswerKind::Transient { reason }, true, None) if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Query, .. })) => Err(CallError::Graphql { messages: vec![reason.clone()], extensions: None }),
                     (_, false, _) => Err(CallError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() }),
