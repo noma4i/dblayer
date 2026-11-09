@@ -300,7 +300,8 @@ fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::store::fi
 pub(super) fn abort_answered(result: &Result<(), TransportError>) -> bool {
     match result {
         Ok(()) => true,
-        Err(error) => !temporary(error),
+        Err(TransportError::Http { status, .. }) => matches!(status, 404 | 410),
+        Err(_) => false,
     }
 }
 

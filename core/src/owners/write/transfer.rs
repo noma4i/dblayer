@@ -127,7 +127,7 @@ impl TransferState {
                         ops.push(StoreOp::BlobCacheRemove { content_sha256: transfer.sha256.clone() });
                     }
                     if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone()) {
-                        ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: self.now.0 });
+                        ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: transfer.blob_created_at.unwrap_or(self.now).0 });
                     }
                     if let (StoreKind::SyncUpload, TransferStage::Accepting, Some(group)) = (kind, transfer.stage, transfer.batch_id) {
                         if let Some(entry) = self.groups.get(&group).filter(|entry| entry.ids.first() == Some(&transfer.transfer_id)) {
@@ -228,13 +228,13 @@ impl TransferState {
             }
             return;
         }
-        self.orphan_flight.remove(&upload_id);
-        if self.orphans.remove(&upload_id).is_none() {
+        let Some(key) = self.orphans.get(&upload_id).cloned() else {
+            self.orphan_flight.remove(&upload_id);
             return;
-        }
+        };
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::OrphanRemoved, orphan: Some((upload_id.clone(), key)) });
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
@@ -361,6 +361,14 @@ impl TransferState {
     fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
+        if pending.kind == StoreKind::OrphanRemoved {
+            if let Some((upload_id, _)) = pending.orphan {
+                self.orphans.remove(&upload_id);
+                self.orphan_flight.remove(&upload_id);
+                self.orphan_owed.remove(&upload_id);
+            }
+            return self.maybe_drained(fx);
+        }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             self.minted.retain(|upload_id, debt| debt.transfer.is_none_or(|id| !pending.ids.contains(&id)) && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id));
             if let Some((upload_id, key)) = pending.orphan {
@@ -415,6 +423,10 @@ impl TransferState {
 
     fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        if let (StoreKind::OrphanRemoved, Some((upload_id, _))) = (pending.kind, &pending.orphan) {
+            self.orphan_flight.remove(upload_id);
+            return;
+        }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             if matches!(rejected.reason, RejectReason::Storage(_)) {
                 self.owe_minted(&pending, fx);
@@ -648,7 +660,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,

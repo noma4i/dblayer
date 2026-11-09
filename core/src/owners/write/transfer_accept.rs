@@ -116,6 +116,7 @@ impl TransferState {
             new_source: None,
             previous: None,
             failed_at: None,
+            blob_created_at: None,
             closing: false,
         };
         self.transfers.insert(transfer_id, transfer);
@@ -368,6 +369,7 @@ impl TransferState {
             transfer.next_step = NextStep::Part(1);
             transfer.confirmed_parts = 0;
             transfer.upload_id = None;
+            transfer.blob_created_at = None;
             transfer.error = None;
             transfer.failed_at = None;
             transfer.etags.clear();

@@ -104,10 +104,12 @@ impl TransferState {
         }
         self.step_answered(id);
         fx.push(Effect::Cancel(put_timer(attempt_id)));
+        let now = self.now;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if part.is_some_and(|part| part != transfer.confirmed_parts + 1) {
             return;
         }
+        transfer.blob_created_at.get_or_insert(now);
         if upload_id.is_some() {
             transfer.upload_id = upload_id;
         }

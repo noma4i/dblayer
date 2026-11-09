@@ -315,6 +315,8 @@ pub enum StoreKind {
     UploadId,
     /// The orphan record of a multipart upload minted after its transfer was removed.
     LateOrphan,
+    /// The record of an orphan whose abort the server answered: it goes after `Committed`.
+    OrphanRemoved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -454,6 +456,8 @@ pub struct Transfer {
     /// The state before a retry with a new source: the copy and the metadata stay until the new copy is committed.
     pub previous: Option<Box<Transfer>>,
     pub failed_at: Option<Time>,
+    /// `Clock.now()` of the answer of the creation of the blob on the server: the term of its cache entry counts from it.
+    pub blob_created_at: Option<Time>,
     pub closing: bool,
 }
 

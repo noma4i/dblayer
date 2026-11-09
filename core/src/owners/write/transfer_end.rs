@@ -144,6 +144,7 @@ impl TransferState {
                 if transfer.aborted {
                     transfer.confirmed_parts = 0;
                     transfer.upload_id = None;
+                    transfer.blob_created_at = None;
                     transfer.etags.clear();
                     transfer.aborted = false;
                     transfer.next_step = NextStep::Part(1);
