@@ -1,5 +1,6 @@
 use super::*;
 
+mod answer_kind_tests;
 mod cancel_tests;
 mod mock_contract_tests;
 mod mock_tests;

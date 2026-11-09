@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+mod answer_kind;
 mod cancel;
 pub(crate) mod encrypted;
 mod error;
@@ -14,6 +15,7 @@ mod response;
 pub(crate) mod retry;
 mod session_code;
 
+pub use answer_kind::{classify as classify_answer, refusal, refusal_name, AnswerKind, WireOutcome};
 pub use cancel::CancelToken;
 pub use encrypted::cable::{CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, EncryptedLines, Incoming, SocketEvent};
 pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, Exchange, HttpExchange, HttpReply, SecurityCode, ServerConfig};
