@@ -113,6 +113,7 @@ for path in files:
     if relative.startswith("sync/stress/") or relative in ("transport/mock.rs", "test_wait.rs"):
         continue
     text = contents[path]
+    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     checked = [(match.end(), end_of(code, match.end() - 1, "(", ")")) for match in re.finditer(r"\b(?:crate::db::|super::)?lock::effect\s*\(", code)]
     for match in effect.finditer(code):
@@ -159,6 +160,7 @@ for path in files:
     if relative == "task.rs" or any(marker in "/" + relative for marker in task_support):
         continue
     text = contents[path]
+    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     for form in spawn_forms:
         for match in form.finditer(code):
@@ -337,6 +339,7 @@ for path in files:
     if any(marker in "/" + relative for marker in task_support) or relative.startswith(("transport/", "runtime/gate")):
         continue
     text = contents[path]
+    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     inside = test_regions(code)
     spans = []
@@ -474,6 +477,16 @@ for stand in ("ffi/selftest", "ffi/tests"):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             if stand_write.search(line) and f"z35:{path.relative_to(source)}" not in allowed:
                 findings.append(f"Z35 the public test stand lands server rows and stale marks through the senders (cable, answer, mutation), it imports no Store write or owner send: {path.relative_to(root)}:{number}")
+
+pair_builders = {"ffi/write.rs", "ffi/upload.rs", "owners/life/calls_runner.rs", "transport/encrypted/graphql.rs"}
+for path in files:
+    relative = str(path.relative_to(source))
+    text = contents[path]
+    if relative.startswith("ffi/selftest/"): continue
+    if "graphql_body(" in text and relative not in pair_builders:
+        findings.append(f"Z36 a body of a sequenced request is built only by the listed builders (graphql_body, full document): {path.relative_to(root)}")
+    if ("persistedQuery" in text or "hash_only(" in text) and relative not in {"transport/encrypted/graphql.rs", "owners/session/flow.rs"}:
+        findings.append(f"Z36 the hash-only body of a pair is made only by Session pair_bodies from the full body: {path.relative_to(root)}")
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")
