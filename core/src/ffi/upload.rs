@@ -36,7 +36,7 @@ struct Single {
 }
 
 fn file_name(file: &UploadFile, path: &str) -> String {
-    file.name.clone().unwrap_or_else(|| std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |name| name.to_string_lossy().into_owned()))
+    file.source.name().map(str::to_string).unwrap_or_else(|| std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |name| name.to_string_lossy().into_owned()))
 }
 
 fn invalid(detail: impl Into<String>) -> DbError { DbError::Invalid { detail: detail.into() } }
@@ -94,7 +94,7 @@ impl Database {
     fn upload_item(&self, plan: &Plan<'_>, mutation: &str, (fields, item): (Map<String, Value>, &str), source: Option<(Source, bool)>) -> Result<BatchItem, DbError> {
         let steps = source.as_ref().map(|(file, multipart)| {
             let name = file_name(plan.file, &file.path);
-            StepsBody { multipart: *multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
+            StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
         Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), mutation: self.upload_mutation(plan, mutation)?, steps })
     }
@@ -104,7 +104,7 @@ impl Database {
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).filter(|declared| declared.batch.is_none()).cloned().ok_or_else(|| invalid(format!("{model} declares no single upload action {action}")))?;
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
-        Ok(Single { declaration, mutation, source: file.path.as_deref().map(|path| self.source_of(path)).transpose()? })
+        Ok(Single { declaration, mutation, source: file.source.path().map(|path| self.source_of(path)).transpose()? })
     }
 
     fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
@@ -137,9 +137,9 @@ impl Database {
                 (declaration, declaration.mutation.clone().ok_or_else(|| invalid("upload mutation is missing"))?, variables)
             }
         };
-        let file = UploadFile { path: item.path.clone(), name: item.name.clone(), mime: item.mime.clone(), variables: Map::new() };
+        let file = UploadFile { source: item.source.clone(), variables: Map::new() };
         let correlate = spec.actions.iter().find(|declared| declared.name == action).and_then(|declared| declared.correlate.first()).and_then(|field| item.values.get(field)).and_then(Value::as_str).unwrap_or(planned.row_id.as_str()).to_string();
-        let source = file.path.as_deref().map(|path| self.source_of(path)).transpose()?;
+        let source = file.source.path().map(|path| self.source_of(path)).transpose()?;
         let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate), source)?;
         if let Some(name) = single_name { built.mutation.action = name; }
         Ok(built)

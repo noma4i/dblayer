@@ -23,10 +23,24 @@ pub enum WireSource {
 }
 
 impl WireSource {
-    fn parts(self) -> (Option<String>, Option<String>, Option<String>) {
+    pub(crate) fn path(&self) -> Option<&str> {
         match self {
-            Self::File { path, name, mime } => (Some(path), name, mime),
-            Self::Pending => (None, None, None),
+            Self::File { path, .. } => Some(path),
+            Self::Pending => None,
+        }
+    }
+
+    pub(crate) fn name(&self) -> Option<&str> {
+        match self {
+            Self::File { name, .. } => name.as_deref(),
+            Self::Pending => None,
+        }
+    }
+
+    pub(crate) fn mime(&self) -> Option<&str> {
+        match self {
+            Self::File { mime, .. } => mime.as_deref(),
+            Self::Pending => None,
         }
     }
 }
@@ -56,22 +70,19 @@ pub(super) fn object(json: &str) -> Result<Map<String, Value>, DbError> {
 #[cfg(test)]
 impl WireUploadRequest {
     pub fn of(file: &UploadFile) -> Self {
-        let source = file.path.clone().map(|path| WireSource::File { path, name: file.name.clone(), mime: file.mime.clone() }).unwrap_or(WireSource::Pending);
-        Self { source, variables_json: Value::Object(file.variables.clone()).to_string() }
+        Self { source: file.source.clone(), variables_json: Value::Object(file.variables.clone()).to_string() }
     }
 }
 
 impl WireUploadRequest {
     pub fn into_file(self) -> Result<UploadFile, DbError> {
-        let (path, name, mime) = self.source.parts();
-        Ok(UploadFile { path, name, mime, variables: object(&self.variables_json)? })
+        Ok(UploadFile { source: self.source, variables: object(&self.variables_json)? })
     }
 }
 
 impl WireUploadItem {
     pub fn into_item(self) -> Result<UploadItem, DbError> {
-        let (path, name, mime) = self.source.parts();
-        Ok(UploadItem { values: object(&self.values_json)?, path, name, mime, variables: object(&self.variables_json)? })
+        Ok(UploadItem { values: object(&self.values_json)?, source: self.source, variables: object(&self.variables_json)? })
     }
 }
 

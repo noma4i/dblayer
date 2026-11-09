@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+use crate::ffi::upload_wire::WireSource;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadItem {
     pub values: Map<String, Value>,
-    pub path: Option<String>,
-    pub name: Option<String>,
-    pub mime: Option<String>,
+    pub source: WireSource,
     pub variables: Map<String, Value>,
 }
 
@@ -18,15 +18,13 @@ pub struct UploadBatchInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadFile {
-    pub path: Option<String>,
-    pub name: Option<String>,
-    pub mime: Option<String>,
+    pub source: WireSource,
     pub variables: Map<String, Value>,
 }
 
 impl UploadFile {
     pub fn new(path: &str) -> Self {
-        Self { path: Some(path.to_string()), name: None, mime: None, variables: Map::new() }
+        Self { source: WireSource::File { path: path.to_string(), name: None, mime: None }, variables: Map::new() }
     }
 
     pub fn variable(mut self, name: &str, value: Value) -> Self {
