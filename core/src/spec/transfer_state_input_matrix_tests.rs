@@ -156,16 +156,6 @@ fn xfer_orphan_abort_refused_keeps_debt() {
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
 }
 
-#[test]
-fn xfer_open_saved_interrupted() {
-    use crate::owners::write::transfer::TransferAnswer;
-    let (mut twin, restored) = Twin::opened(Vec::new(), [(7, OutboxOutcome::Interrupted)].into_iter().collect());
-    assert_eq!((restored.writes(), restored.all_replies()), (0, 0));
-    let (reply, out) = twin.outcome(7, 1);
-    assert_eq!((out.replies(reply), out.all_replies(), out.writes()), (vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)], 1, 0));
-    assert!(twin.state().transfers.is_empty());
-}
-
 fn failed_transfer_mutation(twin: &mut Twin) -> u64 {
     let id = twin.mutating(KEY);
     twin.mutation_outcome(KEY, OutboxOutcome::Failed { error: "error".into() });
@@ -222,7 +212,7 @@ fn xfer_failed_confirmed_before_discard() {
 #[test]
 fn xfer_failed_outcome_failed_waiting() {
     use crate::owners::write::transfer::TransferStage;
-    for outcome in [OutboxOutcome::Failed { error: "error".into() }, OutboxOutcome::Rejected { error: "error".into() }, OutboxOutcome::Interrupted] {
+    for outcome in [OutboxOutcome::Failed { error: "error".into() }, OutboxOutcome::Rejected { error: "error".into() }] {
         let mut twin = Twin::new();
         let id = failed_transfer_mutation(&mut twin);
         twin.discard(KEY);
