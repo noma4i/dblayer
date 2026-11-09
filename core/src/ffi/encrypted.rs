@@ -139,10 +139,10 @@ impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         self.not_closed()?;
         let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
-        match self.await_life(self.life.session_call(operation, body_json)).await? {
+        match self.await_call(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => self.offload(move || session_body(&body)).await,
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
-            _ => Err(super::command::ended()),
+            _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
         }
     }
 
@@ -151,7 +151,7 @@ impl Database {
             LifeReply::SessionResume(Ok(Some(body))) => self.offload(move || session_body(&body)).await.map(Some),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
             LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
-            _ => Err(super::command::ended()),
+            _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
         }
     }
 
@@ -162,7 +162,7 @@ impl Database {
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Storage { detail: "the account could not be cleared".into() }),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed)) => Err(super::command::closed()),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Runtime)) => Err(DbError::Runtime { detail: "the owners failed".into() }),
-            _ => Err(super::command::ended()),
+            _ => Err(super::cause_error(&super::EndCause::SessionEnded)),
         }
     }
 }
@@ -187,7 +187,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
-        Failed::Interrupted => super::command::ended(),
+        Failed::Interrupted => DbError::Interrupted { detail: "the call ended".into() },
         Failed::Closed => super::command::closed(),
     }
 }

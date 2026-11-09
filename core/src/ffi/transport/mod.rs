@@ -103,7 +103,7 @@ impl OnlineSink {
         match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
             crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
-            crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
+            crate::runtime::Outcome::EpochEnded(cause) => Err(super::cause_error(&super::EndCause::of(cause))),
             crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
         }
     }

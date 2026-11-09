@@ -23,6 +23,8 @@ pub enum LoadMoreResult {
 #[derive(uniffi::Object)]
 pub struct LoadRequest {
     outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
+    /// The sender the task answers with: a cancel answers with it too, so the wait ends with its cause.
+    answer: Arc<tokio::sync::watch::Sender<Option<Result<(), DbError>>>>,
     held: Mutex<Option<tokio::task::AbortHandle>>,
     life: Arc<crate::owners::life::Life>,
     /// The count of the owners barrier while an aborted task is still being dropped: the task lets it go with its last field.
@@ -38,7 +40,7 @@ impl Drop for ReleaseBarrier {
     }
 }
 
-fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
+fn load_cancelled() -> DbError { super::cause_error(&super::EndCause::Cancelled) }
 
 #[uniffi::export]
 impl LoadRequest {
@@ -47,7 +49,6 @@ impl LoadRequest {
         let mut outcome = self.outcome.clone();
         let seen = match outcome.wait_for(Option::is_some).await {
             Ok(seen) => seen.clone(),
-            Err(_) if crate::lock::lock(&self.held).is_none() => return Err(load_cancelled()),
             Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
         };
         seen.unwrap_or_else(|| Err(load_cancelled()))
@@ -57,6 +58,7 @@ impl LoadRequest {
     pub fn cancel(&self) {
         let held = crate::lock::lock(&self.held).take();
         let Some(task) = held else { return };
+        crate::lock::effect(|| self.answer.send_if_modified(|seen| seen.is_none().then(|| *seen = Some(Err(load_cancelled()))).is_some()));
         let previous = crate::lock::lock(&self.dropping).replace(self.life.launch());
         drop(previous);
         crate::lock::effect(|| task.abort());
@@ -184,6 +186,8 @@ impl Database {
     fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
+        let sender = Arc::new(sender);
+        let answer = sender.clone();
         let this = self.clone();
         let launch = self.life.launch();
         let slot = self.reserve_load(args.epoch);
@@ -202,9 +206,9 @@ impl Database {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
             };
-            crate::lock::effect(|| sender.send_replace(Some(result)));
+            crate::lock::effect(|| sender.send_if_modified(|seen| seen.is_none().then(|| *seen = Some(result)).is_some()));
         }));
-        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
+        Ok(Arc::new(LoadRequest { outcome, answer, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
     }
 
     fn reserve_load(&self, epoch: u64) -> LoadSlot {
@@ -250,7 +254,7 @@ impl Database {
         self.remote()?;
         self.account_call(epoch)?;
         let published = self.life.published();
-        if published.epoch != epoch { return Err(super::command::ended()); }
+        if published.epoch != epoch { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
         let (id, waiter) = (slot.id, slot.waiter.take().ok_or_else(super::database::foreign_reply)?);
         self.life.load(epoch, id, key.clone(), (goal, force), self.db.revision_seq()?, no_wait);
@@ -263,13 +267,13 @@ impl Database {
         let LifeReply::Window(outcome) = reply? else { return Err(super::database::foreign_reply()) };
         match *outcome {
             WindowOutcome::Loaded { has_more, fetched, .. } => {
-                if !self.admits(call.epoch) { return Err(super::command::ended()); }
+                if !self.admits(call.epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
                 Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore })
             }
             WindowOutcome::Failed { failure } => Err(failure),
             WindowOutcome::Offline { message } => Err(DbError::Offline { detail: message }),
             WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
-            WindowOutcome::Ended { cause } => Err(super::end_error(&cause)),
+            WindowOutcome::Ended { cause } => Err(super::cause_error(&cause)),
         }
     }
 }

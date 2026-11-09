@@ -179,7 +179,7 @@ fn settled_by(value: &ReadValue, seq: u64) -> Option<Result<u64, DbError>> {
             ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Storage { detail: String::new() }))),
             ReadPhase::Idle | ReadPhase::Loading => None,
         },
-        ReadValue::Ended { cause } => Some(Err(super::end_error(cause))),
+        ReadValue::Ended { cause } => Some(Err(super::cause_error(cause))),
         _ => None,
     }
 }

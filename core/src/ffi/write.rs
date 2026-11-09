@@ -31,7 +31,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::SessionEnded => DbError::Session { code: crate::transport::SessionCode::SessionEnded, detail: "the session ended".into() },
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
-        Fault::Ended(cause) => super::end_error(&cause),
+        Fault::Ended(cause) => super::cause_error(&cause),
         Fault::Closed => super::command::closed(),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },
@@ -57,7 +57,7 @@ pub(super) fn fault_outcome(fault: Fault, what: &str) -> Result<WireOperationOut
 pub(super) fn outcome_error(error: DbError) -> Result<WireOperationOutcome, DbError> {
     let cause = match error {
         DbError::Closed { .. } => super::EndCause::Closed,
-        DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Session { code: crate::transport::SessionCode::SessionEnded, .. } => super::EndCause::SessionEnded,
+        DbError::NoSession { .. } | DbError::Session { code: crate::transport::SessionCode::SessionEnded, .. } => super::EndCause::SessionEnded,
         error => return Err(error),
     };
     Ok(WireOperationOutcome::Ended { cause })

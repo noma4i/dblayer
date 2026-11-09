@@ -126,12 +126,15 @@ pub enum DbError {
     NotOpen { detail: String },
 }
 
-pub(super) fn end_error(cause: &EndCause) -> DbError {
+/// The error of a wait that ends with its epoch, stream or command: the only mapping of an end cause (D-263).
+pub(super) fn cause_error(cause: &EndCause) -> DbError {
     match cause {
-        EndCause::Closed => DbError::Closed { detail: "the stream ended".into() },
+        EndCause::Closed => DbError::Closed { detail: "the database ended the wait".into() },
         EndCause::SessionEnded => DbError::NoSession { detail: "the session ended".into() },
         EndCause::Invalid { detail } => DbError::Invalid { detail: detail.clone() },
-        cause => DbError::Interrupted { detail: format!("{cause:?}") },
+        EndCause::Storage { error } => DbError::Storage { detail: error.clone() },
+        EndCause::Internal { detail } => DbError::Internal { detail: detail.clone() },
+        cause @ (EndCause::Cancelled | EndCause::Discarded) => DbError::Interrupted { detail: format!("{cause:?}") },
     }
 }
 

@@ -24,8 +24,6 @@ pub struct CommandRequest {
     pub upload: Option<CommandUpload>,
 }
 
-pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
-
 /// The error of a call that finds the database closed.
 pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is closed".into() } }
 
@@ -36,7 +34,7 @@ impl Database {
     pub(super) async fn in_epoch<T>(&self, epoch: u64, _target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         self.account_call(epoch)?;
         let result = work.await?;
-        if !self.admits(epoch) { return Err(ended()); }
+        if !self.admits(epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
         Ok(result)
     }
 
@@ -50,7 +48,7 @@ impl Database {
         crate::runtime::release_holds();
         drop(kept);
         let value = value?;
-        if !answer.admits(epoch) { return Err(ended()); }
+        if !answer.admits(epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
         Ok(value)
     }
 
