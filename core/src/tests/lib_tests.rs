@@ -98,3 +98,49 @@ fn user_agent_preserves_application_products() {
         assert_eq!(crate::ffi::user_agent(application), expected);
     }
 }
+
+#[test]
+fn rt_prop_no_owner_delay() {
+    let owners = crate::test_wait::package_dir().join("src").join("owners");
+    let mut files = Vec::new();
+    rust_files(&owners, &mut files);
+    let mut strays: Vec<String> = Vec::new();
+    for path in &files {
+        let text = fs::read_to_string(path).unwrap();
+        let name = path.strip_prefix(&owners).unwrap().display().to_string();
+        for needle in [".delay(", "thread_rng", "StdRng", "SmallRng", "gen_range", "OsRng", "fastrand", "process_seed"] {
+            if text.contains(needle) {
+                strays.push(format!("{name}: {needle}"));
+            }
+        }
+    }
+    strays.sort();
+    assert_eq!(strays, Vec::<String>::new(), "an owner computes a retry delay or draws randomness instead of sending Effect::Backoff{{policy, attempt}}");
+}
+
+#[test]
+fn xfer_source_one_representation() {
+    let root = crate::test_wait::package_dir().join("src");
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+    let mut strays: Vec<String> = Vec::new();
+    for path in &files {
+        let name = path.strip_prefix(&root).unwrap().display().to_string();
+        if name == "ffi/upload_wire.rs" {
+            continue;
+        }
+        let lines: Vec<String> = fs::read_to_string(path).unwrap().lines().map(str::to_string).collect();
+        for (index, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("path: Option<String>") || trimmed.starts_with("path: String") {
+                let window = lines[index..(index + 5).min(lines.len())].join("\n");
+                if window.contains("name: Option<String>") && window.contains("mime: Option<String>") {
+                    strays.push(name.clone());
+                }
+            }
+        }
+    }
+    strays.sort();
+    strays.dedup();
+    assert_eq!(strays, Vec::<String>::new(), "the upload source triple (path, name, mime) is declared outside ffi/upload_wire.rs; the source is one WireSource value to the owner (D-199)");
+}
