@@ -281,7 +281,7 @@ impl ReadStream {
     /// Takes the stream for one reader and returns its number or the reason the claim ended.
     pub async fn claim_reader(&self) -> ReadClaim {
         let Some(life) = self.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
-        let reader = crate::runtime::next_id(crate::runtime::Counter::Reader);
+        let reader = crate::runtime::next_id(crate::runtime::IdSpace::Reader);
         if life.claim_reader(self.stream, reader).await { ReadClaim::Claimed { reader } } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
     }
 

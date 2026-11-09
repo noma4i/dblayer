@@ -28,7 +28,7 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use counters::Counters;
 pub use duration::parse_duration;
 pub use freshness::selected_policy;
-pub use process_ids::{next_id, Counter};
+pub use process_ids::{next_id, IdSpace};
 pub use retry::{process_seed, RetryPolicy};
 #[cfg(test)]
 pub(crate) use test_clock::TestClock;

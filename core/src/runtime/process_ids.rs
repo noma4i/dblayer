@@ -3,11 +3,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy)]
-pub enum Counter {
+pub enum IdSpace {
     Reader,
     Round,
 }
 
 static COUNTERS: [AtomicU64; 2] = [AtomicU64::new(1), AtomicU64::new(1)];
 
-pub fn next_id(counter: Counter) -> u64 { COUNTERS[counter as usize].fetch_add(1, Ordering::SeqCst) }
+pub fn next_id(space: IdSpace) -> u64 { COUNTERS[space as usize].fetch_add(1, Ordering::SeqCst) }
