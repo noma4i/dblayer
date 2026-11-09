@@ -26,7 +26,8 @@ async fn members(stand: &Stand) -> Vec<String> {
 }
 
 /// The rule of D-224: `segment` is the list the page covers from its start, `answer` the ids that arrived in order.
-fn expected(segment: &[&str], answer: &[&str], has_next: bool) -> Vec<String> {
+fn expected(segment: &[&str], answer: &[&str], has_next: bool, first_page: bool) -> Vec<String> {
+    if first_page && answer.is_empty() { return Vec::new(); }
     let Some(last) = answer.last() else { return if has_next { segment.iter().map(|id| id.to_string()).collect() } else { Vec::new() } };
     if !has_next { return answer.iter().map(|id| id.to_string()).collect(); }
     let at = segment.iter().position(|id| id == last).unwrap_or(segment.len().saturating_sub(1));
@@ -71,7 +72,7 @@ async fn run(path: &str) {
                     remaining = removal(position, &["u3", "u4"]);
                     stand.answer("blockedUsers", page(&remaining, has_next));
                     bound(stand.database.load_more(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
-                    want = { let mut keep: Vec<String> = vec!["u1".into(), "u2".into()]; keep.extend(expected(&["u3", "u4"], &remaining, has_next)); keep.sort(); keep };
+                    want = { let mut keep: Vec<String> = vec!["u1".into(), "u2".into()]; keep.extend(expected(&["u3", "u4"], &remaining, has_next, false)); keep.sort(); keep };
                     cell_path = format!("load_more / next page {}", if has_next { "with cursor" } else { "last" });
                 }
                 _ => {
@@ -86,7 +87,7 @@ async fn run(path: &str) {
                     } else {
                         bound(stand.database.refresh(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
                     }
-                    want = { let mut keep = expected(&ALL, &remaining, has_next); keep.sort(); keep };
+                    want = { let mut keep = expected(&ALL, &remaining, has_next, true); keep.sort(); keep };
                     cell_path = format!("{path} / page {}", if has_next { "with cursor" } else { "last" });
                 }
             }
