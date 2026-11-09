@@ -79,7 +79,7 @@ pub fn seal_response(request: &Value, sequence: Option<i64>, body: Value) -> Str
     format!("{header}..{}.{}.{}", URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(text), URL_SAFE_NO_PAD.encode(tag))
 }
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -87,6 +87,7 @@ use sha2::{Digest, Sha256};
 
 use super::{CredentialSlot, HttpExchange, HttpReply};
 use crate::runtime::Clock;
+use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::TransportError;
 
 #[derive(Default)]
@@ -105,23 +106,20 @@ struct Faults {
 #[derive(Default)]
 struct Session {
     digest: String,
-    sequence: i64,
-    request_digest: String,
-    answer: Option<String>,
     ended: bool,
     reads: HashSet<String>,
 }
 
-fn document_of(registry: &mut HashSet<(String, String)>, body: &Value) -> Result<Value, &'static str> {
+fn document_of(documents: &mut HashMap<String, String>, body: &Value) -> Result<Value, &'static str> {
     let Some(persisted) = body.get("extensions").and_then(|extensions| extensions.get("persistedQuery")) else { return Ok(body["query"].clone()) };
     let hash = persisted["sha256Hash"].as_str().unwrap_or_default().to_string();
     match body["query"].as_str() {
         Some(query) if hex_of(query) == hash => {
-            registry.insert((hash, query.to_string()));
+            documents.insert(hash, query.to_string());
             Ok(json!(query))
         }
         Some(_) => Err("INVALID_INPUT"),
-        None => registry.iter().find(|(known, _)| *known == hash).map(|(_, query)| json!(query)).ok_or("PERSISTED_QUERY_NOT_FOUND"),
+        None => documents.get(&hash).map(|query| json!(query)).ok_or("PERSISTED_QUERY_NOT_FOUND"),
     }
 }
 
@@ -139,7 +137,8 @@ struct State {
     faults: Faults,
     seen: Vec<Value>,
     executed: Vec<Value>,
-    registry: HashSet<(String, String)>,
+    documents: HashMap<String, String>,
+    contract: Contract<String>,
     reply: Option<Value>,
 }
 
@@ -149,24 +148,19 @@ pub struct FakeServer {
     on_request: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
-fn digest_of(data: &Value) -> String {
-    let mut copy = data.clone();
-    copy.as_object_mut().expect("object").remove("issuedAt");
-    Sha256::digest(copy.to_string().as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-
 impl FakeServer {
     pub fn rewind_sequence(&self, credential: &str, sequence: i64) {
         let digest: String = Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
         let mut state = self.state.lock().unwrap();
-        let session = state.session.as_mut().filter(|session| session.digest == digest).expect("session of the credential");
-        session.sequence = sequence;
+        state.session.as_ref().filter(|session| session.digest == digest).expect("session of the credential");
+        state.contract.set_last(sequence);
     }
 
     pub fn register(&self, document: &str) {
         let hash = hex_of(document);
-        self.state.lock().unwrap().registry.insert((hash, document.to_string()));
+        let mut state = self.state.lock().unwrap();
+        state.contract.register(&hash);
+        state.documents.insert(hash, document.to_string());
     }
 
     pub fn reply_with(&self, data: Value) {
@@ -178,7 +172,9 @@ impl FakeServer {
     }
 
     pub fn empty_registry(&self) {
-        self.state.lock().unwrap().registry.clear();
+        let mut state = self.state.lock().unwrap();
+        state.documents.clear();
+        state.contract.forget();
     }
 
     pub fn refuse_hashes(&self) {
@@ -229,41 +225,40 @@ impl FakeServer {
         let auth = path.starts_with("/api/auth/");
         if auth && data["sequence"] == 1 && state.session.as_ref().is_none_or(|session| session.digest != credential_digest) {
             state.session = Some(Session { digest: credential_digest.clone(), ..Session::default() });
+            state.contract.set_last(0);
         }
         let Some(session) = state.session.as_mut().filter(|session| session.digest == credential_digest) else {
             return seal_response(data, None, json!({ "error": "UNAUTHENTICATED" }));
         };
+        let graphql = path == "/api/graphql";
         let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
-        let resolved = if path == "/api/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
+        if graphql && (forget || refuse) {
+            return seal_response(data, None, persisted_failure(if forget { "PERSISTED_QUERY_NOT_FOUND" } else { "INVALID_INPUT" }));
+        }
+        let request = Request::from_wire(&credential_digest, data);
+        let sequence = request.sequence;
         if let Some((code, confirmed)) = state.faults.refuse_next.take() {
             let spent = data["sequence"].as_i64().filter(|_| confirmed);
             let answer = seal_response(data, spent, json!({ "error": code }));
-            if let Some(sequence) = spent {
-                session.sequence = sequence;
-                session.request_digest = digest_of(data);
-                session.answer = Some(answer.clone());
-            }
+            if spent.is_some() { state.contract.settle(&request, answer.clone()); }
             return answer;
         }
-        let Some(sequence) = data["sequence"].as_i64() else {
-            let document = match resolved {
-                Ok(document) => document,
-                Err(code) => return seal_response(data, None, persisted_failure(code)),
-            };
+        match state.contract.admit(&request) {
+            Admission::Stored(answer) => return answer,
+            Admission::TwoBodies => panic!("the pair {} went with two bodies", request.request_id),
+            Admission::Refused(refusal) => return seal_response(data, None, refusal),
+            Admission::Fresh => {}
+        }
+        let resolved = if graphql { document_of(&mut state.documents, &data["body"]) } else { Ok(Value::Null) };
+        if let Err(code) = &resolved {
+            return seal_response(data, None, persisted_failure(code));
+        }
+        if sequence.is_none() {
+            let document = resolved.unwrap_or_default();
             if !session.reads.insert(data["requestId"].as_str().unwrap().to_string()) || std::mem::take(&mut state.faults.replay_next_read) {
                 return seal_response(data, None, json!({ "error": "REPLAYED_REQUEST" }));
             }
             return seal_response(data, None, json!({ "data": { "read": document } }));
-        };
-        if let Err(code) = &resolved {
-            return seal_response(data, None, persisted_failure(code));
-        }
-        let digest = digest_of(data);
-        if session.sequence == sequence && session.request_digest == digest {
-            return session.answer.clone().expect("stored answer");
-        }
-        if sequence != session.sequence + 1 {
-            return seal_response(data, None, json!({ "error": "SEQUENCE_CONFLICT" }));
         }
         if session.ended {
             return seal_response(data, None, json!({ "error": "SESSION_ENDED" }));
@@ -274,19 +269,12 @@ impl FakeServer {
                 json!({ "revoked": true })
             }
             "/api/auth/confirm" => json!({ "error": "INVALID_CODE" }),
-            "/api/graphql" => match &resolved {
-                Ok(document) => json!({ "data": state.reply.clone().unwrap_or_else(|| json!({ "done": document })) }),
-                Err(code) => persisted_failure(code),
-            },
+            "/api/graphql" => json!({ "data": state.reply.clone().unwrap_or_else(|| json!({ "done": resolved.as_ref().ok() })) }),
             _ => json!({ "nextStep": "authenticated" }),
         };
-        let answer = seal_response(data, Some(sequence), result);
-        session.sequence = sequence;
-        session.request_digest = digest;
-        session.answer = Some(answer.clone());
-        if resolved.is_ok() {
-            state.executed.push(data["body"].clone());
-        }
+        let answer = seal_response(data, sequence, result);
+        state.contract.settle(&request, answer.clone());
+        state.executed.push(data["body"].clone());
         answer
     }
 }
