@@ -86,3 +86,18 @@ fn xfer_blob_cache_created_at_is_the_createblob_answer() {
     let written = twin.completed(id);
     assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 1000 }], "the term of the cache is the term of the server blob from its creation, not from complete");
 }
+
+#[test]
+fn xfer_blob_time_survives_restart() {
+    let mut row = stored(1, KEY, 1);
+    row.confirmed_parts = 1;
+    row.blob_created_at = Some(crate::runtime::Time(1000));
+    let (mut twin, _) = Twin::opened(vec![row], Default::default());
+    twin.post(TransferInput::Clock(crate::runtime::Time(5000)));
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    twin.online(true);
+    twin.commit();
+    assert_eq!(twin.stage(1), TransferStage::Completing, "the restored upload reaches its complete step");
+    let written = twin.completed(1);
+    assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 1000 }], "the cache time survives the restart and comes from the createBlob answer, not the reopen now");
+}
