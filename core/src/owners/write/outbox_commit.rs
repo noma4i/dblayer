@@ -165,7 +165,7 @@ impl OutboxState {
     pub(super) fn swap_row(&mut self, landed: OpId, temp: &str, real: &str) {
         let model = self.ops[&landed].op.model.clone();
         self.aliases.insert((model.clone(), temp.to_string()), real.to_string());
-        for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && operation.op.model == model && operation.op.row_id == temp) {
+        for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, &model, temp)) {
             Self::resolve_operation(&self.aliases, &mut operation.op);
         }
     }
@@ -219,6 +219,7 @@ impl OutboxState {
         let Some(stage) = self.stage_of(op_id) else { return };
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             self.submit_refused(op_id, reason, fx);
+            self.ops.remove(&op_id);
             self.finish_cancelled_commit(created, fx);
             return;
         }

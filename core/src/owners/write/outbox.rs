@@ -133,10 +133,24 @@ impl OutboxState {
 
     pub(super) fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(self.base_generation) }
 
+    pub(super) fn addresses_row(operation: &QueuedOperation, model: &str, row: &str) -> bool {
+        operation.op.model == model && match &operation.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| member.row_id == row),
+            _ => operation.op.row_id == row,
+        }
+    }
+
+    fn shares_row(first: &QueuedOperation, second: &QueuedOperation) -> bool {
+        match &second.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| Self::addresses_row(first, &second.op.model, &member.row_id)),
+            _ => Self::addresses_row(first, &second.op.model, &second.op.row_id),
+        }
+    }
+
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.ops.values().any(|other| other.op_id < op_id && other.op.model == operation.op.model && other.op.row_id == operation.op.row_id && other.stage != Stage::Done)
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation))
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -468,7 +482,7 @@ impl OutboxState {
     /// The first operation of the row that is not `Done`: the one `retry` and `discard` address.
     pub(super) fn open_on_row(&self, model: &str, row: &str, action: Option<&str>) -> Option<OpId> {
         let row = self.aliases.get(&(model.to_string(), row.to_string())).map_or(row, String::as_str);
-        self.ops.values().find(|operation| operation.op.model == model && operation.op.row_id == row && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).map(|operation| operation.op_id)
+        self.ops.values().filter(|operation| Self::addresses_row(operation, model, row) && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).min_by_key(|operation| operation.sequence).map(|operation| operation.op_id)
     }
 
     /// A call without an action asks Transfer, which holds the transfers that have no operation yet: the smallest open operation of the row here is the bound.
@@ -487,7 +501,7 @@ impl OutboxState {
 
     /// Transfer named the smallest open operation of the row here: an operation of a transfer goes on through its Transfer, any other by its own cell.
     fn selected(&mut self, (model, row_id): (String, String), action: String, kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        if kind == SelectKind::Retry && self.open_on_row(&model, &row_id, Some(&action)).is_some_and(|op_id| matches!(self.ops[&op_id].op.origin, OpSource::Transfer { .. })) {
+        if kind == SelectKind::Retry && self.open_on_row(&model, &row_id, Some(&action)).is_some_and(|op_id| matches!(self.ops[&op_id].op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. })) {
             return Self::reply(fx, reply, OutboxAnswer::Transfer { action });
         }
         match kind {
