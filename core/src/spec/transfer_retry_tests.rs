@@ -32,6 +32,10 @@ fn intent_ops(out: &Out) -> Vec<u64> {
     out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Intent { op_id, .. } = op { Some(*op_id) } else { None }).collect()
 }
 
+fn intent_cycles(out: &Out) -> Vec<(u32, u64)> {
+    out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Intent { attempts, cycle_id, .. } = op { Some((*attempts, *cycle_id)) } else { None }).collect()
+}
+
 fn recreated(twin: &mut Twin, id: TransferId, keyed: &str) {
     let (reply, out) = twin.retry(keyed, None);
     assert_eq!((twin.stage(id), out.writes(), out.outbox_retries()), (TransferStage::PersistingRetry, 1, 0));
@@ -42,6 +46,7 @@ fn recreated(twin: &mut Twin, id: TransferId, keyed: &str) {
     assert_eq!((twin.stage(id), twin.t(id).cycle_id), (TransferStage::PersistingBatchIntent, 2));
     assert_eq!(out.writes(), 1);
     assert_eq!(intent_ops(&out), vec![id], "the reserved op_id of the element");
+    assert_eq!(intent_cycles(&out), vec![(1, 2)], "the first attempt of the repeated cycle");
     assert!(out.submit_ops().is_empty());
     let out = twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Mutating);
