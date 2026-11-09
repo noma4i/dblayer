@@ -41,33 +41,65 @@ async fn sess_request_ids_unique_per_process() {
     second.close_database().await.unwrap();
 }
 
+const OPERATIONS_WITH_UPLOADS: &str = r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"#;
+
+/// Refuses every named operation with a transient server error (503), then a permanent one (400) once
+/// `fatal` is set, so each owner backs off once and its retry resolves. Session traffic without an
+/// operation name (the social sign-in) reaches the server.
+struct RefusingHttp {
+    session: super::encrypted_tests::ThroughServer,
+    fatal: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl super::FakeHttp for RefusingHttp {
+    async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<super::EncryptedReply, super::DbError> {
+        let request = crate::transport::encrypted::tests::fake_server_tests::decrypt_request(&body).unwrap();
+        if request["body"]["operationName"].as_str().is_none() {
+            return super::FakeHttp::post(&self.session, path, body, purpose).await;
+        }
+        let status = if self.fatal.load(std::sync::atomic::Ordering::SeqCst) { 400 } else { 503 };
+        Ok(super::EncryptedReply { status, body: String::new() })
+    }
+}
+
 /// wire_prop_retry_progress_one_source: the public `RetryProgress` lists one waiting entry per owner that backs off (Session, Window, Outbox, Transfer), each keyed by its owner and first attempt, and every entry leaves when its tick fires (wire.md P-WIRE-03, D-274).
 #[tokio::test(flavor = "multi_thread")]
 async fn wire_prop_retry_progress_one_source() {
     use std::collections::BTreeSet;
-    use crate::transport::{PutScript, RetryEntry, RetryOwner};
+    use crate::transport::{RetryEntry, RetryOwner};
+    use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
+    use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
 
-    let transport = Arc::new(MockTransport::new());
-    transport.respond_with(|_| Some(Reply::graphql_error("busy", "SERVICE_UNAVAILABLE")));
-    transport.enqueue_put("https://put/part/1", PutScript::status(503));
-    let clock = Arc::new(ManualClock::new(std::time::Duration::from_secs(1)));
-    let wired = transport.clone();
+    let clock = super::TestClock::new(1_800_000_000_000);
+    let server = FakeServer::new(clock.manual());
+    let credentials = Arc::new(MemoryCredentials::default());
+    let http = Arc::new(RefusingHttp { session: super::encrypted_tests::ThroughServer(server.clone()), fatal: std::sync::atomic::AtomicBool::new(false) });
+    let encrypted = super::EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
+    let ports = super::OpenPorts {
+        transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)),
+        encrypted: Some(encrypted),
+        credentials: Some(Arc::new(super::encrypted_tests::Held(credentials))),
+        http: Some(http.clone()),
+        endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()),
+        ..Default::default()
+    };
     let spec = super::sealed_errors_tests::moment_spec();
-    let database = Database::start_with(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), clock.clone(), move |db, _| {
-        super::signed_session_tests::signed_session(db);
-        Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
-    }).unwrap();
-    database.register_operations(super::sealed_errors_tests::OPERATIONS.into()).await.unwrap();
+    let database = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), ports, clock.clone()).await.unwrap();
+    database.register_operations(OPERATIONS_WITH_UPLOADS.into()).await.unwrap();
     database.set_online(true).unwrap();
+    database.session_call("social".into(), super::session_guards_tests::SOCIAL_BODY.into()).await.unwrap();
     let epoch = database.session_epoch();
 
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"clip").unwrap();
+
+    let created = database.create(epoch, "Moment".into(), "{\"text\":\"a\"}".into(), "{}".into()).await.unwrap();
+    let row_id = created.optimistic_value.unwrap().id;
+    database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
     let window = tokio::spawn({ let db = database.clone(); async move { db.load(epoch, "Moment".into(), "feed".into(), "{}".into()).await } });
-    let outbox = tokio::spawn({ let db = database.clone(); async move { db.create(epoch, "Moment".into(), "{\"text\":\"a\"}".into(), "{}".into()).await } });
     let session = tokio::spawn({ let db = database.clone(); async move { db.run(epoch, "MakeMoment".into(), "{}".into()).await } });
-    let transfer = tokio::spawn({
-        let db = database.clone();
-        async move { db.upload(epoch, "Moment".into(), "r1".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None }, variables_json: "{}".into() }).await }
-    });
 
     let progress = database.retry_progress();
     let reader = progress.subscribe();
@@ -79,8 +111,9 @@ async fn wire_prop_retry_progress_one_source() {
     assert_eq!(owners, [RetryOwner::Session, RetryOwner::Window, RetryOwner::Outbox, RetryOwner::Transfer].into_iter().collect(), "one waiting entry per owner");
     assert!(waiting.waiting.iter().all(|entry| entry.attempt == 1), "the first retry of each owner: {:?}", waiting.waiting);
 
+    http.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
     for entry in &waiting.waiting {
-        clock.advance(std::time::Duration::from_millis(entry.delay_ms));
+        clock.advance(entry.delay_ms);
     }
     let drained = loop {
         let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
@@ -89,8 +122,6 @@ async fn wire_prop_retry_progress_one_source() {
     assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
 
     window.abort();
-    outbox.abort();
     session.abort();
-    transfer.abort();
     database.close_database().await.unwrap();
 }
