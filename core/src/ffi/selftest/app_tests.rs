@@ -198,7 +198,7 @@ async fn a_run_and_a_load_after_reset_and_login_end() {
     database.close_now();
 }
 
-/// C19, R-5: login is refused as already authenticated, the confirmed sign-out follows, the login repeats and starts the session. A refused sign-out does not repeat the login.
+/// C19, R-5: login is refused as already authenticated, the confirmed sign-out follows, the login repeats and starts the session. A sign-out the server answers SESSION_ENDED ends the session and does not repeat the login.
 #[tokio::test(flavor = "multi_thread")]
 async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     let rig = Rig::encrypted().await;
@@ -218,10 +218,10 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     assert!(rig.world.signed());
 
     rig.world.fail_next("logout", Fault::Refuse { code: "SESSION_ENDED", confirmed: true });
-    let refused = bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap_err();
-    assert_eq!(session_code(refused), SessionCode::SessionEnded);
-    assert!(rig.world.signed(), "a refused sign-out ended the server session");
-    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "login_link").count(), logins + 1, "a refused sign-out repeated the login");
+    let ended = bound(rig.database.session_call("logout".into(), "{}".into())).await;
+    assert!(ended.is_ok(), "a sign-out answered SESSION_ENDED ends the session with Ok (sess_calling_revoked_logout): {ended:?}");
+    assert!(rig.database.signed_in_digest().is_none(), "the client session ended with the server one");
+    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "login_link").count(), logins + 1, "an ended sign-out repeated the login");
     rig.database.close_now();
 }
 
