@@ -136,7 +136,7 @@ fn store_retry_preserves_transfer_outcome() {
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: second.clone() }]);
     assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first), (2, second)].into()));
     write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::RemoveUpload { key: "moments:m1:upload".into() }]);
-    assert!(!db.read_restore().unwrap().transfer_outcomes.contains_key(&3));
+    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, OutboxOutcome::Failed { error: "refused".into() }), (2, OutboxOutcome::Discarded)].into()), "RemoveUpload keeps the outcomes of every cycle (D-237)");
 }
 
 #[test]

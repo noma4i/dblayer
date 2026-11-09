@@ -259,6 +259,21 @@ fn boot_prunes_expired_tombstones() {
 }
 
 #[test]
+fn boot_prunes_transfer_outcomes_older_than_seven_days() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::StoreOp;
+    use crate::owners::write::outbox::OutboxOutcome;
+    let (store, clock) = booted_store();
+    let outcome = |transfer_id| StoreOp::TransferOutcome { transfer_id, cycle_id: 1, outcome: OutboxOutcome::Discarded };
+    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(1)]);
+    clock.advance(std::time::Duration::from_millis(6 * 86_400_000));
+    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(2)]);
+    clock.advance(std::time::Duration::from_millis(86_400_001));
+    store.boot(&[messages_spec(), items_spec()], None).unwrap();
+    assert_eq!(store.read_restore().unwrap().transfer_outcomes.keys().copied().collect::<Vec<_>>(), vec![2], "an outcome older than 7 days from its write goes at open");
+}
+
+#[test]
 fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
