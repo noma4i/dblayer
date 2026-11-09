@@ -200,7 +200,7 @@ where
                     Effect::ScheduleAt { id, at, input }
                 }
                 Effect::Backoff { id, policy, attempt, input } => {
-                    seen.push(Emitted::Schedule { id, after: policy.with_jitter(0.0, 0).delay(attempt), input: format!("{input:?}") });
+                    seen.push(Emitted::Schedule { id, after: policy.delay_seeded(attempt, 0), input: format!("{input:?}") });
                     Effect::Backoff { id, policy, attempt, input }
                 }
                 Effect::Cancel(id) => {

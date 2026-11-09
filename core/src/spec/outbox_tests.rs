@@ -206,7 +206,7 @@ async fn out_sending_temp_run() {
     assert_eq!((cell.next, cell.eff.contains(&Eff::ScheduleTick)), (St::Sending, true));
     assert_eq!(rig.server.count("MakeMoment"), 1);
     assert!(rig.pending(&receipt).await);
-    rig.clock.advance(crate::runtime::RetryPolicy::Outbox.backoff().delay(0).as_nanos().div_ceil(1_000_000) as u64);
+    rig.clock.advance(crate::runtime::RetryPolicy::Outbox.delay(1).as_nanos().div_ceil(1_000_000) as u64);
     rig.server.wait_seen("MakeMoment", 2).await;
 
     assert_eq!(kind_of(&rig.outcome(&receipt).await), "Confirmed");

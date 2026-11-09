@@ -280,7 +280,7 @@ impl TransferState {
         let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
-        let after = RetryPolicy::Upload.backoff().delay(attempts.saturating_sub(1));
+        let after = RetryPolicy::Upload.delay(attempts.max(1));
         fx.push(Effect::Schedule { id: ScheduleId(RETRY_TIMER + attempt_id), after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
         self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id });
     }
@@ -293,7 +293,7 @@ impl TransferState {
         self.next_attempt += 1;
         let attempt = transfer.attempts;
         transfer.attempt_id = attempt_id;
-        let after = RetryPolicy::Upload.backoff().delay(attempt.saturating_sub(1));
+        let after = RetryPolicy::Upload.delay(attempt.max(1));
         let timer = ScheduleId(RETRY_TIMER + attempt_id);
         fx.push(Effect::Schedule { id: timer, after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
     }

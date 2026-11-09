@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::runtime::Backoff;
+use crate::runtime::RetryPolicy;
 
 pub type Epoch = u64;
 
@@ -70,7 +70,7 @@ pub enum Effect<O: StateOwner> {
     Schedule { id: ScheduleId, after: Duration, input: O::Input },
     /// A point on the scale of the Clock (R5a): the owner knows the deadline, the moment of the effect does not move it.
     ScheduleAt { id: ScheduleId, at: Time, input: O::Input },
-    Backoff { id: ScheduleId, policy: Backoff, attempt: u32, input: O::Input },
+    Backoff { id: ScheduleId, policy: RetryPolicy, attempt: u32, input: O::Input },
     Cancel(ScheduleId),
     Send(Outbound),
     Broadcast(Control),
@@ -82,7 +82,7 @@ impl<O: StateOwner> Debug for Effect<O> {
         match self {
             Self::Schedule { id, after, input } => f.debug_struct("Schedule").field("id", id).field("after", after).field("input", input).finish(),
             Self::ScheduleAt { id, at, input } => f.debug_struct("ScheduleAt").field("id", id).field("at", at).field("input", input).finish(),
-            Self::Backoff { id, policy, attempt, input } => f.debug_struct("Backoff").field("id", id).field("base", &policy.base).field("attempt", attempt).field("input", input).finish(),
+            Self::Backoff { id, policy, attempt, input } => f.debug_struct("Backoff").field("id", id).field("policy", policy).field("attempt", attempt).field("input", input).finish(),
             Self::Cancel(id) => f.debug_tuple("Cancel").field(id).finish(),
             Self::Send(outbound) => Debug::fmt(outbound, f),
             Self::Broadcast(control) => f.debug_tuple("Broadcast").field(control).finish(),

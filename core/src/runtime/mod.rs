@@ -1,6 +1,5 @@
 
 mod append_log;
-mod backoff;
 mod cell;
 mod clock;
 mod counters;
@@ -23,13 +22,12 @@ mod threaded;
 mod test_clock;
 
 pub use append_log::AppendLog;
-pub use backoff::Backoff;
 pub use cell::EffectRunner;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use counters::Counters;
 pub use duration::parse_duration;
 pub use freshness::selected_policy;
-pub use retry::RetryPolicy;
+pub use retry::{process_seed, RetryPolicy};
 #[cfg(test)]
 pub(crate) use test_clock::TestClock;
 pub use det::{wake_pumps, Choice, DetScheduler, Lane, TraceEntry};

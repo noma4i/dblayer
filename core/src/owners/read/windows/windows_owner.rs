@@ -351,9 +351,8 @@ impl Windows {
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {
-                    let policy = if class == ErrorClass::Network { RetryPolicy::QueryNetwork } else { RetryPolicy::QueryServer };
-                    let after: Duration = policy.backoff().delay(attempt - 1);
-                    out.push(Effect::Schedule { id: ScheduleId(request), after, input: WindowsInput::RetryDue { request } });
+                    let policy = retry_policy(class).unwrap_or(RetryPolicy::QueryServer);
+                    out.push(Effect::Backoff { id: ScheduleId(request), policy, attempt, input: WindowsInput::RetryDue { request } });
                 }
                 Emit::CancelRetry { request } => out.push(Effect::Cancel(ScheduleId(request))),
                 Emit::Announce { state, streams } => {

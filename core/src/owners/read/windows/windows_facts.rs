@@ -277,7 +277,7 @@ impl Facts {
                 if counted == chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) {
                     return self.land_chain(load, &chain, Marker { sequence: chain.latest, values: found.values }, false);
                 }
-                if load.attempts + 1 < attempt_limit(ErrorClass::Server) {
+                if may_retry(ErrorClass::Server, load.attempts + 1) {
                     load.attempts += 1;
                     load.retry = true;
                     load.step = context.request().0;

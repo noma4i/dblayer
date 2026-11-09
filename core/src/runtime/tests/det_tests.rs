@@ -331,11 +331,11 @@ fn due_after(seed: u64, attempt: u32) -> u64 {
 
 #[test]
 fn runtime_applies_the_jitter_of_a_backoff_from_its_seed() {
-    let delays: Vec<u64> = (0..16).map(|seed| due_after(seed, 0)).collect();
-    assert!(delays.iter().all(|delay| (800..=1000).contains(delay)), "attempt 0 of 1 s with jitter 0.2 lies in [800, 1000] ms: {delays:?}");
+    let delays: Vec<u64> = (0..16).map(|seed| due_after(seed, 1)).collect();
+    assert!(delays.iter().all(|delay| (800..=1000).contains(delay)), "attempt 1 of 1 s with jitter 0.2 lies in [800, 1000] ms: {delays:?}");
     assert!(delays.iter().collect::<HashSet<_>>().len() >= 4, "the seed spreads the retries: {delays:?}");
-    assert_eq!(due_after(3, 2), due_after(3, 2), "one seed gives one delay");
-    assert!((3200..=4000).contains(&due_after(3, 2)), "attempt 2 doubles twice");
+    assert_eq!(due_after(3, 3), due_after(3, 3), "one seed gives one delay");
+    assert!((3200..=4000).contains(&due_after(3, 3)), "attempt 3 doubles twice");
 }
 
 #[test]

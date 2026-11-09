@@ -7,7 +7,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use statig::prelude::*;
 
@@ -145,7 +144,7 @@ impl Facts {
                     return Transition(WinState::loading(self.issue(new_request, new_attempt, 1, load.force)));
                 }
                 let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
-                if class != ErrorClass::Permanent && load.attempts + 1 < attempt_limit(class) {
+                if may_retry(class, load.attempts + 1) {
                     load.attempts += 1;
                     load.retry = true;
                     self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class });

@@ -356,12 +356,12 @@ impl Feed {
                 Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick(Time(0)) }),
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
                 Fx::Resubscribe { connection, attempt } => {
-                    let after = RetryPolicy::Subscription.backoff().delay(attempt - 1);
+                    let after = RetryPolicy::Cable.delay(attempt);
                     out.push(Effect::Schedule { id: ScheduleId(connection), after, input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
-                    let after = RetryPolicy::Subscription.backoff().delay(attempt - 1);
+                    let after = RetryPolicy::Cable.delay(attempt);
                     out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),

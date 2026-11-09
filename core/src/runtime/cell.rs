@@ -61,7 +61,7 @@ pub(crate) struct Cell<O: StateOwner> {
 
 impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(|| 0) }
+        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(super::process_seed) }
     }
 
     pub fn set_jitter(&mut self, jitter: impl FnMut() -> u64 + Send + 'static) { self.jitter = Box::new(jitter); }
@@ -178,7 +178,7 @@ impl<O: StateOwner> Cell<O> {
                     None
                 }
                 Effect::Backoff { id, policy, attempt, input } => {
-                    let delay = policy.with_jitter(policy.jitter, (self.jitter)()).delay(attempt);
+                    let delay = policy.delay_seeded(attempt, (self.jitter)());
                     let at = Time(self.now.0.saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)));
                     self.schedule_input(id, at, out, input);
                     None

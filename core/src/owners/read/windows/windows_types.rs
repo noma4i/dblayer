@@ -303,14 +303,17 @@ pub enum WindowStage {
     Ended,
 }
 
-/// Attempts of a window per error class.
-pub(super) fn attempt_limit(class: ErrorClass) -> u32 {
+/// The policy that retries a failure of this class; a permanent failure has none.
+pub(super) fn retry_policy(class: ErrorClass) -> Option<crate::runtime::RetryPolicy> {
     match class {
-        ErrorClass::Network => 3,
-        ErrorClass::Server => 2,
-        ErrorClass::Permanent | ErrorClass::InvalidCursor => 0,
+        ErrorClass::Network => Some(crate::runtime::RetryPolicy::QueryNetwork),
+        ErrorClass::Server => Some(crate::runtime::RetryPolicy::QueryServer),
+        ErrorClass::Permanent | ErrorClass::InvalidCursor => None,
     }
 }
+
+/// Whether the send after `sends` sends may go out for a failure of this class.
+pub(super) fn may_retry(class: ErrorClass, sends: u32) -> bool { retry_policy(class).is_some_and(|policy| policy.allows(sends.saturating_add(1))) }
 
 /// The request ids of the windows: the counter of the process, so no two lives of a database in 1 process share an id. A test of the owner counts its own ids from 1.
 #[derive(Clone, Copy, Debug)]

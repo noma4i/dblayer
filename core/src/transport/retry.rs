@@ -1,5 +1,5 @@
 use super::error::TransportError;
-use crate::runtime::{Backoff, Clock, RetryPolicy};
+use crate::runtime::{Clock, RetryPolicy};
 use super::Connectivity;
 
 use super::answer_kind::RETRYABLE_CODES;
@@ -91,7 +91,7 @@ impl RetryCalls {
 pub(crate) struct Retrying<'a> {
     clock: &'a dyn crate::runtime::Clock,
     progress: &'a RetryCalls,
-    backoff: Backoff,
+    policy: RetryPolicy,
     attempt: u64,
     joined: bool,
     online: &'a Connectivity,
@@ -103,13 +103,13 @@ impl Drop for Retrying<'_> {
 
 impl<'a> Retrying<'a> {
     pub(crate) fn new(clock: &'a dyn Clock, progress: &'a RetryCalls, online: &'a Connectivity, policy: RetryPolicy) -> Self {
-        Self { clock, progress, online, backoff: policy.backoff().randomized(), attempt: 0, joined: false }
+        Self { clock, progress, online, policy, attempt: 0, joined: false }
     }
 
     pub(crate) async fn failed(&mut self, error: TransportError) -> Result<(), TransportError> {
-        if RetryClass::of_error(&error) == RetryClass::Fatal || !self.backoff.allows(self.attempt.min(u32::MAX as u64) as u32) { return Err(self.refused(error)); }
+        if RetryClass::of_error(&error) == RetryClass::Fatal || !self.policy.allows(u32::try_from(self.attempt.saturating_add(2)).unwrap_or(u32::MAX)) { return Err(self.refused(error)); }
         self.online.online().await;
-        let delay = self.backoff.delay(self.attempt.min(u32::MAX as u64) as u32);
+        let delay = self.policy.delay(u32::try_from(self.attempt.saturating_add(1)).unwrap_or(u32::MAX));
         let reason = match &error {
             TransportError::Network(_) => "network".to_string(),
             TransportError::Http { status, .. } => format!("HTTP {status}"),
