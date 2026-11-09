@@ -62,12 +62,12 @@ pub fn owner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
             if *epoch != s.g.epoch { row(e, "r4_epoch_ended_other"); return; }
             if s.g.phase == Phase::Restoring {
                 row(e, "xfer_restoring_closing");
-                for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Interrupted)); }
+                for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(EndCause::SessionEnded))); }
                 s.g.phase = Phase::Idle;
                 return;
             }
             broadcast(s, i, e);
-            for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Interrupted)); }
+            for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(EndCause::SessionEnded))); }
         }
         Input::Closing => closing(s, e),
         Input::RoundStatus { epoch, transfer_ids, refused } => {
@@ -98,7 +98,7 @@ pub fn closing(s: &mut State, e: &mut Vec<Effect>) {
     } else {
         broadcast(s, &Input::Closing, e);
     }
-    for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Interrupted)); }
+    for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(EndCause::Closed))); }
     s.g.phase = Phase::Closed;
     maybe_drained(s, e);
 }

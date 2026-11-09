@@ -100,11 +100,11 @@ pub fn reply_accept(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, a: Answer)
 }
 
 pub fn interrupt_all(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, cause: EndCause) {
-    reply_accept(g, t, e, Answer::Err(Fault::Interrupted));
-    if let Some((r, _)) = t.replies.cancel.take() { reply(e, r, Answer::Err(Fault::Interrupted)); }
-    if let Some((r, _)) = t.replies.supply.take() { reply(e, r, Answer::Err(Fault::Interrupted)); }
-    if let Some(r) = t.replies.retry.take() { reply(e, r, Answer::Err(Fault::Interrupted)); }
-    for r in std::mem::take(&mut t.replies.discard_waiters) { reply(e, r, Answer::Err(Fault::Interrupted)); }
+    reply_accept(g, t, e, Answer::Err(Fault::Ended(cause)));
+    if let Some((r, _)) = t.replies.cancel.take() { reply(e, r, Answer::Err(Fault::Ended(cause))); }
+    if let Some((r, _)) = t.replies.supply.take() { reply(e, r, Answer::Err(Fault::Ended(cause))); }
+    if let Some(r) = t.replies.retry.take() { reply(e, r, Answer::Err(Fault::Ended(cause))); }
+    for r in std::mem::take(&mut t.replies.discard_waiters) { reply(e, r, Answer::Err(Fault::Ended(cause))); }
     let all: Vec<(u64, Vec<ReplyId>)> = std::mem::take(&mut t.outcome_waiters).into_iter().collect();
     for (_, ws) in all { for r in ws { reply(e, r, Answer::Outcome(Outcome::Ended(cause))); } }
 }

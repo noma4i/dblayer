@@ -323,12 +323,12 @@ pub fn mutation_outcome(g: &mut G, t: &mut Transfer, out: &MutOut, e: &mut Vec<E
             cm_mo(g, t, e, vec![Op::RemoveUpload { transfer_id: t.id }]);
             post_singles(g, &*t);
         }
-        MutOut::Interrupted => {
+        MutOut::Ended(cause) => {
             if waiters {
                 if !q { row(e, "xfer_mutation_interrupted_discard_waiting"); }
-                for r in std::mem::take(&mut t.replies.discard_waiters) { reply(e, r, Answer::Err(Fault::Interrupted)); }
+                for r in std::mem::take(&mut t.replies.discard_waiters) { reply(e, r, Answer::Err(Fault::Ended(*cause))); }
             } else if !q { row(e, "xfer_mutation_interrupted"); }
-            fix_outcome(t, e, Outcome::Interrupted);
+            fix_outcome(t, e, Outcome::Ended(*cause));
             t.st = St::Done;
         }
     }
@@ -436,7 +436,7 @@ pub fn tx_end(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, closing: bool) {
     let cause = if closing { EndCause::Closed } else { EndCause::SessionEnded };
     interrupt_all(g, t, e, cause);
     let c = t.cycle_id;
-    t.outcomes.entry(c).or_insert(Outcome::Interrupted);
+    t.outcomes.entry(c).or_insert(Outcome::Ended(cause));
     t.local_url = false;
     e.push(Effect::Rounds(RoundsIn::Idle { epoch: t.epoch, transfer_id: t.id }));
 }

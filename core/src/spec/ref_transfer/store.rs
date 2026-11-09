@@ -15,7 +15,7 @@ pub fn end_interrupted(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, name: &
     t.st = St::Done;
     interrupt_all(g, t, e, cause);
     let c = t.cycle_id;
-    t.outcomes.entry(c).or_insert(Outcome::Interrupted);
+    t.outcomes.entry(c).or_insert(Outcome::Ended(cause));
 }
 
 pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &mut Vec<Effect>) {
@@ -26,7 +26,7 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
             let interrupted = closing || ended || matches!(reason, Reason::StaleGeneration(_));
             row(e, if closing { "xfer_accepting_closing" } else if interrupted { "xfer_accepting_rejected_interrupted" } else { "xfer_accepting_rejected" });
             e.push(Effect::DeleteFile { transfer_id: t.id });
-            if interrupted { reply_accept(g, t, e, Answer::Err(Fault::Interrupted)); } else { reply_accept(g, t, e, Answer::Err(Fault::Reason(reason.clone()))); }
+            if interrupted { reply_accept(g, t, e, Answer::Err(Fault::Ended(cause))); } else { reply_accept(g, t, e, Answer::Err(Fault::Reason(reason.clone()))); }
             t.st = St::Done;
         }
         St::PersistingAttempt { .. } => {
@@ -148,7 +148,7 @@ pub fn store_committed(g: &mut G, t: &mut Transfer, st: St, e: &mut Vec<Effect>)
             if closing {
                 row(e, "xfer_accepting_closing");
                 e.push(Effect::DeleteFile { transfer_id: t.id });
-                reply_accept(g, t, e, Answer::Err(Fault::Interrupted));
+                reply_accept(g, t, e, Answer::Err(Fault::Ended(EndCause::Closed)));
                 t.st = St::Done;
                 return;
             }
@@ -336,7 +336,7 @@ pub fn removing_committed(g: &mut G, t: &mut Transfer, why: Why, orphan: Option<
             e.push(Effect::Rounds(RoundsIn::Idle { epoch: t.epoch, transfer_id: t.id }));
             if let Some((r, c)) = cancel { reply(e, r, ans_ok(c)); }
             for r in waiters { reply(e, r, Answer::Ok); }
-            reply_accept(g, t, e, Answer::Err(Fault::Interrupted));
+            reply_accept(g, t, e, Answer::Err(Fault::Ended(EndCause::Cancelled)));
             fix_outcome(t, e, Outcome::Discarded);
         }
         Why::Confirmed(rev) => {

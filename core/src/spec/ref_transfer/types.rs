@@ -33,7 +33,7 @@ pub enum Cached { Fresh { blob_id: String }, Stale, Miss }
 pub enum Reason { NoSession, Closed, Storage, Invalid, StaleGeneration(Vec<u64>) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Fault { NotFoundAt(usize), NoSession, Invalid, NotFound, InFlight, Interrupted, Closed, Storage, Copy(String), RestoreFailed, Reason(Reason), Failure(Failure) }
+pub enum Fault { NotFoundAt(usize), NoSession, Invalid, NotFound, InFlight, Ended(EndCause), Closed, Storage, Copy(String), RestoreFailed, Reason(Reason), Failure(Failure) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ErrKind { Exhausted, MissingFile, SourceFailed, RestoreFailed, Storage, InternalInvalid, Step(String) }
@@ -42,13 +42,13 @@ pub enum ErrKind { Exhausted, MissingFile, SourceFailed, RestoreFailed, Storage,
 pub struct Failure { pub kind: ErrKind, pub message: String }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EndCause { SessionEnded, Closed }
+pub enum EndCause { SessionEnded, Closed, Cancelled }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome { Confirmed { revision: u64 }, Discarded, Interrupted, Ended(EndCause), Failed { error: Failure }, Rejected { error: Failure } }
+pub enum Outcome { Confirmed { revision: u64 }, Discarded, Ended(EndCause), Failed { error: Failure }, Rejected { error: Failure } }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MutOut { Confirmed { revision: u64 }, Rejected { error: Failure }, Failed { error: Failure }, Discarded, Interrupted }
+pub enum MutOut { Confirmed { revision: u64 }, Rejected { error: Failure }, Failed { error: Failure }, Discarded, Ended(EndCause) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MutTarget { Transfer { transfer_id: TransferId, outcome: MutOut }, Group { batch_id: GroupId, outcomes: BTreeMap<TransferId, MutOut> } }
