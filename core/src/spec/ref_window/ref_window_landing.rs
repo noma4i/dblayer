@@ -17,7 +17,6 @@ impl Window {
         }
         self.last_error = None;
         self.cursor_reset_used = false;
-        self.replace_all = false;
         let chain = self.members_complete && self.cursor.is_some();
         let settled = self.settled;
         self.set_phase(Phase::Loaded);

@@ -39,7 +39,7 @@ impl Window {
         self.landing_marker = Some((marker, if keep_rows { self.members } else { chain.base + chain.rows }, !keep_rows));
         let cursor = if keep_rows { self.cursor } else { None };
         self.state = State::Landing { request, page: 1, cursor, rows: (keep_rows && self.has_rows) || chain.rows > 0 };
-        vec![Effect::Commit { request, replace_all: false }]
+        vec![Effect::Commit { request }]
     }
 
     /// Rows `win_media_marker_same`, `win_media_tail`, `win_media_full`, `win_media_confirmed`, `win_media_confirm_retry`, `win_media_confirm_failed`.
