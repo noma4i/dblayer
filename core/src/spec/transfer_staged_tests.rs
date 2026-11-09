@@ -86,6 +86,29 @@ fn xfer_staged_clear_rejected() {
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::PersistingAttempt, Vec::<String>::new()), "a rejected clear of the staged marker keeps the transfer, the marker stays for the next restart to clear");
 }
 
+/// xfer_staged_promote_failure_restart (K1, D-226, transfer.md:455): the new metadata is already Committed
+/// with staged = true; the rename of the staged file to the key fails. The spec row says the failure is durable:
+/// the temporary file is deleted and Failed with the old copy remains. The old copy and its metadata must be
+/// written back and the staged marker cleared before the retry reply, so a restart reads the old copy and not
+/// the new metadata over a missing file. Prod restores the old row only in memory and emits only DeleteFile,
+/// with no Store batch.
+#[test]
+fn xfer_staged_promote_failure_restart() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    let old_source = twin.state().transfers[&id].source.clone().map(|source| source.path);
+    let (_, _) = twin.retry(KEY, Some(fresh()));
+    twin.copy_done(id);
+    twin.commit();
+    let out = twin.post(TransferInput::StagedPromoteFailed { transfer_id: id, detail: "rename".into() });
+    let written = out.rows().into_iter().next().map(|(row, _)| (row.staged, row.source.clone()));
+    assert_eq!(
+        (out.writes(), written, out.deleted(), twin.stage(id)),
+        (1, Some((false, old_source)), vec![staged_file_id(id)], TransferStage::Failed),
+        "a failed rename writes the old copy back durably (staged cleared, old source) before the reply, not only in memory: {out:?}",
+    );
+}
+
 /// xfer_retry_invalid_source (H08): a retry of a failed transfer with a source that has no file (empty path, zero parts) is refused with Invalid and stays Failed.
 #[test]
 fn xfer_retry_invalid_source() {
