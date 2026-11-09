@@ -60,6 +60,7 @@ fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::Sto
 }
 
 pub(crate) struct Restore {
+    pub aliases: std::collections::BTreeMap<(String, String), String>,
     pub ops: Result<Vec<StoredOp>, CoreError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, CoreError>,
     pub transfer_outcomes: std::collections::BTreeMap<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>,
@@ -89,8 +90,9 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, aliases) = self.read_models(&[], |reader| {
             let connection = reader.connection();
+            let aliases = connection.prepare(include_str!("sql/restore_read/read_aliases.sql"))?.query_map([], |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?), row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
             let pending = crate::store::session_state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::store::session_state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
             let effects_only = connection.prepare(include_str!("sql/restore_read/read_restore_select_op.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
@@ -101,7 +103,7 @@ impl Store {
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers))
+            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, aliases))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
@@ -150,7 +152,7 @@ impl Store {
             }
             rows
         });
-        Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
+        Ok(Restore { aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
     }
 
     fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, CoreError> {

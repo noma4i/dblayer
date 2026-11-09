@@ -65,12 +65,33 @@ impl Database {
 
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
     pub(super) async fn resolved(&self, epoch: u64, model: &str, row: crate::identity::RowId) -> Result<crate::identity::RowId, DbError> {
-        if self.life.is_shut() { return Err(super::command::closed()); }
+        self.account_call(epoch)?;
         if !row.is_temp() { return Ok(row); }
-        match self.await_life(self.life.resolve_row(epoch, model.to_string(), row.to_string())).await? {
-            LifeReply::Outbox(OutboxAnswer::Resolved(resolved)) => id(&resolved),
-            _ => Err(super::database::foreign_reply()),
+        let (db, model) = (self.db.clone(), model.to_string());
+        self.offload(move || Ok(db.resolve(&model, &row)?)).await
+    }
+
+    pub(super) async fn file_row(&self, epoch: u64, model: &str, row: &str, field: &str, required: bool) -> Result<crate::identity::RowId, DbError> {
+        self.account_call(epoch)?;
+        self.db.file_field(model, field)?;
+        let row = self.resolved(epoch, model, id(row)?).await?;
+        if required {
+            let (model, row) = (model.to_string(), row.clone());
+            self.read_in_epoch(epoch, "file target", move |database| row_present(database, &model, &row)).await?;
         }
+        Ok(row)
+    }
+
+    pub(super) async fn operation_target(&self, epoch: u64, model: &str, row: &str, action: Option<&str>, upload: bool) -> Result<(String, bool), DbError> {
+        self.account_call(epoch)?;
+        let spec = self.db.spec(model)?;
+        if let Some(action) = action {
+            if !spec.actions.iter().any(|declared| declared.name == action) { return Err(DbError::Invalid { detail: format!("{model} declares no action {action}") }); }
+        }
+        let transfer = action.is_some_and(|action| spec.upload_action(action).is_some());
+        if upload && !transfer { return Err(DbError::Invalid { detail: format!("{model} declares no upload action") }); }
+        let row = self.resolved(epoch, model, id(row)?).await?;
+        Ok((row.to_string(), transfer))
     }
 
     pub(super) fn mutation_needs_transport(&self, model: &str, action: &str) -> Result<(), DbError> {
@@ -149,18 +170,33 @@ impl Database {
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         self.mutation_needs_transport(&model, "update")?;
+        let (db, name) = (self.db.clone(), model.clone());
+        let (patch, args) = self.offload(move || {
+            let patch: serde_json::Map<String, Value> = parse_json(&patch_json)?;
+            let args = parse_json(&args_json)?;
+            db.validate_update(&name, &patch)?;
+            Ok((patch, args))
+        }).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
-        let planned = self.offload(move || Ok(db.plan_update(&name, &row, parse_json(&patch_json)?, parse_json(&args_json)?)?)).await?;
+        let planned = self.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
         self.write_planned(epoch, "update", planned).await
     }
 
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
+        if !self.db.spec(&model)?.actions.iter().any(|declared| declared.name == action) { return Err(DbError::Invalid { detail: format!("{model} declares no action {action}") }); }
         self.mutation_needs_transport(&model, &action)?;
+        let (db, name) = (self.db.clone(), model.clone());
+        let (patch, args) = self.offload(move || {
+            let patch: serde_json::Map<String, Value> = parse_json(&patch_json)?;
+            let args = parse_json(&args_json)?;
+            db.validate_act(&name, patch.clone(), &args)?;
+            Ok((patch, args))
+        }).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
-        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &row, parse_json(&patch_json)?, parse_json(&args_json)?)?)).await?;
+        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
         self.write_planned(epoch, &action, planned).await
     }
 
@@ -175,9 +211,15 @@ impl Database {
 
     pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
         self.account_call(epoch)?;
+        let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
+        let value = self.offload(move || {
+            let value = parse_json::<Value>(&value_json)?;
+            db.local_value(&name, &field, value.clone())?;
+            Ok(value)
+        }).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
-        let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, parse_json::<Value>(&value_json)?)?)).await?;
+        let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {
             crate::store::LocalPlan::Unchanged => return Ok(()),
             crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
@@ -191,16 +233,14 @@ impl Database {
         self.account_call(epoch)?;
         let (db, name, text) = (self.db.clone(), model.clone(), values_json.clone());
         self.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, id(&row_id)?.to_string(), values_json, self.life.now());
+        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json, self.life.now());
         self.outbox_answer(waiter, "set ephemeral").await.map(drop)
     }
 
     pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, file: FileBytes) -> Result<super::wire::WireFile, DbError> {
         let FileBytes { bytes, name, mime } = file;
-        self.account_call(epoch)?;
-        let row = id(&row_id)?;
-        let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
-        self.read_in_epoch(epoch, "attach", move |database| row_present(database, &checked_model, &checked).and_then(|()| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from))).await?;
+        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.life.now());
         let OutboxAnswer::Written { shown: Some(shown), .. } = self.outbox_answer(waiter, "attach").await? else { return Err(DbError::Internal { detail: "the attach was answered with no row".into() }) };
         let attached = shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value).ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
@@ -208,16 +248,14 @@ impl Database {
     }
 
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
-        self.account_call(epoch)?;
-        let row = id(&row_id)?;
-        let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
-        self.read_in_epoch(epoch, "detach", move |database| row_present(database, &checked_model, &checked).and_then(|()| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from))).await?;
+        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.life.now());
         let OutboxAnswer::Written { files_removed, .. } = self.outbox_answer(waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
         Ok(files_removed > 0)
     }
 
     pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
+        self.not_closed()?;
         let held = &receipt.ticket;
         if !Arc::ptr_eq(&held.owner, &self.life) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
         if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
@@ -235,8 +273,8 @@ impl Database {
     }
 
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
-        self.account_call(epoch)?;
-        if let Some(declared) = action.as_deref().filter(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
+        let (row_id, transfer) = self.operation_target(epoch, &model, &row_id, action.as_deref(), false).await?;
+        if let Some(declared) = action.as_deref().filter(|_| transfer) {
             return self.discard_transfer(epoch, &model, &row_id, declared).await;
         }
         let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);

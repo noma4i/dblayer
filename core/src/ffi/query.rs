@@ -16,9 +16,12 @@ impl Database {
 
     /// One row read from SQLite once, off the calling thread.
     pub async fn read_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
+        self.account_call(epoch)?;
+        self.wire(&model)?;
+        let row_id = self.resolved(epoch, &model, super::database::id(&row_id)?).await?;
         self.read_in_epoch(epoch, "read row", move |this| {
             let wire = this.wire(&model)?;
-            Ok(this.db.find(&model, &super::database::id(&row_id)?)?.map(|row| wire.row(&row)))
+            Ok(this.db.find(&model, &row_id)?.map(|row| wire.row(&row)))
         }).await
     }
 }

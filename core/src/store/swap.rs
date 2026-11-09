@@ -98,6 +98,7 @@ fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, temp
 }
 
 pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, own: i64) -> Result<crate::store::CommitResult, StoreError> {
+    writer.connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp, real])?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let reader = Reader::new(writer.connection, writer.models);

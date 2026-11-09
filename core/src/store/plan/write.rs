@@ -101,10 +101,15 @@ impl Store {
     }
 
     /// New values of a row. A call with the values the row has and no arguments changes nothing.
-    pub(crate) fn plan_update(&self, model: &str, id: &RowId, patch: Row, args: Row) -> Result<Planned, CoreError> {
+    pub(crate) fn validate_update(&self, model: &str, patch: &Row) -> Result<(), CoreError> {
         let spec = self.spec(model)?;
-        reject_unknown_fields(spec, model, &patch)?;
-        reject_invalid_values(spec, model, &patch)?;
+        reject_unknown_fields(spec, model, patch)?;
+        reject_invalid_values(spec, model, patch)
+    }
+
+    pub(crate) fn plan_update(&self, model: &str, id: &RowId, patch: Row, args: Row) -> Result<Planned, CoreError> {
+        self.validate_update(model, &patch)?;
+        let spec = self.spec(model)?;
         let mut patch = spec.patch(&patch);
         self.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
@@ -131,13 +136,21 @@ impl Store {
     }
 
     /// A named action: the edits of the receiver and of the rows its arguments name, the closed effects of the declaration.
+    pub(crate) fn validate_act(&self, model: &str, mut patch: Row, args: &Row) -> Result<(), CoreError> {
+        let spec = self.spec(model)?;
+        crate::schema::keyed::resolve_maps(&mut patch, args);
+        let _ = crate::schema::keyed::take(&mut patch);
+        let _ = crate::schema::keyed::take_flags(&mut patch);
+        reject_unknown_fields(spec, model, &patch)?;
+        reject_invalid_values(spec, model, &patch)
+    }
+
     pub(crate) fn plan_act(&self, model: &str, action: &str, id: &RowId, mut patch: Row, args: Row) -> Result<Planned, CoreError> {
+        self.validate_act(model, patch.clone(), &args)?;
         let spec = self.spec(model)?;
         crate::schema::keyed::resolve_maps(&mut patch, &args);
         let keyed = crate::schema::keyed::take(&mut patch);
         let flagged = crate::schema::keyed::take_flags(&mut patch);
-        reject_unknown_fields(spec, model, &patch)?;
-        reject_invalid_values(spec, model, &patch)?;
         let mut patch = spec.patch(&patch);
         self.decode_values(model, &mut patch, |source, key| source.get(key))?;
         let own = RowRef::new(ModelKey::new(model), id.clone());
@@ -257,7 +270,7 @@ impl Store {
     }
 
     /// The value of a local field as the row stores it: checked against the declaration of the slot.
-    fn local_value(&self, model: &str, path: &str, value: Value) -> Result<Value, CoreError> {
+    pub(crate) fn local_value(&self, model: &str, path: &str, value: Value) -> Result<Value, CoreError> {
         let slot = self.spec(model)?.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {
             None if !value.is_null() => match slot.field.fault(&value, path, true, &mut Vec::new()) {

@@ -149,6 +149,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_in
     if keep_intents {
         connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_sync_action.sql"))?;
     } else {
+        connection.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
         clear_sync(connection, None)?;
         clear_all(connection)?;
     }

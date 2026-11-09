@@ -180,8 +180,8 @@ impl Database {
 #[uniffi::export]
 impl Database {
     pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> {
-        self.account_call(epoch)?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
+        let row = id(&row)?;
         let database = self.me.upgrade().ok_or_else(super::command::closed)?;
         let (name, verb, target) = (model.clone(), action.clone(), row.clone());
         let source = self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?;
@@ -192,8 +192,7 @@ impl Database {
     }
 
     pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> {
-        self.account_call(epoch)?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         match self.transfer_answer(self.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
             TransferAnswer::Ok => Ok(()),
             _ => Err(super::database::foreign_reply()),
@@ -248,13 +247,9 @@ impl Database {
     }
 
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
-        self.account_call(epoch)?;
-        self.wire(&model)?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (checked_model, checked) = (model.clone(), row.clone());
-        self.read_in_epoch(epoch, "cancel upload", move |database| super::write::row_present(database, &checked_model, &checked)).await?;
-        if self.uploads.is_none() { return Ok(false); }
-        let waiter = self.life.cancel_upload(epoch, key_of(&model, row.as_str(), &action));
+        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
+        if self.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
+        let waiter = self.life.cancel_upload(epoch, key_of(&model, &row, &action));
         match self.transfer_answer(waiter, "cancel upload").await? {
             TransferAnswer::Cancelled(cancelled) => Ok(cancelled),
             _ => Err(DbError::Internal { detail: "the owner answered a cancel with no result".into() }),

@@ -1,9 +1,17 @@
 use std::path::Path;
 use std::sync::{Condvar, Mutex, MutexGuard};
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::StoreError;
+
+impl super::Store {
+    pub(crate) fn resolve(&self, model: &str, row: &crate::identity::RowId) -> Result<crate::identity::RowId, StoreError> {
+        if !row.is_temp() { return Ok(row.clone()); }
+        let real: Option<String> = self.read(&[model], |reader| Ok(reader.connection().query_row(include_str!("sql/ddl/read_row_alias.sql"), rusqlite::params![model, row.as_str()], |entry| entry.get(0)).optional()?))?;
+        real.map(|real| crate::identity::RowId::new(&real).map_err(|error| StoreError::Constraint(error.to_string()))).unwrap_or_else(|| Ok(row.clone()))
+    }
+}
 
 pub(super) struct Readers {
     connections: Vec<Mutex<Connection>>,

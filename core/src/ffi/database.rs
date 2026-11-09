@@ -268,7 +268,8 @@ impl Database {
     pub fn peek_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
         self.admit_now(epoch)?;
         let wire = self.wire(&model)?;
-        let found = self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row));
+        let row_id = self.db.resolve(&model, &id(&row_id)?)?;
+        let found = self.db.peek_row(&model, &row_id).map(|row| wire.row(&row));
         self.admit_now(epoch)?;
         Ok(found)
     }
@@ -298,18 +299,15 @@ impl Database {
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> {
-        self.account_call(epoch)?;
-        let row_id = id(&row_id)?;
+        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
     }
     pub async fn read(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
-        self.account_call(epoch)?;
-        let row_id = id(&row_id)?;
+        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read_file(&model, &row_id, &field)?)).await
     }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
-        self.account_call(epoch)?;
-        let row_id = id(&row_id)?;
+        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
     pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
@@ -358,8 +356,8 @@ impl Database {
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
+        let (row_id, transfer) = self.operation_target(epoch, &model, &row_id, action.as_deref(), source.is_some()).await?;
+        if source.is_some() || transfer {
             let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };
             return self.retry_transfer(epoch, model, row_id, action, source).await;
         }
@@ -370,7 +368,7 @@ impl Database {
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.apply_online(online) }
 
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(OnlineSink::of_life(&self.life)) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { self.not_closed()?; Ok(OnlineSink::of_life(&self.life)) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         let waiter = self.life.close();

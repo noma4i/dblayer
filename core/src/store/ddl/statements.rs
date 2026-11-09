@@ -19,7 +19,8 @@ pub(super) const CACHE_STATEMENTS: [&str; 18] = [
     include_str!("../sql/ddl/window_marker.sql"),
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 38] = [
+pub(super) const CORE_STATEMENTS: [&str; 39] = [
+    include_str!("../sql/ddl/row_alias.sql"),
     include_str!("../sql/ddl/manifest.sql"),
     include_str!("../sql/ddl/op.sql"),
     include_str!("../sql/ddl/op_transfer.sql"),

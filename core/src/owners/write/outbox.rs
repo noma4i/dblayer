@@ -519,7 +519,7 @@ impl OutboxState {
             OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
-            OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } => {}
+            OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
             OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(fx),
             OutboxInput::RestoreReady { .. } => {}

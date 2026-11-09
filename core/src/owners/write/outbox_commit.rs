@@ -143,11 +143,28 @@ impl OutboxState {
         let model = self.ops[&landed].op.model.clone();
         self.aliases.insert((model.clone(), temp.to_string()), real.to_string());
         for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && operation.op.model == model && operation.op.row_id == temp) {
-            operation.op.row_id = real.to_string();
-            operation.op.body = operation.op.body.replace(temp, real);
-            for row in operation.op.effects.rows.iter_mut().filter(|row| row.model == model && row.row_id == temp) {
-                row.row_id = real.to_string();
-            }
+            Self::resolve_operation(&self.aliases, &mut operation.op);
+        }
+    }
+
+    pub(super) fn resolve_operation(aliases: &std::collections::BTreeMap<(String, String), String>, op: &mut NewOp) {
+        let resolve = |model: &str, row: &mut String| {
+            if let Some(real) = aliases.get(&(model.to_string(), row.clone())) { *row = real.clone(); }
+        };
+        let before = op.row_id.clone();
+        resolve(&op.model, &mut op.row_id);
+        if before != op.row_id {
+            let old = serde_json::Value::String(before).to_string();
+            let new = serde_json::Value::String(op.row_id.clone()).to_string();
+            op.body = op.body.replace(&old, &new);
+        }
+        for row in &mut op.effects.rows { resolve(&row.model, &mut row.row_id); }
+        for member in &mut op.effects.members { resolve(&member.model, &mut member.row_id); }
+        for row in &mut op.effects.tombstones { resolve(&row.model, &mut row.row_id); }
+        for row in &mut op.effects.touches { resolve(&row.model, &mut row.row_id); }
+        if let Some((model, row)) = &mut op.effects.shown { resolve(model, row); }
+        if let OpSource::TransferGroup { members, .. } = &mut op.origin {
+            for member in members { resolve(&op.model, &mut member.row_id); }
         }
     }
 

@@ -223,6 +223,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     Err(error) => fail(wiring, error.to_string()),
                     Ok(None) => {}
                     Ok(Some(restore)) => {
+                        wiring.to_outbox(OutboxInput::AliasesRestored { aliases: restore.aliases });
                         if let Some(op_id) = restore.reserved {
                             wiring.to_outbox(OutboxInput::ReservedFloor { op_id });
                         }

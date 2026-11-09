@@ -167,6 +167,7 @@ impl OutboxState {
                 fx.push(Effect::Run(OutboxEffect::SnapshotRequest { epoch: started.epoch }));
             }
             OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
+            OutboxInput::AliasesRestored { aliases } => self.aliases = aliases,
             OutboxInput::EpochEnded(_) => {
                 self.ended = true;
                 self.answer_held(fx);

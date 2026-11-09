@@ -244,7 +244,7 @@ impl OutboxState {
     }
 
     /// `(none) x Submit`: an unsent `create` that a `destroy` of the same row cancels ends with it, the network is not called.
-    pub(super) fn submit(&mut self, epoch: Epoch, op: NewOp, reply: ReplyId, fx: &mut Effects<Outbox>) {
+    pub(super) fn submit(&mut self, epoch: Epoch, mut op: NewOp, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
@@ -252,7 +252,8 @@ impl OutboxState {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Invalid));
         }
         self.now = self.now.max(op.created_at);
-        let row = self.aliases.get(&(op.model.clone(), op.row_id.clone())).cloned().unwrap_or_else(|| op.row_id.clone());
+        Self::resolve_operation(&self.aliases, &mut op);
+        let row = op.row_id.clone();
         let unsent_create = (op.action == "destroy")
             .then(|| self.ops.values().find(|other| other.stage == Stage::Queued && !other.sent && other.op.action == "create" && other.op.model == op.model && other.op.row_id == row).map(|other| other.op_id))
             .flatten();
@@ -286,10 +287,11 @@ impl OutboxState {
     }
 
     /// `Submit` with the intent written by the batch of Transfer: the operation goes out as after `Submitting x Committed`, with no write and no receipt.
-    pub(super) fn submit_reserved(&mut self, epoch: Epoch, op_id: OpId, op: NewOp, fx: &mut Effects<Outbox>) {
+    pub(super) fn submit_reserved(&mut self, epoch: Epoch, op_id: OpId, mut op: NewOp, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return;
         }
+        Self::resolve_operation(&self.aliases, &mut op);
         self.add_operation(op_id, op, Stage::Submitting);
         self.operation_committed(op_id, CommitKind::Intent, (0, Vec::new()), fx);
     }
