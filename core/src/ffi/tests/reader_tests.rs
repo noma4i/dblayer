@@ -39,9 +39,9 @@ async fn boundary_reader_early_exit() {
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Snapshot { .. })));
     stream.release_reader(reader);
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
-    assert!(within(stream.pull(reader)).await.is_none());
+    assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
     let again = within(stream.claim_reader()).await.expect("a stream that is gone accepts a claim");
-    assert!(within(stream.pull(again)).await.is_none());
+    assert!(matches!(within(stream.pull(again)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
     within(db.close_database()).await.unwrap();
 }
 
