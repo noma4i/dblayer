@@ -507,6 +507,9 @@ impl SessionState {
                 } else if sequence.is_none() && pending.document.is_some() && crate::transport::encrypted::document_missing(&body) {
                     let document = pending.document.clone();
                     self.persist(PendingCall { body: document.unwrap_or_default(), document: None, ..pending }, None, fx);
+                } else if sequence.is_none() && pending.class == OperationClass::Login {
+                    let code = answer_code(&body);
+                    self.land(pending, Err(SessionError::Session(code)), None, None, false, fx);
                 } else if sequence.is_none() {
                     self.land(pending, Ok(body), None, None, false, fx);
                 } else {

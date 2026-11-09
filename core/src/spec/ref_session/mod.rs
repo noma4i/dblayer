@@ -549,3 +549,9 @@ fn names_missing_document(body: &str) -> bool {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else { return false };
     parsed["errors"].as_array().is_some_and(|errors| errors.iter().any(|error| error["extensions"]["code"] == "PERSISTED_QUERY_NOT_FOUND"))
 }
+
+fn code_of_answer(body: &str) -> crate::transport::SessionCode {
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let name = parsed["error"].as_str().or(parsed["errors"][0]["extensions"]["code"].as_str()).unwrap_or("OTHER");
+    crate::transport::SessionCode::named(name).unwrap_or(crate::transport::SessionCode::Other)
+}

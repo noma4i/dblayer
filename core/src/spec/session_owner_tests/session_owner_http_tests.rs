@@ -399,6 +399,26 @@ fn sess_closing_answers_session_end() {
 }
 
 #[test]
+fn sess_calling_no_sequence_login() {
+    let mut twin = generating();
+    let op = twin.op();
+    twin.feed(Input::CredentialGenerated { op, credential: 42 });
+    let op = twin.op();
+    twin.feed_all([Input::SecretStored { op, ok: true }, committed()]);
+    let refusal = r#"{"errors":[{"message":"bad","extensions":{"code":"INVALID_INPUT"}}]}"#;
+    let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: refusal.into(), sequence: None, refusal: None };
+    let landing = twin.feed(input);
+    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, digest: None, sequence: None, .. }]), "the provisional credential is erased: {landing:?}");
+    let cleared = twin.feed(committed());
+    assert!(matches!(&cleared[..], [RefEffect::ClearSecret { .. }]), "{cleared:?}");
+    let op = twin.op();
+    twin.feed(Input::SecretCleared { op, ok: true });
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Session(SessionCode::Other)))], "the caller gets a typed error, not Ok");
+    assert_eq!(twin.reference.credential, None);
+    assert!(matches!(&twin.feed(call_of("login", 2))[..], [RefEffect::GenerateCredential { .. }]), "the next sign-in goes as the first");
+}
+
+#[test]
 fn sess_landing_login_failed_clears() {
     let mut twin = generating();
     let op = twin.op();

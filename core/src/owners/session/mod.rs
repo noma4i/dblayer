@@ -333,6 +333,12 @@ fn author_error_retained(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: 
     fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error, pending_retained } });
 }
 
+fn answer_code(body: &str) -> crate::transport::SessionCode {
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let code = parsed["error"].as_str().or_else(|| parsed["errors"][0]["extensions"]["code"].as_str()).unwrap_or("OTHER");
+    crate::transport::SessionCode::of(code)
+}
+
 /// A sign-in that the server did not accept: the credential its call issued goes, the server did not end the session.
 fn login_failed(pending: &PendingCall, answer: &SessionAnswer, server_ended: bool) -> bool {
     pending.class == OperationClass::Login && pending.credential.is_some() && answer.is_err() && !server_ended
