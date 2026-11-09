@@ -60,7 +60,7 @@ impl Delivery {
                 }
                 Some(PullAnswer::Value(Box::new(value)))
             }
-            None if self.ended_given => Some(PullAnswer::ended(self.cause.clone())),
+            None if self.ended_given => Some(PullAnswer::Done),
             None => None,
         }
     }
@@ -114,7 +114,7 @@ impl Delivery {
             self.compact();
         }
         if let Some(outcome) = self.waiting.take() {
-            let answer = self.take_first().unwrap_or_else(|| PullAnswer::ended(self.cause.clone()));
+            let answer = self.take_first().unwrap_or(PullAnswer::Done);
             fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
         } else if was_empty && self.sink_open() {
             fx.push(Emit::Run(StreamEffect::Available));

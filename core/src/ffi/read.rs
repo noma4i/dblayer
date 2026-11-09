@@ -248,15 +248,14 @@ impl ReadStream {
                 let mut value = *value;
                 if let Value::Ended(cause) = &mut value {
                     let mut ended = self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if ended.is_some() { return None; }
-                    *ended = Some(cause.clone());
+                    *cause = ended.get_or_insert_with(|| cause.clone()).clone();
                 }
                 match read_value(value, self.wire.as_deref()) {
                     Ok(value) => Some(value),
                     Err(error) => self.finished(EndCause::Internal { detail: error.to_string() }),
                 }
             }
-            Outcome::Closing => self.finished(EndCause::Closed),
+            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(EndCause::Closed),
             Outcome::EpochEnded(_) => self.finished(EndCause::SessionEnded),
             Outcome::Internal => self.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
             Outcome::Value(PullAnswer::Interrupted) => self.finished(EndCause::Cancelled),
