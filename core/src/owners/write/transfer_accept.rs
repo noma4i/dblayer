@@ -1,6 +1,6 @@
 //! Owner `Transfer`: the acceptance of a file (`Accept`, `AcceptBatch`), the copy of the source and the common write of the acceptance.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::outbox::{Fault, OutboxInput, ReserveTarget};
 use super::transfer::{reply, run, Fx, TransferState};
@@ -338,7 +338,8 @@ impl TransferState {
     /// The temporary file took the place of the copy: the marker of the row goes, a call that waits for the swap gets its answer.
     pub(super) fn staged_promoted(&mut self, id: TransferId, fx: &mut Fx) {
         let Some((key, waiting)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage == TransferStage::PersistingCopy)) else { return };
-        self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
+        let batch = self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
+        self.pending.insert(batch, Pending { ids: vec![id], kind: StoreKind::StagedCleared, orphan: None, written: BTreeMap::new() });
         if waiting { self.copy_committed(&[id], fx); }
     }
 

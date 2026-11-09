@@ -158,8 +158,8 @@ impl TransferState {
                     if transfer.stage == TransferStage::PersistingCopy && transfer.cache_stale {
                         ops.push(StoreOp::BlobCacheRemove { content_sha256: transfer.sha256.clone() });
                     }
-                    if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone()) {
-                        ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: transfer.blob_created_at.unwrap_or(self.now).0 });
+                    if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id), Some(created_at)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone(), transfer.blob_created_at) {
+                        ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: created_at.0 });
                     }
                     if let (StoreKind::SyncUpload, TransferStage::Accepting, Some(group)) = (kind, transfer.stage, transfer.batch_id) {
                         if let Some(entry) = self.groups.get(&group).filter(|entry| entry.ids.first() == Some(&transfer.transfer_id)) {
@@ -390,7 +390,7 @@ impl TransferState {
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
         for (id, columns) in &pending.written { self.shown_committed(*id, *columns, pending.kind == StoreKind::Shown, fx); }
-        if pending.kind == StoreKind::Shown { return; }
+        if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {
                 self.orphans.remove(&upload_id);
@@ -455,6 +455,10 @@ impl TransferState {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
         if let (StoreKind::OrphanRemoved, Some((upload_id, _))) = (pending.kind, &pending.orphan) {
             self.orphan_flight.remove(upload_id);
+            return;
+        }
+        if pending.kind == StoreKind::StagedCleared {
+            if let RejectReason::Storage(_) = rejected.reason { self.copy_rejected(&pending.ids, rejected.reason, fx); }
             return;
         }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
@@ -554,6 +558,7 @@ impl TransferState {
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::StagedPromoted { transfer_id } => self.staged_promoted(transfer_id, fx),
+            TransferInput::StagedPromoteFailed { transfer_id, detail } => self.copy_rejected(&[transfer_id], RejectReason::Storage(detail), fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
@@ -707,7 +712,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,

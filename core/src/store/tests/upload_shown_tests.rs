@@ -16,7 +16,7 @@ fn row() -> UploadRow {
     UploadRow {
         key: KEY.into(), seq: 1, source: Some("/source".into()), parts: 3, batch: None, fields: None, upload_id: None, confirmed_parts: 1, attempts: 2, completed: false, failed: None,
         created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None,
-        transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, op_id: None, etags: vec![Some("etag".into())],
+        transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, op_id: None, etags: vec![Some("etag".into())],
     }
 }
 

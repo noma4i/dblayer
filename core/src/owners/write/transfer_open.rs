@@ -18,6 +18,7 @@ impl TransferState {
             transfer.seq = row.seq;
             transfer.restored = true;
             transfer.failed_at = row.failed_at;
+            transfer.blob_created_at = row.blob_created_at;
             transfer.stored_shown = Some((u8::MAX, false));
             transfer.pending_step = row.pending_step;
             transfer.upload_id = row.upload_id.clone();

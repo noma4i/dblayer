@@ -119,6 +119,7 @@ pub struct StoredTransfer {
     /// The row was dropped by the layout move or cannot be read.
     pub staged: bool,
     pub failed_at: Option<Time>,
+    pub blob_created_at: Option<Time>,
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
 }
@@ -222,6 +223,7 @@ pub enum TransferInput {
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
     StagedPromoted { transfer_id: TransferId },
+    StagedPromoteFailed { transfer_id: TransferId, detail: String },
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
@@ -319,6 +321,8 @@ pub enum StoreKind {
     OrphanRemoved,
     /// The shown value of a row: readers get it after `Committed`.
     Shown,
+    /// The marker of a temporary copy goes: a refusal of the Store fails the transfer.
+    StagedCleared,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -652,6 +656,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         aborted: transfer.aborted,
         staged: transfer.previous.is_some(),
         failed_at: transfer.failed_at.map(|at| at.0),
+        blob_created_at: transfer.blob_created_at.map(|at| at.0),
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
     }

@@ -314,8 +314,10 @@ impl EffectRunner<Transfers> for TransferExecutor {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, staged, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged),
             TransferEffect::PromoteStaged { transfer_id } => {
-                let _ = self.files.promote(&staged_file_id(transfer_id), &file_id(transfer_id));
-                back.reply(stamp, TransferInput::StagedPromoted { transfer_id });
+                match self.files.promote(&staged_file_id(transfer_id), &file_id(transfer_id)) {
+                    Ok(_) => back.reply(stamp, TransferInput::StagedPromoted { transfer_id }),
+                    Err(error) => back.reply(stamp, TransferInput::StagedPromoteFailed { transfer_id, detail: error.to_string() }),
+                }
             }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
             TransferEffect::Step { transfer_id, attempt_id, key, operation, part, purpose, upload_id, source, steps, .. } => {

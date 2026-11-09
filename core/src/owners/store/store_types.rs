@@ -115,6 +115,8 @@ pub struct UploadRow {
     pub staged: bool,
     /// `Clock.now()` of the move to `Failed`: the expiry counts from it.
     pub failed_at: Option<u64>,
+    /// `Clock.now()` of the answer of the creation of the blob: the term of its cache entry counts from it.
+    pub blob_created_at: Option<u64>,
     /// The operation the optimistic effects of the transfer belong to (`ReserveOp`).
     pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).
