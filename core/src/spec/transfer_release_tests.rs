@@ -17,7 +17,7 @@ fn opened(found: StoredTransfer, online: bool) -> (Twin, Out) {
     let (mut twin, opening) = Twin::opened(vec![found], Default::default());
     twin.online(online);
     let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    (twin, Out { runs: [opening.runs, ready.runs].concat(), ..Default::default() })
+    (twin, Out { runs: [opening.runs, ready.runs].concat(), batches: [opening.batches, ready.batches].concat(), shown: [opening.shown, ready.shown].concat(), ..Default::default() })
 }
 
 fn all(outs: &[&Out]) -> Vec<u64> { outs.iter().flat_map(|out| out.releases()).collect() }
@@ -44,8 +44,10 @@ fn xfer_release_pending_step() {
     let (mut twin, ready) = opened(saved(0), true);
     assert_eq!((ready.steps().len(), twin.stage(1), all(&[&ready])), (0, TransferStage::Ready, Vec::<u64>::new()), "online, the transfer starts no step of its own and releases nothing while Session owns the saved pair (D-246)");
     let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: crate::owners::session::AuthorOutcome::Dropped });
-    assert_eq!((answered.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "a dropped held pair clears pending_step and starts one plain attempt (D-269)");
+    assert_eq!((answered.steps().len(), twin.stage(1)), (0, TransferStage::PersistingAttempt), "a dropped held pair clears pending_step and writes a plain attempt first (D-269)");
+    let started = twin.commit();
+    assert_eq!((started.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "the committed attempt sends one step of its own");
     let failed = twin.step_error(1, false);
     let (_, discarded) = twin.discard(KEY);
-    assert_eq!(all(&[&ready, &answered, &failed, &discarded]), Vec::<u64>::new(), "a replayed and answered step releases nothing");
+    assert_eq!(all(&[&ready, &answered, &started, &failed, &discarded]), Vec::<u64>::new(), "a replayed and answered step releases nothing");
 }

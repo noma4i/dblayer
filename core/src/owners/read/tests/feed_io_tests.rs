@@ -261,6 +261,8 @@ fn feed_io_graphql_errors_drop() {
         peer.frames.send(confirmed(1)).unwrap();
         peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
         if drops {
+            pump(&mut det, |det| saw_input(det, "ProtocolError") == 1);
+            det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
             pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
             assert!(saw_input(&det, "ProtocolError") == 1, "{name}: the error frame is an explicit protocol error");
             assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
