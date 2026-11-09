@@ -93,7 +93,7 @@ extension DBModel {
 }
 
 public enum OperationOutcome<Model: DBModel>: Sendable {
-  case confirmed(value: Model?, answerJSON: String?)
+  case confirmed(confirmedValue: Model?, answerJSON: String?)
   case rejected(failure: WireFailure)
   case interrupted
 
@@ -122,7 +122,7 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
 
   @concurrent public func outcome() async throws -> OperationOutcome<Model> {
     switch try await database.outcome(receipt: wire) {
-    case let .confirmed(value, answerJSON): return .confirmed(value: try value.map(Model.decode), answerJSON: answerJSON)
+    case let .confirmed(value, answerJSON): return .confirmed(confirmedValue: try value.map(Model.decode), answerJSON: answerJSON)
     case let .rejected(failure): return .rejected(failure: failure)
     case .interrupted: return .interrupted
     }
