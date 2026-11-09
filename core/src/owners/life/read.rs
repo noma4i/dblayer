@@ -116,7 +116,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                 match (plus, owned) {
                     (true, true) => deliveries_wiring.to_transfer(TransferInput::StatusInterestPlus { key, stream_id: stream }),
                     (false, true) => deliveries_wiring.to_transfer(TransferInput::StatusInterestMinus { key, stream_id: stream }),
-                    (true, false) => deliveries_wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob: BlobStatus::of(&Shown::Gone) }),
+                    (true, false) => deliveries_wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob: BlobStatus::of(&Shown::Gone), revision: 0 }),
                     (false, false) => {}
                 }
             }

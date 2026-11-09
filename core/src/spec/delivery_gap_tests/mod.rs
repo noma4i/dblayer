@@ -227,7 +227,7 @@ impl Twin {
             Input::ModelLost { first, last } => self.post(d::DeliveryInput::ModelLost { stream, first: *first, last: *last }),
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
-            Input::Transfer { state } => self.post(d::DeliveryInput::TransferStatus { stream, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
+            Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
             Input::Retry { attempts } => self.post(d::DeliveryInput::RetryState { stream, retry: d::RetryStatus { attempts: *attempts, phase: "idle".into() } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
@@ -408,7 +408,7 @@ fn dlv_open_status() {
 #[test]
 fn dlv_opening_status() {
     let mut blob = open_as(Kind::Blob);
-    assert_eq!(blob.step(Input::Transfer { state: "uploading".into() }), [Effect::Available]);
+    assert_eq!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }), [Effect::Available]);
     assert_eq!(blob.read_all(), [Val::Status { revision: 1, state: "uploading".into() }]);
     let mut retry = open_as(Kind::Retry);
     assert_eq!(retry.step(Input::Retry { attempts: 2 }), [Effect::Available]);
@@ -418,24 +418,24 @@ fn dlv_opening_status() {
 #[test]
 fn dlv_live_status() {
     let mut twin = open_as(Kind::Blob);
-    twin.step(Input::Transfer { state: "uploading".into() });
+    twin.step(Input::Transfer { state: "uploading".into(), revision: 12 });
     twin.read_all();
-    assert_eq!(twin.step(Input::Transfer { state: "done".into() }), [Effect::Available]);
+    assert_eq!(twin.step(Input::Transfer { state: "done".into(), revision: 13 }), [Effect::Available]);
     assert_eq!(twin.read_all(), [Val::Status { revision: 2, state: "done".into() }]);
-    twin.step(Input::Transfer { state: "failed".into() });
-    twin.step(Input::Transfer { state: "retrying".into() });
+    twin.step(Input::Transfer { state: "failed".into(), revision: 14 });
+    twin.step(Input::Transfer { state: "retrying".into(), revision: 15 });
     assert_eq!(twin.read_all(), [Val::Status { revision: 4, state: "retrying".into() }], "an unread status gives way to the last one");
 }
 
 #[test]
 fn dlv_live_status_same() {
     let mut twin = open_as(Kind::Blob);
-    twin.step(Input::Transfer { state: "uploading".into() });
+    twin.step(Input::Transfer { state: "uploading".into(), revision: 16 });
     twin.read_all();
-    assert!(twin.step(Input::Transfer { state: "uploading".into() }).is_empty());
+    assert!(twin.step(Input::Transfer { state: "uploading".into(), revision: 17 }).is_empty());
     let mut other = open_as(Kind::Retry);
     other.step(Input::Retry { attempts: 1 });
-    assert!(other.step(Input::Transfer { state: "x".into() }).is_empty(), "a status of another kind changes nothing");
+    assert!(other.step(Input::Transfer { state: "x".into(), revision: 18 }).is_empty(), "a status of another kind changes nothing");
     assert_eq!(other.read_all(), [Val::Retry { attempts: 1 }]);
 }
 
@@ -608,7 +608,7 @@ fn matrix_owner_state_input_delivery() {
         ("ReadStale", Input::ReadStale { revision: 1, rows: rows(&["r1"]) }), ("ReadFailed", Input::ReadFailed { revision: 2 }), ("ReadFailedStale", Input::ReadFailedStale),
         ("WindowState idle", Input::WindowState(Ws::idle())), ("WindowState loaded", Input::WindowState(Ws::loaded_at(2))),
         ("Joined", Input::Joined { position: 0 }), ("ModelReady", Input::ModelReady), ("ModelEvent", Input::ModelEvent { position: 1, payload: "p".into() }), ("ModelLost", Input::ModelLost { first: 2, last: 3 }), ("ModelGap", Input::ModelGap),
-        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into() }), ("Retry", Input::Retry { attempts: 1 }),
+        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into(), revision: 19 }), ("Retry", Input::Retry { attempts: 1 }),
         ("Pull", Input::Pull), ("PullCancelled matched", Input::PullCancelled { matched: true }), ("Cancel", Input::Cancel { reply: 5 }), ("Release", Input::Release), ("SinkClosed", Input::SinkClosed),
         ("EpochEnded own", Input::EpochEnded { own: true }), ("EpochEnded other", Input::EpochEnded { own: false }), ("EpochClosed", Input::EpochClosed), ("ModelsReset own", Input::ModelsReset { own_model: true }), ("Closing", Input::Closing),
     ];

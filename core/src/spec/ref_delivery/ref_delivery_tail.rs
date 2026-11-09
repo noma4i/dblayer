@@ -72,12 +72,11 @@ impl Delivery {
         self.next_feed = Some(last + 1);
     }
 
-    pub(super) fn status(&mut self, state: String, fx: &mut Vec<Effect>) {
+    pub(super) fn status(&mut self, state: String, revision: i64, fx: &mut Vec<Effect>) {
         if self.last_status.as_ref() == Some(&state) { return; }
         self.stage = Stage::Live;
-        self.status_revision += 1;
         self.last_status = Some(state.clone());
-        self.append(Val::Status { revision: self.status_revision, state }, fx);
+        self.append(Val::Status { revision, state }, fx);
     }
 
     pub(super) fn retry(&mut self, attempts: u32, fx: &mut Vec<Effect>) {

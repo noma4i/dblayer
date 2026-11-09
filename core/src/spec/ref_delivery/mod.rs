@@ -91,7 +91,7 @@ pub(super) enum Input {
     ModelLost { first: u64, last: u64 },
     ModelGap,
     Resync,
-    Transfer { state: String },
+    Transfer { state: String, revision: i64 },
     Retry { attempts: u32 },
     Pull,
     PullCancelled { matched: bool },
@@ -205,7 +205,6 @@ pub(super) struct Delivery {
     released: bool,
     sink_closed: bool,
     interested: bool,
-    status_revision: i64,
     last_status: Option<String>,
     last_retry: Option<u32>,
     pub(super) gone: bool,
@@ -244,7 +243,6 @@ impl Delivery {
             released: false,
             sink_closed: false,
             interested: false,
-            status_revision: 0,
             last_status: None,
             last_retry: None,
             gone: false,
@@ -455,7 +453,7 @@ impl Delivery {
             (Stage::Opening, Input::ModelsReset { own_model }) => {
                 if own_model && self.kind.reads_rows() { fx.push(Effect::Read(self.read_revision)); }
             }
-            (Stage::Opening, Input::Transfer { state }) if self.kind == Kind::Blob => self.status(state, fx),
+            (Stage::Opening, Input::Transfer { state, revision }) if self.kind == Kind::Blob => self.status(state, revision, fx),
             (Stage::Opening, Input::Retry { attempts }) if self.kind == Kind::Retry => self.retry(attempts, fx),
             (Stage::Opening | Stage::Live, Input::Cancel { reply }) => {
                 fx.extend(self.leave());
@@ -550,7 +548,7 @@ impl Delivery {
             (Stage::Live, Input::ModelGap) if self.kind == Kind::Events => {
                 if self.next_feed.is_none() || !self.ready { self.held_events.push(Held::Gap); } else { self.append(Val::Gap, fx); }
             }
-            (Stage::Live, Input::Transfer { state }) if self.kind == Kind::Blob => self.status(state, fx),
+            (Stage::Live, Input::Transfer { state, revision }) if self.kind == Kind::Blob => self.status(state, revision, fx),
             (Stage::Live, Input::Retry { attempts }) if self.kind == Kind::Retry => self.retry(attempts, fx),
             (Stage::Live, Input::ModelsReset { own_model }) => {
                 if own_model && self.kind.reads_rows() { self.read_revision = self.revision; fx.push(Effect::Read(self.revision)); }

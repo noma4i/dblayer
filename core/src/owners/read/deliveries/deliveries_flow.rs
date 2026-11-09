@@ -212,12 +212,13 @@ impl Delivery {
         }
     }
 
-    pub(super) fn status(&mut self, blob: BlobStatus, fx: &mut Vec<Emit>) {
+    pub(super) fn status(&mut self, blob: BlobStatus, revision: i64, fx: &mut Vec<Emit>) {
         if self.view.kind != Kind::Blob || !self.sink_open() {
             return;
         }
         let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _, _)| *reason != blob.wait_reason);
         self.transfer = Some(blob);
+        self.status_revision = revision;
         if changed_reason { fx.push(self.new_read(self.read_revision)); } else { self.show_status(fx); }
     }
 
@@ -237,7 +238,6 @@ impl Delivery {
             return;
         }
         self.stage = DeliveryStage::Live;
-        self.status_revision += 1;
         self.blob = Some(blob.clone());
         self.push(Value::Status { revision: self.status_revision, blob }, fx);
     }

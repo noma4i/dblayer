@@ -74,7 +74,7 @@ fn dlv_live_resync_other() {
         let mut twin = open_as(kind);
         match kind {
             Kind::Count => { twin.step(Input::CountDone { revision: 1, count: 1 }); }
-            Kind::Blob => { twin.step(Input::Transfer { state: "ready".into() }); }
+            Kind::Blob => { twin.step(Input::Transfer { state: "ready".into(), revision: 20 }); }
             Kind::Retry => { twin.step(Input::Retry { attempts: 1 }); }
             _ => {}
         }
