@@ -336,6 +336,12 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     run(["bash", "scripts/release.sh", version, "--publish"], forced, dict(forced_env, RELEASE_CONSUMERS="always", STUB_CONSUMERS="red"), expected=1, contains="app suites are red")
     assert_no_release(forced, forced_env, base / "forced/events")
     print("ok RELEASE_CONSUMERS=always runs the app suites without a boundary change")
+    waived, waived_env = fixture(base / "waived", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], waived, dict(waived_env, CONSUMER_LANES="none", STUB_CONSUMERS="red"))
+    receipt = json.loads((waived / "target/release-1.2.3/RECEIPT.json").read_text())
+    assert receipt["consumers"] == "waived-by-owner" and receipt["consumer_lanes"] == {} and receipt["consumer_lanes_required"] == [], receipt
+    assert not any(line.startswith("check_consumers ") for line in (base / "waived/events").read_text().splitlines()), "app suites ran although the owner waived them"
+    print("ok CONSUMER_LANES=none tags without the app suites and records the waiver")
     green, green_env = fixture(base / "green", touch=boundary)
     run(["bash", "scripts/release.sh", version, "--publish"], green, green_env)
     receipt = json.loads((green / "target/release-1.2.3/RECEIPT.json").read_text())

@@ -67,12 +67,13 @@ manifest=core/src/ffi/selftest/manifest.tsv
 [ -s "$manifest" ] || fail "sequence manifest missing: $manifest (the lifecycle sequences must be on master before a release)"
 for check in check_docs check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
 bash scripts/check_legacy.sh check || fail "check_legacy failed"
-# The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. No setting skips them.
+# The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. CONSUMER_LANES=none skips them only by the word of the owner for one release; the receipt records consumers = waived-by-owner.
 consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
 consumers=required
 consumer_lanes="${CONSUMER_LANES:-ios android}"
+[ "$consumer_lanes" = none ] && { consumers=waived-by-owner; consumer_lanes=""; }
 for lane in $consumer_lanes; do case "$lane" in ios | android) ;; *) fail "CONSUMER_LANES names an unknown lane: $lane" ;; esac; done
-if [ "${RELEASE_CONSUMERS:-}" != always ]; then
+if [ "$consumers" = required ] && [ "${RELEASE_CONSUMERS:-}" != always ]; then
   changed="$(git diff --name-only "$previous_tag"..HEAD)" || fail 'cannot list files changed since the previous tag'
   grep -Eq "$consumer_boundary" <<< "$changed" || consumers=not-required
 fi
