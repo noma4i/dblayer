@@ -124,7 +124,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
         Path::UploadStep | Path::UploadFinal => unreachable!("the upload paths run on their own stand"),
         Path::OutboxSend => rig.spawn(async move {
             let receipt = match database.send(message(epoch, "m", 1)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
-            match database.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(WireOperationOutcome::Rejected { .. }) => "Err:Rejected".to_string(), Ok(WireOperationOutcome::Interrupted) => "Err:Interrupted".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
+            match database.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(WireOperationOutcome::Rejected { .. }) => "Err:Rejected".to_string(), Ok(WireOperationOutcome::Ended { .. }) => "Err:Interrupted".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
         }),
     };
     let mut armed = rig.clock.armed();

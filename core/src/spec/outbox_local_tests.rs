@@ -55,7 +55,9 @@ fn out_local_write_stale_generation() {
     let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 2 } }));
     assert!(answers(&effects, WRITE).is_empty());
     assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::LocalWrite, generation: 2, .. }]));
-    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+    let [OutboxEffect::Store { batch, .. }] = effects.as_slice() else { unreachable!() };
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: *batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
 }
 
 #[test]

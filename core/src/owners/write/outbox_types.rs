@@ -112,7 +112,16 @@ pub enum OutboxOutcome {
     Rejected { error: String },
     Failed { error: String },
     Discarded,
-    Interrupted,
+    Interrupted(crate::owners::read::deliveries::EndCause),
+}
+
+pub(super) fn end_cause(reason: &RejectReason) -> crate::ffi::EndCause {
+    match reason {
+        RejectReason::Closed => crate::ffi::EndCause::Closed,
+        RejectReason::NoSession => crate::ffi::EndCause::SessionEnded,
+        RejectReason::Storage(error) => crate::ffi::EndCause::Storage { error: error.clone() },
+        RejectReason::Invalid | RejectReason::StaleGeneration { .. } => crate::ffi::EndCause::Invalid { detail: format!("{reason:?}") },
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -37,7 +37,7 @@ async fn outcome_of(database: &Database, receipt: &WireOperationReceipt) -> Stri
     match bound(database.outcome(receipt.clone())).await.unwrap() {
         WireOperationOutcome::Confirmed { value, .. } => format!("confirmed {}", value.map(|row| row.id).unwrap_or_default()),
         WireOperationOutcome::Rejected { failure } => format!("rejected {}", failure.message),
-        WireOperationOutcome::Interrupted => "interrupted".into(),
+        WireOperationOutcome::Ended { .. } => "interrupted".into(),
     }
 }
 

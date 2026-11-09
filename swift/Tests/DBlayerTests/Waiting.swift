@@ -446,9 +446,11 @@ extension Projected {
   func loaded() async throws {
     var result: Result<Void, any Error>?
     await eventually("the projection shows a settled state") {
-      if let reason = projection.ended, reason != .invalid {
-        result = .failure(DbError.Interrupted(detail: "the stream ended before its rows were shown"))
-        return true
+      if let reason = projection.ended {
+        if case .invalid = reason {} else {
+          result = .failure(DbError.Interrupted(detail: "the stream ended before its rows were shown"))
+          return true
+        }
       }
       guard let state = projection.state, state.settled else { return false }
       if state.phase == .failed, let error = state.error { result = .failure(error) } else { result = .success(()) }

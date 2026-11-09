@@ -151,7 +151,7 @@ fn xfer_accepting_rejected() {
     twin.reserve_batch(&ids);
     let out = twin.reject(RejectReason::NoSession);
     assert_eq!(out.all_replies(), 1, "a batch has one answer and no receipt");
-    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::Interrupted), "a refusal of the ended session is Interrupted (D-249)");
+    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::SessionEnded), "the refusal reports the ended session");
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
 }
 
@@ -163,7 +163,7 @@ fn xfer_accepting_other() {
     let out = twin.close();
     assert_eq!((out.drained(), out.all_replies(), twin.stage(id)), (0, 0, TransferStage::Accepting), "Closing waits for the answer of the Store");
     let out = twin.commit();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Closed)]);
     assert_eq!((out.drained(), out.copies(), twin.stage(id)), (1, 0, TransferStage::Done));
 }
 

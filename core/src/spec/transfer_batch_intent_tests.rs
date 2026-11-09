@@ -33,10 +33,11 @@ fn xfer_batch_intent_ended() {
     for reason in [RejectReason::NoSession, RejectReason::Closed] {
         let (mut twin, ids) = persisting_joint();
         let replies = waiting_outcomes(&mut twin, &ids);
+        let cause = if reason == RejectReason::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
         let out = twin.reject(reason);
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause.clone()), None)]);
         }
         assert_eq!((out.submits(), out.writes(), out.steps().len(), out.completes()), (0, 0, 0, 0));
     }
@@ -58,10 +59,11 @@ fn xfer_batch_intent_close() {
     for closing in [false, true] {
         let (mut twin, ids) = persisting_joint();
         let replies = waiting_outcomes(&mut twin, &ids);
+        let cause = if closing { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
         let out = if closing { twin.close() } else { twin.end_epoch() };
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause.clone()), None)]);
         }
         assert_eq!(out.drained(), usize::from(closing));
         assert_eq!((out.submits(), out.removed().len(), out.deletes()), (0, 0, 0), "the stored group stays for the next open");

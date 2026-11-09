@@ -51,7 +51,7 @@ async fn a_reset_during_a_put_ends_the_wait_and_removes_the_old_upload() {
 
     bound(database.session_reset()).await.unwrap();
 
-    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Interrupted));
+    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
     let refused = bound(database.upload(database.session_epoch(), "Moment".into(), id.clone(), "upload_clip".into(), request(&file))).await.unwrap_err();
     assert!(matches!(refused, DbError::NoSession { .. }), "{refused:?}");
     database.set_online(true).unwrap();
@@ -83,7 +83,7 @@ async fn xfer_prop_reset_during_put_no_stray_work() {
     bound(database.session_reset()).await.unwrap();
 
     assert!(token.is_cancelled(), "the PUT of the ended epoch is cancelled when the reset answers");
-    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Interrupted));
+    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
     assert_eq!(stand.puts.seen.lock().unwrap().len(), 1);
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -136,7 +136,7 @@ async fn xfer_prop_put_cancel_pushes() {
             assert!(bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await.unwrap(), "{cause}");
         } else {
             bound(database.session_reset()).await.unwrap();
-            assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Interrupted), "{cause}");
+            assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }), "{cause}");
         }
 
         put.dropped().await;

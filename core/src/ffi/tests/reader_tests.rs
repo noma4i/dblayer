@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{Config, Database, DbError, EndCause, ReadRequest, ReadValue, TestClock};
+use super::{Config, Database, EndCause, ReadClaim, ReadRequest, ReadValue, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::within;
 use crate::value::ScalarKind;
@@ -17,12 +17,14 @@ fn notes(db: &Database) -> Arc<super::ReadStream> {
     db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) })
 }
 
+fn claimed(value: ReadClaim) -> u64 { let ReadClaim::Claimed { reader } = value else { panic!("the reader claim ended: {value:?}") }; reader }
+
 #[tokio::test(flavor = "multi_thread")]
 async fn boundary_reader_orders() {
     let db = open().await;
     let stream = notes(&db);
-    let first = within(stream.claim_reader()).await.unwrap();
-    assert!(matches!(within(stream.claim_reader()).await, Err(DbError::Invalid { .. })));
+    let first = claimed(within(stream.claim_reader()).await);
+    assert!(matches!(within(stream.claim_reader()).await, ReadClaim::Ended { cause: EndCause::Invalid { .. } }));
     stream.release_reader(first + 1);
     assert!(matches!(within(stream.pull(first)).await, Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull(first));
@@ -35,12 +37,12 @@ async fn boundary_reader_orders() {
 async fn boundary_reader_early_exit() {
     let db = open().await;
     let stream = notes(&db);
-    let reader = within(stream.claim_reader()).await.unwrap();
+    let reader = claimed(within(stream.claim_reader()).await);
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Snapshot { .. })));
     stream.release_reader(reader);
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
-    let again = within(stream.claim_reader()).await.expect("a stream that is gone accepts a claim");
+    let again = claimed(within(stream.claim_reader()).await);
     assert!(matches!(within(stream.pull(again)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
     within(db.close_database()).await.unwrap();
 }
@@ -49,7 +51,7 @@ async fn boundary_reader_early_exit() {
 async fn boundary_reader_orders_a_pull_of_another_reader_is_invalid_and_leaves_the_stream_to_its_reader() {
     let db = open().await;
     let stream = notes(&db);
-    let first = within(stream.claim_reader()).await.unwrap();
+    let first = claimed(within(stream.claim_reader()).await);
     assert!(matches!(within(stream.pull(first + 1)).await, Some(ReadValue::Ended { cause: EndCause::Invalid { .. } })));
     assert!(matches!(within(stream.pull(first)).await, Some(ReadValue::Snapshot { .. })));
     within(db.close_database()).await.unwrap();
@@ -61,7 +63,7 @@ async fn boundary_reader_orders_a_claim_after_the_stream_ended_and_left_gets_end
     let stream = notes(&db);
     within(db.session_reset()).await.unwrap();
     within(stream.cancel()).await;
-    let reader = within(stream.claim_reader()).await.expect("a claim of a stream that is gone is accepted");
+    let reader = claimed(within(stream.claim_reader()).await);
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { .. })));
     within(db.close_database()).await.unwrap();
 }

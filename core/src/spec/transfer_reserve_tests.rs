@@ -105,7 +105,7 @@ fn xfer_reserving_end() {
         let (id, reply, _) = reserving(&mut twin);
         let out = if epoch_end { twin.end_epoch() } else { twin.close() };
         assert_eq!(twin.stage(id), TransferStage::Done);
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::Interrupted), "epoch_end {epoch_end}");
+        assert_eq!(Twin::fault(&out, reply), Some(if epoch_end { Fault::SessionEnded } else { Fault::Closed }), "epoch_end {epoch_end}");
         assert_eq!(out.drained(), usize::from(!epoch_end));
         let late = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
         assert!(Twin::quiet(&late), "a late OpReserved is foreign: {late:?}");

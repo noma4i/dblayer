@@ -207,7 +207,7 @@ impl TransferState {
     pub(super) fn accepting_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
         for &id in ids {
             if self.transfers.get(&id).is_some_and(|transfer| transfer.closing) {
-                self.interrupt(id, fx);
+                self.interrupt(id, crate::ffi::EndCause::Closed, fx);
                 continue;
             }
             if self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_none()) {
@@ -243,7 +243,11 @@ impl TransferState {
 
     /// `Accepting x Rejected`: no receipt, nothing is accepted.
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        let fault = if self.closing || matches!(reason, RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. }) { Fault::Interrupted } else { Fault::Rejected(reason) };
+        let fault = if self.closing { Fault::Closed } else { match reason {
+            RejectReason::NoSession => Fault::SessionEnded,
+            RejectReason::Closed => Fault::Closed,
+            reason => Fault::Rejected(reason),
+        } };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let group_reply = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));

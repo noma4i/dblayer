@@ -568,7 +568,7 @@ fn outcome_name(outcome: &WireOperationOutcome) -> &'static str {
     match outcome {
         WireOperationOutcome::Confirmed { .. } => "confirmed",
         WireOperationOutcome::Rejected { .. } => "rejected",
-        WireOperationOutcome::Interrupted => "interrupted",
+        WireOperationOutcome::Ended { .. } => "interrupted",
     }
 }
 

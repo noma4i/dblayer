@@ -53,7 +53,7 @@ fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64
 pub enum WireOperationOutcome {
     Confirmed { value: Option<WireRow>, answer_json: Option<String> },
     Rejected { failure: super::wire::WireFailure },
-    Interrupted,
+    Ended { cause: crate::owners::read::deliveries::EndCause },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]

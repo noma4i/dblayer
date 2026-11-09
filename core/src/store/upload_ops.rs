@@ -78,7 +78,7 @@ pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u
         OutboxOutcome::Rejected { error } => ("rejected", None, Some(error.as_str())),
         OutboxOutcome::Failed { error } => ("failed", None, Some(error.as_str())),
         OutboxOutcome::Discarded => ("discarded", None, None),
-        OutboxOutcome::Interrupted => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
+        OutboxOutcome::Interrupted(_) => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
     };
     connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value, now])?;
     Ok(())

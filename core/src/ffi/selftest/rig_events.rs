@@ -52,7 +52,7 @@ impl Rig {
                 Some(entry) => entry.clone(),
                 None => {
                     let stream = self.database.subscribe_values(epoch, ReadRequest::Events { model: model.into() });
-                    let reader = stream.claim_reader().await.unwrap();
+                    let crate::ffi::ReadClaim::Claimed { reader } = stream.claim_reader().await else { panic!("the event reader claim ended") };
                     assert!(matches!(bound(stream.pull(reader)).await, Some(ReadValue::Ready)), "the cable is ready for {model}");
                     streams.insert((epoch, model.to_string()), (stream.clone(), reader));
                     (stream, reader)

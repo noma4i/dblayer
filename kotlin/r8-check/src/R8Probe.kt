@@ -12,7 +12,7 @@ fun main() = runBlocking {
         check(created.cells.contains(Cell.Text("kept")))
         val stream = db.subscribeValues(epoch, ReadRequest.List(QuerySpec("Item", null, "{}", emptyList(), emptyList(), null, null, false)))
         var snapshot: ReadValue.Snapshot? = null
-        val claim = stream.claimReader()
+        val claim = (stream.claimReader() as ReadClaim.Claimed).reader
         while (snapshot == null) {
             val value = checkNotNull(stream.pull(claim)) { "the stream ended before its first snapshot" }
             if (value is ReadValue.Snapshot && value.rows.isNotEmpty()) snapshot = value

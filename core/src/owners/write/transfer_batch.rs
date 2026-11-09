@@ -180,7 +180,7 @@ impl TransferState {
                         if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
                     }
                 }
-                OutboxOutcome::Interrupted => { self.interrupt(id, fx); self.rounds_idle(id, fx); }
+                OutboxOutcome::Interrupted(cause) => { self.interrupt(id, cause.clone(), fx); self.rounds_idle(id, fx); }
             }
         }
         let changed: Vec<_> = ids.into_iter().filter(|id| matches!(self.stage_of(*id), Some(TransferStage::Removing | TransferStage::PersistingFailure))).collect();

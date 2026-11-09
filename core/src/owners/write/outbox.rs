@@ -352,7 +352,7 @@ impl OutboxState {
         operation.outcome = Some(outcome.clone());
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
-        if outcome != OutboxOutcome::Interrupted {
+        if !matches!(outcome, OutboxOutcome::Interrupted(_)) {
             self.drain(fx);
         }
     }
@@ -486,6 +486,8 @@ impl OutboxState {
     }
 
     pub(super) fn interrupt_all(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
+        let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+        let outcome = OutboxOutcome::Interrupted(cause);
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
             let Some(stage) = self.stage_of(op_id) else { continue };
@@ -498,10 +500,10 @@ impl OutboxState {
             self.answer_waiters(op_id, &OutboxAnswer::Err(fault.clone()), fx);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::Done;
-                operation.outcome = Some(OutboxOutcome::Interrupted);
+                operation.outcome = Some(outcome.clone());
             }
-            self.tell_transfer(op_id, &OutboxOutcome::Interrupted, false, fx);
-            self.give_outcome(op_id, &OutboxOutcome::Interrupted, fx);
+            self.tell_transfer(op_id, &outcome, false, fx);
+            self.give_outcome(op_id, &outcome, fx);
         }
         self.waiting.clear();
     }

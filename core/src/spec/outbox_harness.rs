@@ -76,7 +76,7 @@ pub(super) fn kind_in(input: &str) -> CommitKind {
     else if input.contains("MarkError { op_id") { CommitKind::ClearMark }
     else if input.contains("Attempt {") { CommitKind::Attempt }
     else if input.contains("ops: [Requeue {") { CommitKind::Requeue }
-    else if input.contains("ops: [LocalRows {") || input.contains("ops: [EphemeralRows {") || input.contains("ops: [LocalPending {") { CommitKind::LocalWrite }
+    else if input.contains("ops: [LocalRows {") || input.contains("ops: [EphemeralRows {") || input.contains("ops: [LocalPending {") || input.contains("ops: [DetachFile {") || input.contains("ops: [AttachFile {") || input.contains("ops: [Planned {") || input.contains("ops: [Show {") { CommitKind::LocalWrite }
     else if input.contains("ops: [RemoveRows {") { CommitKind::RemoveRow }
     else { CommitKind::Land }
 }
@@ -85,8 +85,10 @@ pub(super) fn outcome_named(text: &str) -> o::OutboxOutcome {
     if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } }
     else if text.contains("Rejected") { o::OutboxOutcome::Rejected { error: String::new() } }
     else if text.contains("Failed") { o::OutboxOutcome::Failed { error: String::new() } }
+    else if text.contains("Interrupted(Closed)") { o::OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed) }
+    else if text.contains("Interrupted(SessionEnded)") { o::OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded) }
     else if text.contains("Discarded") { o::OutboxOutcome::Discarded }
-    else { o::OutboxOutcome::Interrupted }
+    else { panic!("unknown outbox outcome: {text}") }
 }
 
 pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Option<OutboxEffect> {
@@ -116,7 +118,8 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         }
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => return None,
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes,
-        Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
+        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcome") => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
+        Emitted::Send { to: TRANSFER_AT, .. } => return None,
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
         Emitted::Schedule { .. } => OutboxEffect::Schedule,
         Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
@@ -180,7 +183,7 @@ pub(super) fn out_of(outcome: &o::OutboxOutcome) -> Out {
         o::OutboxOutcome::Rejected { .. } => Out::Rejected,
         o::OutboxOutcome::Failed { .. } => Out::Failed,
         o::OutboxOutcome::Discarded => Out::Discarded,
-        o::OutboxOutcome::Interrupted => Out::Interrupted,
+        o::OutboxOutcome::Interrupted(_) => Out::Interrupted,
     }
 }
 

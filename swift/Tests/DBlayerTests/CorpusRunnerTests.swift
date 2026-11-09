@@ -151,7 +151,7 @@ private func outcomeName(_ outcome: WireOperationOutcome) -> String {
   switch outcome {
   case .confirmed: return "confirmed"
   case .rejected: return "rejected"
-  case .interrupted: return "interrupted"
+  case .ended: return "interrupted"
   }
 }
 
@@ -272,6 +272,8 @@ private final class DatabaseRunner {
       return observation("unsupported", "status")
     case .operations:
       return observation("unsupported", "operations")
+    case .cableClose:
+      return observation("unsupported", "cable_close")
     case .ended(let reason):
       return observation("ended", ["stream": stream, "cause": causeName(reason)])
     }
@@ -369,7 +371,7 @@ private final class DatabaseRunner {
       let id = idOf(row), label = textOr(args, "as", "\(row):\(action)")
       let path = FileManager.default.temporaryDirectory.appendingPathComponent("corpus_\(ProcessInfo.processInfo.processIdentifier).bin")
       guard (try? Data("corpus".utf8).write(to: path)) != nil else { return failure("file") }
-      let request = WireUploadRequest(path: path.path, name: "clip.bin", mime: "application/octet-stream", variablesJson: "{}")
+      let request = WireUploadRequest(source: .file(path: path.path, name: "clip.bin", mime: "application/octet-stream"), variablesJson: "{}")
       spawn { await Self.receiptDone(label, row, "upload") { try await database.upload(epoch: epoch, model: "Moment", rowId: id, action: action, request: request) } }
     case "cancel_upload":
       guard let row = text("row"), let action = text("action") else { return failure("arguments") }
@@ -458,7 +460,7 @@ private final class DatabaseRunner {
       guard let label = text("as"), let count = (args["count"] as? NSNumber)?.intValue, let operation = text("operation") else { return failure("arguments") }
       let path = FileManager.default.temporaryDirectory.appendingPathComponent("corpus_batch_\(ProcessInfo.processInfo.processIdentifier).bin")
       guard (try? Data("corpus".utf8).write(to: path)) != nil else { return failure("file") }
-      let items = (0..<count).map { $0 + 1 }.map { WireUploadItem(valuesJson: canonical(["text": "\(label)\($0)"]), path: path.path, name: "clip.bin", mime: "application/octet-stream", variablesJson: "{}") }
+      let items = (0..<count).map { $0 + 1 }.map { WireUploadItem(valuesJson: canonical(["text": "\(label)\($0)"]), source: .file(path: path.path, name: "clip.bin", mime: "application/octet-stream"), variablesJson: "{}") }
       spawn {
         do {
           let receipt = try await database.uploadCreateBatch(epoch: epoch, model: "Moment", items: items, request: WireUploadBatch(operation: operation, variablesJson: "{}"))

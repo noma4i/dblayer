@@ -181,7 +181,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
 pub struct ReadStream {
     database: Weak<Database>,
     stream: u64,
-    ended: std::sync::atomic::AtomicBool,
+    ended: std::sync::Mutex<Option<EndCause>>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
     /// The epoch of the open, and the relation the request reads from the server.
@@ -210,7 +210,10 @@ impl ReadStream {
     }
 
     fn finished(&self, cause: EndCause) -> Option<ReadValue> {
-        (!self.ended.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(ReadValue::Ended { cause })
+        let mut ended = self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if ended.is_some() { return None; }
+        *ended = Some(cause.clone());
+        Some(ReadValue::Ended { cause })
     }
 }
 
@@ -242,9 +245,10 @@ impl ReadStream {
         waiting.armed = false;
         match answer {
             Outcome::Value(PullAnswer::Value(value)) => {
-                let value = *value;
-                if matches!(value, Value::Ended(_)) {
-                    self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+                let mut value = *value;
+                if let Value::Ended(cause) = &mut value {
+                    let mut ended = self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *cause = ended.get_or_insert_with(|| cause.clone()).clone();
                 }
                 match read_value(value, self.wire.as_deref()) {
                     Ok(value) => Some(value),
@@ -254,7 +258,7 @@ impl ReadStream {
             Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(EndCause::Closed),
             Outcome::EpochEnded(_) => self.finished(EndCause::SessionEnded),
             Outcome::Internal => self.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: EndCause::Invalid { detail: "the stream could not open".into() } }),
+            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone().unwrap_or_else(|| EndCause::Invalid { detail: "the stream could not open".into() }) }),
             Outcome::Value(PullAnswer::Interrupted) => self.finished(EndCause::Cancelled),
         }
     }
@@ -275,12 +279,12 @@ impl ReadStream {
         database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
 
-    /// Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
-    pub async fn claim_reader(&self) -> Result<u64, DbError> {
+    /// Takes the stream for one reader and returns its number or the reason the claim ended.
+    pub async fn claim_reader(&self) -> ReadClaim {
         static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let life = self.life().ok_or_else(super::command::closed)?;
+        let Some(life) = self.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
         let reader = READERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if life.claim_reader(self.stream, reader).await { Ok(reader) } else if life.is_shut() { Err(super::command::closed()) } else { Err(DbError::Invalid { detail: "the stream has a reader".into() }) }
+        if life.claim_reader(self.stream, reader).await { ReadClaim::Claimed { reader } } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
     }
 
     /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
@@ -291,9 +295,12 @@ impl ReadStream {
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
         if let Some(life) = self.life() { let _ = life.cancel_stream(self.stream).wait().await; }
-        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(EndCause::Cancelled);
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum ReadClaim { Claimed { reader: u64 }, Ended { cause: EndCause } }
 
 impl Drop for ReadStream {
     fn drop(&mut self) {
@@ -381,7 +388,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), wire, epoch, load })
+        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), wire, epoch, load })
     }
 }
 

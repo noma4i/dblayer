@@ -404,10 +404,10 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     crate::ffi::owners_drained(&rig.database).await.unwrap();
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
     bound(rig.database.session_reset()).await.unwrap();
-    assert!(matches!(bound(outcome).await.unwrap().unwrap(), WireOperationOutcome::Interrupted));
+    assert!(matches!(bound(outcome).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
     rig.database.set_online(true).unwrap();
     rig.login_ios("B").await;
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Interrupted));
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
     assert_eq!(rig.world.count("SendMessage"), 0);
     rig.database.close_now();
 }

@@ -161,7 +161,7 @@ impl TransferState {
                 self.set(id, TransferStage::PersistingFailure);
                 self.begin_failure(id, error.clone(), false, fx);
             }
-            Some(OutboxOutcome::Interrupted) | None => {
+            Some(OutboxOutcome::Interrupted(_)) | None => {
                 if row.has_intent {
                     if let Some(group) = row.batch.and_then(|group| self.groups.get_mut(&group)) {
                         if group.phase == BatchPhase::Collecting { group.phase = BatchPhase::Singles; }

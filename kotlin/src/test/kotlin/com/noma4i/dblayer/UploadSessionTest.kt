@@ -74,7 +74,7 @@ class UploadSessionTest {
             transport.arrived.await()
             val waiting = async(start = CoroutineStart.UNDISPATCHED) { sent.outcome() }
             DBlayer.sessionReset()
-            assertEquals(OperationOutcome.Interrupted, waiting.await())
+            assertEquals(OperationOutcome.Ended(EndCause.SessionEnded), waiting.await())
             val refused = runCatching { database.upload(database.sessionEpoch(), "Moment", row.id, "upload_clip", UploadRequest(file.path).wire()) }.exceptionOrNull()
             assertTrue("upload without a session returned $refused", refused is DbException.NoSession)
             loginAgain()

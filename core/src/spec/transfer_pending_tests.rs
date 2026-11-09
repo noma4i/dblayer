@@ -156,7 +156,7 @@ fn xfer_pending_closing() {
     twin.commit();
     let (reply, _) = twin.outcome(id, 1);
     let out = twin.close();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted, None)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed), None)]);
     assert_eq!((out.drained(), out.removed().len()), (1, 0));
 }
 
@@ -167,7 +167,7 @@ fn xfer_pending_epoch_end() {
     twin.commit();
     let (reply, _) = twin.outcome(id, 1);
     let out = twin.end_epoch();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted, None)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded), None)]);
     assert_eq!(twin.stage(id), TransferStage::Done);
 }
 
@@ -320,7 +320,7 @@ fn xfer_supply_end() {
             supply(&mut twin, EPOCH, 9);
             if persist { twin.copy_done(id); }
             let out = if close { twin.close() } else { twin.end_epoch() };
-            assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::Interrupted)]);
+            assert_eq!(out.replies(9), vec![TransferAnswer::Err(if close { Fault::Closed } else { Fault::SessionEnded })]);
             assert_eq!(twin.stage(id), TransferStage::Done);
             assert_eq!(out.deletes(), 1);
             assert_eq!(out.copy_cancels(), usize::from(!persist));
@@ -457,6 +457,6 @@ fn xfer_wait_fail_source() {
         twin.commit();
         twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "preparation".into(), reply: 9 });
         let out = if close { twin.close() } else { twin.end_epoch() };
-        assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::Interrupted)]);
+        assert_eq!(out.replies(9), vec![TransferAnswer::Err(if close { Fault::Closed } else { Fault::SessionEnded })]);
     }
 }

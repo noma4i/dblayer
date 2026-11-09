@@ -36,7 +36,7 @@ async fn boundary_selector_without_action() {
 
         bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), None)).await.unwrap();
         let (ended, kept) = if transfer_first { (transfer, mutation) } else { (mutation, transfer) };
-        assert!(matches!(bound(rig.database.outcome(ended)).await.unwrap(), WireOperationOutcome::Interrupted), "transfer_first {transfer_first}: the first operation ended");
+        assert!(matches!(bound(rig.database.outcome(ended)).await.unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::Discarded }), "transfer_first {transfer_first}: the first operation ended");
 
         rig.database.set_online(true).unwrap();
         assert!(matches!(bound(rig.database.outcome(kept)).await.unwrap(), WireOperationOutcome::Confirmed { .. }), "transfer_first {transfer_first}: the other operation went out");

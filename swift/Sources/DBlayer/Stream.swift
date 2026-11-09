@@ -36,10 +36,11 @@ final class ReaderLease: @unchecked Sendable {
 
   func next() async -> ReadValue? {
     if case .unclaimed = claim {
-      do { claim = .held(try await reader.claimReader()) } catch {
+      switch await reader.claimReader() {
+      case let .claimed(id): claim = .held(id)
+      case let .ended(cause):
         claim = .over
-        guard case let .Invalid(detail)? = error as? DbError else { return .ended(cause: .closed) }
-        return .ended(cause: .invalid(detail: detail))
+        return .ended(cause: cause)
       }
     }
     guard case let .held(id) = claim else { return nil }

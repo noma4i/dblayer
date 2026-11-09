@@ -67,7 +67,7 @@ fn out_reserve_op_while_restoring() {
     ended.run();
     let (sends, _) = settle(&mut ended);
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Err(Interrupted)"), "{sends:?}");
+    assert!(found.len() == 1 && found[0].contains("Err(SessionEnded)"), "{sends:?}");
 }
 
 #[test]

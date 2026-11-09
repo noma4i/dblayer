@@ -22,14 +22,9 @@ import kotlinx.serialization.json.JsonObject
 /** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that is cancelled cancels the stream in the core and leaves the object alive. A stream that ends by itself delivers one `ReadValue.Ended` last. */
 class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream) {
     val values: Flow<ReadValue> = flow {
-        val claim = try {
-            reader.claimReader()
-        } catch (refused: DbException.Invalid) {
-            emit(ReadValue.Ended(EndCause.Invalid(refused.detail)))
-            return@flow
-        } catch (failed: DbException) {
-            emit(ReadValue.Ended(EndCause.Closed))
-            return@flow
+        val claim = when (val result = reader.claimReader()) {
+            is ReadClaim.Claimed -> result.reader
+            is ReadClaim.Ended -> { emit(ReadValue.Ended(result.cause)); return@flow }
         }
         try {
             while (true) emit(reader.pull(claim) ?: break)

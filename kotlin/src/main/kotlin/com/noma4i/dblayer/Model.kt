@@ -114,7 +114,7 @@ sealed interface OperationOutcome<out Model : DBModel> {
     val confirmedValue: Model? get() = null
     class Confirmed<Model : DBModel>(override val confirmedValue: Model?, val answerJson: String?) : OperationOutcome<Model>
     class Rejected(val failure: WireFailure) : OperationOutcome<Nothing>
-    data object Interrupted : OperationOutcome<Nothing>
+    data class Ended(val cause: EndCause) : OperationOutcome<Nothing>
 }
 
 class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {
@@ -127,7 +127,7 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
         when (val result = database.outcome(wire)) {
             is WireOperationOutcome.Confirmed -> OperationOutcome.Confirmed(result.value?.let(decoder::read), result.answerJson)
             is WireOperationOutcome.Rejected -> OperationOutcome.Rejected(result.failure)
-            WireOperationOutcome.Interrupted -> OperationOutcome.Interrupted
+            is WireOperationOutcome.Ended -> OperationOutcome.Ended(result.cause)
         }
     }
 }

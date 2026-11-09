@@ -252,10 +252,10 @@ extension BridgeProbeTests {
     let waiting = Task { try await sent.outcome() }
 
     try await DB.sessionReset()
-    guard case .interrupted = try await waiting.value else { Issue.record("the outcome did not end with the session"); return }
+    guard case .ended(cause: .sessionEnded) = try await waiting.value else { Issue.record("the outcome did not end with the session"); return }
     try DB.database.setOnline(online: true)
     try await Self.signIn("B")
-    guard case .interrupted = try await sent.outcome() else { Issue.record("a receipt of A answered in the epoch of B"); return }
+    guard case .ended(cause: .sessionEnded) = try await sent.outcome() else { Issue.record("a receipt of A answered in the epoch of B"); return }
   }
 
   /// B12: a stream whose source cannot be connected ends once with the invalid outcome and leaves nothing open.
@@ -271,7 +271,8 @@ extension BridgeProbeTests {
       if case let .ended(cause) = $0 { return cause }
       return nil
     }
-    #expect(ended == [.invalid])
+    #expect(ended.count == 1)
+    guard case .invalid? = ended.first else { Issue.record("the stream did not end with Invalid"); return }
     #expect(await lease.next() == nil, "a stream that ended gives nothing more")
     #expect(try await DB.subscriptionCensus().subscriptions == 0)
   }

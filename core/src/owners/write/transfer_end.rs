@@ -306,7 +306,7 @@ impl TransferState {
     pub(super) fn removing_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         if !matches!(reason, RejectReason::Storage(_)) {
             for &id in ids {
-                self.interrupt(id, fx);
+                self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
             }
             return;
         }
@@ -413,7 +413,7 @@ impl TransferState {
         self.pending.clear();
         self.minted.clear();
         for id in self.open_ids() {
-            self.interrupt(id, fx);
+            self.interrupt(id, crate::ffi::EndCause::SessionEnded, fx);
         }
         self.answer_held(Fault::SessionEnded, fx);
     }
@@ -430,9 +430,9 @@ impl TransferState {
                 Some(TransferStage::Copying | TransferStage::CopyReady) => {
                     run(fx, TransferEffect::CopyCancel { transfer_id: id });
                     run(fx, TransferEffect::DeleteFile { path: file_id(id) });
-                    self.interrupt(id, fx);
+                    self.interrupt(id, crate::ffi::EndCause::Closed, fx);
                 }
-                _ => self.interrupt(id, fx),
+                _ => self.interrupt(id, crate::ffi::EndCause::Closed, fx),
             }
         }
         self.answer_held(Fault::Closed, fx);

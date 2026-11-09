@@ -352,10 +352,17 @@ impl TransferState {
     }
 
     /// Everything that waits for the call answers `answer`; `Interrupted` for the end of the epoch and for the close.
-    pub(super) fn interrupt(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn interrupt(&mut self, id: TransferId, cause: crate::ffi::EndCause, fx: &mut Fx) {
         self.release_step(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let fault = |fault: Fault| TransferAnswer::Err(fault);
+        let fault = match &cause {
+            crate::ffi::EndCause::Closed => Fault::Closed,
+            crate::ffi::EndCause::SessionEnded => Fault::SessionEnded,
+            crate::ffi::EndCause::Storage { error } => Fault::Rejected(crate::owners::contract::RejectReason::Storage(error.clone())),
+            crate::ffi::EndCause::Invalid { .. } => Fault::Invalid,
+            crate::ffi::EndCause::Internal { .. } => Fault::Internal,
+            crate::ffi::EndCause::Cancelled | crate::ffi::EndCause::Discarded => Fault::Interrupted,
+        };
         let mut replies: Vec<ReplyId> = Vec::new();
         replies.extend(transfer.accept_reply.take());
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
@@ -369,12 +376,12 @@ impl TransferState {
             run(fx, TransferEffect::DeleteFile { path: file_id(id) });
         }
         for reply_id in replies.into_iter().chain(grouped) {
-            reply(fx, reply_id, fault(Fault::Interrupted));
+            reply(fx, reply_id, TransferAnswer::Err(fault.clone()));
         }
         if in_flight {
             run(fx, TransferEffect::CancelStep { transfer_id: id });
         }
-        self.settle(id, OutboxOutcome::Interrupted, fx);
+        self.settle(id, OutboxOutcome::Interrupted(cause), fx);
         self.set(id, TransferStage::Done);
         self.show(id, Shown::Gone, fx);
     }
@@ -514,7 +521,7 @@ impl TransferState {
             }
             (Some(_), true) => {
                 for id in pending.ids {
-                    self.interrupt(id, fx);
+                    self.interrupt(id, super::outbox_types::end_cause(&rejected.reason), fx);
                 }
             }
             _ => {}
@@ -645,7 +652,10 @@ impl TransferState {
         for input in std::mem::take(&mut self.held) {
             match input {
                 TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
-                TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)),
+                TransferInput::Outcome { reply: id, .. } => {
+                    let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+                    reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause), None))
+                }
                 _ => {}
             }
         }

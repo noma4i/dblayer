@@ -42,7 +42,7 @@ async fn lifecycle(wanted: &str) {
             let stand = Stand::open().await;
             let epoch = stand.database.session_epoch();
             let stream: Arc<ReadStream> = stand.database.subscribe_values(epoch, request.clone());
-            let reader = bound(stream.claim_reader()).await.unwrap_or(0);
+            let crate::ffi::ReadClaim::Claimed { reader } = bound(stream.claim_reader()).await else { panic!("the stream reader claim ended") };
             let cell = |matrix: &mut Matrix, what: &str, expected: &str, observed: &str| matrix.check(name, event, what, expected, observed);
             match event {
                 "cancel" => {

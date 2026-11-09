@@ -30,7 +30,7 @@ fn out_marking_failed_no_session() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, true);
     let effects = refuse(&mut twin, id, RejectReason::NoSession);
-    assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Interrupted]));
+    assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded)]));
 }
 
 #[test]

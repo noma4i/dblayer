@@ -310,10 +310,10 @@ class ValueBridgeTest {
             val waiting = screen.async { sent.outcome() }
 
             DBlayer.sessionReset()
-            assertEquals(OperationOutcome.Interrupted, awaitWithin("the outcome ends with the session") { waiting.await() })
+            assertEquals(OperationOutcome.Ended(EndCause.SessionEnded), awaitWithin("the outcome ends with the session") { waiting.await() })
             DBlayer.database.setOnline(true)
             signIn("B")
-            assertEquals("a receipt of A answered in the epoch of B", OperationOutcome.Interrupted, sent.outcome())
+            assertEquals("a receipt of A answered in the epoch of B", OperationOutcome.Ended(EndCause.SessionEnded), sent.outcome())
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -328,7 +328,7 @@ class ValueBridgeTest {
             signIn("A")
             val reader = DBlayer.database.subscribeValues(DBlayer.database.sessionEpoch(), ReadRequest.Entity("Nope", "x", ReadFetch.NEVER))
             val ended = ArrayList<EndCause>()
-            val claim = reader.claimReader()
+            val claim = (reader.claimReader() as ReadClaim.Claimed).reader
             while (true) {
                 val value = reader.pull(claim) ?: break
                 if (value is ReadValue.Ended) ended.add(value.cause)

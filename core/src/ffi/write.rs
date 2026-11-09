@@ -47,6 +47,15 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
 
 pub(super) fn failure_of(error: &str) -> super::wire::WireFailure { super::wire::failure(&crate::owners::write::failure::parse(error)) }
 
+pub(super) fn outcome_error(error: DbError) -> Result<WireOperationOutcome, DbError> {
+    let cause = match error {
+        DbError::Closed { .. } => super::EndCause::Closed,
+        DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Session { code: crate::transport::SessionCode::SessionEnded, .. } => super::EndCause::SessionEnded,
+        error => return Err(error),
+    };
+    Ok(WireOperationOutcome::Ended { cause })
+}
+
 impl Database {
     async fn outbox_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
         match self.await_life(waiter).await? {
@@ -262,7 +271,7 @@ impl Database {
         if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
         }
-        if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
+        if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Ended { cause: super::EndCause::SessionEnded }); }
         match held.ticket.clone() {
             None => {
                 if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
@@ -298,22 +307,21 @@ impl Database {
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
         let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
-            Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
-            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
+            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return outcome_error(refused(fault, "operation outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(error) => return Err(error),
+            Err(error) => return outcome_error(error),
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
                 let value = match self.landed_value(receipt.epoch, &receipt.model, ticket.op_id).await {
                     Ok(value) => value,
-                    Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
-                    Err(error) => return Err(error),
+                    Err(error) => return outcome_error(error),
                 };
                 WireOperationOutcome::Confirmed { value, answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
-            OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,
+            OutboxOutcome::Discarded => WireOperationOutcome::Ended { cause: super::EndCause::Discarded },
+            OutboxOutcome::Interrupted(cause) => WireOperationOutcome::Ended { cause },
         })
     }
 

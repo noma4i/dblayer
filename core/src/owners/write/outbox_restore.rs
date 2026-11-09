@@ -135,7 +135,10 @@ impl OutboxState {
             match input {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())),
                 OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx),
-                OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted)),
+                OutboxInput::Outcome { reply, .. } => {
+                    let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+                    Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted(cause)))
+                }
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
                 _ => {}
             }

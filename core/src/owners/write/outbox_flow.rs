@@ -237,7 +237,7 @@ impl OutboxState {
             return Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Failed { error: error.clone() }));
         }
         match operation.stage {
-            Stage::Done => Self::reply(fx, reply, OutboxAnswer::Outcome(operation.outcome.clone().unwrap_or(OutboxOutcome::Interrupted))),
+            Stage::Done => match operation.outcome.clone() { Some(outcome) => Self::reply(fx, reply, OutboxAnswer::Outcome(outcome)), None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal)) },
             Stage::Failed => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) })),
             _ => self.outcome_waiters.push((receipt.op_id, reply)),
         }

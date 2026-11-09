@@ -11,7 +11,7 @@ use super::{Database, DbError};
 use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
-use crate::owners::write::outbox::{Fault, NewOp, OpSource, OutboxOutcome, Receipt};
+use crate::owners::write::outbox::{NewOp, OpSource, OutboxOutcome, Receipt};
 use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renumber, Source, SuppliedSource, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
@@ -298,10 +298,9 @@ impl Database {
     pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<WireOperationOutcome, DbError> {
         let (answer, landed) = match self.await_life(self.life.upload_outcome(receipt.epoch, held.clone())).await {
             Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
-            Ok(LifeReply::Transfer(TransferAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
-            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(refused(fault, "upload outcome")),
+            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return super::write::outcome_error(refused(fault, "upload outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(error) => return Err(error),
+            Err(error) => return super::write::outcome_error(error),
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
@@ -309,7 +308,8 @@ impl Database {
                 WireOperationOutcome::Confirmed { value, answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) },
-            OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,
+            OutboxOutcome::Discarded => WireOperationOutcome::Ended { cause: super::EndCause::Discarded },
+            OutboxOutcome::Interrupted(cause) => WireOperationOutcome::Ended { cause },
         })
     }
 }

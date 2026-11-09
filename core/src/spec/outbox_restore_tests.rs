@@ -95,7 +95,7 @@ fn out_restoring_epoch_ended() {
     for reply in [40, 41, 42] {
         assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::SessionEnded)], "reply {reply}");
     }
-    assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
+    assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded))]);
     let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
     assert!(late.is_empty(), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
 }
@@ -145,7 +145,7 @@ fn out_restoring_closing() {
     twin.run();
     let closed = take_fx(&twin.log, state_of(&twin.det));
     assert_eq!(answers(&closed, 40), vec![OutboxAnswer::Err(Fault::Closed)]);
-    assert_eq!(answers(&closed, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
+    assert_eq!(answers(&closed, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed))]);
     assert_eq!(drained(&closed), 1);
 }
 

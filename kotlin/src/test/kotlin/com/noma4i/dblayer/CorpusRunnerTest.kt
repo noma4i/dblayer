@@ -120,7 +120,7 @@ private fun fetchOf(name: String?): ReadFetch? = when (name) {
 private fun outcomeName(outcome: WireOperationOutcome): String = when (outcome) {
     is WireOperationOutcome.Confirmed -> "confirmed"
     is WireOperationOutcome.Rejected -> "rejected"
-    WireOperationOutcome.Interrupted -> "interrupted"
+    is WireOperationOutcome.Ended -> "interrupted"
 }
 
 private fun moreName(result: LoadMoreResult): String = when (result) {
@@ -220,6 +220,7 @@ private class DatabaseRunner {
         is ReadValue.Lost -> obs("lost", "stream" to stream, "first" to value.first, "last" to value.last)
         is ReadValue.Status -> observation("unsupported", JsonPrimitive("status"))
         is ReadValue.Operations -> observation("unsupported", JsonPrimitive("operations"))
+        is ReadValue.CableClose -> observation("unsupported", JsonPrimitive("cable_close"))
         is ReadValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.cause))
     }
 
@@ -303,7 +304,7 @@ private class DatabaseRunner {
                 val action = text("action") ?: return failure("arguments")
                 val id = idOf(row); val key = label(row, action)
                 val file = File.createTempFile("corpus_", ".bin").also { it.writeText("corpus"); it.deleteOnExit() }
-                val request = WireUploadRequest(file.path, "clip.bin", "application/octet-stream", "{}")
+                val request = WireUploadRequest(WireSource.File(file.path, "clip.bin", "application/octet-stream"), "{}")
                 spawn { receiptDone(key, row, "upload") { database.upload(epoch, "Moment", id, action, request) } }
             }
             "cancel_upload" -> {
@@ -384,7 +385,7 @@ private class DatabaseRunner {
                 val count = (args["count"] as? JsonPrimitive)?.longOrNull?.toInt() ?: return failure("arguments")
                 val operation = text("operation") ?: return failure("arguments")
                 val file = File.createTempFile("corpus_batch_", ".bin").also { it.writeText("corpus"); it.deleteOnExit() }
-                val items = (1..count).map { WireUploadItem(JsonObject(mapOf("text" to JsonPrimitive("$key$it"))).toString(), file.path, "clip.bin", "application/octet-stream", "{}") }
+                val items = (1..count).map { WireUploadItem(JsonObject(mapOf("text" to JsonPrimitive("$key$it"))).toString(), WireSource.File(file.path, "clip.bin", "application/octet-stream"), "{}") }
                 spawn {
                     val receipt = database.uploadCreateBatch(epoch, "Moment", items, WireUploadBatch(operation, "{}"))
                     Done(receipt.items.indices.map { obs("receipt", "row" to "$key${it + 1}", "op" to "upload") })
