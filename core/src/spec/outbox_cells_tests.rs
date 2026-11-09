@@ -861,3 +861,45 @@ fn out_rollback_invalid() {
     let effects = refuse(&mut twin, id, RejectReason::Invalid);
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
 }
+
+fn discarded(effects: &[OutboxEffect]) -> usize { answers(effects, WAITER).iter().filter(|answer| **answer == OutboxAnswer::Outcome(OutboxOutcome::Discarded)).count() }
+
+#[test]
+fn out_destroy_discards_chain() {
+    let mut twin = Twin::new();
+    let created = queued_behind_blocker(&mut twin, NewOp { action: "create".into(), ..model_op("r", Policy::Rollback, false) });
+    let later = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 21);
+    twin.committed(later);
+    let after = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 23);
+    twin.committed(after);
+    twin.waiter(created);
+    twin.waiter(later);
+    twin.waiter(after);
+    let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
+    assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "one batch takes back the create and every later operation of the row");
+    let destroy = *twin.state().ops.keys().max().expect("the destroy");
+    let done = twin.committed(created);
+    assert_eq!((discarded(&done), twin.stage(later), twin.stage(after), sends(&done)), (3, None, None, 0), "{done:?}");
+    assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None, row_id: None }));
+    assert_eq!(discarded(&twin.post(OutboxInput::Online(Online(true)))), 0, "each operation is discarded once");
+}
+
+#[test]
+fn out_destroy_discards_chain_with_a_batch_in_flight() {
+    for committed in [true, false] {
+        let mut twin = Twin::new();
+        let created = queued_behind_blocker(&mut twin, NewOp { action: "create".into(), ..model_op("r", Policy::Rollback, false) });
+        let later = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 21);
+        twin.waiter(created);
+        let rollback = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
+        assert_eq!(kinds(&rollback), vec![CommitKind::Rollback], "committed={committed}");
+        let reply = if committed { twin.committed(later) } else { twin.rejected(later, RReason::Storage) };
+        let submit = answers(&reply, 21);
+        assert!(if committed { matches!(submit.as_slice(), [OutboxAnswer::Receipt(_)]) } else { matches!(submit.as_slice(), [OutboxAnswer::Err(_)]) }, "committed={committed}: {reply:?}");
+        if committed { twin.waiter(later); }
+        let done = twin.committed(created);
+        assert_eq!((discarded(&done), twin.stage(later), sends(&done)), (if committed { 2 } else { 1 }, None, 0), "committed={committed}: {done:?}");
+        let rollbacks = done.iter().chain(reply.iter()).filter(|effect| kinds(std::slice::from_ref(effect)) == vec![CommitKind::Rollback]).count();
+        assert_eq!(rollbacks, 0, "committed={committed}: the chain is taken back once");
+    }
+}
