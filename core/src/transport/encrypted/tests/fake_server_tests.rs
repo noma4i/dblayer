@@ -99,6 +99,7 @@ struct Faults {
     pub replay_next_read: bool,
     pub forget_registrations: bool,
     pub refuse_hashes: bool,
+    pub spend_on_miss: bool,
     pub refuse_next: Option<(String, bool)>,
 }
 
@@ -177,6 +178,12 @@ impl FakeServer {
         self.state.lock().unwrap().faults.forget_registrations = true;
     }
 
+    pub fn spend_sequence_on_miss(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.registry.clear();
+        state.faults.spend_on_miss = true;
+    }
+
     pub fn refuse_hashes(&self) {
         self.state.lock().unwrap().faults.refuse_hashes = true;
     }
@@ -247,7 +254,7 @@ impl FakeServer {
             }
             return seal_response(data, None, json!({ "data": { "read": document } }));
         };
-        if let Err(code) = &resolved {
+        if let (Err(code), false) = (&resolved, state.faults.spend_on_miss) {
             return seal_response(data, None, persisted_failure(code));
         }
         let digest = digest_of(data);

@@ -30,10 +30,7 @@ impl SealConfig {
             if expected != crate::store::identity_of(&digest) { return Err(SessionError::StateLost); }
             Some(RequestSession { credential: secret, sequence: Some(i64::try_from(pending.sequence).map_err(|error| SessionError::Storage(error.to_string()))?) })
         };
-        let mut body: Value = serde_json::from_str(&pending.body).map_err(|error| SessionError::Storage(error.to_string()))?;
-        if body.pointer("/extensions/persistedQuery").is_some() {
-            if let Some(object) = body.as_object_mut() { object.remove("query"); }
-        }
+        let body: Value = serde_json::from_str(&pending.body).map_err(|error| SessionError::Storage(error.to_string()))?;
         let plain = RequestPlain { audience: self.audience.clone(), kid: self.key.pin().into(), path: pending.path.clone(), request_id: uuid::Uuid::new_v4().to_string(), issued_at: self.clock.now().as_secs() as i64, response_key: random_token(), session, body };
         seal_request(&self.key, &plain).map(|token| token.len() as u64).map_err(|error| SessionError::Storage(error.to_string()))
     }

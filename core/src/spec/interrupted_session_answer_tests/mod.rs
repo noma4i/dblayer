@@ -38,7 +38,7 @@ impl Rig {
     }
 
     fn refuse(&mut self, attempt_id: u64) -> Vec<SessionEffect> {
-        let effects = self.send(SessionInput::HttpError { request_id: 11, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: Some((262145, 262144)), security: None, body: None });
+        let effects = self.send(SessionInput::HttpError { request_id: 11, attempt_id, temporary: false, auth: false, status: 0, too_large: Some((262145, 262144)), security: None, body: None });
         let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
         self.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
     }

@@ -69,7 +69,7 @@ fn sess_generating_other() {
             SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick(Time(0)),
             SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None },
             SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into() },
-            SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: None, body: None },
+            SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None },
             SessionInput::Dropped { request_id: 9, attempt_id: 9 },
             SessionInput::Committed(Committed { batch: 9, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
             SessionInput::Rejected(Rejected { batch: 9, reason: RejectReason::NoSession }),
@@ -95,7 +95,7 @@ fn calling_error(too_large: Option<(u64, u64)>, security: Option<(crate::transpo
         let (batch, request) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, pending, .. } => Some((*batch, pending.request_id)), _ => None }).unwrap();
         let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
         let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
-        let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large, security: security.clone(), body: None });
+        let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, status: 0, too_large, security: security.clone(), body: None });
         let (batch, answer) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, answer, .. } => Some((*batch, answer.clone())), _ => None }).unwrap();
         assert_eq!(answer, author.then(|| (request, Err(expected.clone()))));
         assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { .. } | SessionEffect::Answer { .. })));

@@ -192,16 +192,16 @@ impl Session {
     pub(super) fn online_changed(&mut self, state: State, online: bool, out: &mut Out) {
         self.online = Some(online);
         match state {
-            State::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent } if !online => {
+            State::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id) } if !online => {
                 out.effects.push(Effect::HttpCancel { attempt_id });
                 if let Some(author) = pending.author {
                     out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Dropped });
                     self.state = State::PendingHeld { pending };
                 } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
                 }
             }
-            State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent } if online => self.send(pending, attempts, document_sent, out),
+            State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork } if online => self.send(pending, attempts, out),
             State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) } if online && pending.author.is_none() => self.land_again(pending, landed, out),
             other => self.state = other,
         }
@@ -415,7 +415,7 @@ impl Session {
                 self.state = state;
                 self.queue.push_back(Queued::Call { operation, body, reply });
             }
-            (State::Calling { pending, attempts, phase, document_sent }, input) => self.calling(pending, attempts, phase, document_sent, input, out),
+            (State::Calling { pending, attempts, phase }, input) => self.calling(pending, attempts, phase, input, out),
             (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Committed(committed)) if committed == batch => {
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
@@ -460,11 +460,11 @@ impl Session {
         if !self.queue.iter().any(|entry| matches!(entry, Queued::Mutate { req_id: seen, .. } if seen == req_id)) { self.queue.push_back(queued); }
     }
 
-    pub(super) fn calling(&mut self, pending: Pending, attempts: u64, phase: CallPhase, document_sent: bool, input: Input, out: &mut Out) {
+    pub(super) fn calling(&mut self, pending: Pending, attempts: u64, phase: CallPhase, input: Input, out: &mut Out) {
         let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == CallPhase::InFlight(attempt_id);
         match input {
             Input::GateClosed { request_id, attempt_id } if mine(request_id, attempt_id) => {
-                self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
             }
             Input::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {
@@ -476,10 +476,11 @@ impl Session {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
                     self.land(pending, Ok(body), identity, Some(sequence), false, out);
+                } else if sequence.is_none() {
+                    self.land(pending, Ok(body), None, None, false, out);
                 } else {
-                    let (reason, fail) = if sequence.is_none() { (Block::Protocol, Fail::Protocol) } else { (Block::SequenceConflict, Fail::SequenceConflict) };
-                    Self::finish_retained(out, &pending, Err(fail), true);
-                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason, landing: None };
+                    Self::finish_retained(out, &pending, Err(Fail::SequenceConflict), true);
+                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::SequenceConflict, landing: None };
                 }
             }
             Input::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
@@ -487,8 +488,7 @@ impl Session {
                 self.land(pending, answer, None, None, true, out);
             }
             Input::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(Fail::Security { code, detail }), None, None, false, out),
-            Input::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.send(pending, attempts, true, out),
-            Input::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, body, .. } if mine(request_id, attempt_id) => {
+            Input::HttpError { request_id, attempt_id, temporary: true, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     out.effects.push(match body {
                         Some(body) => Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Response(body) },
@@ -497,9 +497,9 @@ impl Session {
                     self.state = State::PendingHeld { pending };
                 } else if self.is_online() {
                     out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
-                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
                 } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
                 }
             }
             Input::HttpError { request_id, attempt_id, auth, .. } if mine(request_id, attempt_id) => {
@@ -512,9 +512,9 @@ impl Session {
                     self.state = State::PendingHeld { pending };
                 } else if self.is_online() {
                     out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
-                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
                 } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
                 }
             }
             Input::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {
@@ -522,18 +522,18 @@ impl Session {
                     Self::finish(out, &pending, Err(Fail::StateLost));
                     self.state = State::SecretMismatch;
                 } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingSecret, document_sent };
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingSecret };
                 }
             }
-            Input::Tick if phase == CallPhase::WaitingRetry && self.is_online() => self.send(pending, attempts, document_sent, out),
+            Input::Tick if phase == CallPhase::WaitingRetry && self.is_online() => self.send(pending, attempts, out),
             Input::Foreground if phase == CallPhase::WaitingSecret => {
                 if self.is_online() {
-                    self.send(pending, attempts, document_sent, out);
+                    self.send(pending, attempts, out);
                 } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
                 }
             }
-            _ => self.state = State::Calling { pending, attempts, phase, document_sent },
+            _ => self.state = State::Calling { pending, attempts, phase },
         }
     }
 }

@@ -129,6 +129,25 @@ async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id
     database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn the_final_mutation_of_an_upload_lands_on_the_first_send_on_a_server_with_an_empty_registry() {
+    let rig = SessionRig::new();
+    let database = opened_with_row(&rig, Arc::new(Puts::default())).await;
+    rig.server.spend_sequence_on_miss();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"abc").unwrap();
+    let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
+    let outcome = bound(database.outcome(receipt)).await.unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
+    let sequenced: Vec<_> = rig.server.seen().into_iter().filter(|request| request["body"]["operationName"].is_string() && request["body"]["operationName"] != "Feed" && request["sequence"].is_i64()).collect();
+    let numbers: Vec<i64> = sequenced.iter().map(|request| request["sequence"].as_i64().unwrap()).collect();
+    assert_eq!(numbers.windows(2).filter(|pair| pair[1] != pair[0] + 1).count(), 0, "a number repeated or skipped: {numbers:?}");
+    assert!(sequenced.iter().all(|request| request["body"]["query"].is_string()), "a sequenced request went without its document");
+    assert_eq!(executed(&rig, "MakeMoment").len(), 1);
+    database.close_now();
+}
+
 /// xfer_step_ok, xfer_all_parts: a file over the threshold goes in parts of 5 MiB, `complete` lists every etag, the mutation carries the id of `complete`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_large_file_uploads_in_parts_and_completes_before_its_mutation() {

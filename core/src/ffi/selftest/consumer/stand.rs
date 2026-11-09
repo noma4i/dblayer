@@ -41,13 +41,45 @@ struct Server {
     answers: StdMutex<HashMap<String, Value>>,
     asked: StdMutex<Vec<(String, Value)>>,
     sequenced: StdMutex<Vec<(String, i64)>>,
+    registry: StdMutex<Option<Registry>>,
     held: tokio::sync::watch::Sender<HashSet<String>>,
     answered: tokio::sync::watch::Sender<usize>,
 }
 
+struct Registry {
+    known: HashSet<String>,
+    last: i64,
+    spend_on_miss: bool,
+    refuse_once: HashSet<String>,
+    conflicts: usize,
+}
+
+impl Registry {
+    fn answer(&mut self, operation: &str, request: &Value) -> Option<(Option<i64>, Value)> {
+        let sequence = request["sequence"].as_i64().filter(|sequence| *sequence > 0);
+        let code = |code: &str| json!({"errors": [{"message": code, "extensions": {"code": code}}]});
+        if self.refuse_once.remove(operation) { return Some((None, code("PERSISTED_QUERY_NOT_FOUND"))); }
+        let persisted = request["body"].pointer("/extensions/persistedQuery/sha256Hash").and_then(Value::as_str).map(str::to_string);
+        match (request["body"].get("query").is_some(), persisted) {
+            (true, Some(hash)) => { self.known.insert(hash); }
+            (false, Some(hash)) if !self.known.contains(&hash) => {
+                let Some(sequence) = sequence.filter(|_| self.spend_on_miss) else { return Some((None, code("PERSISTED_QUERY_NOT_FOUND"))) };
+                if sequence != self.last + 1 { self.conflicts += 1; return Some((None, json!({"error": "SEQUENCE_CONFLICT"}))); }
+                self.last = sequence;
+                return Some((Some(sequence), code("PERSISTED_QUERY_NOT_FOUND")));
+            }
+            _ => {}
+        }
+        let sequence = sequence?;
+        if sequence != self.last + 1 { self.conflicts += 1; return Some((None, json!({"error": "SEQUENCE_CONFLICT"}))); }
+        self.last = sequence;
+        None
+    }
+}
+
 impl Default for Server {
     fn default() -> Self {
-        Server { answers: StdMutex::default(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), registry: StdMutex::default(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -57,6 +89,7 @@ impl FakeHttp for Server {
         let request = decrypt_request(&body).unwrap();
         let answer = if path == "/api/auth/login_link" {
             self.sequenced.lock().unwrap().push(("login_link".into(), request["sequence"].as_i64().unwrap_or(0)));
+            if let Some(registry) = self.registry.lock().unwrap().as_mut() { registry.last = request["sequence"].as_i64().unwrap_or(0); }
             json!({"sessionId": request["body"]["account"]})
         } else if path == "/api/auth/otp" {
             json!({"sent": true})
@@ -64,6 +97,8 @@ impl FakeHttp for Server {
             let operation = request["body"]["operationName"].as_str().unwrap().to_string();
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
             self.sequenced.lock().unwrap().push((operation.clone(), request["sequence"].as_i64().unwrap_or(0)));
+            let refused = self.registry.lock().unwrap().as_mut().and_then(|registry| registry.answer(&operation, &request));
+            if let Some((sequence, body)) = refused { return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, body) }); }
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
             let answer = self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}));
@@ -111,6 +146,15 @@ impl Stand {
     pub(super) async fn sign_in(&self) {
         bound(self.database.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
     }
+
+    pub(super) fn empty_registry(&self, spend_on_miss: bool) {
+        let last = self.server.sequenced.lock().unwrap().iter().map(|(_, sequence)| *sequence).max().unwrap_or(0);
+        *self.server.registry.lock().unwrap() = Some(Registry { known: HashSet::new(), last, spend_on_miss, refuse_once: HashSet::new(), conflicts: 0 });
+    }
+
+    pub(super) fn refuse_once(&self, operation: &str) { self.server.registry.lock().unwrap().as_mut().expect("the registry is empty-checking").refuse_once.insert(operation.into()); }
+
+    pub(super) fn conflicts(&self) -> usize { self.server.registry.lock().unwrap().as_ref().map_or(0, |registry| registry.conflicts) }
 
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }

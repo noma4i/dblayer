@@ -61,16 +61,12 @@ pub(in super::super) fn documents(requests: &[Value]) -> Vec<bool> {
     requests.iter().map(|request| request["body"].get("query").is_some()).collect()
 }
 
-fn ids(requests: &[Value]) -> Vec<Value> {
-    requests.iter().map(|request| request["requestId"].clone()).collect()
-}
-
 #[tokio::test]
-async fn local_413_after_apq_miss_leaves_the_next_sequence_available() {
+async fn a_mutation_over_the_size_limit_never_leaves_and_leaves_the_next_sequence_available() {
     let rig = Rig::signed_in().await;
     let transport = rig.transport();
     assert!(matches!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await, Err(TransportError::RequestTooLarge { .. })));
-    assert_eq!(documents(&rig.graphql_requests()), [false]);
+    assert_eq!(documents(&rig.graphql_requests()), Vec::<bool>::new(), "the full document is refused before the send");
     assert_eq!(rig.pending_sequence(), None);
     transport.mutate(request(WRITE)).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2);
@@ -125,16 +121,15 @@ async fn an_invalid_hash_is_not_sent_again() {
 }
 
 #[tokio::test]
-async fn a_mutation_missing_from_the_registry_is_sent_again_with_the_document_under_the_same_request_id_and_sequence() {
+async fn a_mutation_missing_from_the_registry_is_sent_once_with_the_document() {
     let rig = Rig::signed_in().await;
 
     let response = rig.transport().mutate(request(WRITE)).await.unwrap();
 
     let sent = rig.graphql_requests();
     assert_eq!(response.data, Some(json!({ "done": WRITE })));
-    assert_eq!(documents(&sent), [false, true]);
-    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(2)]);
-    assert_eq!(ids(&sent).iter().collect::<std::collections::HashSet<_>>().len(), 1);
+    assert_eq!(documents(&sent), [true]);
+    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2)]);
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (2, None));
 }
 
@@ -146,6 +141,6 @@ async fn a_registered_mutation_is_sent_once_as_the_next_sequence() {
     rig.transport().mutate(request(WRITE)).await.unwrap();
 
     let sent = rig.graphql_requests();
-    assert_eq!((documents(&sent), sent[0]["sequence"].clone()), (vec![false], json!(2)));
+    assert_eq!((documents(&sent), sent[0]["sequence"].clone()), (vec![true], json!(2)));
 }
 

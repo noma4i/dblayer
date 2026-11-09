@@ -64,7 +64,7 @@ fn http_pairs(history: &[RefEffect]) -> Vec<(u64, u64)> {
 
 fn at_attempt(input: Input, attempt: u64) -> Input {
     match input {
-        Input::HttpError { request_id, temporary, auth, persisted_missing, security, body, .. } => Input::HttpError { request_id, attempt_id: attempt, temporary, auth, persisted_missing, security, body },
+        Input::HttpError { request_id, temporary, auth, security, body, .. } => Input::HttpError { request_id, attempt_id: attempt, temporary, auth, security, body },
         Input::Revoked { request_id, body, .. } => Input::Revoked { request_id, attempt_id: attempt, body },
         other => other,
     }
@@ -143,9 +143,9 @@ fn sess_prop_mutate_stamp() {
 #[test]
 fn sess_prop_durable_answer() {
     let outcomes: [(Input, Fail); 4] = [
-        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, persisted_missing: false, security: None, body: None }, Fail::Http),
-        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: true, persisted_missing: false, security: None, body: None }, Fail::Unauthorized),
-        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, persisted_missing: false, security: Some((crate::transport::SecurityCode::TlsTrust, "trust".into())), body: None }, Fail::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "trust".into() }),
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, security: None, body: None }, Fail::Http),
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: true, security: None, body: None }, Fail::Unauthorized),
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, security: Some((crate::transport::SecurityCode::TlsTrust, "trust".into())), body: None }, Fail::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "trust".into() }),
         (Input::Revoked { request_id: 11, attempt_id: 0, body: "{}".into() }, Fail::Revoked),
     ];
     for (input, fail) in outcomes {

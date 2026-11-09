@@ -7,6 +7,10 @@
 - Uploads accept a deferred source and publish their rows before file preparation.
 - `UploadSource`, `supplySource`, and `failSource` provide or fail a deferred source.
 
+### Fixed
+
+- A write, a session call and an upload mutation always send the full document: the first send no longer carries the hash alone, so a server without the document no longer spends the sequence on a miss and refuses the resend with `SEQUENCE_CONFLICT`.
+
 ## 6.19.0 - 2026-11-09
 
 ### Changed

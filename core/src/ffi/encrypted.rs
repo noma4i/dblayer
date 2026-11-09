@@ -170,7 +170,7 @@ impl Database {
 pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> DbError {
     use crate::owners::session::SessionError as Failed;
     match error {
-        Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
+        Failed::Invalid => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
         Failed::NoCredential => DbError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::StateLost => DbError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
         Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },

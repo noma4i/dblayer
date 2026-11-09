@@ -315,7 +315,7 @@ fn sess_cancel_started() {
 fn sess_persisting_committed() {
     let mut twin = persisting();
     let effects = twin.feed(committed());
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { full_document: false, .. }]));
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { .. }]));
     assert!(matches!(twin.reference.state, RefState::Calling { attempts: 0, phase: CallPhase::InFlight(_), .. }));
 }
 
@@ -428,13 +428,19 @@ fn sess_calling_sequence_conflict() {
 #[test]
 fn sess_calling_no_sequence() {
     let mut twin = calling();
+    let credential = twin.reference.credential;
     let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), sequence: None, refusal: None };
-    twin.feed(input);
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Protocol))]);
+    let effects = twin.feed(input);
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, .. }]), "the pending goes, the number stays: {effects:?}");
+    twin.feed(committed());
+    assert_eq!(twin.replies, vec![(1, Ok("{}".into()))], "the answer goes to the caller");
+    assert_eq!(twin.reference.credential, credential, "credential.sequence is not spent");
     let mut author = calling_mutate();
     let input = Input::Response { request_id: author.rid(), attempt_id: author.aid(), body: "{}".into(), sequence: None, refusal: None };
-    assert_eq!(author.feed(input), vec![answer(7, 11, retained(Fail::Protocol))], "the author learns the pair stays saved");
-    assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Protocol, .. }));
+    author.feed(input);
+    let done = author.feed(committed());
+    assert!(done.contains(&answer(7, 11, Outcome::Response("{}".into()))), "the author gets the answer: {done:?}");
+    assert!(matches!(author.reference.state, RefState::Idle), "no pending is held: {:?}", author.reference.state);
 }
 
 #[test]
@@ -468,7 +474,7 @@ fn sess_calling_stray() {
         Input::Response { request_id: rid + 50, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Response { request_id: rid, attempt_id: aid + 50, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Revoked { request_id: rid, attempt_id: aid + 50, body: "{}".into() },
-        Input::HttpError { request_id: rid, attempt_id: aid + 50, temporary: false, auth: true, persisted_missing: false, security: None, body: None },
+        Input::HttpError { request_id: rid, attempt_id: aid + 50, temporary: false, auth: true, security: None, body: None },
         Input::Dropped { request_id: rid + 50, attempt_id: aid },
     ]);
     assert!(matches!(twin.reference.state, RefState::Calling { phase: CallPhase::InFlight(a), .. } if a == aid));

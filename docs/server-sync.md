@@ -410,7 +410,7 @@ DBlayer.open(context, encrypted = encrypted, credentials = credentials, transpor
 Rules of the session:
 
 - Every mutation, including a credentialed sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
-- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or the next open with a session sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
+- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or the next open with a session sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes.
 - While a request is pending, a different mutation fails with a network error and sends nothing. The library sends the pending request when the database opens with a session. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - Database format changes, model resets and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
@@ -424,8 +424,8 @@ The JWE size is checked before the pending row is saved and before the HTTP send
 If the size exceeds 256 KiB, Swift gets `DbError.RequestTooLarge(size:limit:)` and Kotlin gets `DbException.RequestTooLarge` with the fields `size` and `limit`.
 This local refusal does not change the sequence of the existing session and creates no pending row.
 The next short request is sent without `sessionReset()`.
-The check applies to reads, `sessionCall`, the `logout` call and the repeated APQ request with the full document.
-On an APQ miss, the hash-only request already confirmed its sequence. A local refusal of the full document does not use the next sequence.
+The check applies to reads, `sessionCall`, the `logout` call and every request with a sequence.
+A local refusal of the full document does not use the next sequence.
 A real HTTP 413 returns `Http` and removes Pending without spending its sequence.
 
 ### Upload failures
@@ -434,7 +434,7 @@ A transfer step retries network errors and the temporary GraphQL codes listed ab
 
 ### Persisted queries
 
-The core sends a GraphQL call as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field.
+The core sends a GraphQL read as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field.
 
 | Server answer | Core |
 | ------------- | ---- |
@@ -445,10 +445,10 @@ The core sends a GraphQL call as its SHA-256 hash first, without the document. T
 The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations behave as before and return the answer of the last send.
 
 - A query is sent again as a new request: new request id, new response key. The server reports the miss before it records the request id, so nothing is spent.
-- A mutation is sent again as a new mutation. The server has already taken the first sequence number `N` and answers the miss with it, so the core confirms `N` and removes the pending request. The second send takes `N+1`, new request id and response key, and the core stores it before it sends it, like any mutation. The same `N` with another body would get `SEQUENCE_CONFLICT`.
-- After a restart the library sends the stored request unchanged. A stored hash-only request that is answered with a miss returns that answer, and your app sends the mutation again as usual.
+- Writes always send the full document: a request with a sequence (mutation, `sessionCall`, the final mutation of an upload) goes with `query` and the hash on every attempt, with the same bytes after a retry, a release and a restart. The hash-first send is for reads only.
+- An answer without `sequence` (for example `PERSISTED_QUERY_NOT_FOUND` or `INVALID_INPUT`, which the server answers before it checks the sequence) did not spend the number: the core removes the pending request, returns the answer and sends the next call under the same number.
 
-The server registry fills itself. The first call of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later call of that document, from any device, is one hash-only request. If the server registers the documents in advance through its deployment tooling, there are no misses and every call is one hash-only request.
+The server registry fills itself. The first read of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later read of that document, from any device, is one hash-only request. If the server registers the documents in advance through its deployment tooling, there are no misses and every read is one hash-only request.
 
 ## Responses become rows
 

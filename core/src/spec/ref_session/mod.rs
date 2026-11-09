@@ -49,7 +49,6 @@ pub enum Fail {
     Revoked,
     StateLost,
     SequenceConflict,
-    Protocol,
     Unauthorized,
     Security { code: crate::transport::SecurityCode, detail: String },
     Http,
@@ -143,7 +142,7 @@ pub enum Input {
     Restored { epoch: u64, pending: Option<Pending> },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
-    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
+    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     Committed(BatchId),
     Rejected(BatchId, Reason),
@@ -184,7 +183,7 @@ pub enum Effect {
     CommitPending { batch: BatchId, epoch: u64, pending: Pending, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`.
     CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)>, erase_session: bool },
-    HttpRequest { pending: Pending, attempt_id: AttemptId, full_document: bool },
+    HttpRequest { pending: Pending, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     ScheduleTick { attempts: u64 },
     GenerateCredential { op: SecretOpId },
@@ -213,7 +212,6 @@ pub enum CallPhase {
 pub enum Block {
     Storage,
     SequenceConflict,
-    Protocol,
     StateLost,
 }
 
@@ -241,7 +239,7 @@ pub enum State {
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
     Persisting { pending: Pending, batch: BatchId },
-    Calling { pending: Pending, attempts: u64, phase: CallPhase, document_sent: bool },
+    Calling { pending: Pending, attempts: u64, phase: CallPhase },
     Landing { pending: Pending, batch: BatchId, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
     Blocked { pending: Option<Pending>, reason: Block, landing: Option<Landed> },
     Closed,
@@ -298,7 +296,6 @@ fn blocked_fail(reason: Block) -> Fail {
     match reason {
         Block::Storage => Fail::Storage,
         Block::SequenceConflict => Fail::SequenceConflict,
-        Block::Protocol => Fail::Protocol,
         Block::StateLost => Fail::StateLost,
     }
 }
@@ -461,17 +458,17 @@ impl Session {
         self.state = State::Persisting { pending, batch };
     }
 
-    fn send(&mut self, pending: Pending, attempts: u64, document_sent: bool, out: &mut Out) {
+    fn send(&mut self, pending: Pending, attempts: u64, out: &mut Out) {
         let attempt_id = self.attempt();
-        out.effects.push(Effect::HttpRequest { pending: pending.clone(), attempt_id, full_document: document_sent });
-        self.state = State::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent };
+        out.effects.push(Effect::HttpRequest { pending: pending.clone(), attempt_id });
+        self.state = State::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id) };
     }
 
     fn start_calling(&mut self, pending: Pending, out: &mut Out) {
         if self.is_online() {
-            self.send(pending, 0, false, out);
+            self.send(pending, 0, out);
         } else {
-            self.state = State::Calling { pending, attempts: 0, phase: CallPhase::WaitingNetwork, document_sent: false };
+            self.state = State::Calling { pending, attempts: 0, phase: CallPhase::WaitingNetwork };
         }
     }
 

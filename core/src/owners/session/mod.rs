@@ -39,7 +39,6 @@ pub enum SessionError {
     Revoked,
     StateLost,
     SequenceConflict,
-    Protocol,
     Unauthorized,
     Security { code: crate::transport::SecurityCode, detail: String },
     Http { status: u16 },
@@ -142,7 +141,6 @@ pub enum AttemptPhase {
 pub enum Block {
     Storage,
     SequenceConflict,
-    Protocol,
     StateLost,
 }
 
@@ -170,7 +168,7 @@ pub enum SessionPhase {
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
     Persisting { pending: PendingCall, batch: BatchId },
-    Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool },
+    Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase },
     Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
     Blocked { pending: Option<PendingCall>, reason: Block, landing: Option<Landed> },
     Closed,
@@ -210,7 +208,7 @@ pub enum SessionEffect {
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
     /// `erase_session`: the sign-in failed, `encrypted_session` of its new credential goes with the pending.
     CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, erase_session: bool },
-    HttpRequest { pending: PendingCall, attempt_id: AttemptId, full_document: bool },
+    HttpRequest { pending: PendingCall, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Schedule` (R5).
     ScheduleTick { attempts: u64 },
@@ -262,7 +260,7 @@ pub enum SessionInput {
     Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
-    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
+    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     /// The executor of the HTTP exchange of `attempt_id` died.
     HttpFailed { attempt_id: AttemptId },
@@ -345,7 +343,6 @@ fn blocked_error(reason: Block) -> SessionError {
     match reason {
         Block::Storage => SessionError::Storage("the stored request is not confirmed".into()),
         Block::SequenceConflict => SessionError::SequenceConflict,
-        Block::Protocol => SessionError::Protocol,
         Block::StateLost => SessionError::StateLost,
     }
 }

@@ -148,17 +148,17 @@ impl SessionState {
         self.phase = SessionPhase::Persisting { pending, batch };
     }
 
-    pub(super) fn request_http(&mut self, pending: PendingCall, attempts: u64, document_sent: bool, fx: &mut Vec<SessionEffect>) {
+    pub(super) fn request_http(&mut self, pending: PendingCall, attempts: u64, fx: &mut Vec<SessionEffect>) {
         let attempt_id = self.attempt();
-        fx.push(SessionEffect::HttpRequest { pending: pending.clone(), attempt_id, full_document: document_sent });
-        self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::InFlight(attempt_id), document_sent };
+        fx.push(SessionEffect::HttpRequest { pending: pending.clone(), attempt_id });
+        self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::InFlight(attempt_id) };
     }
 
     pub(super) fn start_calling(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
         if self.is_online() {
-            self.request_http(pending, 0, false, fx);
+            self.request_http(pending, 0, fx);
         } else {
-            self.phase = SessionPhase::Calling { pending, attempts: 0, phase: AttemptPhase::WaitingNetwork, document_sent: false };
+            self.phase = SessionPhase::Calling { pending, attempts: 0, phase: AttemptPhase::WaitingNetwork };
         }
     }
 

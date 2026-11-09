@@ -61,7 +61,6 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Revoked => Fail::Revoked,
         SessionError::StateLost => Fail::StateLost,
         SessionError::SequenceConflict => Fail::SequenceConflict,
-        SessionError::Protocol => Fail::Protocol,
         SessionError::Unauthorized => Fail::Unauthorized,
         SessionError::Security { code, detail } => Fail::Security { code: *code, detail: detail.clone() },
         SessionError::Http { .. } => Fail::Http,
@@ -148,12 +147,11 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::SecretMismatch => RefState::SecretMismatch,
         SessionPhase::SecretUnavailable { error, read } => RefState::SecretUnavailable { error: error.clone(), read: *read },
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
-        SessionPhase::Calling { pending, attempts, phase, document_sent } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase), document_sent: *document_sent },
+        SessionPhase::Calling { pending, attempts, phase } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase) },
         SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended },
         SessionPhase::Blocked { pending, reason, landing } => RefState::Blocked { pending: pending.as_ref().map(pending_of), landing: landing.as_ref().map(|Landed { answer, identity, sequence, server_ended }| RefLanded { answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended }), reason: match reason {
             owner::Block::Storage => Block::Storage,
             owner::Block::SequenceConflict => Block::SequenceConflict,
-            owner::Block::Protocol => Block::Protocol,
             owner::Block::StateLost => Block::StateLost,
         } },
         SessionPhase::Closed => RefState::Closed,
@@ -175,7 +173,7 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::SealProbe { seal_id, pending, credential } => RefEffect::SealProbe { seal_id: *seal_id, pending: pending_of(pending), credential: *credential },
         SessionEffect::CommitPending { batch, epoch, pending, session } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending), session: *session },
         SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), erase_session: *erase_session },
-        SessionEffect::HttpRequest { pending, attempt_id, full_document } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id, full_document: *full_document },
+        SessionEffect::HttpRequest { pending, attempt_id } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id },
         SessionEffect::HttpCancel { attempt_id } => RefEffect::HttpCancel { attempt_id: *attempt_id },
         SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
         SessionEffect::GenerateCredential { secret_op_id } => RefEffect::GenerateCredential { op: *secret_op_id },
@@ -259,7 +257,7 @@ impl Twin {
             Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
             Input::Response { request_id, attempt_id, body, sequence, refusal } => SessionInput::Response { request_id, attempt_id, body, sequence, refusal },
             Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
-            Input::HttpError { request_id, attempt_id, temporary, auth, persisted_missing, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, persisted_missing, status: 0, too_large: None, security, body },
+            Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: resolve(batch), reason: reject(reason) }),
@@ -338,7 +336,7 @@ impl Twin {
 
     fn response(&self, sequence: u64) -> Input { Input::Response { request_id: self.rid(), attempt_id: self.aid(), body: "{}".into(), sequence: Some(sequence), refusal: None } }
 
-    fn http_error(&self, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id: self.rid(), attempt_id: self.aid(), temporary, auth, persisted_missing: false, security: None, body: None } }
+    fn http_error(&self, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id: self.rid(), attempt_id: self.aid(), temporary, auth, security: None, body: None } }
 
     fn dropped(&self) -> Input { Input::Dropped { request_id: self.rid(), attempt_id: self.aid() } }
 

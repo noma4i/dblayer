@@ -23,7 +23,6 @@ use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
 use crate::transport::{NetworkPurpose, SessionCode, TransportError};
 
-const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
 
 struct Wire {
     id: String,
@@ -194,48 +193,32 @@ fn refusal_of(body: &Value) -> Option<SessionCode> {
         .find_map(SessionCode::from_wire)
 }
 
-fn persisted_query_missing(body: &Value) -> bool {
-    body.get("errors").and_then(Value::as_array).into_iter().flatten().any(|error| error.get("extensions").and_then(|extensions| extensions.get("code")).and_then(Value::as_str) == Some(PERSISTED_QUERY_NOT_FOUND))
-}
-
-/// The body of a persisted GraphQL request goes with its document only after the server missed the hash.
-fn body_of(text: &str, full_document: bool) -> Value {
-    let mut body: Value = serde_json::from_str(text).unwrap_or(Value::Null);
-    if !full_document && body.pointer("/extensions/persistedQuery").is_some() {
-        if let Some(object) = body.as_object_mut() { object.remove("query"); }
-    }
-    body
-}
-
 pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
-            if persisted_query_missing(&answer.body) {
-                return SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: true, status: 0, too_large: None, security: None, body: None };
-            }
             if let Some(code) = refusal_of(&answer.body) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
             if temporary_error(&answer.body).is_some() {
-                return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false, status: 0, too_large: None, security: None, body: Some(answer.body.to_string()) };
+                return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: Some(answer.body.to_string()) };
             }
             if logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
                 return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
             }
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: None }
         }
-        Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
-        Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, persisted_missing: false, status: 0, too_large: None, security: None, body: None },
+        Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
+        Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
         Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
                 TransportError::RequestTooLarge { size, limit } => (0, Some((*size, *limit))),
                 _ => (0, None),
             };
-            SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status, too_large, security: None, body: None }
+            SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status, too_large, security: None, body: None }
         }
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id, attempt_id },
-        Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false, status: 0, too_large: None, security: None, body: None },
+        Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: None },
     }
 }
 
@@ -306,7 +289,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::HttpRequest { pending, attempt_id, full_document } => {
+            SessionEffect::HttpRequest { pending, attempt_id } => {
                 let request_id = pending.request_id;
                 let Some(wire) = self.wires.get(&request_id) else {
                     return back.reply(control, SessionInput::SecretMissing { request_id, attempt_id, lost: true });
@@ -320,7 +303,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 };
                 let (exchange, back, credentials) = (self.exchange.clone(), back.clone(), self.secret.slot());
                 let logout = pending.class == OperationClass::Logout;
-                let body = body_of(&pending.body, full_document);
+                let body: Value = serde_json::from_str(&pending.body).unwrap_or(Value::Null);
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));

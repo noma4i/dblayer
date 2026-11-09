@@ -114,7 +114,7 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Revoked => TransportError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::NoCredential => TransportError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::SequenceConflict => TransportError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
-        Failed::Protocol | Failed::Invalid => TransportError::Decode("the answer does not confirm the sequence".into()),
+        Failed::Invalid => TransportError::Decode("the answer does not confirm the sequence".into()),
         Failed::Unauthorized => TransportError::Http { status: 401, body: String::new() },
         Failed::Security { code, detail } => TransportError::Security { code, detail },
         Failed::Http { status } => TransportError::Http { status, body: "the request was refused".into() },
