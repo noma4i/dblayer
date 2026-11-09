@@ -530,6 +530,17 @@ fn session_http_auth_status() {
 }
 
 #[test]
+fn sess_runner_unreadable_dropped() {
+    use crate::owners::session::SessionInput;
+    use crate::transport::encrypted::Answer;
+    use crate::transport::TransportError;
+    let dropped = super::session_runner::session_input(1, 1, false, true, true, Err(TransportError::Decode("unreadable body".into())));
+    assert!(matches!(dropped, SessionInput::Dropped { request_id: 1, attempt_id: 1 }), "{dropped:?}");
+    let answered = super::session_runner::session_input(1, 1, false, true, true, Ok(Answer { sequence: Some(2), body: serde_json::json!({}) }));
+    assert!(matches!(answered, SessionInput::Response { .. }), "{answered:?}");
+}
+
+#[test]
 fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landing() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{StoreBatch, StoreOp};
