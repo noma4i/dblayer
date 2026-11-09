@@ -113,7 +113,8 @@ async fn life_register_bad_preload() {
 #[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
-    assert!(slot.open(config(), "invalid".into(), options(), crate::ffi::OpenPorts::default(), None).await.is_err());
+    let refused = slot.open(config(), "invalid".into(), options(), crate::ffi::OpenPorts::default(), None).await;
+    assert!(matches!(refused, Err(DbError::Invalid { .. })), "{:?}", refused.as_ref().err());
     assert!(open(&slot).await.is_ok());
 }
 

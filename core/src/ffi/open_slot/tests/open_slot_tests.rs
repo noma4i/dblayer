@@ -11,7 +11,7 @@ fn a_second_acquire_is_refused_until_the_first_lease_is_released_or_dropped() {
     first.release();
     first.release();
     let second = slot.acquire().unwrap();
-    assert!(slot.acquire().is_err());
+    assert!(matches!(slot.acquire(), Err(DbError::Invalid { .. })));
     drop(second);
     assert!(slot.acquire().is_ok());
 }

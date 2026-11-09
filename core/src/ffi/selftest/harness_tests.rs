@@ -92,7 +92,8 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let rig = Rig::bare(a.clone(), false).await;
     let held = Held::open(&rig.database);
     held.shows(&rig, "A").await;
-    assert!(rig.open_again(None).await.is_err(), "a second open succeeded while the first database was open");
+    let again = rig.open_again(None).await;
+    assert!(matches!(again, Err(DbError::Invalid { .. })), "a second open succeeded while the first database was open: {:?}", again.as_ref().err());
 
     held.cancel_all();
     rig.database.close_now();

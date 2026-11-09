@@ -161,7 +161,9 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
             _ => database.session_reset().await.unwrap(),
         }
         pause.release.add_permits(1);
-        assert!(within(work).await.unwrap().is_err(), "old response was accepted: session_call={session_call}, end={end}");
+        let ended = within(work).await.unwrap();
+        let expected_close = end == "close" && session_call;
+        assert!(if expected_close { matches!(ended, Err(DbError::Closed { .. })) } else { matches!(ended, Err(DbError::Interrupted { .. })) }, "old response was accepted: session_call={session_call}, end={end}: {ended:?}");
         if !close {
             if end == "session_reset" { assert!(database.signed_in_digest().is_none()); }
             server.forbid(true);
@@ -191,7 +193,9 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
         let retrying = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) }));
         crate::test_wait::settled(&database, "the request failed and the call waits for its retry", || server.hits() > hits).await;
         end_it(&database, end).await;
-        assert!(within(retrying).await.unwrap().is_err(), "{end}: a call in a retry wait outlived the transition");
+        let ended = within(retrying).await.unwrap();
+        let expected_close = end == "close";
+        assert!(if expected_close { matches!(ended, Err(DbError::Closed { .. })) } else { matches!(ended, Err(DbError::Interrupted { .. })) }, "{end}: a call in a retry wait outlived the transition: {ended:?}");
         database.close_now();
     }
     let server = Arc::new(Server::default());
@@ -207,8 +211,9 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     let life = database.life_handle();
     tokio::task::spawn_blocking(move || life.barrier()).await.unwrap();
     database.session_reset().await.unwrap();
-    assert!(within(running).await.unwrap().is_err());
-    assert!(within(queued).await.unwrap().is_err(), "a call queued behind another one ran after the session reset");
+    let (running, queued) = (within(running).await.unwrap(), within(queued).await.unwrap());
+    assert!(matches!(running, Err(DbError::Interrupted { .. })), "{running:?}");
+    assert!(matches!(queued, Err(DbError::NoSession { .. })), "a call queued behind another one ran after the session reset: {queued:?}");
     assert!(database.signed_in_digest().is_none());
     database.close_now();
 }
@@ -224,7 +229,8 @@ async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothi
     within(pause.entered.notified()).await;
     database.close_now();
     pause.release.add_permits(1);
-    assert!(within(work).await.unwrap().is_err(), "the revoked answer of the closed database was accepted");
+    let ended = within(work).await.unwrap();
+    assert!(matches!(ended, Err(DbError::Closed { .. })), "the revoked answer of the closed database was accepted: {ended:?}");
     assert!(database.signed_in_digest().is_some(), "the answer cleared the session after the database closed");
 }
 
@@ -243,7 +249,8 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     sign_in(&database, "B").await;
     within(database.refresh(database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
-    assert!(within(old).await.unwrap().is_err(), "the refresh of the old data waited for its request after the reset");
+    let old = within(old).await.unwrap();
+    assert!(matches!(old, Err(DbError::Interrupted { .. })), "the refresh of the old data waited for its request after the reset: {old:?}");
     pause.release.add_permits(1);
     database.close_now();
 }
@@ -264,8 +271,9 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     let joined = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { second.load(epoch, "User".into(), "all".into(), "{}".into()).await }));
     crate::test_wait::settled(&database, "the load joined the flight", || database.life.waiting_calls() > waiting).await;
     within(database.session_reset()).await.unwrap();
-    assert!(within(owner).await.unwrap().is_err(), "the owner of the old flight waited for its request");
-    assert!(within(joined).await.unwrap().is_err(), "a call joined to the old flight waited for its request");
+    let (owner, joined) = (within(owner).await.unwrap(), within(joined).await.unwrap());
+    assert!(matches!(owner, Err(DbError::Interrupted { .. })), "the owner of the old flight waited for its request: {owner:?}");
+    assert!(matches!(joined, Err(DbError::Interrupted { .. })), "a call joined to the old flight waited for its request: {joined:?}");
     pause.release.add_permits(1);
     database.close_now();
 }

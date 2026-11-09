@@ -450,7 +450,8 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
         settled(&rig, "the failed stream ended", || !reader.ended().is_empty()).await;
         assert_eq!(reader.ended(), vec![ReadEnd::Invalid], "{request:?} ended with more or less than one outcome");
         settled(&rig, "the failed stream left the table", || rig.database.stream_census().open == 0).await;
-        assert!(bound(rig.database.loaded(stream)).await.is_err(), "{request:?} reported a first load");
+        let loaded = bound(rig.database.loaded(stream)).await;
+        assert!(matches!(loaded, Err(DbError::Invalid { .. })), "{request:?} reported a first load: {loaded:?}");
     }
     rig.database.close_now();
 }

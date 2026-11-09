@@ -75,5 +75,6 @@ async fn call_result_normalized() {
 
 #[tokio::test]
 async fn a_bare_list_of_models_is_refused_as_specs() {
-    assert!(Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts::default()).await.is_err());
+    let refused = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts::default()).await;
+    assert!(matches!(refused, Err(DbError::Invalid { .. })), "{:?}", refused.as_ref().err());
 }

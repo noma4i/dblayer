@@ -96,7 +96,8 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     if matches!(transition, Transition::Close) {
         gate.release();
         let result = bound(running).await.unwrap();
-        assert!(result.is_err(), "{case}: the call ended the close with {result:?}");
+        let ended = if matches!(call, Call::SignIn) { matches!(result, Err(DbError::Closed { .. })) } else { matches!(result, Err(DbError::Interrupted { .. })) };
+        assert!(ended, "{case}: the call ended the close with {result:?}");
         return;
     }
     rig.login_ios("B").await;
@@ -144,7 +145,8 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
         rig.database.close_now();
 
         let result = bound(running).await.unwrap();
-        assert!(result.is_err(), "{call:?}: the call ended the close with {result:?}");
+        let ended = if matches!(call, Call::SignIn) { matches!(result, Err(DbError::Closed { .. })) } else { matches!(result, Err(DbError::Interrupted { .. })) };
+        assert!(ended, "{call:?}: the call ended the close with {result:?}");
         rig.database.close_now();
     }
 }
@@ -165,7 +167,8 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     rig.database.close_now();
 
     for wait in waits {
-        assert!(bound(wait).await.unwrap().is_err(), "a wait for the initial load outlived the close");
+        let ended = bound(wait).await.unwrap();
+        assert!(matches!(ended, Err(DbError::Interrupted { .. })), "a wait for the initial load outlived the close: {ended:?}");
     }
     assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::ReadEnd::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();

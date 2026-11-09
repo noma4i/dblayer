@@ -113,7 +113,8 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
     db.reset_data().await;
-    assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
+    let ended = within(load).await.unwrap();
+    assert!(matches!(ended, Err(DbError::Interrupted { .. })), "the explicit load waited for its request after the reset: {ended:?}");
     within(crate::ffi::settled(&db)).await.unwrap();
     hold.add_permits(1);
     assert!(!stored(&db));

@@ -455,7 +455,7 @@ async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
     slot.fail_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, _life) = open_with(&world, slot.clone(), &db);
     let outcome = crate::test_wait::within(client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await;
-    assert!(outcome.is_err(), "{outcome:?}");
+    assert!(matches!(outcome, Err(crate::transport::TransportError::Storage(_))), "{outcome:?}");
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
     assert_eq!(rows(&db), (None, None));
 }
@@ -469,7 +469,7 @@ async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_databas
     slot.panic_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, life) = open_with(&world, slot.clone(), &db);
     let outcome = crate::test_wait::within(client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await;
-    assert!(outcome.is_err(), "{outcome:?}");
+    assert!(matches!(outcome, Err(crate::transport::TransportError::Internal(_))), "{outcome:?}");
     settled(&life, "Lifecycle never heard the executor failure", || life.published().closed).await;
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
 }
@@ -526,7 +526,8 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     }
     let answers = |db: &Store| session_state::answers(&db.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
-    assert!(db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), db.pointer_guards(), None).is_err());
+    let refused = db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), db.pointer_guards(), None);
+    assert!(matches!(refused, Err(crate::store::StoreError::Json(_))), "{:?}", refused.as_ref().err());
     assert_eq!(answers(&db), 1);
     db.write_batch(&batch(Vec::new()), db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(answers(&db), 0);

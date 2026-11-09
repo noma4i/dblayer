@@ -61,7 +61,7 @@ async fn close_releases_old_engine() {
     sink.set_online(false);
     let reopened = slot.acquire();
     assert!(reopened.is_ok(), "the slot is free after the close");
-    assert!(slot.acquire().is_err(), "and has exactly one owner after the reopen");
+    assert!(matches!(slot.acquire(), Err(DbError::Invalid { .. })), "and has exactly one owner after the reopen");
     drop(database);
     settled(&owners, "the old database has no owner while the platform still holds the sink", || owner.upgrade().is_none()).await;
     let requests = transport.call_count("Signal");
