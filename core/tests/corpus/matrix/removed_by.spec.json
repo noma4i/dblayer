@@ -1,0 +1,99 @@
+{
+  "models": [
+    {
+      "actions": [],
+      "associations": [],
+      "ephemeral": [],
+      "expire_after": null,
+      "fields": [
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "id",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "str",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "title",
+          "nullable": false,
+          "optional": false
+        }
+      ],
+      "indexes": [],
+      "key": "Note",
+      "listens": [],
+      "relations": [],
+      "storage": "local"
+    },
+    {
+      "actions": [],
+      "associations": [],
+      "ephemeral": [],
+      "expire_after": null,
+      "fields": [
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "id",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "noteId",
+          "nullable": false,
+          "optional": false
+        }
+      ],
+      "indexes": [],
+      "key": "NoteMark",
+      "listens": [],
+      "relations": [],
+      "removed_by": [
+        {
+          "matches": {
+            "noteId": "id"
+          },
+          "model": "Note"
+        }
+      ],
+      "storage": "local"
+    }
+  ],
+  "operations": []
+}

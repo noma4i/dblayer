@@ -11,6 +11,7 @@ mod call_refusal_tests;
 mod wire_matrix_tests;
 mod matrix_admission_tests;
 mod matrix_write_tests;
+mod removed_by_tests;
 mod matrix_answer_tests;
 mod matrix_value_tests;
 mod matrix_static_tests;

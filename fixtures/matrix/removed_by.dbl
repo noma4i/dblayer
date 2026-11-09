@@ -1,0 +1,8 @@
+model Note, storage: :local do
+  attribute :title, :string
+end
+
+model NoteMark, storage: :local do
+  attribute :noteId, :id
+  removed_by Note, match: { noteId: :id }
+end
