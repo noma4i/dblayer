@@ -131,6 +131,7 @@ pub fn new_transfer(g: &mut G, key: TransferKey, source: Source, epoch: u64, now
         id, key, op_id: None, epoch, source, st: St::Reserving, seq, pos, cycle_id: 1, batch, size: 0, sha256: None, parts: 1, upload_id: None, confirmed: vec![],
         attempts: 0, complete_attempts: 0, signed_id: None, created_at: now, accepted_at: now, error: None, copy_present: false, has_effects, held_step: None, round_error: None,
         replies: Replies::default(), outcome_waiters: BTreeMap::new(), outcomes: BTreeMap::new(), intent_live: false, write_retry: None, intent_after_ready: false, local_url: false, cached: None, aborted: false, values, variables: vec![],
+        stored_shown: None,
     }
 }
 
@@ -155,6 +156,7 @@ pub fn run_on(s: &mut State, id: TransferId, i: &Input, e: &mut Vec<Effect>) {
     let before = shown(&s.g, &t);
     tx(&mut s.g, &mut t, i, e);
     status_push(&s.g, &t, &before, e);
+    t.stored_shown = Some(shown(&s.g, &t));
     after(s, t);
     run_post(s, e);
 }

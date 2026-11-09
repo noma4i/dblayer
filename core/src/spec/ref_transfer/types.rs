@@ -254,6 +254,7 @@ pub struct Transfer {
     pub created_at: u64, pub accepted_at: u64, pub error: Option<Failure>, pub copy_present: bool, pub has_effects: bool, pub held_step: Option<ReqId>,
     pub round_error: Option<String>, pub replies: Replies, pub outcome_waiters: BTreeMap<u64, Vec<ReplyId>>, pub outcomes: BTreeMap<u64, Outcome>,
     pub intent_live: bool, pub write_retry: Option<AttemptId>, pub intent_after_ready: bool, pub local_url: bool, pub cached: Option<Cached>, pub aborted: bool, pub values: Vec<String>, pub variables: Vec<String>,
+    pub stored_shown: Option<Shown>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

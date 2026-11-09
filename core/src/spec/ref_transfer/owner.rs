@@ -243,11 +243,13 @@ pub fn classify(s: &mut State, item: &RestoreItem, outs: &BTreeMap<TransferId, B
             let er = Failure { kind: ErrKind::RestoreFailed, message: error.message.clone() };
             t.error = Some(er.clone());
             fix_outcome(&mut t, e, Outcome::Failed { error: er });
+            t.stored_shown = Some(shown(&s.g, &t));
             s.transfers.insert(t.id, t);
         }
         RestoreItem::Row(r) => {
             let mut t = stored_to_transfer(&mut s.g, r);
             classify_row(&mut s.g, &mut t, r, item, outs, e);
+            t.stored_shown = Some(shown(&s.g, &t));
             if t.st == St::Done { after(s, t); } else { s.transfers.insert(t.id, t); }
         }
     }

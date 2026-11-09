@@ -456,6 +456,23 @@ fn xfer_interest() {
     assert!(out.statuses().contains(&(5, Shown::Uploading { progress: 33 })));
 }
 
+/// xfer_interest_plus_stored_value: while a `Shown` batch is in flight a reader that joins gets the last committed value, not the pending write (D-226, D-273); Committed hands the new value to every subscriber once.
+#[test]
+fn xfer_interest_plus_stored_value() {
+    let mut twin = Twin::new();
+    twin.uploading(KEY, 3);
+    let out = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
+    assert_eq!(out.statuses(), vec![(5, Shown::Uploading { progress: 0 })], "the first reader gets the committed value");
+    twin.hold_shown = true;
+    let out = twin.online(false);
+    assert_eq!((out.shown_batches().len(), out.statuses()), (1, Vec::new()), "the queued value waits for the Store, no reader sees it yet");
+    let batch = out.shown_batches()[0];
+    let mid = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 6 });
+    assert_eq!(mid.statuses(), vec![(6, Shown::Uploading { progress: 0 })], "a reader joining while the value is in flight gets the last committed value, not the pending write");
+    let committed = twin.commit_shown(batch);
+    assert_eq!(committed.statuses(), vec![(5, Shown::Queued), (6, Shown::Queued)], "Committed hands the new value to every subscriber once");
+}
+
 /// xfer_status_by_key: a stream that follows a key before its transfer exists gets `Gone` at once and every later value of the transfer that takes the key.
 #[test]
 fn xfer_status_by_key() {

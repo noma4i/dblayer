@@ -87,7 +87,7 @@ pub fn owner_addressed(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
         Input::StatusInterestPlus { stream_id, key } => {
             row(e, "xfer_status_by_key");
             s.g.key_subs.entry(key.clone()).or_default().insert(*stream_id);
-            let cur = find_open(s, key).and_then(|id| s.transfers.get(&id)).map(|t| (t.id, shown(&s.g, t)));
+            let cur = find_open(s, key).and_then(|id| s.transfers.get(&id)).and_then(|t| t.stored_shown.clone().map(|sh| (t.id, sh)));
             match cur {
                 Some((id, sh)) => e.push(Effect::Status { stream_id: *stream_id, transfer_id: id, shown: sh }),
                 None => e.push(Effect::Status { stream_id: *stream_id, transfer_id: 0, shown: unknown_shown() }),
