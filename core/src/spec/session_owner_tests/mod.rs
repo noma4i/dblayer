@@ -276,7 +276,7 @@ impl Twin {
         let traced = self.det.trace().len();
         self.det.post(self.addr, EpochStamp::Control, owner_input);
         self.det.run_until_quiet(100).expect("the owner is quiet");
-        let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {")).count();
+        let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count();
         let raw = take(&self.log);
         let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
