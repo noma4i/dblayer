@@ -205,6 +205,7 @@ pub struct WindowsState {
     pub(super) preload: Vec<WindowKey>,
     pub(super) operations_awaited: bool,
     pub(super) identity: bool,
+    pub(super) ended: Option<EndCause>,
     pub(super) sources: BTreeSet<WindowKey>,
     pub(super) request_ids: RequestIds,
     pub(super) next_attempt: u32,
@@ -237,7 +238,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
     }
 
     #[cfg(test)]
@@ -307,7 +308,7 @@ impl WindowsState {
 
     /// A key without a machine gets one in `Opening` and asks for its saved window.
     pub(super) fn ensure(&mut self, key: &WindowKey, out: &mut Effects<Windows>) {
-        if !self.windows.contains_key(key) {
+        if !self.windows.contains_key(key) && self.ended.is_none() {
             let read_id = self.next_read;
             self.next_read += 1;
             self.create(key, Some(read_id));
@@ -407,7 +408,15 @@ impl Windows {
         }
     }
 
+    /// A key without a machine in an ended epoch gets none: its caller is answered as an `Ended` machine would.
+    fn refused_after_end(state: &WindowsState, key: &WindowKey, id: InterestId, out: &mut Effects<Self>) -> bool {
+        let Some(cause) = state.ended.clone().filter(|_| !state.windows.contains_key(key)) else { return false };
+        out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Ended { cause } } }));
+        true
+    }
+
     pub(super) fn interest_plus(state: &mut WindowsState, key: WindowKey, (id, now): (InterestId, i64), out: &mut Effects<Self>) {
+        if Self::refused_after_end(state, &key, id, out) { return; }
         state.ensure(&key, out);
         Self::on(state, &key, Ev::InterestPlus { id, now }, out);
     }
@@ -445,6 +454,7 @@ impl Windows {
             out.push(Effect::Run(WindowsEffect::Window { key, effect }));
             return;
         }
+        if Self::refused_after_end(state, &key, id, out) { return; }
         state.ensure(&key, out);
         Self::on(state, &key, Ev::Load { id, goal, force, store_revision, now }, out);
     }
@@ -587,13 +597,14 @@ impl StateOwner for Windows {
                 state.saving = false;
                 state.foreground_seen = 0;
                 state.identity = started.identity.is_some();
+                state.ended = None;
                 if state.identity {
                     out.push(Effect::Run(WindowsEffect::SnapshotRequest { epoch: started.epoch }));
                     Self::start_preload(state, 0, &mut out);
                 }
             }
             WindowsInput::EpochEnded(ended) => {
-                if ended.epoch == state.epoch { state.identity = false; }
+                if ended.epoch == state.epoch { state.identity = false; state.ended = Some(EndCause::of(ended.cause)); }
                 let cause = EndCause::of(ended.cause);
                 Self::interrupt_held(state, cause.clone(), &mut out);
                 let keys: Vec<WindowKey> = state.windows.iter().filter(|(_, window)| window.machine.epoch == ended.epoch).map(|(key, _)| key.clone()).collect();

@@ -248,7 +248,8 @@ impl ReadStream {
                 let mut value = *value;
                 if let Value::Ended(cause) = &mut value {
                     let mut ended = self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    *cause = ended.get_or_insert_with(|| cause.clone()).clone();
+                    if ended.is_some() { return None; }
+                    *ended = Some(cause.clone());
                 }
                 match read_value(value, self.wire.as_deref()) {
                     Ok(value) => Some(value),
