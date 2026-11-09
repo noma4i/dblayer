@@ -81,7 +81,11 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                         _ => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
                     };
                     let case = format!("{wire} {entry} confirmed={confirmed}");
-                    assert_eq!(session(error), (code, wire.to_string()), "{case}");
+                    if code == SessionCode::Unauthenticated {
+                        assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
+                    } else {
+                        assert_eq!(session(error), (code, wire.to_string()), "{case}");
+                    }
                     assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential.clone(), 0), "{case}");
                 }
             }));
