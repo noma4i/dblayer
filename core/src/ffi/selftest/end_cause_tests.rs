@@ -303,7 +303,10 @@ async fn outcome_after_answer() -> String {
     bound(rig.database.discard(epoch, "Message".into(), row, None)).await.unwrap();
     answer_woke(&wake).await;
     rig.database.close_now();
-    outcome_tag(bound(call).await)
+    match bound(call).await {
+        Err(DbError::Closed { .. }) => "Closed".into(),
+        result => format!("{result:?}"),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
