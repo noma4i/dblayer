@@ -28,6 +28,8 @@ pub(crate) struct Contract<A> {
     everything_cached: bool,
     last: Option<i64>,
     settled: HashMap<(String, String, Option<i64>), (String, A)>,
+    /// The number each request id of a scope went with: an id is one pair for good, so a second number under it is a reused id.
+    numbers: HashMap<(String, String), Option<i64>>,
     script: HashMap<String, VecDeque<A>>,
     standing: Option<A>,
 }
@@ -61,7 +63,7 @@ impl<A: Clone> Default for Contract<A> {
 
 impl<A: Clone> Contract<A> {
     pub(crate) fn new() -> Self {
-        Contract { known: HashSet::new(), everything_cached: false, last: Some(0), settled: HashMap::new(), script: HashMap::new(), standing: None }
+        Contract { known: HashSet::new(), everything_cached: false, last: Some(0), settled: HashMap::new(), numbers: HashMap::new(), script: HashMap::new(), standing: None }
     }
 
     /// A server whose session number the double was never told: the first sequenced request sets it.
@@ -90,6 +92,9 @@ impl<A: Clone> Contract<A> {
     }
 
     pub(crate) fn admit(&mut self, request: &Request) -> Admission<A> {
+        if !request.request_id.is_empty() && *self.numbers.entry((request.scope.clone(), request.request_id.clone())).or_insert(request.sequence) != request.sequence {
+            return Admission::TwoBodies;
+        }
         if let Some((body, answer)) = self.settled.get(&request.pair()) {
             return if *body == request.body { Admission::Stored(answer.clone()) } else { Admission::TwoBodies };
         }
