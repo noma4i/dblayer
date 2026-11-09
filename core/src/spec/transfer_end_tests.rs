@@ -304,6 +304,19 @@ fn xfer_expiry_exact_week_keeps() {
 }
 
 #[test]
+fn xfer_failed_no_failed_at_never_expires() {
+    let mut row = stored(1, KEY, 2);
+    row.restore_failed = Some("prior".into());
+    row.failed_at = None;
+    row.created_at = Time(0);
+    let (mut twin, _) = Twin::opened(vec![row], Default::default());
+    assert_eq!(twin.stage(1), TransferStage::Failed);
+    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    assert!(Twin::quiet(&out), "a Failed row that never recorded a failure time does not expire from created_at: {out:?}");
+    assert_eq!(twin.stage(1), TransferStage::Failed);
+}
+
+#[test]
 fn xfer_failed_other() {
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
