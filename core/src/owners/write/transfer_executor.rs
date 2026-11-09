@@ -356,7 +356,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
-            TransferEffect::Status { stream_id, shown, .. } => (self.status)(stream_id, shown),
+            TransferEffect::Status { stream_id, shown, revision, .. } => (self.status)(stream_id, shown, revision),
             TransferEffect::Started { epoch } => (self.signal)(LifeSignal::Started(epoch)),
             TransferEffect::SnapshotRequest { epoch } => (self.signal)(LifeSignal::SnapshotRequest(epoch)),
             TransferEffect::RestoreClassified { epoch } => (self.signal)(LifeSignal::RestoreClassified(epoch)),

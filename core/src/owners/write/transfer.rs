@@ -36,10 +36,8 @@ impl TransferState {
         }
     }
 
-    /// What a key shows now: `Gone` while no transfer holds it.
-    pub(super) fn shown_by_key(&self, key: &str) -> Shown {
-        self.transfers.values().find(|transfer| transfer.key == key).map_or(Shown::Gone, |transfer| self.shown_now(transfer.transfer_id))
-    }
+    /// What a joining reader gets: the value the readers got last with its revision, `Gone` while no value of the key was published.
+    pub(super) fn published_by_key(&self, key: &str) -> (Shown, i64) { self.published.get(key).cloned().unwrap_or((Shown::Gone, 0)) }
 
     /// The Store op that writes the shown value with the counters it shows.
     pub(super) fn shown_op(transfer: &super::transfer_types::Transfer, shown: Shown) -> StoreOp {
@@ -64,23 +62,26 @@ impl TransferState {
             }
             return;
         }
-        self.publish_shown(&key, shown, fx);
+        let revision = self.transfers.get(&id).map_or(0, |transfer| transfer.revision);
+        self.publish_shown(&key, shown, revision, fx);
     }
 
-    fn publish_shown(&self, key: &str, shown: Shown, fx: &mut Fx) {
+    fn publish_shown(&mut self, key: &str, shown: Shown, revision: i64, fx: &mut Fx) {
+        if shown == Shown::Gone { self.published.remove(key); } else { self.published.insert(key.to_string(), (shown.clone(), revision)); }
         for stream_id in self.subscribers.get(key).into_iter().flatten() {
-            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone() });
+            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone(), revision });
         }
     }
 
     /// The Store holds `columns` of the row: a later value of the transfer is written, the value of this batch is published when `publish`.
-    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), publish: bool, fx: &mut Fx) {
+    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), (publish, revision): (bool, i64), fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stored_shown = Some(columns);
+        transfer.revision = transfer.revision.max(revision);
         let key = transfer.key.clone();
         match transfer.last_shown.clone() {
             Some(shown) if shown != Shown::Gone && shown.columns() != columns => self.show(id, shown, fx),
-            Some(shown) if publish => self.publish_shown(&key, shown, fx),
+            Some(shown) if publish => self.publish_shown(&key, shown, revision, fx),
             _ => {}
         }
     }
@@ -399,7 +400,7 @@ impl TransferState {
     fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
-        for (id, columns) in &pending.written { self.shown_committed(*id, *columns, pending.kind == StoreKind::Shown, fx); }
+        for (id, columns) in &pending.written { self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {

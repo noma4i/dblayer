@@ -26,7 +26,7 @@ pub use crate::owners::session::AttemptId;
 pub type CycleId = u64;
 pub use crate::owners::read::deliveries::StreamId;
 /// The sink of a `Blob` stream: the stream and what its key shows.
-pub type StatusSink = std::sync::Arc<dyn Fn(StreamId, Shown) + Send + Sync>;
+pub type StatusSink = std::sync::Arc<dyn Fn(StreamId, Shown, i64) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TransferPeers {
@@ -349,7 +349,7 @@ pub enum TransferEffect {
     Reply { reply: ReplyId, answer: TransferAnswer },
     /// `uploads[action]`.
     /// Deliveries `TransferStatus` for the stream `stream_id`.
-    Status { stream_id: StreamId, key: Key, shown: Shown },
+    Status { stream_id: StreamId, key: Key, shown: Shown, revision: i64 },
     Started { epoch: Epoch },
     SnapshotRequest { epoch: Epoch },
     RestoreClassified { epoch: Epoch },
@@ -535,6 +535,8 @@ pub struct TransferState {
     pub(super) selecting: BTreeMap<ReplyId, (TransferId, super::outbox_types::SelectKind)>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) subscribers: BTreeMap<Key, BTreeSet<StreamId>>,
+    /// The value row readers and Blob streams got last for a key, with the revision of the batch that wrote it: what a joining reader gets. A key without one shows `Gone`.
+    pub(super) published: BTreeMap<Key, (Shown, i64)>,
     pub(super) declarations: BTreeSet<(String, String)>,
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,
@@ -580,6 +582,7 @@ impl TransferState {
             selecting: BTreeMap::new(),
             pending: BTreeMap::new(),
             subscribers: BTreeMap::new(),
+            published: BTreeMap::new(),
             declarations: BTreeSet::new(),
             orphans: BTreeMap::new(),
             orphan_flight: BTreeSet::new(),

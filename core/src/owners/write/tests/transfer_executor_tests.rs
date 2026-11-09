@@ -92,7 +92,7 @@ fn world() -> World {
         files.clone(),
         TransferSinks {
             settle: Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
-            status: Arc::new(move |_stream, shown| lock(&to_shown).push(shown)),
+            status: Arc::new(move |_stream, shown, _revision| lock(&to_shown).push(shown)),
             drained: Arc::new(|_| {}),
             signal: Arc::new(|_| {}),
         },
