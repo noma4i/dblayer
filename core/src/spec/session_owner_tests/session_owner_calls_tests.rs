@@ -233,6 +233,19 @@ fn sess_idle_mutate_stale() {
 }
 
 #[test]
+fn sess_idle_mutate_closed() {
+    for closed in [false, true] {
+        let mut twin = Twin::new();
+        let published = Published { epoch: EPOCH, identity: None, generation: 0, state: PublishedState::Closing, closed };
+        twin.det.post(twin.addr, EpochStamp::Control, SessionInput::Published(published));
+        twin.det.post(twin.addr, EpochStamp::Control, SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: EPOCH + 1, path: OTP.into(), body: "{}".into(), purpose: 0 });
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        assert!(matches!(effects.as_slice(), [SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Closed, .. } }]));
+    }
+}
+
+#[test]
 fn sess_idle_mutate_no_session() {
     let mut twin = Twin::bare();
     assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, permanent(Fail::NoSession))]);
