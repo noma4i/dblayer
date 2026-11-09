@@ -4,6 +4,7 @@ impl FeedState {
     pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>, channels: BTreeMap<String, Vec<Channel>>) -> Self {
         Self {
             epoch,
+            now: Time(0),
             mode: Mode::Off { gap: false },
             online: None,
             online_seq: 0,
@@ -120,7 +121,7 @@ impl FeedState {
     pub(super) fn fresh_connection(&mut self) -> Connection {
         let id = self.next_connection;
         self.next_connection += 1;
-        Connection { id, protocol: Protocol::Handshake }
+        Connection { id, protocol: Protocol::Handshake, pong: None }
     }
 
     /// Transport `Subscribe(want)` on a new connection.
@@ -147,6 +148,7 @@ impl FeedState {
         if let Protocol::Established { key_id, send_counter, .. } = &mut connection.protocol {
             fx.push(Fx::Run(FeedEffect::Seal { connection: connection.id, key_id: *key_id, counter: *send_counter, frame }));
             *send_counter += 1;
+            fx.push(Fx::Keepalive { connection: connection.id, counter: *send_counter });
         }
     }
 
@@ -158,6 +160,8 @@ impl FeedState {
         }
         fx.push(Fx::CancelResubscribe { connection: connection.id });
         fx.push(Fx::CancelHandshake { connection: connection.id });
+        fx.push(Fx::CancelKeepalive { connection: connection.id });
+        fx.push(Fx::CancelPong { connection: connection.id });
         let drain = drain && connection.goodbye();
         fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye(), drain }));
         if drain {

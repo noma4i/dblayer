@@ -116,6 +116,10 @@ impl FeedState {
 
     /// `Dropped` and `SubscriptionEnded` of a known connection.
     pub(super) fn dropped(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
+        if self.connection_mut(connection).is_some() {
+            fx.push(Fx::CancelKeepalive { connection });
+            fx.push(Fx::CancelPong { connection });
+        }
         match self.mode {
             Mode::Opening { .. } if self.opening_connection() == Some(connection) => {
                 let lost = self.lose_held(None, fx);
@@ -167,6 +171,22 @@ impl FeedState {
         }
     }
 
+    pub(super) fn keepalive(&mut self, connection: ConnectionId, counter: u64, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) { return; }
+        let now = self.now.0;
+        let Some(found) = self.active.as_mut() else { return };
+        if found.pong.is_some() || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
+        Self::seal(found, Outgoing::Ping { ts: now }, fx);
+        found.pong = Some(counter);
+        fx.push(Fx::PongDeadline { connection, counter });
+    }
+
+    pub(super) fn pong_deadline(&mut self, connection: ConnectionId, counter: u64, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.active.as_ref().is_some_and(|found| found.pong == Some(counter)) { return; }
+        fx.push(Fx::Run(FeedEffect::Cancel { connection }));
+        self.dropped(connection, fx);
+    }
+
     pub(super) fn frame_opened(&mut self, connection: ConnectionId, counter: u64, frame: Frame, fx: &mut Vec<Fx>) {
         let Some(found) = self.connection_mut(connection) else { return };
         let accepted = match &mut found.protocol {
@@ -181,6 +201,12 @@ impl FeedState {
             return;
         }
         match frame {
+            Frame::Pong => {
+                if let Some(found) = self.connection_mut(connection) {
+                    found.pong = None;
+                    fx.push(Fx::CancelPong { connection });
+                }
+            }
             Frame::Ping { ts } => {
                 if let Some(found) = self.connection_mut(connection) {
                     Self::seal(found, Outgoing::Pong { ts }, fx);
@@ -205,7 +231,7 @@ impl FeedState {
             return;
         }
         if let Some(found) = self.opening.as_mut() {
-            *found = Connection { id: connection, protocol: Protocol::Handshake };
+            *found = Connection { id: connection, protocol: Protocol::Handshake, pong: None };
         }
         fx.push(Fx::Run(FeedEffect::Connect { connection }));
         fx.push(Fx::HandshakeDeadline { connection });

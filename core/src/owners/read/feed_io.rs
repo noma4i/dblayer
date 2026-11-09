@@ -159,6 +159,7 @@ impl FeedIo {
         let id = body["id"].as_str().map(str::to_string);
         Ok(match body["t"].as_str() {
             Some("ping") => Frame::Ping { ts: body["ts"].as_number().cloned().ok_or(ProtocolReason::Frame)? },
+            Some("pong") => Frame::Pong,
             Some("closing") => Frame::Ended,
             Some("error") => Frame::Error { id },
             Some("complete") => Frame::Complete { id: id.unwrap_or_default() },
@@ -186,6 +187,7 @@ impl FeedIo {
             }
             Outgoing::Unsubscribe { channel } => json!({"t":"unsubscribe", "id":channel}),
             Outgoing::Pong { ts } => json!({"t":"pong", "ts":ts}),
+            Outgoing::Ping { ts } => json!({"t":"ping", "ts":ts}),
         }
     }
 

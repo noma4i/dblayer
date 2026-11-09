@@ -289,6 +289,7 @@ impl Twin {
                         Outgoing::Subscribe { .. } => Effect::SealSubscribe,
                         Outgoing::Unsubscribe { .. } => Effect::SealUnsubscribe,
                         Outgoing::Pong { .. } => Effect::SealPong,
+                        Outgoing::Ping { .. } => continue,
                     });
                 }
                 Emitted::Run(FeedEffect::Close { .. }) => modelled.push(Effect::Close),
