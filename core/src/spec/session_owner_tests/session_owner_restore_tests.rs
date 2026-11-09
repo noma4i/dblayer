@@ -139,6 +139,38 @@ fn sess_restore_ready_direct() {
     assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
 }
 
+fn transfer_owner() -> crate::transport::RequestOwner {
+    crate::transport::RequestOwner::Transfer { operation_id: 4, item_id: "key-1".into(), step: crate::owners::write::upload::UploadStage::Create }
+}
+
+#[test]
+fn sess_restored_transfer_pending() {
+    let mut twin = Twin::new();
+    let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 1)) });
+    assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
+    assert!(twin.reference.restored_transfer.as_ref().is_some_and(|pending| pending.request_id == 5 && pending.author == Some(super::super::ref_session::TRANSFER_AUTHOR) && pending.reply.is_none()));
+    assert!(twin.reference.restored_direct.is_none() && twin.reference.restored_detached.is_none(), "the pending is held for the Transfer owner, not a direct or detached call");
+    let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1), "Session drives the held transfer pair itself: {effects:?}");
+}
+
+#[test]
+fn sess_restore_ready_transfer_pending() {
+    let mut twin = Twin::new();
+    twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 1)) });
+    let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1 && pending.reply.is_none()), "the stored pair goes out byte for byte: {effects:?}");
+    assert!(matches!(&twin.reference.state, RefState::Calling { pending, attempts: 1, .. } if pending.request_id == 5));
+    assert!(twin.reference.restored_transfer.is_none());
+    let input = twin.response(1);
+    let landing = twin.feed(input);
+    assert!(matches!(&landing[..], [RefEffect::CommitLanding { answer: Some((5, Ok(_))), .. }]), "the pair answer is stored for the Transfer author: {landing:?}");
+    let committed = twin.feed(committed());
+    assert_eq!(committed, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into()))], "the pair answer reaches the Transfer author, not a call reply");
+    assert!(twin.replies.is_empty(), "no call reply");
+    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
+}
+
 #[test]
 fn sess_restore_ready_other() {
     let mut twin = persisting();

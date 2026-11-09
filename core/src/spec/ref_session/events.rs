@@ -63,6 +63,7 @@ impl Session {
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None => self.restored_direct = Some(Pending { epoch, ..pending }),
+                        Some(Owner::Transfer { .. }) => self.restored_transfer = Some(Pending { epoch, ..pending }),
                         Some(Owner::Detached) => self.restored_detached = Some(Pending { epoch, ..pending }),
                         Some(_) => {}
                     }
@@ -100,6 +101,7 @@ impl Session {
             Input::EpochEnded { epoch, cause } => {
                 if epoch != self.epoch { self.state = state; return; }
                 self.restored_direct = None;
+                self.restored_transfer = None;
                 self.restored_detached = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;

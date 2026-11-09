@@ -272,6 +272,7 @@ pub struct Session {
     pub after_publish: Option<(ReplyId, Answer, Option<u64>)>,
     pub subscribers: BTreeSet<StreamId>,
     pub restored_direct: Option<Pending>,
+    pub restored_transfer: Option<Pending>,
     pub restored_detached: Option<Pending>,
     pub released: BTreeSet<RequestId>,
     pub restored: bool,
@@ -313,7 +314,7 @@ fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_transfer: None, restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -385,8 +386,12 @@ impl Session {
     }
 
     pub(super) fn start_restored(&mut self, out: &mut Out) -> bool {
-        let Some(pending) = self.restored_direct.take().or_else(|| self.restored_detached.take()) else { return false };
-        self.start_calling(pending, out);
+        if let Some(pending) = self.restored_direct.take().or_else(|| self.restored_detached.take()) {
+            self.start_calling(pending, out);
+            return true;
+        }
+        let Some(pending) = self.restored_transfer.take() else { return false };
+        self.start_calling_attempts(pending, 1, out);
         true
     }
 
@@ -472,11 +477,13 @@ impl Session {
         self.state = State::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id) };
     }
 
-    fn start_calling(&mut self, pending: Pending, out: &mut Out) {
+    fn start_calling(&mut self, pending: Pending, out: &mut Out) { self.start_calling_attempts(pending, 0, out); }
+
+    fn start_calling_attempts(&mut self, pending: Pending, attempts: u64, out: &mut Out) {
         if self.is_online() {
-            self.send(pending, 0, out);
+            self.send(pending, attempts, out);
         } else {
-            self.state = State::Calling { pending, attempts: 0, phase: CallPhase::WaitingNetwork };
+            self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
         }
     }
 
@@ -502,6 +509,7 @@ impl Session {
         self.refuse_queue(out, Fail::Closed);
         self.held = None;
         self.restored_direct = None;
+        self.restored_transfer = None;
         self.restored_detached = None;
         self.state = State::Closed;
         out.effects.push(Effect::Drained);
@@ -523,7 +531,7 @@ impl Session {
     }
 
     fn adopt_epoch(&mut self, epoch: u64) {
-        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_detached.as_mut()) { pending.epoch = epoch; }
+        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_transfer.as_mut()).or(self.restored_detached.as_mut()) { pending.epoch = epoch; }
         if let State::PendingHeld { pending } | State::Calling { pending, .. } = &mut self.state { pending.epoch = epoch; }
     }
 
