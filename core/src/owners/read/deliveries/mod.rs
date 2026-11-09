@@ -538,7 +538,7 @@ impl StateOwner for Deliveries {
                 if state.streams.contains_key(&stream) {
                     on(state, stream, &mut out, |machine, fx| machine.pull(outcome, reader, fx));
                 } else {
-                    out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Answer { outcome, answer: PullAnswer::Done } }));
+                    out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Answer { outcome, answer: PullAnswer::Value(Box::new(Value::Ended(EndCause::Cancelled))) } }));
                 }
             }
             DeliveryInput::Census { reply } => {
