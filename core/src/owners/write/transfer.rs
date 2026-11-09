@@ -383,7 +383,7 @@ impl TransferState {
         if in_flight {
             run(fx, TransferEffect::CancelStep { transfer_id: id });
         }
-        self.settle(id, OutboxOutcome::Interrupted(cause), fx);
+        self.settle(id, OutboxOutcome::Ended(cause), fx);
         self.set(id, TransferStage::Done);
         self.show(id, Shown::Gone, fx);
     }
@@ -656,7 +656,7 @@ impl TransferState {
                 TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => {
                     let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
-                    reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause), None))
+                    reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None))
                 }
                 _ => {}
             }

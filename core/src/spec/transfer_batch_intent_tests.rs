@@ -37,7 +37,7 @@ fn xfer_batch_intent_ended() {
         let out = twin.reject(reason);
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause.clone()), None)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)]);
         }
         assert_eq!((out.submits(), out.writes(), out.steps().len(), out.completes()), (0, 0, 0, 0));
     }
@@ -63,7 +63,7 @@ fn xfer_batch_intent_close() {
         let out = if closing { twin.close() } else { twin.end_epoch() };
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
         for reply in replies {
-            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(cause.clone()), None)]);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)]);
         }
         assert_eq!(out.drained(), usize::from(closing));
         assert_eq!((out.submits(), out.removed().len(), out.deletes()), (0, 0, 0), "the stored group stays for the next open");

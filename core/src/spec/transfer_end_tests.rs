@@ -330,7 +330,7 @@ fn xfer_epoch_ended() {
     let out = twin.end_epoch();
     assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
     assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::SessionEnded)]);
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded), None)]);
+    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
     assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
 }
 
@@ -361,7 +361,7 @@ fn xfer_closing() {
     let (waiting, _) = twin.outcome(uploading, 1);
     let out = twin.close();
     assert_eq!((twin.stage(uploading), out.cancel_steps(), out.drained()), (TransferStage::Done, 1, 1), "the row of the base stays for the next open");
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed), None)]);
+    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)]);
     assert_eq!(out.writes(), 0);
     let mut mutating = Twin::new();
     let id = mutating.mutating(OTHER);

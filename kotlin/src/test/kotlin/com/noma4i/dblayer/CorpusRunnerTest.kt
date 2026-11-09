@@ -120,7 +120,7 @@ private fun fetchOf(name: String?): ReadFetch? = when (name) {
 private fun outcomeName(outcome: WireOperationOutcome): String = when (outcome) {
     is WireOperationOutcome.Confirmed -> "confirmed"
     is WireOperationOutcome.Rejected -> "rejected"
-    is WireOperationOutcome.Ended -> "interrupted"
+    is WireOperationOutcome.Ended -> "ended ${causeName(outcome.cause)}"
 }
 
 private fun moreName(result: LoadMoreResult): String = when (result) {

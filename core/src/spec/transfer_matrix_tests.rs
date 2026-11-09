@@ -124,7 +124,7 @@ fn xfer_mutation_interrupted_discard_waiting() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
     let (reply, _) = twin.discard(KEY);
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded));
+    let out = twin.mutation_outcome(KEY, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded));
     assert_eq!(twin.stage(id), TransferStage::Done);
     assert_eq!(Twin::fault(&out, reply), Some(Fault::SessionEnded));
     assert_eq!(out.writes(), 0, "the row stays in the base");

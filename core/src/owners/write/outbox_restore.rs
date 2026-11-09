@@ -137,7 +137,7 @@ impl OutboxState {
                 OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx),
                 OutboxInput::Outcome { reply, .. } => {
                     let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
-                    Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted(cause)))
+                    Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Ended(cause)))
                 }
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
                 _ => {}

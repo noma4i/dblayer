@@ -200,7 +200,7 @@ impl OutboxState {
                 RejectReason::NoSession | RejectReason::Closed => {
                     self.removed.remove(&op_id);
                     self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-                    self.finish(op_id, OutboxOutcome::Interrupted(end_cause(&reason)), false, fx);
+                    self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.retry_timer(op_id, fx),
                 _ => self.remove_row_operation(op_id, fx),
@@ -236,7 +236,7 @@ impl OutboxState {
                 let transfer_ids = self.take_retry_uploads(op_id);
                 if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-                self.finish(op_id, OutboxOutcome::Interrupted(end_cause(&reason)), false, fx);
+                self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
             RejectReason::Invalid => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
@@ -266,7 +266,7 @@ impl OutboxState {
         self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Done;
-            operation.outcome = Some(OutboxOutcome::Interrupted(end_cause(&reason)));
+            operation.outcome = Some(OutboxOutcome::Ended(end_cause(&reason)));
         }
     }
 

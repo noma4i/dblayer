@@ -112,7 +112,7 @@ pub enum OutboxOutcome {
     Rejected { error: String },
     Failed { error: String },
     Discarded,
-    Interrupted(crate::owners::read::deliveries::EndCause),
+    Ended(crate::owners::read::deliveries::EndCause),
 }
 
 pub(super) fn end_cause(reason: &RejectReason) -> crate::ffi::EndCause {

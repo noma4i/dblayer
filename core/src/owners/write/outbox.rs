@@ -352,7 +352,7 @@ impl OutboxState {
         operation.outcome = Some(outcome.clone());
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
-        if !matches!(outcome, OutboxOutcome::Interrupted(_)) {
+        if !matches!(outcome, OutboxOutcome::Ended(_)) {
             self.drain(fx);
         }
     }
@@ -487,7 +487,7 @@ impl OutboxState {
 
     pub(super) fn interrupt_all(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
         let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
-        let outcome = OutboxOutcome::Interrupted(cause);
+        let outcome = OutboxOutcome::Ended(cause);
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
             let Some(stage) = self.stage_of(op_id) else { continue };
@@ -593,6 +593,12 @@ impl StateOwner for Outbox {
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
         if state.closing {
+            match &input {
+                OutboxInput::Committed(committed) if matches!(state.batches.get(&committed.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
+                OutboxInput::Rejected(rejected) if matches!(state.batches.get(&rejected.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
+                OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } => { state.handle(input, &mut fx); return fx; }
+                _ => {}
+            }
             match &input {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),

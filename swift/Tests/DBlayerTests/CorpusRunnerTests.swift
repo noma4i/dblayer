@@ -151,7 +151,7 @@ private func outcomeName(_ outcome: WireOperationOutcome) -> String {
   switch outcome {
   case .confirmed: return "confirmed"
   case .rejected: return "rejected"
-  case .ended: return "interrupted"
+  case let .ended(cause): return "ended \(causeName(cause))"
   }
 }
 

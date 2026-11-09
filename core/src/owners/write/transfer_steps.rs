@@ -319,7 +319,7 @@ impl TransferState {
         if !self.waits_for_discard(id) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
         let failed_waiting = waiting && self.stage_of(id) == Some(TransferStage::Failed);
-        let next_single = (!matches!(outcome, OutboxOutcome::Interrupted(_)) && !(failed_waiting && !matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Discarded))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
+        let next_single = (!matches!(outcome, OutboxOutcome::Ended(_)) && !(failed_waiting && !matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Discarded))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
             OutboxOutcome::Confirmed { revision, result, row_id } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
@@ -339,7 +339,7 @@ impl TransferState {
                 self.begin_failure(id, error, false, fx);
             }
             OutboxOutcome::Failed { error } => self.begin_failure(id, error, false, fx),
-            OutboxOutcome::Interrupted(cause) => {
+            OutboxOutcome::Ended(cause) => {
                 self.interrupt(id, cause, fx);
                 self.rounds_idle(id, fx);
             }

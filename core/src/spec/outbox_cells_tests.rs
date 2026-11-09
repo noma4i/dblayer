@@ -740,8 +740,8 @@ fn out_persisting_attempt_no_session() {
         let id = persisting(&mut twin, true);
         let cause = if reason == RejectReason::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
         let effects = refuse(&mut twin, id, reason);
-        assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Interrupted(cause.clone())]));
-        assert_eq!(twin.state().ops[&id].outcome, Some(OutboxOutcome::Interrupted(cause)));
+        assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Ended(cause.clone())]));
+        assert_eq!(twin.state().ops[&id].outcome, Some(OutboxOutcome::Ended(cause)));
     }
 }
 

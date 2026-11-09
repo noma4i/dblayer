@@ -33,7 +33,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
         ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4, result: None, row_id: None }),
         ("discarded", discarded, discarded_id, OutboxOutcome::Discarded),
         ("failed", failed, failed_id, OutboxOutcome::Failed { error: super::transfer_harness::refusal() }),
-        ("interrupted", interrupted, interrupted_id, OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded)),
+        ("interrupted", interrupted, interrupted_id, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded)),
     ]
 }
 

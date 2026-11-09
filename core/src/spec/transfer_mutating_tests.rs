@@ -142,10 +142,10 @@ fn xfer_mutating_discard_accepted() {
 fn xfer_mutation_interrupted() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded));
+    let out = twin.mutation_outcome(KEY, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded));
     assert_eq!((twin.stage(id), out.writes(), out.shows()), (TransferStage::Done, 0, vec![Shown::Gone]), "the row stays in the base until the account is cleared or the next open");
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded), None)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
 }
 
 #[test]

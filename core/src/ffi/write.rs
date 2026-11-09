@@ -321,7 +321,7 @@ impl Database {
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
             OutboxOutcome::Discarded => WireOperationOutcome::Ended { cause: super::EndCause::Discarded },
-            OutboxOutcome::Interrupted(cause) => WireOperationOutcome::Ended { cause },
+            OutboxOutcome::Ended(cause) => WireOperationOutcome::Ended { cause },
         })
     }
 

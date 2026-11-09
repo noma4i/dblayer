@@ -126,6 +126,15 @@ pub enum DbError {
     NotOpen { detail: String },
 }
 
+pub(super) fn end_error(cause: &EndCause) -> DbError {
+    match cause {
+        EndCause::Closed => DbError::Closed { detail: "the stream ended".into() },
+        EndCause::SessionEnded => DbError::NoSession { detail: "the session ended".into() },
+        EndCause::Invalid { detail } => DbError::Invalid { detail: detail.clone() },
+        cause => DbError::Interrupted { detail: format!("{cause:?}") },
+    }
+}
+
 impl From<crate::store::CoreError> for DbError {
     fn from(error: crate::store::CoreError) -> Self {
         match error {

@@ -179,8 +179,7 @@ fn settled_by(value: &ReadValue, seq: u64) -> Option<Result<u64, DbError>> {
             ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Storage { detail: String::new() }))),
             ReadPhase::Idle | ReadPhase::Loading => None,
         },
-        ReadValue::Ended { cause: EndCause::Invalid { detail } } => Some(Err(DbError::Invalid { detail: detail.clone() })),
-        ReadValue::Ended { .. } => Some(Err(DbError::Interrupted { detail: "the stream ended before its rows were shown".into() })),
+        ReadValue::Ended { cause } => Some(Err(super::end_error(cause))),
         _ => None,
     }
 }

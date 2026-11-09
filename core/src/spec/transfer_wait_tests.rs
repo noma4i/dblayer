@@ -133,10 +133,10 @@ fn xfer_wait_outcome() {
     let mut ended = Twin::new();
     let id = ended.uploading(KEY, 2);
     let (reply, _) = ended.outcome(id, 1);
-    assert_eq!(ended.end_epoch().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded), None)], "EpochEnded");
+    assert_eq!(ended.end_epoch().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)], "EpochEnded");
     let mut closing = Twin::new();
     let id = closing.uploading(KEY, 2);
     let (reply, _) = closing.outcome(id, 1);
-    assert_eq!(closing.close().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed), None)], "Closing");
+    assert_eq!(closing.close().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)], "Closing");
     assert_eq!(closing.stage(id), TransferStage::Done);
 }

@@ -564,11 +564,11 @@ fn done(kind: &str, value: Value) -> Done {
     Done { observed: vec![observed], ..Done::default() }
 }
 
-fn outcome_name(outcome: &WireOperationOutcome) -> &'static str {
+fn outcome_name(outcome: &WireOperationOutcome) -> String {
     match outcome {
-        WireOperationOutcome::Confirmed { .. } => "confirmed",
-        WireOperationOutcome::Rejected { .. } => "rejected",
-        WireOperationOutcome::Ended { .. } => "interrupted",
+        WireOperationOutcome::Confirmed { .. } => "confirmed".into(),
+        WireOperationOutcome::Rejected { .. } => "rejected".into(),
+        WireOperationOutcome::Ended { cause } => format!("ended {}", cause_name(cause)),
     }
 }
 

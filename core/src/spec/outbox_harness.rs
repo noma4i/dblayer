@@ -85,8 +85,8 @@ pub(super) fn outcome_named(text: &str) -> o::OutboxOutcome {
     if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } }
     else if text.contains("Rejected") { o::OutboxOutcome::Rejected { error: String::new() } }
     else if text.contains("Failed") { o::OutboxOutcome::Failed { error: String::new() } }
-    else if text.contains("Interrupted(Closed)") { o::OutboxOutcome::Interrupted(crate::ffi::EndCause::Closed) }
-    else if text.contains("Interrupted(SessionEnded)") { o::OutboxOutcome::Interrupted(crate::ffi::EndCause::SessionEnded) }
+    else if text.contains("Ended(Closed)") { o::OutboxOutcome::Ended(crate::ffi::EndCause::Closed) }
+    else if text.contains("Ended(SessionEnded)") { o::OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded) }
     else if text.contains("Discarded") { o::OutboxOutcome::Discarded }
     else { panic!("unknown outbox outcome: {text}") }
 }
@@ -183,7 +183,7 @@ pub(super) fn out_of(outcome: &o::OutboxOutcome) -> Out {
         o::OutboxOutcome::Rejected { .. } => Out::Rejected,
         o::OutboxOutcome::Failed { .. } => Out::Failed,
         o::OutboxOutcome::Discarded => Out::Discarded,
-        o::OutboxOutcome::Interrupted(_) => Out::Interrupted,
+        o::OutboxOutcome::Ended(_) => Out::Interrupted,
     }
 }
 
