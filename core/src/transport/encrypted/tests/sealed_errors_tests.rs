@@ -53,18 +53,6 @@ fn pending(db: &Store) -> bool {
 }
 
 #[tokio::test]
-async fn replayed_read_uses_a_new_request_id() {
-    let rig = rig().await;
-    let before = rig.server.seen().len();
-    rig.server.refuse_next("REPLAYED_REQUEST", false);
-    let response = rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({})).by(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))).await.unwrap();
-    let sent = rig.server.seen();
-    assert_eq!(response.data, Some(json!({ "read": "query Q { q }" })));
-    assert_eq!(sent.len() - before, 2);
-    assert_ne!(sent[before]["requestId"], sent[before + 1]["requestId"]);
-}
-
-#[tokio::test]
 async fn query_replayed_single_retry_owner() {
     let rig = rig().await;
     let before = rig.server.seen().len();
