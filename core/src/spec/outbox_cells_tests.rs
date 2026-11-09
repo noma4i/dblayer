@@ -542,6 +542,20 @@ fn out_submitting_committed() {
 }
 
 #[test]
+fn out_rollback_other() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    unchanged_by(&mut twin, id, St::RollingBack(RWhy::Rejected), vec![
+        OutboxInput::Online(Online(true)),
+        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
+        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        OutboxInput::TransportError { op_id: id, temporary: true },
+        OutboxInput::Dropped { op_id: id },
+    ]);
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
