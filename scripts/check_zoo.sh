@@ -113,7 +113,6 @@ for path in files:
     if relative.startswith("sync/stress/") or relative in ("transport/mock.rs", "test_wait.rs"):
         continue
     text = contents[path]
-    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     checked = [(match.end(), end_of(code, match.end() - 1, "(", ")")) for match in re.finditer(r"\b(?:crate::db::|super::)?lock::effect\s*\(", code)]
     for match in effect.finditer(code):
@@ -160,7 +159,6 @@ for path in files:
     if relative == "task.rs" or any(marker in "/" + relative for marker in task_support):
         continue
     text = contents[path]
-    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     for form in spawn_forms:
         for match in form.finditer(code):
@@ -339,7 +337,6 @@ for path in files:
     if any(marker in "/" + relative for marker in task_support) or relative.startswith(("transport/", "runtime/gate")):
         continue
     text = contents[path]
-    if relative.startswith("ffi/selftest/"): continue
     code = code_only(text)
     inside = test_regions(code)
     spans = []
