@@ -437,7 +437,7 @@ for path in files:
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
-test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig", "server_contract"}
+test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig"}
 for path in sorted(root.rglob("*.rs")):
     if any(part.startswith(("target", ".")) for part in path.relative_to(root).parts):
         continue
@@ -479,7 +479,7 @@ pair_builders = {"ffi/write.rs", "ffi/upload.rs", "owners/life/calls_runner.rs",
 for path in files:
     relative = str(path.relative_to(source))
     text = contents[path]
-    if relative.startswith("ffi/selftest/"): continue
+    if relative.startswith(("ffi/selftest/", "server_contract/")): continue
     if "graphql_body(" in text and relative not in pair_builders:
         findings.append(f"Z36 a body of a sequenced request is built only by the listed builders (graphql_body, full document): {path.relative_to(root)}")
     if ("persistedQuery" in text or "hash_only(" in text) and relative not in {"transport/encrypted/graphql.rs", "owners/session/flow.rs"}:
@@ -495,6 +495,13 @@ for path in sorted(source.rglob("*.rs")):
     for number, line in enumerate(text.splitlines(), 1):
         if double_rules.search(line) and f"z37:{relative}" not in allowed:
             findings.append(f"Z37 a double of the server keeps no pair memory, sequence rule or document registry of its own: it asks server_contract: {path.relative_to(root)}:{number}")
+
+contract_users = {"lib.rs", "ffi/mod.rs", "ffi/contract.rs", "transport/mock.rs"}
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative.startswith(("server_contract/", "ffi/selftest/")) or relative in contract_users: continue
+    if re.search(r"\bserver_contract\b|\bServerContract\b", contents[path]) and f"z38:{relative}" not in allowed:
+        findings.append(f"Z38 the server contract of the test doubles is reached only from its export (ffi/contract.rs), tests and the platform doubles, no production path calls it: {path.relative_to(root)}")
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")

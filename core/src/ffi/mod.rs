@@ -1,4 +1,5 @@
 mod database;
+mod contract;
 mod cable;
 mod receipt;
 #[cfg(test)]
