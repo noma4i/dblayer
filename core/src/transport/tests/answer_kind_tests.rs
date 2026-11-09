@@ -58,9 +58,13 @@ fn wire_classify_table() {
         ("499", WireOutcome::Status(499), false, AnswerKind::Permanent { status: Some(499) }),
     ];
     for (name, outcome, sequenced, expected) in cases {
-        let kind = classify(&outcome, sequenced);
+        let kind = classify(&outcome, sequenced, false);
         assert!(same(kind.clone(), &expected), "{name}: {kind:?}, expected {expected:?}");
     }
+    for sequenced in [false, true] {
+        assert_eq!(classify(&answer(None, code_body("PERSISTED_QUERY_NOT_FOUND")), sequenced, true), AnswerKind::PermanentGraphql);
+    }
+    assert_eq!(classify(&answer(None, json!({ "error": "SEQUENCE_CONFLICT" })), false, false), AnswerKind::PermanentSession { code: SessionCode::SequenceConflict });
 }
 
 #[test]
