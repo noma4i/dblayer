@@ -60,7 +60,7 @@ pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> 
             Err(error) => calls_input(call_id, root, Err(TransportError::Decode(error.to_string()))),
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
-        AuthorOutcome::Error { class: ErrorClass::Network, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
+        AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, pending_retained: true, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: call_error(crate::ffi::session_failure(error)) },
     }
 }

@@ -42,11 +42,9 @@ fn out_sending_response_batch_items() {
     assert_eq!(pair_by_key(&correlate, &waiting, &answer), vec![("temp-b".to_string(), "2".to_string()), ("temp-a".to_string(), "1".to_string())]);
 }
 
-/// out_sending_response_temporary: an answer with a temporary code is sent again, a refusal with another code is not.
 #[test]
-fn out_sending_response_temporary() {
-    let temporary = |body: &str| matches!(decoded(body), Decoded::Refused { temporary: true, .. });
-    assert!(temporary(r#"{"errors":[{"message":"Busy","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}"#));
-    assert!(temporary(r#"{"error":"SERVICE_UNAVAILABLE"}"#));
+fn out_confirmed_response_is_not_retried() {
+    assert!(matches!(decoded(r#"{"errors":[{"message":"Busy","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}"#), Decoded::Refused { temporary: false, .. }));
+    assert!(matches!(decoded(r#"{"error":"SERVICE_UNAVAILABLE"}"#), Decoded::Refused { temporary: false, .. }));
     assert!(matches!(decoded(r#"{"errors":[{"message":"No","extensions":{"code":"FORBIDDEN"}}]}"#), Decoded::Refused { temporary: false, .. }));
 }

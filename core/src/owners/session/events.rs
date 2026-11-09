@@ -526,7 +526,7 @@ impl SessionState {
             SessionInput::HttpError { request_id, attempt_id, temporary: true, status, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     match body {
-                        Some(body) => fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response(body) }),
+                        Some(_) => author_error_retained(fx, author, pending.request_id, ErrorClass::Server, SessionError::Http { status }, true),
                         None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
                     }
                     self.phase = SessionPhase::PendingHeld { pending };

@@ -61,6 +61,7 @@ impl EncryptedTransport {
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
                 crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
+                crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Server, pending_retained: true, .. } => Err(TransportError::Network("the server asked to retry".into())),
                 crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
                 crate::owners::session::AuthorOutcome::Dropped => Err(TransportError::Network("the answer was not received".into())),
             },

@@ -54,7 +54,7 @@ fn answered(sequence: Option<i64>, body: &Value, sequenced: bool) -> AnswerKind 
         return AnswerKind::Revoked;
     }
     match name {
-        Some(DOCUMENT_MISSING) => return AnswerKind::DocumentMissing,
+        Some(DOCUMENT_MISSING) if sequence.is_none() => return AnswerKind::DocumentMissing,
         Some("UNAUTHENTICATED") => return AnswerKind::Refused { code: SessionCode::Unauthenticated },
         Some("REPLAYED_REQUEST") => return if sequenced { AnswerKind::Refused { code: SessionCode::ReplayedRequest } } else { AnswerKind::Transient { reason: "REPLAYED_REQUEST".into() } },
         Some("SEQUENCE_CONFLICT") if sequenced => return AnswerKind::Refused { code: SessionCode::SequenceConflict },
