@@ -10,12 +10,6 @@ use crate::runtime::Clock;
 use crate::transport::{SessionCode, TransportError};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const PERMANENT_HTTP_REFUSALS: [u16; 6] = [400, 404, 405, 413, 415, 422];
-
-pub(crate) fn permanently_refused(error: &TransportError) -> bool {
-    matches!(error, TransportError::Http { status, .. } if PERMANENT_HTTP_REFUSALS.contains(status))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EncryptedConfig {
     pub origin: String,

@@ -16,7 +16,8 @@ use crate::owners::session::{secret_id, stored_answer, AttemptId, Credential, Op
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::encrypted::credential::{dropped_pending, stored_answers, stored_pending, stored_session, Secret};
-use crate::transport::encrypted::exchange::{digest_of, permanently_refused, Exchange};
+use crate::transport::encrypted::exchange::{digest_of, Exchange};
+use crate::transport::{classify_answer, AnswerKind, WireOutcome};
 use crate::transport::answer_kind::transient_failure;
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
@@ -187,16 +188,10 @@ fn secret_for(credentials: &dyn CredentialSlot, expected: Option<&str>) -> Resul
     }
 }
 
-fn refusal_of(body: &Value) -> Option<SessionCode> {
-    body.get("error").and_then(Value::as_str).into_iter()
-        .chain(body.get("errors").and_then(Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str()))
-        .find_map(SessionCode::from_wire)
-}
-
 pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
-            if let Some(code) = refusal_of(&answer.body) {
+            if let Some(code) = crate::transport::refusal_name(&answer.body).and_then(|name| SessionCode::from_wire(&name)) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
             if transient_failure(&answer.body).is_some() {
@@ -209,7 +204,7 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
         }
         Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
         Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
-        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
+        Err(error) if matches!(&error, TransportError::Http { status, .. } if matches!(classify_answer(&WireOutcome::Status(*status), true), AnswerKind::Permanent { .. })) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
                 TransportError::RequestTooLarge { size, limit } => (0, Some((*size, *limit))),
