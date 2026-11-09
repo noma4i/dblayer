@@ -124,6 +124,20 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
     Ok(())
 }
 
+/// The windows of `models` and the windows named by `keys` owe a reread from the next sequence on.
+pub(super) fn mark_stale(connection: &Connection, models: &[String], keys: &[String]) -> Result<(), StoreError> {
+    let since = max_sequence(connection)? + 1;
+    let mut by_prefix = connection.prepare_cached(include_str!("sql/windows/mark_families.sql"))?;
+    for model in models {
+        by_prefix.execute(params![like_prefix(&ListKey::compose(&[model]).as_str().to_string()), since])?;
+    }
+    let mut by_key = connection.prepare_cached(include_str!("sql/windows/mark_key.sql"))?;
+    for key in keys {
+        by_key.execute(params![key, since])?;
+    }
+    Ok(())
+}
+
 pub(super) fn mark_families(connection: &Connection, families: &[(String, String)], since: i64) -> Result<usize, StoreError> {
     let mut update = connection.prepare_cached(include_str!("sql/windows/mark_families.sql"))?;
     let mut marked = 0;

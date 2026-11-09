@@ -1,0 +1,1 @@
+UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1 AND applied < ?2
