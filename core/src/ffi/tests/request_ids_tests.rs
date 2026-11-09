@@ -70,7 +70,7 @@ async fn wire_prop_retry_progress_one_source() {
     });
 
     let progress = database.retry_progress();
-    let mut reader = progress.subscribe();
+    let reader = progress.subscribe();
     let waiting = loop {
         let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
         if snapshot.waiting.len() == 4 { break snapshot; }
