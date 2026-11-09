@@ -18,7 +18,7 @@ impl TransferState {
             Some(TransferStage::Copying | TransferStage::PersistingCopy) if self.transfers[&id].supply_back.is_some() => return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)),
             _ => return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)),
         }
-        if source.source.path.is_empty() || source.source.parts == 0 { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+        if source_invalid(&source) { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         self.start_source(id, source, TransferStage::AwaitingSource, rep, fx);
     }
 
@@ -455,3 +455,6 @@ impl TransferState {
         if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Err(fault)); }
     }
 }
+
+/// A source without a path or without parts cannot be uploaded.
+pub(super) fn source_invalid(source: &SuppliedSource) -> bool { source.source.path.is_empty() || source.source.parts == 0 }

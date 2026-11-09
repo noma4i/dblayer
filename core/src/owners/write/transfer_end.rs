@@ -104,6 +104,7 @@ impl TransferState {
 
     pub(super) fn retry(&mut self, key: &str, source: Option<SuppliedSource>, rep: ReplyId, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
+        if source.as_ref().is_some_and(super::transfer_accept::source_invalid) { return Self::refuse(fx, rep, Fault::Invalid); }
         let mutation_failed = self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed && transfer.signed_id.is_some() && transfer.error.as_deref() != Some("missing_file") && transfer.error.as_deref() != Some("RestoreFailed"));
         if mutation_failed && self.transfers.get(&id).is_some_and(|transfer| !transfer.intent_live) {
             if let Some(transfer) = self.transfers.get_mut(&id) {
