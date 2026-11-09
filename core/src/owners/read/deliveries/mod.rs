@@ -61,7 +61,7 @@ pub enum ReadData {
     Count(u64),
     Operations(Vec<crate::ffi::OperationInfo>),
     /// The copy URL and the processing that the row of a transfer shows.
-    Upload { local_url: Option<String>, processing: Option<crate::ffi::WireProcessing> },
+    Upload { wait_reason: Option<crate::owners::write::upload::WaitReason>, local_url: Option<String>, processing: Option<crate::ffi::WireProcessing> },
     Overflow,
 }
 
@@ -78,7 +78,7 @@ pub enum ReadMode {
     Changes { from_revision: i64, from_position: u64, limit: usize },
 }
 
-type UploadRowRead = Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>;
+type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>, Option<crate::ffi::WireProcessing>), String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
@@ -122,6 +122,7 @@ pub enum EndCause {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobStatus {
     pub state: String,
+    pub wait_reason: Option<crate::owners::write::upload::WaitReason>,
     pub progress: u64,
     pub error: Option<String>,
     pub local_url: Option<String>,
@@ -135,11 +136,12 @@ impl BlobStatus {
         let (state, progress, error) = match shown {
             Shown::Gone => ("gone", 0, None),
             Shown::Copying => ("copying", 0, None),
+            Shown::WaitingSource => ("waiting", 0, None),
             Shown::Queued => ("queued", 0, None),
             Shown::Uploading { progress } => ("uploading", u64::from(*progress), None),
             Shown::Failed { error } => ("failed", 0, Some(error.clone())),
         };
-        Self { state: state.into(), progress, error, local_url: None, processing: None }
+        Self { state: state.into(), wait_reason: shown.wait_reason(), progress, error, local_url: None, processing: None }
     }
 }
 

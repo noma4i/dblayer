@@ -213,7 +213,7 @@ internal fun ValueStream.changeItems(): Flow<ChangeItem> = flow {
 }
 
 /** The status of a transfer at one change. */
-data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?, val localUrl: String?, val processing: WireProcessing?)
+data class TransferProgress(val revision: Long, val state: String, val waitReason: String?, val progress: ULong, val error: String?, val localUrl: String?, val processing: WireProcessing?)
 
 /** One item of the status of a transfer: a change, or the end of the stream with the cause of the core. */
 sealed interface TransferItem {
@@ -226,7 +226,7 @@ val ValueStream.uploadStatus: Flow<TransferItem>
     get() = flow {
         values.collect { value ->
             when (value) {
-                is ReadValue.Status -> emit(TransferItem.Progress(TransferProgress(value.revision, value.state, value.progress, value.error, value.localUrl, value.processing)))
+                is ReadValue.Status -> emit(TransferItem.Progress(TransferProgress(value.revision, value.state, value.waitReason, value.progress, value.error, value.localUrl, value.processing)))
                 is ReadValue.Ended -> emit(TransferItem.Ended(value.cause))
                 else -> {}
             }

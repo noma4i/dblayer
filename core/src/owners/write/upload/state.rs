@@ -19,6 +19,7 @@ pub enum UploadStatus {
 #[serde(rename_all = "snake_case")]
 pub enum WaitReason {
     CreateUnconfirmed,
+    SourcePending,
     Offline,
 }
 

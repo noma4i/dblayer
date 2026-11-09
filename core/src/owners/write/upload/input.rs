@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UploadItem {
     pub values: Map<String, Value>,
-    pub path: String,
+    pub path: Option<String>,
     pub name: Option<String>,
     pub mime: Option<String>,
     pub variables: Map<String, Value>,
@@ -18,7 +18,7 @@ pub struct UploadBatchInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadFile {
-    pub path: String,
+    pub path: Option<String>,
     pub name: Option<String>,
     pub mime: Option<String>,
     pub variables: Map<String, Value>,
@@ -26,7 +26,7 @@ pub struct UploadFile {
 
 impl UploadFile {
     pub fn new(path: &str) -> Self {
-        Self { path: path.to_string(), name: None, mime: None, variables: Map::new() }
+        Self { path: Some(path.to_string()), name: None, mime: None, variables: Map::new() }
     }
 
     pub fn variable(mut self, name: &str, value: Value) -> Self {

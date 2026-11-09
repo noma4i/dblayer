@@ -44,9 +44,7 @@ fn xfer_retry_new_source() {
     let (mut twin, id) = missing_file();
     let fresh = Source { path: "/new/video".into(), parts: 2 };
     let (reply, out) = twin.retry(KEY, Some(fresh.clone()));
-    assert_eq!((twin.stage(id), out.kinds(), out.rows()[0].0.source.as_str(), out.all_replies()), (TransferStage::Accepting, vec![UploadKind::Retrying], "/new/video", 0));
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.copies()), (TransferStage::Copying, 1));
+    assert_eq!((twin.stage(id), out.writes(), out.copies(), out.all_replies()), (TransferStage::Copying, 0, 1, 0));
     twin.copy_done(id);
     let out = twin.commit();
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2 && receipt.op_id == id), "{:?}", out.replies(reply));

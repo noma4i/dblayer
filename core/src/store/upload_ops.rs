@@ -32,19 +32,23 @@ pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &In
 pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadKind) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(&row.key)?;
     let (status, stage) = match kind {
+        UploadKind::AwaitingSource => ("waiting", "prepare"),
         UploadKind::Failed => ("failed", "prepare"),
         UploadKind::Completed => ("sending", "mutation"),
         UploadKind::ConfirmedParts => ("uploading", "part"),
         UploadKind::SyncUpload | UploadKind::Retrying => ("queued", "prepare"),
     };
     let on_failure = match row.on_failure { OnFailure::Rollback => "rollback", OnFailure::Keep => "keep" };
+    let wait_reason = if kind == UploadKind::AwaitingSource { crate::owners::write::transfer::Shown::WaitingSource.wait_reason().and_then(|reason| super::operation::enum_text(&reason)) } else { None };
+    let error_kind = row.failed.as_deref().map(|error| if error == "missing_file" { "missing_file" } else if error.starts_with("source_failed:") { "source_failed" } else { "unrecognized" });
+    let error_message = row.failed.as_deref().map(|error| error.strip_prefix("source_failed:").unwrap_or(error));
     connection.execute(
         include_str!("sql/upload_ops/put_upload_insert_sync_upload.sql"),
-        params![model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "unrecognized"), row.failed,
+        params![model, id, action, status, stage, row.confirmed_parts, row.parts, error_kind, error_message,
             i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch.and_then(|group| i64::try_from(group).ok()), row.upload_id, row.completed,
             i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline, i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body,
             on_failure, row.steps_path, row.steps_body, i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX),
-            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts],
+            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason],
     )?;
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
     for (index, etag) in row.etags.iter().enumerate() {

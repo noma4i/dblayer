@@ -43,6 +43,26 @@ You do not decide where bytes live. Small files are kept inside the database, la
 
 ## Uploads
 
+### Deferred source
+
+Accept a request before its source exists. The row is visible with `waiting` and `source_pending`. No file is read or sent before `supplySource`. Supply `values` for declared row attributes and `variables` for the final mutation. If preparation fails, call `failSource`. Retry a failed source with a new `UploadSource`.
+
+```swift
+let request = UploadRequest.pending()
+let receipt = try await DB.account().send(Document.self, values: values, upload: UploadCommand(action: "upload", request: request))
+if let record = receipt.optimisticValue {
+  try await record.supplySource(action: "upload", source: UploadSource(path: path, values: values))
+}
+```
+
+```kotlin
+val request = UploadRequest.pending()
+val receipt = AccountScope.current().send(Document, values, upload = UploadCommand("upload", request))
+receipt.optimisticValue?.supplySource("upload", UploadSource(path, values = values))
+```
+
+A restart before supply marks the transfer `missing_file`. Cancellation or account reset removes its row. A pending batch waits for all remaining sources before its final mutation.
+
 ### Uploads of a record
 
 An upload belongs to a declared upload action of the model. A standalone blob upload without a record does not exist: the upload creates or updates a record, and `uploads[action]` on that record shows its state, progress and error.
@@ -282,7 +302,7 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - Each step saves its attempt count before starting a network request. A restart or network change does not refund that attempt.
 - A successful part starts the next step with a fresh budget. Each step permits up to 50 attempts.
 - An explicit `retry(action)` after failure saves a fresh attempt budget before restarting unfinished work.
-- When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused. `retry(id, action, source)` gives the item a new file: `id` is the item key of the batch receipt or the record id. The new transfer keeps the operation and the item key.
+- When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused. `retry(id, action, source)` gives the item a new file: `id` is the record id. The new transfer keeps the operation and the item key.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.

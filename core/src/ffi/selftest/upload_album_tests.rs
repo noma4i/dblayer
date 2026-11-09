@@ -26,7 +26,7 @@ fn assets(rows: &[(&str, &str, usize)]) -> String {
 }
 
 fn items(paths: &[&Path], keys: &[&str], size: u32) -> Vec<WireUploadItem> {
-    paths.iter().zip(keys).enumerate().map(|(position, (path, key))| WireUploadItem { values_json: format!(r#"{{"clientKey":"{key}","size":{size},"position":{position}}}"#), path: path.to_str().unwrap().into(), name: None, mime: None, variables_json: "{}".into() }).collect()
+    paths.iter().zip(keys).enumerate().map(|(position, (path, key))| WireUploadItem { values_json: format!(r#"{{"clientKey":"{key}","size":{size},"position":{position}}}"#), path: Some(path.to_str().unwrap().into()), name: None, mime: None, variables_json: "{}".into() }).collect()
 }
 
 fn batch() -> WireUploadBatch { WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() } }

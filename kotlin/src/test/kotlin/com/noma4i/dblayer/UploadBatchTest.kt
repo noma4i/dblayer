@@ -16,6 +16,28 @@ import org.junit.Test
 
 class UploadBatchTest {
     @Test
+    fun pendingBatchAcceptsAndSuppliesSources() = bounded {
+        val source = Files.createTempFile("pending-source", ".bin").toFile()
+        try {
+            source.writeText("image")
+            val transport = MockTransport()
+            val database = openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size } } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
+            database.setOnline(false)
+            val items = (0..1).map { UploadItem(buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, UploadRequest.pending()) }
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest("create_files"))
+            assertTrue(receipt.items.all { it.optimisticValue.uploads["create_files"]?.waitReason == "source_pending" })
+            receipt.items[1].optimisticValue.supplySource("create_files", UploadSource(source.path, values = buildJsonObject { put("size", 3) }))
+            receipt.items[0].optimisticValue.failSource("create_files", "preparation")
+            val retry = receipt.items[0].optimisticValue.retry("create_files", UploadSource(source.path))
+            assertTrue(retry.optimisticValue != null)
+            assertTrue(transport.calls.isEmpty())
+            closeForCleanup()
+        } finally {
+            source.delete()
+        }
+    }
+
+    @Test
     fun batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest() = bounded {
         val directory = Files.createTempDirectory("upload-batch").toFile()
         try {

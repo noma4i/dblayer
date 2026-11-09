@@ -16,6 +16,10 @@ const OPERATIONS: &str = include_str!("../../../../tests/corpus/consumer/operati
 
 struct Cable {
     peer: CablePeer,
+    puts: StdMutex<Vec<String>>,
+    hold_put: std::sync::atomic::AtomicBool,
+    put_started: tokio::sync::watch::Sender<usize>,
+    put_release: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -23,7 +27,13 @@ impl FakeTransport for Cable {
     fn cable(&self) -> Option<&CablePeer> { Some(&self.peer) }
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, progress: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> {
+        self.puts.lock().unwrap().push(file.path);
+        progress.sent(2);
+        crate::lock::effect(|| self.put_started.send_modify(|count| *count += 1));
+        if self.hold_put.swap(false, std::sync::atomic::Ordering::SeqCst) { self.put_release.notified().await; }
+        Ok(crate::ffi::PutReply { status: 200, etag: Some("etag".into()) })
+    }
 }
 
 /// The server behind the encrypted path: it answers each operation with the data the test set, anything else with an empty `data`.
@@ -90,7 +100,7 @@ impl Stand {
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         let (opened, subscribed) = tokio::sync::mpsc::unbounded_channel();
         let peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
-        let cable = Arc::new(Cable { peer });
+        let cable = Arc::new(Cable { peer, puts: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
@@ -110,6 +120,14 @@ impl Stand {
 
     /// How many times the core asked the server for the operation.
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
+
+    pub(super) fn puts(&self) -> usize { self.cable.puts.lock().unwrap().len() }
+
+    pub(super) fn hold_put(&self) { self.cable.hold_put.store(true, std::sync::atomic::Ordering::SeqCst); }
+
+    pub(super) async fn put_started(&self) { bound(self.cable.put_started.subscribe().wait_for(|count| *count > 0)).await.unwrap(); }
+
+    pub(super) fn release_put(&self) { crate::lock::effect(|| self.cable.put_release.notify_one()); }
 
     /// How many times the core asked for the operation with the variable `name` equal to `value`.
     pub(super) fn requests_with(&self, operation: &str, name: &str, value: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, variables)| asked == operation && variables[name] == value).count() }

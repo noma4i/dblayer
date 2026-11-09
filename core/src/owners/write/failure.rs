@@ -52,6 +52,8 @@ pub fn no_link() -> String { text(&OperationFailure::new(FailureKind::Network, "
 
 /// The kept text as a failure; a plain text is a refusal with that message.
 pub fn parse(error: &str) -> OperationFailure {
+    if error == "missing_file" { return OperationFailure::new(FailureKind::MissingFile, error); }
+    if let Some(message) = error.strip_prefix("source_failed:") { return OperationFailure::new(FailureKind::SourceFailed, message); }
     serde_json::from_str(error).unwrap_or_else(|_| OperationFailure::new(FailureKind::Rejected, error))
 }
 

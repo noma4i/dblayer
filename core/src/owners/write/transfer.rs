@@ -15,13 +15,23 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateO
 impl TransferState {
     pub(super) fn shown_now(&self, id: TransferId) -> Shown {
         let Some(transfer) = self.transfers.get(&id) else { return Shown::Gone };
-        let progress = transfer.confirmed_parts * 100 / transfer.source.parts.max(1);
+        if matches!(transfer.stage, TransferStage::Copying | TransferStage::PersistingCopy) {
+            match transfer.supply_back {
+                Some(TransferStage::AwaitingSource) => return Shown::WaitingSource,
+                Some(TransferStage::Failed) => return Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
+                _ => {}
+            }
+        }
         match transfer.stage {
             TransferStage::Accepting | TransferStage::Copying | TransferStage::CopyReady => Shown::Copying,
+            TransferStage::AwaitingSource => Shown::WaitingSource,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
             TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::BatchReady | TransferStage::PersistingBatchIntent | TransferStage::Mutating => Shown::Uploading { progress: 100 },
-            TransferStage::Uploading | TransferStage::PersistingPart => Shown::Uploading { progress },
+            TransferStage::Uploading | TransferStage::PersistingPart => match transfer.source.as_ref().filter(|source| source.parts > 0) {
+                Some(source) => Shown::Uploading { progress: transfer.confirmed_parts * 100 / source.parts },
+                None => Shown::Failed { error: "Internal(InvalidSource)".into() },
+            },
             _ => Shown::Queued,
         }
     }
@@ -92,7 +102,11 @@ impl TransferState {
                 } else {
                     let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
                     let kind = if cached_copy { StoreKind::Completed } else { kind };
-                    ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) });
+                    if transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed) {
+                        ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: UploadKind::Retrying });
+                    }
+                    let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
+                    ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
                     if kind == StoreKind::Failed && transfer.failure_abort {
                         if let Some(upload_id) = transfer.upload_id.clone() {
                             ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
@@ -116,11 +130,17 @@ impl TransferState {
                             ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
                         }
                     }
+                    if let (Some(op_id), true, TransferStage::PersistingCopy, Some(_)) = (own, matches!(kind, StoreKind::SyncUpload | StoreKind::Completed), transfer.stage, transfer.supply_back) {
+                        let payload = transfer.new_source.as_ref().map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
+                        ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload, effects: transfer.supply_values.clone() });
+                        ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
+                    }
                     if kind == StoreKind::SyncUpload && transfer.stage == TransferStage::Accepting {
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
                     }
                     if let (Some(op_id), StoreKind::Completed, None, Some(signed)) = (own, kind, transfer.batch_id, transfer.signed_id.as_ref()) {
-                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id } });
+                        let body = transfer.new_source.as_ref().filter(|_| transfer.supply_back.is_some()).map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
+                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id } });
                     }
                 }
                 ops
@@ -203,7 +223,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()) } }
+    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: self.transfers.get(&id).map_or(0, |transfer| transfer.revision), optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()) } }
 
     /// The immutable outcome of the current cycle: every waiter of the cycle gets it once.
     pub(super) fn settle(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
@@ -222,8 +242,9 @@ impl TransferState {
     /// The transfer ends: `Done`, `uploads[action]` gone, the copy file goes by `DeleteFile`.
     pub(super) fn finish(&mut self, id: TransferId, fx: &mut Fx) {
         self.show(id, Shown::Gone, fx);
+        let had_source = self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some());
         self.set(id, TransferStage::Done);
-        self.rounds_idle(id, fx);
+        if had_source { self.rounds_idle(id, fx); }
     }
 
     pub(super) fn delete_copy(&self, id: TransferId, fx: &mut Fx) {
@@ -283,9 +304,14 @@ impl TransferState {
         replies.extend(transfer.accept_reply.take());
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
         replies.extend(transfer.retry_reply.take());
+        replies.extend(transfer.supply_reply.take());
         replies.append(&mut transfer.discard_waiters);
         let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;
         let grouped = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
+        if transfer.supply_back.is_some() && (transfer.stage == TransferStage::PersistingCopy || (!self.closing && transfer.stage == TransferStage::Copying)) {
+            if !self.closing && transfer.stage == TransferStage::Copying { run(fx, TransferEffect::CopyCancel { transfer_id: id }); }
+            run(fx, TransferEffect::DeleteFile { path: file_id(id) });
+        }
         for reply_id in replies.into_iter().chain(grouped) {
             reply(fx, reply_id, fault(Fault::Interrupted));
         }
@@ -304,8 +330,9 @@ impl TransferState {
         }
     }
 
-    fn committed(&mut self, (batch, shown): (crate::owners::contract::BatchId, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
+    fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
+        for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             self.minted.retain(|upload_id, debt| debt.transfer.is_none_or(|id| !pending.ids.contains(&id)) && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id));
             if let Some((upload_id, key)) = pending.orphan {
@@ -330,6 +357,11 @@ impl TransferState {
         if stage == Some(TransferStage::Accepting) {
             for (id, row) in pending.ids.iter().zip(&shown) {
                 if let Some(transfer) = self.transfers.get_mut(id) { transfer.optimistic = row.clone(); }
+            }
+        }
+        if stage == Some(TransferStage::PersistingCopy) {
+            for (id, row) in pending.ids.iter().zip(&shown) {
+                if let Some(transfer) = self.transfers.get_mut(id).filter(|transfer| transfer.supply_back.is_some()) { transfer.optimistic = row.clone(); }
             }
         }
         match stage {
@@ -374,6 +406,13 @@ impl TransferState {
             return self.store_basis(&pending.ids, pending.kind, basis, fx);
         }
         if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
+            if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
+                self.source_rejected(pending.ids[0], Fault::Invalid, fx);
+                return;
+            }
+            if stage == Some(TransferStage::PersistingFailure) {
+                if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+            }
             if stage == Some(TransferStage::PersistingBatchIntent) {
                 for &id in &pending.ids { self.mark_failure(id, "Internal(Invalid)".into(), fx); }
                 self.store(&pending.ids, StoreKind::Failed, fx);
@@ -422,7 +461,7 @@ impl TransferState {
     }
 
     fn handle(&mut self, input: TransferInput, fx: &mut Fx) {
-        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -448,9 +487,11 @@ impl TransferState {
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             TransferInput::StatusInterestPlus { key, stream_id } => self.interest_plus(key, stream_id, fx),
             TransferInput::StatusInterestMinus { key, stream_id } => self.interest_minus(&key, stream_id),
-            TransferInput::Committed(committed) => self.committed((committed.batch, committed.shown), fx),
+            TransferInput::Committed(committed) => self.committed((committed.batch, committed.revision, committed.shown), fx),
             TransferInput::Rejected(rejected) => self.rejected(rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(&key, reply, true, fx),
+            TransferInput::SupplySource { epoch, key, source, reply } => self.supply_source(epoch, &key, source, reply, fx),
+            TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),
             TransferInput::SelectRow { model, rows, outbox_min, kind, reply } => self.select_row((model, rows), outbox_min, kind, reply, fx),
             TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
@@ -484,7 +525,7 @@ impl TransferState {
                 self.replay_held(fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -523,7 +564,7 @@ impl TransferState {
     pub(super) fn answer_held(&mut self, fx: &mut Fx) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
                 TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)),
                 _ => {}
             }

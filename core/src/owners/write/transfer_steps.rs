@@ -18,7 +18,7 @@ impl TransferState {
 
     fn operation_of(&self, transfer: &Transfer) -> u64 { transfer.batch_id.and_then(|batch| self.groups.get(&batch)).and_then(|group| group.op_id).or(transfer.op_id).unwrap_or(0) }
 
-    fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
+    fn progress(transfer: &Transfer) -> Option<u32> { transfer.source.as_ref().filter(|source| source.parts > 0).map(|source| transfer.confirmed_parts * 100 / source.parts) }
 
     fn can_start(&self, transfer: &Transfer) -> bool {
         let opened = !transfer.restored || self.phase == Phase::Ready;
@@ -26,9 +26,9 @@ impl TransferState {
         opened && allowed && transfer.stage == TransferStage::Ready
     }
 
-    fn step_effect(transfer: &Transfer, operation: u64) -> TransferEffect {
-        let NextStep::Part(part) = transfer.next_step else { return Self::complete_effect(transfer) };
-        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
+    fn step_effect(transfer: &Transfer, operation: u64) -> Option<TransferEffect> {
+        let NextStep::Part(part) = transfer.next_step else { return Some(Self::complete_effect(transfer)) };
+        Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place })
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
@@ -41,7 +41,7 @@ impl TransferState {
         while self.online == Some(true) && self.active() < self.slots {
             let next = self.scan().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
-            if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.confirmed_parts < transfer.source.parts) {
+            if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts < source.parts)) {
                 self.begin_failure(id, "Exhausted".into(), abort, fx);
                 continue;
             }
@@ -66,7 +66,9 @@ impl TransferState {
             return;
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-        let (effect, shown) = (Self::step_effect(transfer, operation), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
+        let Some(effect) = Self::step_effect(transfer, operation) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(progress) = (if transfer.stage == TransferStage::Completing { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
+        let shown = Shown::Uploading { progress };
         let (uploading, attempt_id) = (transfer.stage == TransferStage::Uploading, transfer.attempt_id);
         self.show(id, shown, fx);
         run(fx, effect);
@@ -112,7 +114,7 @@ impl TransferState {
         transfer.confirmed_parts += 1;
         transfer.attempts = 0;
         transfer.etags.push(etag);
-        transfer.last_part = transfer.confirmed_parts >= transfer.source.parts;
+        transfer.last_part = transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts >= source.parts);
         transfer.in_flight = false;
         transfer.stage = TransferStage::PersistingPart;
         self.store(&[id], StoreKind::ConfirmedParts, fx);
@@ -268,7 +270,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Ready;
         transfer.next_step = if transfer.last_part { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
-        let progress = if transfer.last_part { 100 } else { Self::progress(transfer) };
+        let Some(progress) = (if transfer.last_part { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
         self.show(id, Shown::Uploading { progress }, fx);
         self.start_in_order(fx);
     }

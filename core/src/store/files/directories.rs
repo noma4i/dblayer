@@ -14,6 +14,8 @@ pub(crate) struct FileDirectories {
     directory: Option<PathBuf>,
     cache: PathBuf,
     scratch: bool,
+    #[cfg(test)]
+    source_reads: std::sync::atomic::AtomicU64,
 }
 
 fn suffixed(path: &Path, suffix: &str) -> PathBuf {
@@ -46,7 +48,7 @@ fn names(directory: &Path) -> io::Result<Vec<String>> {
 impl FileDirectories {
     pub(crate) fn beside(database: &Path) -> Self {
         let directory = suffixed(database, ".files");
-        Self { cache: directory.join("cache"), directory: Some(directory), scratch: false }
+        Self { cache: directory.join("cache"), directory: Some(directory), scratch: false, #[cfg(test)] source_reads: Default::default() }
     }
 
     pub(crate) fn remove_all(&self) -> io::Result<()> {
@@ -58,7 +60,7 @@ impl FileDirectories {
 
     pub(crate) fn scratch() -> Self {
         let cache = std::env::temp_dir().join(format!("dblayer-{}", uuid::Uuid::new_v4()));
-        Self { directory: None, cache, scratch: true }
+        Self { directory: None, cache, scratch: true, #[cfg(test)] source_reads: Default::default() }
     }
 
     pub(crate) fn has_directory(&self) -> bool {
@@ -133,12 +135,19 @@ impl FileDirectories {
     }
 
     pub(crate) fn copy_source(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+        #[cfg(test)] self.source_reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let result = self.copy_into(id, source);
         if !matches!(&result, Ok(CopiedSource::Ready { .. })) {
             self.discard(&[id.to_string()])?;
         }
         result
     }
+
+    #[cfg(test)]
+    pub(crate) fn source_reads(&self) -> u64 { self.source_reads.load(std::sync::atomic::Ordering::Relaxed) }
+
+    #[cfg(test)]
+    pub(crate) fn record_source_read(&self) { self.source_reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
 
     fn copy_into(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
         use sha2::{Digest, Sha256};

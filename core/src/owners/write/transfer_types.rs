@@ -67,13 +67,29 @@ pub struct Source {
     pub parts: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct SuppliedSource {
+    pub source: Source,
+    pub steps: Steps,
+    pub values: crate::owners::store::IntentEffects,
+    pub variables: serde_json::Map<String, serde_json::Value>,
+    pub wrap: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveSource {
+    pub request: SuppliedSource,
+    pub body: String,
+}
+
 /// A row of `sync_upload` kept in the base.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredTransfer {
     pub transfer_id: TransferId,
     pub key: Key,
     pub seq: u64,
-    pub source: Source,
+    pub source: Option<Source>,
+    pub awaiting_source: bool,
     pub batch: Option<u64>,
     pub fields: serde_json::Map<String, serde_json::Value>,
     pub upload_id: Option<String>,
@@ -94,7 +110,7 @@ pub struct StoredTransfer {
     pub cycle_id: CycleId,
     pub has_intent: bool,
     pub mutation: NewOp,
-    pub steps: Steps,
+    pub steps: Option<Steps>,
     /// The row was dropped by the layout move or cannot be read.
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
@@ -180,9 +196,9 @@ pub struct BatchItem {
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The action asks to go on in power saving.
     pub urgent: bool,
-    pub source: Source,
+    pub source: Option<Source>,
     pub mutation: NewOp,
-    pub steps: Steps,
+    pub steps: Option<Steps>,
 }
 
 #[derive(Clone, Debug)]
@@ -216,7 +232,9 @@ pub enum TransferInput {
     Committed(Committed),
     Rejected(Rejected),
     Cancel { key: Key, reply: ReplyId },
-    Retry { key: Key, source: Option<Source>, reply: ReplyId },
+    SupplySource { epoch: Epoch, key: Key, source: SuppliedSource, reply: ReplyId },
+    SourceFailed { epoch: Epoch, key: Key, message: String, reply: ReplyId },
+    Retry { key: Key, source: Option<SuppliedSource>, reply: ReplyId },
     Discard { key: Key, reply: ReplyId },
     /// A `retry` or `discard` without an action: `rows` are the names of the row, `outbox_min` the smallest open operation of the row in Outbox.
     SelectRow { model: String, rows: Vec<String>, outbox_min: Option<(OpId, String)>, kind: super::outbox_types::SelectKind, reply: ReplyId },
@@ -236,10 +254,20 @@ pub enum TransferInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shown {
     Copying,
+    WaitingSource,
     Queued,
     Uploading { progress: u32 },
     Failed { error: String },
     Gone,
+}
+
+impl Shown {
+    pub fn wait_reason(&self) -> Option<crate::owners::write::upload::WaitReason> {
+        match self {
+            Self::WaitingSource => Some(crate::owners::write::upload::WaitReason::SourcePending),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,6 +326,7 @@ pub enum TransferStage {
     WaitingDeclaration,
     Reserving,
     Accepting,
+    AwaitingSource,
     Copying,
     CopyReady,
     PersistingCopy,
@@ -339,7 +368,7 @@ pub struct Transfer {
     pub transfer_id: TransferId,
     pub key: Key,
     pub seq: u64,
-    pub source: Source,
+    pub source: Option<Source>,
     pub batch_id: Option<BatchId>,
     pub epoch: Epoch,
     pub stage: TransferStage,
@@ -357,12 +386,13 @@ pub struct Transfer {
     pub created_at: Time,
     pub error: Option<String>,
     pub cycle_id: CycleId,
+    pub revision: i64,
     pub place: Option<Location>,
     pub size: u64,
     pub sha256: String,
     pub mutation: NewOp,
     pub fields: serde_json::Map<String, serde_json::Value>,
-    pub steps: Steps,
+    pub steps: Option<Steps>,
     pub restored: bool,
     pub pending_step: Option<u64>,
     pub urgent: bool,
@@ -388,9 +418,12 @@ pub struct Transfer {
     pub optimistic: Option<crate::store::Row>,
     pub cancel_reply: Option<(ReplyId, bool)>,
     pub retry_reply: Option<ReplyId>,
+    pub supply_reply: Option<ReplyId>,
+    pub supply_back: Option<TransferStage>,
+    pub supply_values: crate::owners::store::IntentEffects,
     pub discard_waiters: Vec<ReplyId>,
     pub discard_sent: bool,
-    pub new_source: Option<Source>,
+    pub new_source: Option<ActiveSource>,
     pub closing: bool,
 }
 
@@ -543,32 +576,49 @@ pub(super) fn reply(fx: &mut Fx, reply: ReplyId, answer: TransferAnswer) { run(f
 
 /// The row of `sync_upload` of a transfer after a batch of `kind`.
 pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
+    let supplied = transfer.supply_back.and_then(|_| transfer.new_source.as_ref()).filter(|_| transfer.stage == TransferStage::PersistingCopy);
+    let source = transfer.source.as_ref();
+    let steps = transfer.steps.as_ref();
+    let mut fields = transfer.fields.clone();
+    if let Some(source) = supplied { fields.extend(source.request.variables.clone()); }
     UploadRow {
         key: transfer.key.clone(),
         seq: transfer.seq,
-        source: transfer.source.path.clone(),
-        parts: transfer.source.parts,
+        source: source.map(|source| source.path.clone()),
+        parts: source.map_or(0, |source| source.parts),
         batch: transfer.batch_id,
-        fields: transfer.batch_id.filter(|_| !transfer.fields.is_empty()).map(|_| serde_json::Value::Object(transfer.fields.clone()).to_string()),
+        fields: transfer.batch_id.filter(|_| !fields.is_empty()).map(|_| serde_json::Value::Object(fields).to_string()),
         upload_id: if kind == StoreKind::Failed && transfer.failure_abort { None } else { transfer.upload_id.clone() },
         confirmed_parts: if kind == StoreKind::Failed && transfer.failure_abort { 0 } else { transfer.confirmed_parts },
         attempts: transfer.attempts,
         completed: matches!(kind, StoreKind::Completed) || transfer.signed_id.is_some(),
-        failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying) },
+        failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying && supplied.is_none()) },
         created_at: transfer.created_at.0,
         inline: transfer.place == Some(Location::Table),
         size: transfer.size,
         sha256: transfer.sha256.clone(),
         path: transfer.mutation.path.clone(),
-        body: transfer.mutation.body.clone(),
+        body: supplied.map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone()),
         on_failure: transfer.mutation.on_failure,
-        steps_path: transfer.steps.path.clone(),
-        steps_body: transfer.steps.body.clone(),
+        steps_path: steps.map(|steps| steps.path.clone()),
+        steps_body: steps.map(|steps| steps.body.clone()),
         transfer_id: transfer.transfer_id,
-        cycle_id: transfer.cycle_id + u64::from(kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry),
+        cycle_id: transfer.cycle_id + u64::from((kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry) || (supplied.is_some() && transfer.supply_back == Some(TransferStage::Failed))),
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
     }
+}
+
+pub(super) fn supplied_body(body: &str, source: &SuppliedSource) -> Option<String> {
+    if source.variables.is_empty() { return Some(body.to_string()); }
+    let mut body: serde_json::Value = serde_json::from_str(body).ok()?;
+    let variables = body.get_mut("variables")?.as_object_mut()?;
+    let target = match &source.wrap {
+        Some(key) => variables.get_mut(key)?.as_object_mut()?,
+        None => variables,
+    };
+    target.extend(source.variables.clone());
+    Some(body.to_string())
 }

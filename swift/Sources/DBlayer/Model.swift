@@ -67,8 +67,8 @@ extension DBModel {
     let (database, epoch) = try DB.admitted(scope)
     return try await database.detach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
   }
-  @discardableResult @concurrent public func retry(action: String?, source: UploadRequest? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> { try await Self.retry(id: id, action: action, source: source, in: scope) }
-  @discardableResult @concurrent public static func retry(id: String, action: String?, source: UploadRequest? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+  @discardableResult @concurrent public func retry(action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> { try await Self.retry(id: id, action: action, source: source, in: scope) }
+  @discardableResult @concurrent public static func retry(id: String, action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
     let (database, epoch) = try DB.admitted(scope)
     return try MutationReceipt(database: database, wire: await database.retry(epoch: epoch, model: modelName, rowId: id, action: action, source: source?.wire))
   }

@@ -54,6 +54,44 @@ fn transfer_effects_become_intent_without_reapplying_or_losing_prior() {
 }
 
 #[test]
+fn transfer_appended_effects_rollback_to_the_original_row() {
+    let db = open();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
+    let append = |effects| StoreOp::Effects { op_id, model: model.clone(), row_id: row_id.clone(), action: action.clone(), payload: payload.clone(), effects };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![append(effects)]);
+    let added = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u2", "text": "prepared"}).to_string() }], ..Default::default() };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![append(added)]);
+    assert_eq!((field(&db, "text"), field(&db, "userId")), (json!("prepared"), json!("u2")));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id }]);
+    assert_eq!((field(&db, "text"), field(&db, "userId")), (json!("old"), json!("u1")));
+}
+
+#[test]
+fn transfer_appended_effects_rollback_removes_the_created_row() {
+    let db = open();
+    let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
+    let append = |effects| StoreOp::Effects { op_id, model: model.clone(), row_id: row_id.clone(), action: action.clone(), payload: payload.clone(), effects };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![append(effects)]);
+    let added = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "text": "prepared"}).to_string() }], ..Default::default() };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![append(added)]);
+    assert_eq!(field(&db, "text"), json!("prepared"));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id }]);
+    assert!(db.read(&["moments"], |reader| reader.point("moments", "m1")).unwrap().is_none());
+}
+
+#[test]
+fn transfer_effects_cannot_append_to_a_ready_intent() {
+    let db = open();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
+    let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
+    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 2, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Effects { op_id, model, row_id, action, payload, effects }] };
+    assert!(db.write_batch(&batch, db.files(), db.pointer_guards(), None).is_err());
+    assert_eq!(field(&db, "text"), json!("edit"));
+}
+
+#[test]
 fn transfer_outcome_is_written_with_intent_removal() {
     use crate::owners::write::outbox::OutboxOutcome;
     let db = open();
@@ -80,11 +118,11 @@ fn store_retry_preserves_transfer_outcome() {
     let db = open();
     put(&db, "moments", json!({"id":"m1", "userId":"u1", "text":"old"}));
     let row = UploadRow {
-        key: "moments:m1:upload".into(), seq: 3, source: "/source".into(), parts: 1,
+        key: "moments:m1:upload".into(), seq: 3, source: Some("/source".into()), parts: 1,
         batch: None, fields: None, upload_id: None, confirmed_parts: 1, attempts: 1,
         completed: true, failed: Some("refused".into()), created_at: 1, inline: false,
         size: 3, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
-        on_failure: OnFailure::Keep, steps_path: "/steps".into(), steps_body: "{}".into(),
+        on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),
         transfer_id: 3, cycle_id: 1, signed_id: Some("signed".into()), aborted: false,
         op_id: Some(5), etags: vec![None],
     };

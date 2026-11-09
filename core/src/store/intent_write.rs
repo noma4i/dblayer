@@ -85,11 +85,35 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }
 
-pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id: &str, action: &str, payload: &str, writes: &IntentEffects) -> Result<CommitResult, StoreError> {
+pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id: &str, action: &str, payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
     let reader = Reader::new(writer.connection, writer.models);
     let (mut envelope, prior) = effects(&reader, writes, writer)?;
     let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
-    let prior = crate::store::plan::op_effect::read_prior(writer.connection, seq)?.unwrap_or(serde_json::to_value(prior)?);
+    let held = crate::store::plan::op_effect::read_prior(writer.connection, seq)?;
+    let prior = match (held, append) {
+        (Some(held), true) => {
+            let mut held = Prior::decode(held)?;
+            for next in prior.rows {
+                if let PriorRow::Edited { model, id, before, owned } = &next {
+                    if let Some(PriorRow::Edited { before: previous, owned: revisions, .. }) = held.rows.iter_mut().find(|row| matches!(row, PriorRow::Edited { model: m, id: i, .. } if m == model && i == id)) {
+                        for (field, value) in before { previous.entry(field.clone()).or_insert_with(|| value.clone()); }
+                        revisions.extend(owned.clone());
+                        continue;
+                    }
+                }
+                if let PriorRow::Join { model, id, scope_key, owned, .. } | PriorRow::Leave { model, id, scope_key, owned, .. } = &next {
+                    if let Some(PriorRow::Join { owned: revision, .. } | PriorRow::Leave { owned: revision, .. }) = held.rows.iter_mut().find(|row| matches!(row, PriorRow::Join { model: m, id: i, scope_key: s, .. } | PriorRow::Leave { model: m, id: i, scope_key: s, .. } if m == model && i == id && s == scope_key)) {
+                        *revision = *owned;
+                        continue;
+                    }
+                }
+                held.rows.push(next);
+            }
+            serde_json::to_value(held)?
+        }
+        (Some(held), false) => held,
+        (None, _) => serde_json::to_value(prior)?,
+    };
     let row_id = id(row_id)?;
     envelope.snapshot = Some(RowRef::new(ModelKey::new(model), row_id.clone()));
     envelope.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {

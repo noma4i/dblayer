@@ -76,3 +76,4 @@ mod transfer_batch_orders_tests;
 mod rounds_tests;
 mod transfer_prop_tests;
 mod transfer_wait_tests;
+mod transfer_pending_tests;

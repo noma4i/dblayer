@@ -153,7 +153,7 @@ fn xfer_last_attempt_is_persisted_once() {
         let mut row = partly(1, KEY);
         row.attempts = 49;
         if complete {
-            row.confirmed_parts = row.source.parts;
+            row.confirmed_parts = row.source.as_ref().unwrap().parts;
         }
         let (mut twin, _) = Twin::opened(vec![row], Default::default());
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });

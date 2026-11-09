@@ -31,7 +31,7 @@ impl TransferState {
             transfer.size = row.size;
             transfer.sha256 = row.sha256.clone();
             transfer.cycle_id = row.cycle_id.max(1);
-            transfer.next_step = if row.confirmed_parts >= row.source.parts { NextStep::Complete } else { NextStep::Part(row.confirmed_parts + 1) };
+            transfer.next_step = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { NextStep::Complete } else { NextStep::Part(row.confirmed_parts + 1) };
             let group = transfer.batch_id;
             self.transfers.insert(id, transfer);
             if let Some(group) = group {
@@ -89,6 +89,10 @@ impl TransferState {
         if let Some(saved) = outcomes.get(&id) {
             if let Some(transfer) = self.transfers.get_mut(&id) { transfer.outcomes = saved.clone(); }
         }
+        if row.awaiting_source {
+            self.schedule_expire(fx);
+            return self.begin_failure(id, "missing_file".into(), false, fx);
+        }
         if row.copying {
             return self.restore_copy(id, &row, fx);
         }
@@ -119,7 +123,7 @@ impl TransferState {
             }
             return self.begin_failure(id, "missing_file".into(), false, fx);
         }
-        let shown = if row.confirmed_parts >= row.source.parts { Shown::Uploading { progress: 100 } } else { Shown::Queued };
+        let shown = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { Shown::Uploading { progress: 100 } } else { Shown::Queued };
         self.show(id, shown, fx);
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
@@ -133,7 +137,8 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Copying;
         transfer.attempt_id = attempt_id;
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: transfer.source.clone() };
+        let Some(source) = transfer.source.clone() else { return };
+        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source };
         self.show(id, Shown::Copying, fx);
         run(fx, effect);
         self.rounds_needed(vec![id], fx);

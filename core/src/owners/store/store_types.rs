@@ -58,6 +58,7 @@ pub struct RowValue {
 /// Why the batch writes the row of `sync_upload`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UploadKind {
+    AwaitingSource,
     SyncUpload,
     ConfirmedParts,
     Completed,
@@ -70,7 +71,7 @@ pub enum UploadKind {
 pub struct UploadRow {
     pub key: String,
     pub seq: u64,
-    pub source: String,
+    pub source: Option<String>,
     pub parts: u32,
     /// The group of the elements of a batch.
     pub batch: Option<u64>,
@@ -90,8 +91,8 @@ pub struct UploadRow {
     pub body: String,
     pub on_failure: crate::schema::OnFailure,
     /// The request the steps of the file are built from.
-    pub steps_path: String,
-    pub steps_body: String,
+    pub steps_path: Option<String>,
+    pub steps_body: Option<String>,
     pub transfer_id: u64,
     pub cycle_id: u64,
     pub signed_id: Option<String>,

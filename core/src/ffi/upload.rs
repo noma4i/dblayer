@@ -5,14 +5,14 @@ use serde_json::{Map, Value};
 
 use super::database::id;
 use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
-use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
+use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
 use super::write::refused;
 use super::{Database, DbError};
 use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{Fault, NewOp, OpSource, OutboxOutcome, Receipt};
-use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renumber, Source, TransferAnswer, SIGNED_ID_SENTINEL};
+use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renumber, Source, SuppliedSource, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
@@ -32,11 +32,11 @@ struct Plan<'a> {
 struct Single {
     declaration: ActionDeclaration,
     mutation: String,
-    source: (Source, bool),
+    source: Option<(Source, bool)>,
 }
 
-fn file_name(file: &UploadFile) -> String {
-    file.name.clone().unwrap_or_else(|| std::path::Path::new(&file.path).file_name().map_or_else(|| file.path.clone(), |name| name.to_string_lossy().into_owned()))
+fn file_name(file: &UploadFile, path: &str) -> String {
+    file.name.clone().unwrap_or_else(|| std::path::Path::new(path).file_name().map_or_else(|| path.to_string(), |name| name.to_string_lossy().into_owned()))
 }
 
 fn invalid(detail: impl Into<String>) -> DbError { DbError::Invalid { detail: detail.into() } }
@@ -47,14 +47,37 @@ fn key_of(model: &str, row: &str, action: &str) -> String { format!("{model}:{ro
 impl Database {
     fn upload_config(&self) -> UploadConfig { UploadConfig::default() }
 
+    fn upload_operations(&self) -> Result<&crate::owners::write::upload::UploadOperations, DbError> {
+        self.uploads.as_ref().ok_or_else(|| invalid("upload operations are not declared: pass UploadOperations to open"))
+    }
+
     /// The size of the file and the number of its steps: a single step for a small file, parts for a large one.
     fn source_of(&self, path: &str) -> Result<(Source, bool), DbError> {
+        #[cfg(test)] self.db.files().record_source_read();
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid("the source file is empty")); }
         let config = self.upload_config();
-        let operations = self.uploads.as_ref().ok_or_else(|| invalid("upload operations are not declared: pass UploadOperations to open"))?;
+        let operations = self.upload_operations()?;
         let multipart = operations.multipart.is_some() && (operations.create_blob.is_none() || scenario_for(total, config.multipart_threshold) == UploadScenario::Multipart);
         Ok((Source { path: path.to_string(), parts: if multipart { part_count(total, config.part_size) } else { 1 } }, multipart))
+    }
+
+    fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
+        let values = super::upload_wire::object(&source.values_json)?;
+        let variables = super::upload_wire::object(&source.variables_json)?;
+        let effects = self.db.plan_update(model, row, values, Map::new())?.effects;
+        let (file, multipart) = self.source_of(&source.path)?;
+        let name = source.name.unwrap_or_else(|| std::path::Path::new(&source.path).file_name().map_or_else(|| source.path.clone(), |name| name.to_string_lossy().into_owned()));
+        let spec = self.db.spec(model)?;
+        let declaration = spec.upload_action(action).ok_or_else(|| invalid("upload action is not declared"))?;
+        let current = self.db.read(&[model], |reader| reader.point(model, row.as_str()))?;
+        let correlation = declaration.correlate.first().and_then(|field| current.as_ref().and_then(|row| row.get(field)).and_then(Value::as_str)).map_or_else(|| row.to_string(), str::to_string);
+        let steps = StepsBody { multipart, mime: source.mime.unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: correlation }.steps();
+        let wrap = match &declaration.batch {
+            Some(batch) => spec.actions.iter().find(|action| action.name == batch.single).and_then(|action| action.wrap.clone()),
+            None => declaration.wrap.clone(),
+        };
+        Ok(SuppliedSource { source: file, steps, values: effects, variables, wrap })
     }
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.
@@ -67,17 +90,20 @@ impl Database {
         Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: crate::schema::OnFailure::Keep, origin: OpSource::Api, path: path.to_string(), body, effects: plan.effects.clone(), created_at: 0, expires_after: None })
     }
 
-    fn upload_item(&self, plan: &Plan<'_>, mutation: &str, (fields, item): (Map<String, Value>, &str), (source, multipart): (Source, bool)) -> Result<BatchItem, DbError> {
-        let name = file_name(plan.file);
-        let steps = StepsBody { multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: item.to_string() }.steps();
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source, mutation: self.upload_mutation(plan, mutation)?, steps })
+    fn upload_item(&self, plan: &Plan<'_>, mutation: &str, (fields, item): (Map<String, Value>, &str), source: Option<(Source, bool)>) -> Result<BatchItem, DbError> {
+        let steps = source.as_ref().map(|(file, multipart)| {
+            let name = file_name(plan.file, &file.path);
+            StepsBody { multipart: *multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
+        });
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
     fn single_of(&self, model: &str, action: &str, file: &UploadFile) -> Result<Single, DbError> {
+        self.upload_operations()?;
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).filter(|declared| declared.batch.is_none()).cloned().ok_or_else(|| invalid(format!("{model} declares no single upload action {action}")))?;
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
-        Ok(Single { declaration, mutation, source: self.source_of(&file.path)? })
+        Ok(Single { declaration, mutation, source: file.path.as_deref().map(|path| self.source_of(path)).transpose()? })
     }
 
     fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
@@ -112,7 +138,8 @@ impl Database {
         };
         let file = UploadFile { path: item.path.clone(), name: item.name.clone(), mime: item.mime.clone(), variables: Map::new() };
         let correlate = spec.actions.iter().find(|declared| declared.name == action).and_then(|declared| declared.correlate.first()).and_then(|field| item.values.get(field)).and_then(Value::as_str).unwrap_or(planned.row_id.as_str()).to_string();
-        let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate), self.source_of(&file.path)?)?;
+        let source = file.path.as_deref().map(|path| self.source_of(path)).transpose()?;
+        let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate), source)?;
         if let Some(name) = single_name { built.mutation.action = name; }
         Ok(built)
     }
@@ -151,6 +178,27 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
+    pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> {
+        self.account_call(epoch)?;
+        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let database = self.me.upgrade().ok_or_else(super::command::closed)?;
+        let (name, verb, target) = (model.clone(), action.clone(), row.clone());
+        let source = self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?;
+        match self.transfer_answer(self.life.supply_source(epoch, key_of(&model, row.as_str(), &action), source), "supply source").await? {
+            TransferAnswer::Ok => Ok(()),
+            _ => Err(super::database::foreign_reply()),
+        }
+    }
+
+    pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> {
+        self.account_call(epoch)?;
+        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        match self.transfer_answer(self.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
+            TransferAnswer::Ok => Ok(()),
+            _ => Err(super::database::foreign_reply()),
+        }
+    }
+
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let file = self.offload(move || request.into_file()).await?;
@@ -167,6 +215,7 @@ impl Database {
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         self.account_call(epoch)?;
+        self.upload_operations()?;
         let (items, request) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
@@ -226,16 +275,14 @@ impl Database {
     }
 
     /// `retry` of a transfer with a new source of a file that is gone.
-    pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: String, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
+    pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: String, source: Option<WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let source = match source {
-            Some(request) => {
-                let path = request.into_file()?.path;
-                Some(self.source_of(&path)?.0)
-            }
-            None => None,
-        };
+        let source = if let Some(source) = source {
+            let database = self.me.upgrade().ok_or_else(super::command::closed)?;
+            let (name, verb, target) = (model.clone(), action.clone(), row.clone());
+            Some(self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?)
+        } else { None };
         let waiter = self.life.retry_upload(epoch, key_of(&model, row.as_str(), &action), source);
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;

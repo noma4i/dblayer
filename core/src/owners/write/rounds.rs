@@ -54,12 +54,14 @@ pub struct RoundsState {
     pub sink: bool,
     next_request: RequestId,
     drained: bool,
+    #[cfg(test)]
+    pub(crate) needed_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 type Fx = Effects<Rounds>;
 
 impl RoundsState {
-    pub fn new(transfer: Address<Transfers>) -> Self { Self { transfer, current_epoch: 0, active: BTreeMap::new(), round: Round::None, sink: false, next_request: 1, drained: false } }
+    pub fn new(transfer: Address<Transfers>) -> Self { Self { transfer, current_epoch: 0, active: BTreeMap::new(), round: Round::None, sink: false, next_request: 1, drained: false, #[cfg(test)] needed_count: Default::default() } }
 
     fn busy(&self, epoch: Epoch) -> bool { self.active.get(&epoch).is_some_and(|ids| !ids.is_empty()) }
 
@@ -84,6 +86,7 @@ impl RoundsState {
     }
 
     fn needed(&mut self, epoch: Epoch, ids: Vec<TransferId>, fx: &mut Fx) {
+        #[cfg(test)] self.needed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if epoch != self.current_epoch || self.round == Round::Closed {
             return;
         }

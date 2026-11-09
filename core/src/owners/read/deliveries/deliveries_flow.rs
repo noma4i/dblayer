@@ -210,15 +210,12 @@ impl Delivery {
         if self.view.kind != Kind::Blob || !self.sink_open() {
             return;
         }
+        let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _, _)| *reason != blob.wait_reason);
         self.transfer = Some(blob);
-        if self.upload_row.is_none() {
-            fx.push(self.new_read(self.read_revision));
-            return;
-        }
-        self.show_status(fx);
+        if changed_reason { fx.push(self.new_read(self.read_revision)); } else { self.show_status(fx); }
     }
 
-    pub(super) fn upload_read(&mut self, row: Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>, fx: &mut Vec<Emit>) {
+    pub(super) fn upload_read(&mut self, row: UploadRowRead, fx: &mut Vec<Emit>) {
         self.upload_row = Some(row);
         self.show_status(fx);
     }
@@ -227,8 +224,8 @@ impl Delivery {
     fn show_status(&mut self, fx: &mut Vec<Emit>) {
         let (Some(transfer), Some(row)) = (&self.transfer, &self.upload_row) else { return };
         let blob = match row {
-            Ok((local_url, processing)) => BlobStatus { local_url: local_url.clone(), processing: processing.clone(), ..transfer.clone() },
-            Err(error) => BlobStatus { state: "failed".into(), progress: 0, error: Some(error.clone()), local_url: None, processing: None },
+            Ok((wait_reason, local_url, processing)) => BlobStatus { wait_reason: *wait_reason, local_url: local_url.clone(), processing: processing.clone(), ..transfer.clone() },
+            Err(error) => BlobStatus { state: "failed".into(), wait_reason: None, progress: 0, error: Some(error.clone()), local_url: None, processing: None },
         };
         if !self.sink_open() || self.blob.as_ref() == Some(&blob) {
             return;

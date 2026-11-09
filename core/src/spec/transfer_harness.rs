@@ -138,7 +138,7 @@ pub(super) fn mutation(key: &str) -> NewOp {
     NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None }
 }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: String::new() }) } }
 
 /// The batch of the tests: two to ten elements go in one mutation.
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
@@ -149,7 +149,8 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         attempts: 0,
         key: key.into(),
         seq: id,
-        source: Source { path: format!("/src/{key}"), parts },
+        source: Some(Source { path: format!("/src/{key}"), parts }),
+        awaiting_source: false,
         batch: None,
         fields: Default::default(),
         upload_id: None,
@@ -169,7 +170,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         cycle_id: 1,
         has_intent: false,
         mutation: mutation(key),
-        steps: Steps { path: "/upload".into(), body: String::new() },
+        steps: Some(Steps { path: "/upload".into(), body: String::new() }),
         restore_failed: None,
         pending_step: None,
     }
@@ -420,6 +421,7 @@ impl Twin {
 
     pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
         let reply = self.reply();
+        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), variables: Default::default(), wrap: None });
         (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
     }
 

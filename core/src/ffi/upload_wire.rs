@@ -5,7 +5,7 @@ use crate::owners::write::upload::{UploadBatchInput, UploadFile, UploadItem};
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadRequest {
-    pub path: String,
+    pub path: Option<String>,
     pub name: Option<String>,
     pub mime: Option<String>,
     pub variables_json: String,
@@ -14,9 +14,18 @@ pub struct WireUploadRequest {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadItem {
     pub values_json: String,
+    pub path: Option<String>,
+    pub name: Option<String>,
+    pub mime: Option<String>,
+    pub variables_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WireUploadSource {
     pub path: String,
     pub name: Option<String>,
     pub mime: Option<String>,
+    pub values_json: String,
     pub variables_json: String,
 }
 
@@ -26,7 +35,7 @@ pub struct WireUploadBatch {
     pub variables_json: String,
 }
 
-fn object(json: &str) -> Result<Map<String, Value>, DbError> {
+pub(super) fn object(json: &str) -> Result<Map<String, Value>, DbError> {
     match serde_json::from_str(json).map_err(DbError::from)? {
         Value::Object(map) => Ok(map),
         _ => Err(DbError::Invalid { detail: "upload values must be a JSON object".into() }),

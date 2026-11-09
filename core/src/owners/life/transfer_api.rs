@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use super::{Life, LifeReply};
 use crate::owners::write::outbox::{Fault, Receipt};
 use crate::owners::write::rounds::RoundsInput;
-use crate::owners::write::transfer::{BatchItem, Joint, Source, TransferAnswer, TransferInput};
+use crate::owners::write::transfer::{BatchItem, Joint, SuppliedSource, TransferAnswer, TransferInput};
 use crate::runtime::{Epoch, EpochStamp, Time, Waiter};
 
 impl Life {
@@ -23,7 +23,11 @@ impl Life {
 
     pub fn cancel_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Cancel { key, reply }) }
 
-    pub fn retry_upload(&self, epoch: Epoch, key: String, source: Option<Source>) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Retry { key, source, reply }) }
+    pub fn retry_upload(&self, epoch: Epoch, key: String, source: Option<SuppliedSource>) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Retry { key, source, reply }) }
+
+    pub fn supply_source(&self, epoch: Epoch, key: String, source: SuppliedSource) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::SupplySource { epoch, key, source, reply }) }
+
+    pub fn fail_source(&self, epoch: Epoch, key: String, message: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::SourceFailed { epoch, key, message, reply }) }
 
     pub fn discard_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Discard { key, reply }) }
 

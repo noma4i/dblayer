@@ -225,7 +225,7 @@ impl Twin {
             Input::ModelLost { first, last } => self.post(d::DeliveryInput::ModelLost { stream, first: *first, last: *last }),
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
-            Input::Transfer { state } => self.post(d::DeliveryInput::TransferStatus { stream, blob: d::BlobStatus { state: state.clone(), progress: 0, error: None, local_url: None, processing: None } }),
+            Input::Transfer { state } => self.post(d::DeliveryInput::TransferStatus { stream, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
             Input::Retry { attempts } => self.post(d::DeliveryInput::RetryState { stream, retry: d::RetryStatus { attempts: *attempts, phase: "idle".into() } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
@@ -265,7 +265,7 @@ impl Twin {
             });
             if asked.is_empty() { break; }
             for read_id in asked {
-                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, data: d::ReadData::Upload { local_url: None, processing: None } });
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
             }
             entries.extend(take(&self.log));
         }

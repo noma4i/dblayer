@@ -18,7 +18,7 @@ type BatchRow = (crate::identity::RowId, serde_json::Map<String, serde_json::Val
 pub(crate) struct UploadRaw {
     key: [String; 3],
     seq: i64,
-    source: String,
+    source: Option<String>,
     total: i64,
     batch: Option<i64>,
     upload_id: Option<String>,
@@ -33,8 +33,8 @@ pub(crate) struct UploadRaw {
     path: String,
     body: String,
     on_failure: String,
-    steps_path: String,
-    steps_body: String,
+    steps_path: Option<String>,
+    steps_body: Option<String>,
     transfer_id: i64,
     cycle_id: Option<i64>,
     signed_id: Option<String>,
@@ -116,15 +116,17 @@ impl Store {
         let [model, id, action] = raw.key;
         let key = transfer_key(&model, &id, &action);
         let place = if raw.inline { Location::Table } else { Location::Directory };
-        let copying = raw.size == 0;
+        let awaiting_source = raw.source.is_none() && raw.failed.is_none();
+        let copying = raw.size == 0 && raw.source.is_some();
         let seq: u64 = unsigned(raw.seq, "seq")?;
         let transfer_id: u64 = unsigned(raw.transfer_id, "transfer_id")?;
-        let file_present = if copying { std::path::Path::new(&raw.source).exists() } else { self.file_present(transfer_id, place)? };
+        let file_present = if copying { raw.source.as_ref().is_some_and(|source| std::path::Path::new(source).exists()) } else if awaiting_source { false } else { self.file_present(transfer_id, place)? };
         Ok(StoredTransfer {
             transfer_id,
             key,
             seq,
-            source: Source { path: raw.source, parts: unsigned(raw.total, "total")? },
+            source: raw.source.map(|path| Ok(Source { path, parts: unsigned(raw.total, "total")? })).transpose()?,
+            awaiting_source,
             batch: raw.batch.and_then(|group| u64::try_from(group).ok()).filter(|group| *group > 0),
             upload_id: raw.upload_id,
             fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
@@ -156,7 +158,7 @@ impl Store {
                 effects: IntentEffects::default(),
                 created_at: 0, expires_after: None,
             },
-            steps: Steps { path: raw.steps_path, body: raw.steps_body },
+            steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
             restore_failed: None,
         })
     }

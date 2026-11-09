@@ -6,3 +6,4 @@ mod reaction_keyed_tests;
 mod cable_drop_tests;
 mod preload_load_tests;
 mod sequence_tests;
+mod chat_album_pending_tests;

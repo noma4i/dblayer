@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Uploads accept a deferred source and publish their rows before file preparation.
+- `UploadSource`, `supplySource`, and `failSource` provide or fail a deferred source.
+
 ## 6.19.0 - 2026-11-09
 
 ### Changed

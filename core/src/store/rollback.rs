@@ -129,7 +129,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
     let Some(prior) = Prior::of(entry)? else { return Ok(plan) };
     let own = entry.operation.id.0;
     let mut chain = Chain::new(outbox, own)?;
-    for row in &prior.rows {
+    for row in prior.rows.iter().rev() {
         let Ok(row_id) = RowId::new(row.id()) else { continue };
         match row {
             PriorRow::Created { model, .. } => {

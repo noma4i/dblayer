@@ -80,8 +80,8 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
     rows.iter().find(|row| {
         let open = row.restore_failed.is_none() && row.failed.is_none() && !row.completed && !row.aborted && !row.copying;
         match step {
-            UploadStage::Create | UploadStage::Init | UploadStage::Presign => open && row.confirmed_parts < row.source.parts && serde_json::from_str::<crate::owners::write::upload_codec::StepsBody>(&row.steps.body).is_ok_and(|body| body.item == *item_id),
-            UploadStage::Complete => open && row.confirmed_parts >= row.source.parts && row.key == *item_id,
+            UploadStage::Create | UploadStage::Init | UploadStage::Presign => open && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts) && row.steps.as_ref().is_some_and(|steps| serde_json::from_str::<crate::owners::write::upload_codec::StepsBody>(&steps.body).is_ok_and(|body| body.item == *item_id)),
+            UploadStage::Complete => open && row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) && row.key == *item_id,
             UploadStage::Prepare | UploadStage::Put | UploadStage::Part | UploadStage::Abort | UploadStage::Mutation => false,
         }
     })

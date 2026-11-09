@@ -29,6 +29,8 @@ impl TransferState {
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         match stage {
+            TransferStage::AwaitingSource => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::AwaitingSource), fx),
+            TransferStage::Copying if transfer.supply_back.is_some() => Self::refuse(fx, rep, Fault::InFlight),
             TransferStage::Copying if !batched => {
                 run(fx, TransferEffect::CopyCancel { transfer_id: id });
                 self.begin_cancel(id, Some((rep, cancel)), None, fx);
@@ -99,7 +101,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn retry(&mut self, key: &str, source: Option<Source>, rep: ReplyId, fx: &mut Fx) {
+    pub(super) fn retry(&mut self, key: &str, source: Option<SuppliedSource>, rep: ReplyId, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let mutation_failed = self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed && transfer.signed_id.is_some() && transfer.error.as_deref() != Some("missing_file") && transfer.error.as_deref() != Some("RestoreFailed"));
         if mutation_failed && self.transfers.get(&id).is_some_and(|transfer| !transfer.intent_live) {
@@ -127,22 +129,13 @@ impl TransferState {
                 let receipt = self.receipt(id);
                 reply(fx, rep, TransferAnswer::Receipt(receipt));
             }
-            TransferStage::Failed if transfer.error.as_deref() == Some("missing_file") => {
+            TransferStage::Failed if transfer.error.as_deref().is_some_and(|error| error == "missing_file" || error.starts_with("source_failed:")) => {
                 let Some(source) = source else { return Self::refuse(fx, rep, Fault::Invalid) };
-                transfer.source = source;
-                transfer.stage = TransferStage::Accepting;
-                transfer.prior = Some(TransferStage::Failed);
-                transfer.accept_reply = Some(rep);
-                transfer.place = None;
-                transfer.confirmed_parts = 0;
-                transfer.attempts = 0;
-                transfer.upload_id = None;
-                transfer.etags.clear();
-                self.store(&[id], StoreKind::Retrying, fx);
+                self.start_source(id, source, TransferStage::Failed, rep, fx);
             }
             TransferStage::Failed if transfer.error.as_deref() == Some("RestoreFailed") => Self::refuse(fx, rep, Fault::RestoreFailed),
             TransferStage::Failed => {
-                let all = transfer.confirmed_parts >= transfer.source.parts;
+                let all = transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts >= source.parts);
                 if transfer.aborted {
                     transfer.confirmed_parts = 0;
                     transfer.upload_id = None;
@@ -210,9 +203,11 @@ impl TransferState {
         }
         transfer.stage = TransferStage::Failed;
         let error = transfer.error.clone().unwrap_or_default();
+        let had_source = transfer.source.is_some();
+        if let Some(rep) = transfer.supply_reply.take() { reply(fx, rep, TransferAnswer::Ok); }
         self.settle(id, OutboxOutcome::Failed { error: error.clone() }, fx);
         self.show(id, Shown::Failed { error }, fx);
-        self.rounds_idle(id, fx);
+        if had_source { self.rounds_idle(id, fx); }
         self.batch_after_removal(id, fx);
         self.send_orphans(false, fx);
     }
@@ -283,7 +278,7 @@ impl TransferState {
                 }
                 Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
-            if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) {
+            if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some()) {
                 self.delete_copy(id, fx);
             }
             self.finish(id, fx);
@@ -344,9 +339,10 @@ impl TransferState {
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
     pub(super) fn expire(&mut self, fx: &mut Fx) {
-        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
+        let old: Vec<TransferId> = self.scan().filter(|transfer| matches!(transfer.stage, TransferStage::Failed | TransferStage::AwaitingSource) && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
-            self.discard_failed(id, None, fx);
+            if self.stage_of(id) == Some(TransferStage::AwaitingSource) { self.begin_cancel(id, None, Some(TransferStage::AwaitingSource), fx); }
+            else { self.discard_failed(id, None, fx); }
         }
     }
 

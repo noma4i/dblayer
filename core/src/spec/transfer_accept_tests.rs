@@ -68,7 +68,7 @@ fn xfer_accept_stale() {
 fn xfer_accept_invalid() {
     let mut twin = Twin::new();
     let mut empty = item(KEY, 2);
-    empty.source.path.clear();
+    empty.source.as_mut().unwrap().path.clear();
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(empty), reply: 9, now: Time(0) });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 0)), reply: 10, now: Time(0) });
@@ -91,7 +91,7 @@ fn xfer_accept_batch() {
 fn xfer_accept_batch_invalid() {
     let mut twin = Twin::new();
     let mut broken = item(OTHER, 2);
-    broken.source.parts = 0;
+    broken.source.as_mut().unwrap().parts = 0;
     let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9, now: Time(0) });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
     assert_eq!((out.writes(), twin.state().open_id(KEY), twin.state().open_id(OTHER)), (0, None, None), "no element is accepted");

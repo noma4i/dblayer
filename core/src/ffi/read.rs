@@ -73,7 +73,7 @@ pub enum ReadValue {
     Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
     Lost { first: u64, last: u64 },
     Gap,
-    Status { revision: i64, state: String, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
+    Status { revision: i64, state: String, wait_reason: Option<String>, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
     Retry { attempts: u32, phase: String },
     /// The last value of a stream, exactly one.
     Ended { cause: ReadEnd },
@@ -186,7 +186,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::Event { position, payload } => event_of(position, &payload, wire)?,
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
-        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
+        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
         Value::Retry(retry) => ReadValue::Retry { attempts: retry.attempts, phase: retry.phase },
         Value::Ended(cause) => ReadValue::Ended { cause: end_of(cause) },
     })

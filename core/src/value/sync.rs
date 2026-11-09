@@ -39,6 +39,7 @@ pub enum FailureKind {
     Server,
     Rejected,
     MissingFile,
+    SourceFailed,
     Session(SessionCode),
     /// The sealed request was above the limit of the transport: the size and the limit in bytes.
     RequestTooLarge { size: u64, limit: u64 },
@@ -60,6 +61,7 @@ impl FailureKind {
             FailureKind::Server => "server".into(),
             FailureKind::Rejected => "rejected".into(),
             FailureKind::MissingFile => "missing_file".into(),
+            FailureKind::SourceFailed => "source_failed".into(),
             FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
             FailureKind::RequestTooLarge { size, limit } => format!("{TOO_LARGE_PREFIX}{size}:{limit}"),
             FailureKind::Unrecognized => "unrecognized".into(),
@@ -75,6 +77,7 @@ impl FailureKind {
             "server" => Some(FailureKind::Server),
             "rejected" => Some(FailureKind::Rejected),
             "missing_file" => Some(FailureKind::MissingFile),
+            "source_failed" => Some(FailureKind::SourceFailed),
             "unrecognized" => Some(FailureKind::Unrecognized),
             "protocol" => Some(FailureKind::Protocol),
             "refused" => Some(FailureKind::Refused),

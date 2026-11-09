@@ -216,7 +216,8 @@ impl TransferState {
                 }
             }
             ops.push(StoreOp::Numbers { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), writes: vec![(renumber.position.clone(), position as i64), (renumber.size.clone(), size as i64)] });
-            ops.push(StoreOp::Upload { row: upload_row(transfer, StoreKind::SyncUpload), kind: UploadKind::SyncUpload });
+            let kind = if transfer.stage == TransferStage::AwaitingSource { UploadKind::AwaitingSource } else { UploadKind::SyncUpload };
+            ops.push(StoreOp::Upload { row: upload_row(transfer, StoreKind::SyncUpload), kind });
         }
         ops
     }

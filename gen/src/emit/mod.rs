@@ -502,7 +502,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("        }\n");
         }
         writeln!(out, "        MutationReceipt(database_, {class}, database_.update(epoch_, this.{MODEL_NAME}, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
-        writeln!(out, "    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<{class}> = {class}.retry(id, action, source, account)").unwrap();
+        writeln!(out, "    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<{class}> = {class}.retry(id, action, source, account)").unwrap();
         writeln!(out, "    suspend fun destroy(account: AccountScope? = null): MutationReceipt<{class}> = {class}.destroy(id, account)").unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");

@@ -62,6 +62,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | -------------- | ------- |
 | `FileInfo`, `FileField`, `NoFiles`, `attach`, `file`, `read`, `url`, `detach` | [files](files.md) |
 | `UploadRequest`, `UploadItem`, `UploadBatchRequest`, `UploadCommand`, `AccountScope.upload`, `AccountScope.uploadBatch` | [uploads of a record](files.md#uploads-of-a-record), [create several records with uploads](files.md#create-several-records-with-uploads) |
+| `UploadRequest.pending`, `UploadSource`, `supplySource`, `failSource` | [deferred source](files.md#deferred-source) |
 | `UploadInfo`, `UploadStatus`, `UploadProcessing` | [state](files.md#state) |
 | `TransferProgress`, `TransferItem`, `UploadStatusStream` | [rules](files.md#rules-1) |
 | `cancelUpload` | [rules](files.md#rules-1) |

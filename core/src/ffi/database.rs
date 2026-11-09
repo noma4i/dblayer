@@ -13,7 +13,6 @@ use crate::transport::{self as core, EncryptedTransport, Exchange};
 use crate::owners::write::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
-use super::upload_wire::WireUploadRequest;
 use super::receipt::WireOperationReceipt;
 use super::wire::{WireModel, WireRow};
 use super::{DbError, OnlineSink, Transport};
@@ -358,7 +357,7 @@ impl Database {
         let root = self.run(epoch, operation, variables_json).await?;
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
-    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
+    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
         self.not_closed()?;
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };

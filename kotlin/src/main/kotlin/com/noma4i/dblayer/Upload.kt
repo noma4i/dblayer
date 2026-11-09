@@ -3,25 +3,44 @@ package com.noma4i.dblayer
 import kotlinx.serialization.json.JsonObject
 
 data class UploadRequest(
-    val path: String,
+    val path: String?,
     val name: String? = null,
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
     internal fun wire() = WireUploadRequest(path, name, mime, variables.jsonText())
+    companion object {
+        fun pending(variables: JsonObject = JsonObject(emptyMap())) = UploadRequest(null, variables = variables)
+    }
 }
 
 suspend fun DBModel.cancelUpload(action: String, account: AccountScope? = null): Boolean = onAccount(account) { database, epoch -> database.cancelUpload(epoch, modelName, id, action) }
 
 data class UploadItem(
     val values: JsonObject,
-    val path: String,
+    val path: String?,
     val name: String? = null,
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
+    constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables)
     internal fun wire() = WireUploadItem(values.jsonText(), path, name, mime, variables.jsonText())
 }
+
+data class UploadSource(
+    val path: String,
+    val name: String? = null,
+    val mime: String? = null,
+    val values: JsonObject = JsonObject(emptyMap()),
+    val variables: JsonObject = JsonObject(emptyMap()),
+) {
+    internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText())
+}
+
+suspend fun DBModel.supplySource(action: String, source: UploadSource, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.supplySource(id: String, action: String, source: UploadSource, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
+suspend fun DBModel.failSource(action: String, message: String, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.failSource(epoch, modelName, id, action, message) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.failSource(id: String, action: String, message: String, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.failSource(epoch, modelName, id, action, message) }
 
 data class UploadBatchRequest(
     val operation: String,

@@ -354,6 +354,8 @@ pub struct Life {
     /// The path of the requests of the server, when the database has a session client.
     graphql_path: Option<String>,
     alive: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(test)]
+    rounds_needed: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
@@ -373,6 +375,7 @@ fn absent(session: bool, transfer: bool) -> Vec<Peer> {
 impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
     pub fn start(ports: Ports) -> Result<Self, LifeError> {
+        #[cfg(test)] let rounds_needed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let session = ports.exchange.clone().zip(ports.secret.clone()).zip(ports.seal.clone()).map(|((exchange, secret), seal)| (exchange, secret, seal));
         let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending);
@@ -460,7 +463,9 @@ impl Life {
                 transfers.put_timeout = port.put_timeout;
                 builder.install(address, "transfer", transfers, executor);
                 let rounds_drained = wiring.clone();
-                builder.install(rounds, "rounds", RoundsState::new(address), RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
+                let round_state = RoundsState::new(address);
+                #[cfg(test)] let round_state = { let mut state = round_state; state.needed_count = rounds_needed.clone(); state };
+                builder.install(rounds, "rounds", round_state, RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
                 Some((address, rounds))
             }
             _ => None,
@@ -509,8 +514,11 @@ impl Life {
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive })
+        Ok(Self { wiring, runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
     }
+
+    #[cfg(test)]
+    pub(crate) fn rounds_needed_count(&self) -> u64 { self.rounds_needed.load(std::sync::atomic::Ordering::Relaxed) }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call waits for the first to finish.
     pub fn shutdown(&self) {

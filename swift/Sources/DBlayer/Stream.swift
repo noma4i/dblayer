@@ -275,6 +275,7 @@ public struct ChangeStream: AsyncSequence, Sendable {
 public struct TransferProgress: Sendable, Equatable {
   public let revision: Int64
   public let state: String
+  public let waitReason: String?
   public let progress: UInt64
   public let error: String?
   public let localUrl: String?
@@ -298,7 +299,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
     public mutating func next() async -> TransferItem? {
       while let value = await inner.next() {
         switch value {
-        case let .status(revision, state, progress, error, localUrl, processing): return .progress(TransferProgress(revision: revision, state: state, progress: progress, error: error, localUrl: localUrl, processing: processing))
+        case let .status(revision, state, waitReason, progress, error, localUrl, processing): return .progress(TransferProgress(revision: revision, state: state, waitReason: waitReason, progress: progress, error: error, localUrl: localUrl, processing: processing))
         case let .ended(cause): return .ended(cause)
         default: continue
         }
