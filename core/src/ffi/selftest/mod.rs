@@ -61,6 +61,7 @@ mod upload_pending_tests;
 mod upload_missing_file_release_tests;
 mod upload_release_tests;
 mod upload_reopen_tests;
+mod retry_no_identity_tests;
 mod upload_round_status_tests;
 mod upload_album_tests;
 mod upload_order_tests;
