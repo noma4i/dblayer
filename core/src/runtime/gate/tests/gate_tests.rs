@@ -196,3 +196,20 @@ async fn rt_prop_close_against_query_no_old_transport_threaded() {
         }
     }
 }
+
+/// C2: a request without an epoch that reaches the network after `shutdown` is recorded and fails the test when the gate is dropped; a request before `shutdown` is not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gate_recorder_fails_a_request_after_shutdown() {
+    let before = EpochGate::default();
+    before.attach(Arc::new(Counting::default()));
+    let _ = before.query(None, graphql()).await;
+    before.shutdown();
+    drop(before);
+
+    let after = EpochGate::default();
+    after.attach(Arc::new(Counting::default()));
+    after.shutdown();
+    let _ = after.query(None, graphql()).await;
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(after)));
+    assert!(dropped.is_err(), "the request after the shutdown went unrecorded");
+}
