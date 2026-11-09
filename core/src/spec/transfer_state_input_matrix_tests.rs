@@ -125,6 +125,38 @@ fn xfer_accept_after_closing() {
     }
 }
 
+#[test]
+fn xfer_orphan_remove_committed() {
+    use super::transfer_harness::EPOCH;
+    use crate::owners::write::transfer::TransferInput;
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: true });
+    assert_eq!(out.orphans_removed(), vec!["u9".to_string()]);
+    let out = twin.commit();
+    assert!(Twin::quiet(&out), "{out:?}");
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty());
+}
+
+#[test]
+fn xfer_orphan_abort_refused_keeps_debt() {
+    use super::transfer_harness::EPOCH;
+    use crate::owners::write::transfer::TransferInput;
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    assert!(Twin::quiet(&out), "{out:?}");
+    twin.online(false);
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
