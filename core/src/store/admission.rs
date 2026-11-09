@@ -18,13 +18,13 @@ pub fn admit_upsert(
     tombstone_seq: Option<i64>,
     incoming: Map<String, Value>,
 ) -> UpsertAdmission {
+    if existing.is_none() && tombstone_seq.is_some_and(|seq| base.is_none_or(|base| seq > base)) {
+        return UpsertAdmission::DropExistence;
+    }
     let Some(base) = base else {
         return UpsertAdmission::Row { row: incoming, dropped_fields: Vec::new() };
     };
     let Some(existing) = existing else {
-        if tombstone_seq.is_some_and(|seq| seq > base) {
-            return UpsertAdmission::DropExistence;
-        }
         return UpsertAdmission::Row { row: incoming, dropped_fields: Vec::new() };
     };
     if existing.born_rev > base {
