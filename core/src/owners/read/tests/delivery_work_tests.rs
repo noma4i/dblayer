@@ -123,6 +123,15 @@ fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usi
 }
 
 #[test]
+fn dlv_pull_unknown_stream() {
+    let mut work = Work::new(1);
+    let outcome = Outcomes::<d::PullAnswer>::new().register(EPOCH).id();
+    let effects = Deliveries::step(&mut work.state, DeliveryInput::Pull { stream: 77, outcome, reader: 1 });
+    let answer = d::PullAnswer::Value(Box::new(d::Value::Ended(d::EndCause::Cancelled)));
+    assert!(matches!(effects.as_slice(), [Effect::Run(DeliveryEffect::Stream { stream: 77, effect: StreamEffect::Answer { answer: got, .. } })] if *got == answer), "a Pull of a stream that is gone ends as Cancelled at once: {effects:?}");
+}
+
+#[test]
 fn dlv_prop_work_by_affected() {
     let (examined, read) = work_of_one_commit(2, 20, 4);
     assert_eq!(examined, 2, "the list stream and the Entity stream of the changed row are examined");
