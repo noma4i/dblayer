@@ -16,6 +16,24 @@ fn feed_proto_error_established() {
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == crate::owners::read::CLOSE_DRAIN && input.starts_with("Drain"))));
 }
 
+#[test]
+fn feed_keepalive_stale() {
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    let counter = match twin.state().protocol(connection).unwrap() { Protocol::Established { send_counter, .. } => send_counter, _ => panic!("established") };
+    for input in [
+        FeedInput::Keepalive { connection_id: connection + 100, counter },
+        FeedInput::Keepalive { connection_id: connection, counter: counter + 100 },
+        FeedInput::PongDeadline { connection_id: connection + 100, counter },
+        FeedInput::PongDeadline { connection_id: connection, counter },
+    ] {
+        take(&twin.log);
+        twin.post(input);
+        assert!(take(&twin.log).is_empty());
+        assert_eq!(twin.state().mode(), f::Mode::Live);
+    }
+}
+
 fn alphabet() -> Vec<(&'static str, Input)> {
     vec![
         ("WantPlus Chat", plus("Chat")),
