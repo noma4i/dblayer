@@ -190,6 +190,13 @@ impl FieldSpec {
         }
     }
 
+    pub fn decode_written(&self, value: &Value) -> Option<Value> {
+        match &self.kind {
+            FieldKind::Scalar { kind } => crate::value::read_written_scalar(value, *kind),
+            _ => self.decode(value),
+        }
+    }
+
     pub(super) fn decode_stored(&self, value: &Value) -> Option<Value> {
         if self.parse_json { read_raw(value) } else { self.decode(value) }
     }

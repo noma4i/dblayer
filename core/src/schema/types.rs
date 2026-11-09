@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use super::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
-use crate::value::read_scalar;
 
 type Registry = HashMap<String, (Vec<FieldSpec>, Vec<FieldSpec>)>;
 
@@ -110,14 +109,14 @@ impl FieldSpec {
         if value.is_null() {
             return None;
         }
-        if typed && self.decode(value).is_none() {
+        if typed && self.decode_written(value).is_none() {
             return Some(ValueFault::Invalid(path.to_string()));
         }
         match &self.kind {
             FieldKind::Object if !self.fields.is_empty() => value.as_object().and_then(|object| members_fault(&[&self.fields], object, path, typed, declared)),
             FieldKind::Union => value.as_object().and_then(|object| self.union_fault(object, path, typed, declared)),
             FieldKind::UnionArray => value.as_array()?.iter().enumerate().find_map(|(index, item)| item.as_object().and_then(|object| self.union_fault(object, &format!("{path}[{index}]"), typed, declared))),
-            FieldKind::List { element } => value.as_array()?.iter().enumerate().find_map(|(index, item)| (typed && read_scalar(item, *element).is_none()).then(|| ValueFault::Invalid(format!("{path}[{index}]")))),
+            FieldKind::List { element } => value.as_array()?.iter().enumerate().find_map(|(index, item)| (typed && crate::value::read_written_scalar(item, *element).is_none()).then(|| ValueFault::Invalid(format!("{path}[{index}]")))),
             FieldKind::Array => {
                 let name = self.app_type.as_deref();
                 let members: &'a [FieldSpec] = if self.fields.is_empty() {

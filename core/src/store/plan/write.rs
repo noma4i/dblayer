@@ -270,6 +270,17 @@ impl Store {
         Ok(value)
     }
 
+    /// The values of an ephemeral write: every key is an ephemeral field of the model and every value fits its declared type.
+    pub(crate) fn plan_set_ephemeral(&self, model: &str, values: &Row) -> Result<(), CoreError> {
+        let spec = self.spec(model)?;
+        for (name, value) in values {
+            let field = spec.ephemeral_field(name).ok_or_else(|| CoreError::NotEphemeralField { model: model.to_string(), field: name.clone() })?;
+            let fits = if value.is_null() { field.field.nullable } else { field.field.decode_written(value).is_some() };
+            if !fits { return Err(CoreError::InvalidEphemeralValue { model: model.to_string(), field: name.clone() }); }
+        }
+        Ok(())
+    }
+
     /// The values a supplied source carries: the server fields are an update of the row, the local fields come back apart, written by the same transaction.
     pub(crate) fn plan_supplied(&self, model: &str, id: &RowId, values: Row) -> Result<(Planned, Row), CoreError> {
         let spec = self.spec(model)?;

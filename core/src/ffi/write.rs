@@ -189,6 +189,8 @@ impl Database {
 
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
         self.account_call(epoch)?;
+        let (db, name, text) = (self.db.clone(), model.clone(), values_json.clone());
+        self.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, id(&row_id)?.to_string(), values_json, self.life.now());
         self.outbox_answer(waiter, "set ephemeral").await.map(drop)
     }

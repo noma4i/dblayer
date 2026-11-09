@@ -192,6 +192,14 @@ pub fn read_scalar(value: &Value, kind: ScalarKind) -> Option<Value> {
     }
 }
 
+/// A scalar the app writes: a date is an ISO-8601 text, a number or a free text is refused (M43).
+pub fn read_written_scalar(value: &Value, kind: ScalarKind) -> Option<Value> {
+    if kind == ScalarKind::Date && !value.as_str().is_some_and(|text| OffsetDateTime::parse(text, &Rfc3339).is_ok() || time::Date::parse(text, format_description!("[year]-[month]-[day]")).is_ok()) {
+        return None;
+    }
+    read_scalar(value, kind)
+}
+
 pub fn require<T>(
     value: Option<&Value>,
     context: &str,
