@@ -205,6 +205,8 @@ pub(super) struct Twin {
     unanswered: Vec<BatchId>,
     seen_ids: std::collections::BTreeMap<String, TransferId>,
     followed: std::collections::BTreeSet<String>,
+    /// The batches of shown values wait for the test to answer them.
+    pub hold_shown: bool,
 }
 
 impl Twin {
@@ -219,7 +221,7 @@ impl Twin {
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default(), followed: Default::default() }
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default(), followed: Default::default(), hold_shown: false }
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
@@ -321,6 +323,23 @@ impl Twin {
     }
 
     pub fn post(&mut self, input: TransferInput) -> Out {
+        let mut out = self.post_held(input);
+        let mut waiting = if self.hold_shown { Vec::new() } else { out.shown.clone() };
+        while let Some(shown) = waiting.pop() {
+            let next = self.commit_shown(shown.id);
+            waiting.extend(next.shown.clone());
+            out.runs.extend(next.runs);
+            out.batches.extend(next.batches);
+            out.outbox.extend(next.outbox);
+            out.rounds.extend(next.rounds);
+            out.timers += next.timers;
+            out.schedules.extend(next.schedules);
+            out.cancels += next.cancels;
+        }
+        out
+    }
+
+    fn post_held(&mut self, input: TransferInput) -> Out {
         self.follow(&input);
         self.det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
@@ -348,29 +367,16 @@ impl Twin {
 
     pub fn answer(&mut self, reply: impl FnOnce(BatchId) -> TransferInput) -> Out {
         let batch = self.unanswered.remove(0);
-        let mut out = self.post(reply(batch));
-        let mut waiting = out.shown.clone();
-        while let Some(shown) = waiting.pop() {
-            let next = self.commit_shown(shown.id);
-            waiting.extend(next.shown.clone());
-            out.runs.extend(next.runs);
-            out.batches.extend(next.batches);
-            out.outbox.extend(next.outbox);
-            out.rounds.extend(next.rounds);
-            out.timers += next.timers;
-            out.schedules.extend(next.schedules);
-            out.cancels += next.cancels;
-        }
-        out
+        self.post(reply(batch))
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
     pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
 
     /// `Committed` for a batch of shown values: the Store answers them apart from the batches the tests answer in order.
-    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
+    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
 
-    pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.post(TransferInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) })) }
+    pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) })) }
 
     pub fn has_pending(&self) -> bool { !self.unanswered.is_empty() }
 
