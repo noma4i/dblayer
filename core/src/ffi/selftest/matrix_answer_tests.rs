@@ -32,8 +32,8 @@ struct Kind {
 fn kinds() -> Vec<Kind> {
     vec![
         Kind { name: "transport failure without an answer", fault: || Fault::Down, sequenced: Some("Ok|2"), plain: Some("Ok|2") },
-        Kind { name: "UNAUTHENTICATED", fault: || Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }, sequenced: Some("Err:Session(Unauthenticated)|1"), plain: Some("Err:Session(Unauthenticated)|1") },
-        Kind { name: "HTTP 401", fault: || Fault::Http(401), sequenced: Some("Err:Session(Unauthenticated)|1"), plain: Some("Err:Session(Unauthenticated)|1") },
+        Kind { name: "UNAUTHENTICATED", fault: || Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }, sequenced: Some("Err:Unauthorized|1"), plain: Some("Err:Unauthorized|1") },
+        Kind { name: "HTTP 401", fault: || Fault::Http(401), sequenced: Some("Err:Unauthorized|1"), plain: Some("Err:Unauthorized|1") },
         Kind { name: "REPLAYED_REQUEST", fault: || Fault::Refuse { code: "REPLAYED_REQUEST", confirmed: true }, sequenced: Some("Ok|1"), plain: Some("Ok|2") },
         Kind { name: "sequence and a session code", fault: || Fault::Refuse { code: "RATE_LIMITED", confirmed: true }, sequenced: Some("Err:Session(RateLimited)|1"), plain: None },
         Kind { name: "sequence and a retryable errors code", fault: || Fault::Answer(in_errors("INTERNAL_SERVER_ERROR")), sequenced: Some("Err:Graphql(INTERNAL_SERVER_ERROR)|1"), plain: Some("Ok|2") },
