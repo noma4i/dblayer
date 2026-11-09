@@ -13,7 +13,7 @@ use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorOutcome, SessionInput, CALLS_AUTHOR};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
-use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
+use crate::transport::{GraphQLRequest, TransportError};
 
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
@@ -26,15 +26,17 @@ pub(super) struct CallsRunner {
 pub(super) fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
     match result {
         Ok(response) => {
-            if response.shape().outcome() != ResponseOutcome::Commit {
-                let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
-                return CallsInput::Response { call_id, body: None, errors: if messages.is_empty() { vec!["empty response".to_string()] } else { messages }, extensions: response.extensions() };
-            }
-            let body = response.data.and_then(|data| data.get(root).filter(|value| !value.is_null()).map(Value::to_string));
-            CallsInput::Response { call_id, body, errors: Vec::new(), extensions: None }
+            let Ok(raw) = serde_json::to_value(&response) else { return CallsInput::TransportError { call_id, error: CallError::InvalidResponse } };
+            let kind = crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: raw }, false, true);
+            response_input(call_id, root, response, kind)
         }
         Err(error) => CallsInput::TransportError { call_id, error: call_error(crate::ffi::DbError::from(error)) },
     }
+}
+
+fn response_input(call_id: u64, root: &str, response: crate::transport::Response, kind: crate::transport::AnswerKind) -> CallsInput {
+    let body = response.data.as_ref().and_then(|data| data.get(root).filter(|value| !value.is_null()).map(Value::to_string));
+    CallsInput::Response { call_id, body, data: response.data, errors: response.errors, kind }
 }
 
 /// The one translation of a typed refusal into the answer of a call: the class and the fields stay.
@@ -55,8 +57,11 @@ fn call_error(error: crate::ffi::DbError) -> CallError {
 
 pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
-        AuthorOutcome::Response { body: text, .. } => match serde_json::from_str::<Value>(&text) {
-            Ok(body) => calls_input(call_id, root, crate::transport::encrypted::response_from_answer(crate::transport::encrypted::Answer { sequence: None, body })),
+        AuthorOutcome::Response { body: text, kind } => match serde_json::from_str::<Value>(&text) {
+            Ok(body) => match crate::transport::encrypted::response_from_answer(crate::transport::encrypted::Answer { sequence: None, body }) {
+                Ok(response) => response_input(call_id, root, response, kind),
+                Err(error) => calls_input(call_id, root, Err(error)),
+            },
             Err(error) => calls_input(call_id, root, Err(TransportError::Decode(error.to_string()))),
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },

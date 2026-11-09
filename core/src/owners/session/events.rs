@@ -530,6 +530,7 @@ impl SessionState {
                 }
             }
             SessionInput::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
+                self.answer_kind = Some(crate::transport::AnswerKind::Revoked);
                 let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked) };
                 self.land(pending, answer, None, None, true, fx);
             }
@@ -537,7 +538,13 @@ impl SessionState {
             SessionInput::HttpError { request_id, attempt_id, temporary: true, status, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     match body {
-                        Some(body) => fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { reason: "server".into() } } }),
+                        Some(body) => {
+                            let outcome = match serde_json::from_str(&body) {
+                                Ok(value) => AuthorOutcome::Response { body, kind: crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: value }, false, true) },
+                                Err(_) => AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Invalid, pending_retained: true },
+                            };
+                            fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });
+                        }
                         None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
                     }
                     self.phase = SessionPhase::PendingHeld { pending };

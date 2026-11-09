@@ -2,7 +2,6 @@ use super::error::TransportError;
 use crate::runtime::{Clock, RetryPolicy};
 use super::Connectivity;
 
-use super::answer_kind::RETRYABLE_CODES;
 // GraphQL list cursor errors require restarting pagination from the first page.
 pub(crate) const INVALID_CURSOR: &str = "INVALID_CURSOR";
 
@@ -19,16 +18,15 @@ impl RetryClass {
         if is_network {
             return RetryClass::Network;
         }
-        if http_status.is_some_and(|status| (500..=599).contains(&status)) {
-            return RetryClass::Server;
+        let outcome = match http_status {
+            Some(status) if !(200..300).contains(&status) => super::WireOutcome::Status(status),
+            _ => super::WireOutcome::Answer { sequence: None, body: serde_json::json!({ "errors": graphql_codes.iter().map(|code| serde_json::json!({ "extensions": { "code": code } })).collect::<Vec<_>>() }) },
+        };
+        match super::classify_answer(&outcome, false, true) {
+            super::AnswerKind::Transient { .. } if http_status.is_some_and(|status| (500..=599).contains(&status)) => RetryClass::Server,
+            super::AnswerKind::Transient { .. } => RetryClass::Retriable,
+            _ => RetryClass::Fatal,
         }
-        if matches!(http_status, Some(408 | 429)) {
-            return RetryClass::Retriable;
-        }
-        if graphql_codes.iter().any(|code| RETRYABLE_CODES.contains(code)) {
-            return RetryClass::Retriable;
-        }
-        RetryClass::Fatal
     }
 
     pub fn of_error(error: &TransportError) -> RetryClass {

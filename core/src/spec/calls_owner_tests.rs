@@ -36,7 +36,7 @@ fn call_caller_cancel() {
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { .. })));
         assert_eq!(effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Query, .. })), kind == CallKind::Query);
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Mutate, .. })));
-        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), errors: Vec::new(), extensions: None });
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } });
         twin.det.tick(crate::runtime::Time(30_000));
         twin.det.run_until_quiet(100).unwrap();
         assert!(take(&twin.log).is_empty());
@@ -164,7 +164,7 @@ impl Twin {
         match input.clone() {
             Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
             Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, kind_of(kind))).collect())),
-            Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, errors, extensions: None }),
+            Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, data: None, errors: errors.into_iter().map(|message| crate::transport::GraphQLError { message, path: None, extensions: None }).collect(), kind: crate::transport::AnswerKind::Answered { sequence: None } }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
             Input::Online(online) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Online(Online(online))),

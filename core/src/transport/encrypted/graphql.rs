@@ -8,7 +8,6 @@ use std::sync::{OnceLock, Weak};
 
 use super::credential::Secret;
 use super::exchange::{session_failure, Answer, Exchange};
-use crate::transport::answer_kind::transient_failure;
 use super::jwe::random_token;
 use crate::store::Store;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
@@ -42,8 +41,7 @@ impl EncryptedTransport {
 
     async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
-        let answer = self.exchange_once(&credential, path, &body, wire).await?;
-        match transient_failure(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
+        self.exchange_once(&credential, path, &body, wire).await
     }
 
     async fn exchange_once(&self, credential: &str, path: &str, body: &Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {

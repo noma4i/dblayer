@@ -505,7 +505,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
 }
 
 #[test]
-fn only_a_revoked_logout_answer_is_revoked() {
+fn every_revoked_session_answer_is_revoked() {
     use crate::owners::session::SessionInput;
     use crate::transport::encrypted::Answer;
     let answer = |body: Value| Ok(Answer { sequence: Some(2), body });

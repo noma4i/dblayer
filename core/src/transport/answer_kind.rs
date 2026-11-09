@@ -64,6 +64,9 @@ fn answered(sequence: Option<i64>, body: &Value, sequenced: bool, has_document: 
         Some("SEQUENCE_CONFLICT") => return AnswerKind::PermanentSession { code: SessionCode::SequenceConflict },
         _ => {}
     }
+    if let Some(code) = name.and_then(SessionCode::from_wire).filter(|_| sequenced && sequence.is_some()) {
+        return AnswerKind::Refused { code };
+    }
     if let Some(name) = name.filter(|name| sequence.is_none() && RETRYABLE_CODES.contains(name)) {
         return AnswerKind::Transient { reason: name.into() };
     }

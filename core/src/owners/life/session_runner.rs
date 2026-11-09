@@ -187,12 +187,12 @@ fn secret_for(credentials: &dyn CredentialSlot, expected: Option<&str>) -> Resul
     }
 }
 
-pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout: bool, sequenced: bool, has_document: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
+pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logout: bool, sequenced: bool, has_document: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
             let kind = classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced, has_document);
             let refusal = match kind { AnswerKind::Refused { code } | AnswerKind::PermanentSession { code } => Some(code), _ => None };
-            if logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
+            if matches!(kind, AnswerKind::Revoked) {
                 return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
             }
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal, kind }

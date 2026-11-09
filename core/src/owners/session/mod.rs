@@ -367,9 +367,10 @@ fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAns
 fn finish_retained(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer, pending_retained: bool, kind: Option<crate::transport::AnswerKind>) {
     if let Some(id) = pending.reply { reply(fx, id, result.clone()); }
     if let Some(author) = pending.author {
-        let outcome = match result {
-            Ok(body) => AuthorOutcome::Response { body, kind: kind.unwrap_or(crate::transport::AnswerKind::Answered { sequence: None }) },
-            Err(error) => AuthorOutcome::Error { class: ErrorClass::Permanent, error, pending_retained },
+        let outcome = match (result, kind) {
+            (Ok(body), Some(kind)) => AuthorOutcome::Response { body, kind },
+            (Ok(_), None) => AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Invalid, pending_retained },
+            (Err(error), _) => AuthorOutcome::Error { class: ErrorClass::Permanent, error, pending_retained },
         };
         fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });
     }

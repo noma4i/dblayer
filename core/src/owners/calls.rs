@@ -82,7 +82,7 @@ pub enum CallsInput {
     /// Operations declared by `register_operations` after the open.
     Declare(Vec<(String, CallKind)>),
     /// `body` is the root of the operation, `None` when the response has no root.
-    Response { call_id: CallId, body: Option<String>, errors: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
+    Response { call_id: CallId, body: Option<String>, data: Option<serde_json::Value>, errors: Vec<crate::transport::GraphQLError>, kind: crate::transport::AnswerKind },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
     Deadline { call_id: CallId },
@@ -126,11 +126,6 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
     use crate::runtime::RetryPolicy;
     match error {
         CallError::Network | CallError::Dropped | CallError::Http { status: 408 | 425 | 429 | 500..=599, .. } => Some(if kind == CallKind::Mutate { RetryPolicy::Http } else { RetryPolicy::QueryNetwork }),
-        CallError::Graphql { messages, extensions } if kind == CallKind::Query => {
-            let code = extensions.as_ref().and_then(|extension| extension.code.as_deref()).or_else(|| messages.first().map(String::as_str));
-            let body = serde_json::json!({ "error": code });
-            matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false, true), crate::transport::AnswerKind::Transient { .. }).then_some(RetryPolicy::QueryServer)
-        }
         _ => None,
     }
 }
@@ -238,13 +233,14 @@ impl StateOwner for Calls {
                 deadlines.push(id);
             }
             CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), None, &mut fx, &mut deadlines, &mut finished),
-            CallsInput::Response { call_id, body, errors, extensions } if state.sending(call_id) => {
-                let answer = match (errors.is_empty(), body) {
-                    (false, _) => Err(CallError::Graphql { messages: errors, extensions }),
+            CallsInput::Response { call_id, body, data, errors, kind } if state.sending(call_id) => {
+                let response = crate::transport::Response { data, errors };
+                let answer = match (response.errors.is_empty(), body) {
+                    (false, _) => Err(CallError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() }),
                     (true, Some(body)) => Ok(body),
                     (true, None) => Err(CallError::InvalidResponse),
                 };
-                let retry = match (&answer, state.phase(call_id)) { (Err(error), Some(CallPhase::Sending { kind, .. })) => retry_policy(error, kind), _ => None };
+                let retry = match (&answer, state.phase(call_id), kind) { (Err(_), Some(CallPhase::Sending { kind: CallKind::Query, .. }), crate::transport::AnswerKind::Transient { .. }) => Some(crate::runtime::RetryPolicy::QueryServer), _ => None };
                 if let (Some(policy), Err(error)) = (retry, &answer) { state.retry(call_id, error.clone(), policy, &mut fx, &mut scheduled, &mut finished); }
                 else { state.finish(call_id, answer, &mut fx, &mut finished); }
             }
