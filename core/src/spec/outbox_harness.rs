@@ -40,7 +40,10 @@ impl Ctx {
 pub(super) enum In { Committed, EpochEnded, Closing }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
+pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Ended(End) }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum End { SessionEnded, Closed }
 
 
 /// The slots of the peers and of the owner in every test: the peers first.
@@ -183,7 +186,8 @@ pub(super) fn out_of(outcome: &o::OutboxOutcome) -> Out {
         o::OutboxOutcome::Rejected { .. } => Out::Rejected,
         o::OutboxOutcome::Failed { .. } => Out::Failed,
         o::OutboxOutcome::Discarded => Out::Discarded,
-        o::OutboxOutcome::Ended(_) => Out::Interrupted,
+        o::OutboxOutcome::Ended(crate::ffi::EndCause::Closed) => Out::Ended(End::Closed),
+        o::OutboxOutcome::Ended(_) => Out::Ended(End::SessionEnded),
     }
 }
 

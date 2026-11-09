@@ -320,7 +320,7 @@ fn out_prop_local_write_orders() {
             let closed_first = order.iter().position(|e| *e == Closing) < order.iter().position(|e| *e == Write);
             let ended_first = order.iter().position(|e| *e == EpochEnded) < order.iter().position(|e| *e == Write);
             let want: Vec<OutboxAnswer> = if ended_first { Vec::new() } else if closed_first { vec![OutboxAnswer::Err(Fault::Closed)] } else { vec![outcome.last().and_then(|(_, result)| result.clone()).map_or(OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }, |reason| OutboxAnswer::Err(Fault::Rejected(reason)))] };
-            assert_eq!(answers(&effects, WRITE), want, "{label}: exactly one answer, none from the owner for a write of an ended epoch (the runtime answers the caller Interrupted)");
+            assert_eq!(answers(&effects, WRITE), want, "{label}: exactly one answer, none from the owner for a write of an ended epoch (the runtime answers the caller NoSession)");
             assert_eq!(kinds(&effects).len(), if closed_first || ended_first { 0 } else { 1 + outcome.iter().filter(|(_, result)| matches!(result, Some(RejectReason::StaleGeneration { .. }))).count() }, "{label}: one batch per attempt of the Store, none after Closing");
             assert_eq!(drained(&effects), 1, "{label}: Drained once");
         }
