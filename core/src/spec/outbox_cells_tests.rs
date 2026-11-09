@@ -237,6 +237,25 @@ fn out_persisting_attempt_no_session() {
 }
 
 #[test]
+fn out_server_removed_row_all_stages() {
+    for stage in [St::WaitingDeclaration, St::Submitting, St::Queued, St::Sending, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry, St::Failed] {
+        let ctx = if stage == St::Queued { offline() } else { ready() };
+        let (mut twin, id) = reach(stage, &ctx);
+        let input = OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 };
+        let before = twin.post(input.clone());
+        assert!(!answers(&before, WAITER).contains(&OutboxAnswer::Outcome(OutboxOutcome::Discarded)), "{stage:?}");
+        if matches!(stage, St::Submitting | St::PersistingAttempt | St::Landing | St::RollingBack(_) | St::MarkingFailed | St::MarkingRetry) {
+            twin.committed(id);
+        }
+        assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("ReleasePendingOwner") && !twin.store_text.contains("RollBack"), "{stage:?}: {}", twin.store_text);
+        twin.post(input);
+        let effects = twin.committed(id);
+        assert_eq!(answers(&effects, WAITER), [OutboxAnswer::Outcome(OutboxOutcome::Discarded)], "{stage:?}");
+        assert_eq!(twin.stage(id), Some(St::Done));
+    }
+}
+
+#[test]
 fn out_persisting_attempt_invalid() {
     let mut twin = Twin::new();
     let id = persisting(&mut twin, false);
