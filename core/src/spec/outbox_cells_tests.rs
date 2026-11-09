@@ -221,6 +221,44 @@ fn out_sending_stray() {
 }
 
 #[test]
+fn out_sending_response() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let request_id = twin.state().ops[&id].request_id;
+    let effects = twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
+    assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && twin.store_text.contains(&request_id.to_string()));
+}
+
+#[test]
+fn out_landing_stale_generation() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let effects = twin.rejected(id, RReason::StaleGeneration);
+    assert_eq!(twin.stage(id), Some(St::Landing));
+    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Land, generation, .. }] if *generation == NEW_GENERATION));
+}
+
+#[test]
+fn out_landing_storage() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+    assert_eq!((twin.stage(id), timers(&effects), effects.len()), (Some(St::Landing), 1, 1));
+}
+
+#[test]
+fn out_landing_tick() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let effects = tick(&mut twin, id);
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
