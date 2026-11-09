@@ -60,3 +60,17 @@ async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     assert_eq!(info.size, 300 * 1024);
     db.close_database().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_local_attach_missing_row() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
+    spec.storage = crate::schema::Storage::Local;
+    let models = serde_json::to_string(&vec![spec]).unwrap();
+    let config = Config { path: Some(directory.path().join("files.sqlite").to_string_lossy().into()), data_version: None };
+    let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
+    let epoch = db.session_epoch();
+    let attached = db.attach(epoch, "Files".into(), "absent".into(), "photo".into(), crate::ffi::FileBytes { bytes: vec![1], name: "a".into(), mime: "image/png".into() }).await;
+    let detached = db.detach(epoch, "Files".into(), "absent".into(), "photo".into()).await;
+    assert!((matches!(attached, Err(DbError::NotFound { .. })), matches!(detached, Err(DbError::NotFound { .. }))) == (true, true), "attach and detach of a missing row answer NotFound and copy no file: {attached:?} {detached:?}");
+}
