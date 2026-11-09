@@ -390,6 +390,34 @@ fn out_submitting_retry() {
 }
 
 #[test]
+fn out_submitting_other() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    unchanged_by(&mut twin, id, St::Submitting, vec![
+        OutboxInput::Online(Online(true)),
+        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
+        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        OutboxInput::TransportError { op_id: id, temporary: true },
+        OutboxInput::Dropped { op_id: id },
+        OutboxInput::Tick(crate::runtime::Time(100)),
+    ]);
+}
+
+#[test]
+fn out_landing_other() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    unchanged_by(&mut twin, id, St::Landing, vec![
+        OutboxInput::Online(Online(true)),
+        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
+        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        OutboxInput::TransportError { op_id: id, temporary: true },
+        OutboxInput::Dropped { op_id: id },
+    ]);
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
