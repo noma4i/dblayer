@@ -30,6 +30,15 @@ fn call_http_auth_status() {
     }
 }
 
+#[test]
+fn call_response_preserves_data_and_errors() {
+    let body = serde_json::json!({"data":{"root":{"id":"1"}},"errors":[{"message":"Busy","path":["root",0],"extensions":{"code":"SERVICE_UNAVAILABLE","retry":3}}]});
+    let expected: crate::transport::Response = serde_json::from_value(body.clone()).unwrap();
+    let outcome = crate::owners::session::AuthorOutcome::Response { body: body.to_string(), kind: crate::transport::AnswerKind::Transient { reason: "SERVICE_UNAVAILABLE".into() } };
+    let crate::owners::calls::CallsInput::Response { data, errors, kind, .. } = super::calls_runner::answer_input(5, "root", outcome) else { panic!("response missing") };
+    assert_eq!((data, errors, kind), (expected.data, expected.errors, crate::transport::AnswerKind::Transient { reason: "SERVICE_UNAVAILABLE".into() }));
+}
+
 /// call_transport_error (P-BND-04, D-195): the type and the fields of a refusal of the transport or of the owner Session reach the answer of the call; a permanent refusal is no network retry.
 #[test]
 fn call_transport_error_keeps_the_type_and_the_fields() {
