@@ -183,7 +183,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => DbError::NoSession { detail: "the session of this request ended".into() },
         Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),
         Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => DbError::Internal { detail: format!("the request was refused by the store: {reason:?}") },
-        Failed::Session(code) => DbError::Session { code, detail: code.name().to_string() },
+        Failed::Session(code) => DbError::from(core::TransportError::Session { code, detail: code.name().to_string() }),
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
