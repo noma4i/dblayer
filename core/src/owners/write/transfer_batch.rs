@@ -168,8 +168,7 @@ impl TransferState {
         if self.phase_of(group) != Some(BatchPhase::Mutating) {
             return;
         }
-        let ids: Vec<TransferId> = self.remaining(group).into_iter().filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)).collect();
-        if ids.len() != outcomes.len() || ids.iter().any(|id| !outcomes.contains_key(id)) { return; }
+        let ids: Vec<TransferId> = self.remaining(group).into_iter().filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating) && outcomes.contains_key(id)).collect();
         for &id in &ids {
             match &outcomes[&id] {
                 OutboxOutcome::Confirmed { revision, result, row_id } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone(), row_id: row_id.clone() }, fx),

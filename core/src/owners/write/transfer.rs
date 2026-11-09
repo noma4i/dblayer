@@ -562,8 +562,13 @@ impl TransferState {
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(transfer_id, attempt_id, (temporary, error), fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary, error } => self.complete_error(transfer_id, attempt_id, (temporary, error), fx),
-            TransferInput::MutationOutcome { transfer_id, cycle_id: _, outcome, intent_removed: _ } => self.mutation_outcome(transfer_id, outcome, fx),
-            TransferInput::MutationOutcomes { batch_id, members, intent_removed } => self.finish_batch(batch_id, members.into_iter().map(|(id, _, outcome)| (id, outcome)).collect(), intent_removed, fx),
+            TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed: _ } => {
+                if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.cycle_id == cycle_id) { self.mutation_outcome(transfer_id, outcome, fx); }
+            }
+            TransferInput::MutationOutcomes { batch_id, members, intent_removed } => {
+                let outcomes = members.into_iter().filter(|(id, cycle, _)| self.transfers.get(id).is_some_and(|transfer| transfer.cycle_id == *cycle)).map(|(id, _, outcome)| (id, outcome)).collect();
+                self.finish_batch(batch_id, outcomes, intent_removed, fx);
+            }
             TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
