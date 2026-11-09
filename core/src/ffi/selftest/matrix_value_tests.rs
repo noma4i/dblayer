@@ -106,7 +106,7 @@ fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
             while cursor < lines.len() && depth > 0 {
                 let current = lines[cursor].trim();
                 if depth == 1 && !current.starts_with("//") && !current.starts_with('*') && !current.starts_with("/*") {
-                    for case in current.split(|character| character == ',' || character == ';').take(8) {
+                    for case in current.split([',', ';']).take(8) {
                         let case = identifier(case.trim());
                         if !case.is_empty() && case.chars().next().is_some_and(char::is_uppercase) && !case.starts_with("val") { shape.cases.push(case); }
                     }
@@ -257,7 +257,7 @@ fn core_shapes() -> Vec<(String, CoreShape)> {
             let at = from + found;
             from = at + 8;
             let line_end = text[at..].find('\n').map_or(text.len(), |end| at + end);
-            let derive = &text[text[..at].rfind('\n').map_or(0, |start| start)..line_end];
+            let derive = &text[text[..at].rfind('\n').unwrap_or(0)..line_end];
             let is_record = derive.contains("uniffi::Record");
             let is_enum = derive.contains("uniffi::Enum") || derive.contains("uniffi::Error");
             if !is_record && !is_enum { continue; }

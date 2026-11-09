@@ -33,7 +33,9 @@ fn alphabet() -> Vec<(&'static str, Input)> {
     ]
 }
 
-fn starts() -> Vec<(&'static str, fn() -> Twin)> {
+type Start = (&'static str, fn() -> Twin);
+
+fn starts() -> Vec<Start> {
     vec![("cold", Twin::new), ("fresh", fresh), ("fresh with cursor", fresh_with_cursor), ("loading", loading), ("loading watched", loading_watched), ("landing", landing), ("waiting offline", waiting)]
 }
 

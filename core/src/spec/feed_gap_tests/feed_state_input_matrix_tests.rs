@@ -35,7 +35,9 @@ fn alphabet() -> Vec<(&'static str, Input)> {
     ]
 }
 
-fn starts() -> Vec<(&'static str, fn() -> Twin)> {
+type Start = (&'static str, fn() -> Twin);
+
+fn starts() -> Vec<Start> {
     vec![("off", Twin::new), ("opening", opening), ("live", live), ("live without debounce", live_immediate)]
 }
 

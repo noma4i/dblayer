@@ -65,7 +65,9 @@ fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// Matrix S on a twin: every start state x every input x every second input. The twin compares the owner with its reference after each step and panics on a divergence; a panic is a red cell with its first line.
-pub(crate) fn state_input_pairs<S, I: Clone>(matrix: &mut Matrix, reference: &str, starts: Vec<(&str, fn() -> S)>, alphabet: Vec<(&str, I)>, step: impl Fn(&mut S, I)) {
+pub(crate) type Starts<'a, S> = Vec<(&'a str, fn() -> S)>;
+
+pub(crate) fn state_input_pairs<S, I: Clone>(matrix: &mut Matrix, reference: &str, starts: Starts<S>, alphabet: Vec<(&str, I)>, step: impl Fn(&mut S, I)) {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     for (start_name, start) in &starts {

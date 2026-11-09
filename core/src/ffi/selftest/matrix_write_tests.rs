@@ -114,7 +114,7 @@ async fn matrix_write_path_kind() {
             Ok(Some(row)) => { let back = read(row.id.clone()).await; match back { Ok(Some(stored)) => named(&stored, &order, field).to_string(), other => format!("not read back: {other:?}") } }
             other => format!("not created: {other:?}"),
         };
-        let wanted = if *field == "title" { expected.to_string() } else { expected.to_string() };
+        let wanted = expected.to_string();
         matrix.check(&format!("create.{field}"), "valid", &value.to_string(), &wanted, &observed);
         if let Some(bad) = bad {
             let result = create(json!({"title": "t", *field: bad.clone()})).await.map(|receipt| receipt.optimistic_value.unwrap());

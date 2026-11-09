@@ -151,7 +151,6 @@ async fn admission_group(group: usize) {
     let mut matrix = Matrix::new(name);
     let all = exported_calls();
     let calls: Vec<String> = all.iter().enumerate().filter(|(index, _)| index % 4 == group).map(|(_, call)| call.clone()).collect();
-    let calls = if group == 0 { calls } else { calls };
     if group == 0 && all.len() < 30 { matrix.unclassified("Database", "-", "-", &format!("the source scan found {} exported calls", all.len())); }
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
