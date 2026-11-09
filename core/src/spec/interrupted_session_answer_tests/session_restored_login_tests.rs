@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn restored_login(rig: &mut Rig) -> u64 {
-    let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
+    let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
     rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     rig.start()
 }

@@ -53,6 +53,20 @@ fn document_of(name: &str) -> String {
     format!("mutation {name} {{ {name} {{ id }} }}")
 }
 
+struct LifeOutcome(String);
+
+fn answer_text(outcome: &crate::runtime::Outcome<LifeReply>) -> LifeOutcome {
+    match outcome {
+        crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(text))) => LifeOutcome(text.clone()),
+        other => panic!("no answer: {other:?}"),
+    }
+}
+
+fn stored_sequence(db: &Store) -> i64 {
+    let inner = db.lock();
+    crate::store::session_state::session(&inner.connection).unwrap().unwrap().sequence
+}
+
 fn has_document(body: &Value) -> bool {
     body.get("query").is_some_and(Value::is_string)
 }
@@ -88,7 +102,10 @@ async fn sess_prop_sequenced_body_one_per_pair() {
     let pairs = at_number(&sent, 3);
     assert_eq!(pairs.len(), 1, "a registered document: one hash-only pair: {sent:?}");
     assert!(!has_document(&pairs[0].2));
-    assert!(world.server.seen().iter().all(|request| request["error"].is_null()), "no SEQUENCE_CONFLICT");
+    let LifeOutcome(first_text) = answer_text(&first);
+    let LifeOutcome(second_text) = answer_text(&second);
+    assert!(!first_text.contains("SEQUENCE_CONFLICT") && !second_text.contains("SEQUENCE_CONFLICT"), "{first_text} {second_text}");
+    assert_eq!(stored_sequence(&_db), 3, "login spent 1, each landed call spent exactly 1");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -94,6 +94,7 @@ pub struct PendingCall {
     pub operation: String,
     pub path: String,
     pub body: String,
+    pub document: Option<String>,
     pub credential: Option<Digest>,
     pub purpose: u8,
     pub author: Option<AuthorId>,

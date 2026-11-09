@@ -9,7 +9,7 @@ use crate::runtime::ManualClock;
 use crate::transport::encrypted::tests::fake_server_tests::MemoryCredentials;
 
 fn pending(body: Value, class: OperationClass) -> PendingCall {
-    PendingCall { request_id: 1, sequence: 4, class, operation: "read".into(), path: "/read".into(), body: body.to_string(), credential: None, purpose: 0, author: None, owner: None, epoch: 1, reply: Some(1) }
+    PendingCall { request_id: 1, sequence: 4, class, operation: "read".into(), path: "/read".into(), body: body.to_string(), document: None, credential: None, purpose: 0, author: None, owner: None, epoch: 1, reply: Some(1) }
 }
 
 #[test]

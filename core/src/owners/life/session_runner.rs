@@ -131,6 +131,7 @@ impl SessionRunner {
             operation,
             path: row.path,
             body: row.body,
+            document: row.document,
             credential: identity,
             purpose: u8::from(row.purpose == NetworkPurpose::Transfer),
             author: row.owner.as_ref().and_then(crate::owners::session::author_of),

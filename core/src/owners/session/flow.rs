@@ -111,11 +111,12 @@ impl SessionState {
                     OperationClass::Logout if self.credential.is_none() => reply(fx, id, Err(SessionError::NoCredential)),
                     OperationClass::Sessionless => {
                         let request_id = self.request();
-                        self.seal(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
+                        self.seal(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, document: None, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }
                     OperationClass::Authenticated | OperationClass::Logout => {
                         let request_id = self.request();
-                        self.seal(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
+                        let (body, document) = pair_bodies(body);
+                        self.seal(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, document, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }
                 }
             }
@@ -125,7 +126,8 @@ impl SessionState {
                     return;
                 }
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
-                self.seal(PendingCall { request_id: req_id, sequence, class: OperationClass::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, fx);
+                let (body, document) = pair_bodies(body);
+                self.seal(PendingCall { request_id: req_id, sequence, class: OperationClass::Authenticated, operation: String::new(), path, body, document, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, fx);
             }
         }
     }
@@ -265,4 +267,11 @@ impl SessionState {
         if !self.queue.iter().any(|entry| matches!(entry, Queued::Mutate { req_id: seen, .. } if seen == req_id)) { self.queue.push_back(queued); }
     }
 
+}
+
+pub(super) fn pair_bodies(body: String) -> (String, Option<String>) {
+    match crate::transport::encrypted::hash_only(&body) {
+        Some(hash_only) => (hash_only, Some(body)),
+        None => (body, None),
+    }
 }

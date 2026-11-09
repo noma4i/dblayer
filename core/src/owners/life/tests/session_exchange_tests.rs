@@ -214,7 +214,7 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let digest = rows(&db).0.unwrap().credential_digest;
-        let pending = session_state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
+        let pending = session_state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), document: None, body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
         let inner = db.lock();
         session_state::store_pending(&inner.connection, &pending).unwrap();
     }

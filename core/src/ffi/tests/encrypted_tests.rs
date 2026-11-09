@@ -134,7 +134,7 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
         let db = Store::open_models(Some(&path), vec![], None).map(std::sync::Arc::new).unwrap();
         let inner = db.lock();
         let session = session_state::session(&inner.connection).unwrap().unwrap();
-        let pending = session_state::Pending { credential_digest: session.credential_digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: session.sequence + 1, path: "/api/auth/otp".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+        let pending = session_state::Pending { credential_digest: session.credential_digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: session.sequence + 1, path: "/api/auth/otp".into(), document: None, body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
         session_state::store_pending(&inner.connection, &pending).unwrap();
     }
     let database = within(open()).await.unwrap();
@@ -167,7 +167,7 @@ async fn restored_first_login_finishes_after_open() {
         let inner = db.lock();
         let digest = digest_of(&credential);
         session_state::start(&inner.connection, &digest).unwrap();
-        let pending = session_state::Pending { credential_digest: digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+        let pending = session_state::Pending { credential_digest: digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), document: None, body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
         session_state::store_pending(&inner.connection, &pending).unwrap();
     }
     let database = within(open()).await.unwrap();
@@ -202,7 +202,7 @@ async fn failed_session_restore_opens_and_refuses_calls_until_reset() {
             let inner = db.lock();
             let digest = digest_of(&credential);
             session_state::start(&inner.connection, &digest).unwrap();
-            let pending = session_state::Pending { credential_digest: digest, request_id: "3f1c2a52-9d3e-4b7a-8a11-0123456789ab".into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+            let pending = session_state::Pending { credential_digest: digest, request_id: "3f1c2a52-9d3e-4b7a-8a11-0123456789ab".into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), document: None, body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
             session_state::store_pending(&inner.connection, &pending).unwrap();
             if broken == "pending" {
                 inner.connection.execute("UPDATE encrypted_pending SET body = 'invalid'", []).unwrap();

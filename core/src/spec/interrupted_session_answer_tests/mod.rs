@@ -24,12 +24,12 @@ impl Rig {
     }
 
     fn restore(&mut self) {
-        let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: "read".into(), path: "/read".into(), body: "{}".into(), credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
+        let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: "read".into(), path: "/read".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
         self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     }
 
     fn restore_detached(&mut self) {
-        let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: String::new(), path: "/read".into(), body: "{}".into(), credential: None, purpose: 0, author: None, owner: Some(crate::transport::RequestOwner::Detached), epoch: 3, reply: None };
+        let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: String::new(), path: "/read".into(), body: "{}".into(), document: None, credential: None, purpose: 0, author: None, owner: Some(crate::transport::RequestOwner::Detached), epoch: 3, reply: None };
         self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     }
 
@@ -105,7 +105,7 @@ fn sess_resume_takes_answer() {
 #[test]
 fn sess_resume_login_epoch_started() {
     let mut rig = Rig::new();
-    let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
+    let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
     rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     let attempt = rig.start();
     rig.send(ask_answer(1));

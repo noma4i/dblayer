@@ -100,11 +100,11 @@ fn secret_state(secret: &Secret) -> SecretState {
 }
 
 fn pending_of(pending: &PendingCall) -> RefPending {
-    RefPending { request_id: pending.request_id, sequence: pending.sequence, class: ref_class(pending.class), operation: pending.operation.clone(), path: pending.path.clone(), body: pending.body.clone(), credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner.clone(), epoch: pending.epoch, reply: pending.reply }
+    RefPending { request_id: pending.request_id, sequence: pending.sequence, class: ref_class(pending.class), operation: pending.operation.clone(), path: pending.path.clone(), body: pending.body.clone(), document: pending.document.clone(), credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner.clone(), epoch: pending.epoch, reply: pending.reply }
 }
 
 fn owner_pending(pending: RefPending) -> PendingCall {
-    PendingCall { request_id: pending.request_id, sequence: pending.sequence, class: class_of(pending.class), operation: pending.operation, path: pending.path, body: pending.body, credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner, epoch: pending.epoch, reply: pending.reply }
+    PendingCall { request_id: pending.request_id, sequence: pending.sequence, class: class_of(pending.class), operation: pending.operation, path: pending.path, body: pending.body, document: pending.document, credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner, epoch: pending.epoch, reply: pending.reply }
 }
 
 fn queued_of(queued: &Queued) -> RefQueued {
@@ -421,7 +421,7 @@ fn blocked_storage() -> Twin {
 
 fn stored(owner: Option<crate::transport::RequestOwner>, request_id: u64, sequence: u64) -> RefPending {
     let author = owner.as_ref().and_then(super::ref_session::author_of);
-    RefPending { request_id, sequence, class: Class::Authenticated, operation: String::new(), path: OTP.into(), body: "{}".into(), credential: None, purpose: 0, author, owner, epoch: 0, reply: None }
+    RefPending { request_id, sequence, class: Class::Authenticated, operation: String::new(), path: OTP.into(), document: None, body: "{}".into(), credential: None, purpose: 0, author, owner, epoch: 0, reply: None }
 }
 
 fn open(credential: Option<(u64, u64)>, pending: Option<RefPending>, dropped_pending: bool, secret: Secret) -> Input {

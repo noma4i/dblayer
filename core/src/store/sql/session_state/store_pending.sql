@@ -1,1 +1,1 @@
-INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, document, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?13, ?7, ?8, ?9, ?10, ?11, ?12)

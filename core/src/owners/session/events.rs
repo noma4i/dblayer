@@ -363,7 +363,7 @@ impl SessionState {
                     let LoginCall { operation, body, reply: id } = call;
                     let request_id = self.request();
                     let epoch = self.epoch;
-                    self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation: operation.name, path: operation.path, body, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
+                    self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation: operation.name, path: operation.path, body, document: None, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
                 }
                 (AfterStore::Persist, false) => self.clearing(Some(call.into()), Some(SessionError::Storage("the secret could not be stored".into())), AfterClear::Idle, fx),
                 (AfterStore::Clear(reason), _) => self.clearing(Some(call.into()), Some(reason), AfterClear::Idle, fx),
@@ -504,6 +504,9 @@ impl SessionState {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
                     self.land(pending, Ok(body), identity, Some(sequence), false, fx);
+                } else if sequence.is_none() && pending.document.is_some() && crate::transport::encrypted::document_missing(&body) {
+                    let document = pending.document.clone();
+                    self.persist(PendingCall { body: document.unwrap_or_default(), document: None, ..pending }, None, fx);
                 } else if sequence.is_none() {
                     self.land(pending, Ok(body), None, None, false, fx);
                 } else {

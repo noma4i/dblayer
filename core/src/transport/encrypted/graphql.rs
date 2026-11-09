@@ -88,6 +88,17 @@ pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
     Value::Object(body)
 }
 
+pub fn hash_only(body: &str) -> Option<String> {
+    let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(body) else { return None };
+    fields.get("extensions")?.get("persistedQuery")?;
+    fields.remove("query")?;
+    Some(Value::Object(fields).to_string())
+}
+
+pub fn document_missing(body: &str) -> bool {
+    serde_json::from_str::<Response>(body).is_ok_and(|response| missing_from_registry(&response))
+}
+
 pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: &str, body: &Value) -> bool {
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }

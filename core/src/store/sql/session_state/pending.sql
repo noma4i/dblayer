@@ -1,1 +1,1 @@
-SELECT credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id FROM encrypted_pending WHERE id = 1
+SELECT credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id, document FROM encrypted_pending WHERE id = 1

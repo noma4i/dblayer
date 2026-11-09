@@ -340,7 +340,7 @@ impl Session {
                     let def = self.def(&operation).expect("a generating call is declared");
                     let request_id = self.request();
                     let epoch = self.epoch;
-                    self.persist(Pending { request_id, sequence: 1, class: Class::Login, operation, path: def.path, body, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, Some(credential_new), out);
+                    self.persist(Pending { request_id, sequence: 1, class: Class::Login, operation, path: def.path, body, document: None, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, Some(credential_new), out);
                 }
                 (AfterStore::Persist, false) => self.clearing(Some(call), Some(Fail::Storage), AfterClear::Idle, out),
                 (AfterStore::Clear(reason), _) => self.clearing(Some(call), Some(reason), AfterClear::Idle, out),
@@ -476,6 +476,9 @@ impl Session {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
                     self.land(pending, Ok(body), identity, Some(sequence), false, out);
+                } else if sequence.is_none() && pending.document.is_some() && super::names_missing_document(&body) {
+                    let full = pending.document.clone().unwrap_or_default();
+                    self.persist(Pending { body: full, document: None, ..pending }, None, out);
                 } else if sequence.is_none() {
                     self.land(pending, Ok(body), None, None, false, out);
                 } else {

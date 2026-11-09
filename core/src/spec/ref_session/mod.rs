@@ -88,6 +88,7 @@ pub struct Pending {
     pub operation: String,
     pub path: String,
     pub body: String,
+    pub document: Option<String>,
     pub credential: Option<Digest>,
     pub purpose: u8,
     pub author: Option<AuthorId>,
@@ -421,11 +422,12 @@ impl Session {
                     Class::Logout if self.credential.is_none() => out.replies.push((reply, Err(Fail::NoCredential))),
                     Class::Sessionless => {
                         let request_id = self.request();
-                        self.seal(Pending { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
+                        self.seal(Pending { request_id, sequence: 0, class: def.class, operation, path: def.path, body, document: None, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
                     }
                     Class::Authenticated | Class::Logout => {
                         let request_id = self.request();
-                        self.seal(Pending { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
+                        let (body, document) = pair_of(body);
+                        self.seal(Pending { request_id, sequence, class: def.class, operation, path: def.path, body, document, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
                     }
                 }
             }
@@ -435,7 +437,8 @@ impl Session {
                     return;
                 }
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
-                self.seal(Pending { request_id: req_id, sequence, class: Class::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, out);
+                let (body, document) = pair_of(body);
+                self.seal(Pending { request_id: req_id, sequence, class: Class::Authenticated, operation: String::new(), path, body, document, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, out);
             }
         }
     }
@@ -535,3 +538,14 @@ impl Session {
 }
 
 mod events;
+
+fn pair_of(body: String) -> (String, Option<String>) {
+    let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str::<serde_json::Value>(&body) else { return (body, None) };
+    if fields.get("extensions").and_then(|extensions| extensions.get("persistedQuery")).is_none() || fields.remove("query").is_none() { return (body, None); }
+    (serde_json::Value::Object(fields).to_string(), Some(body))
+}
+
+fn names_missing_document(body: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else { return false };
+    parsed["errors"].as_array().is_some_and(|errors| errors.iter().any(|error| error["extensions"]["code"] == "PERSISTED_QUERY_NOT_FOUND"))
+}

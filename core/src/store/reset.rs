@@ -409,6 +409,7 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
             sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
             path: pending.path.clone(),
             body: pending.body.clone(),
+            document: pending.document.clone(),
             owner: pending.owner.clone(),
             purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
             req_id: pending.request_id,

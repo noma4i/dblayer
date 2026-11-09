@@ -14,6 +14,7 @@ pub struct Pending {
     pub sequence: i64,
     pub path: String,
     pub body: String,
+    pub document: Option<String>,
     pub owner: Option<crate::transport::RequestOwner>,
     pub purpose: crate::transport::NetworkPurpose,
     /// The request id of the author (or of the call) that the owner Session keeps for the pair, restored as stored.
@@ -86,6 +87,7 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                 },
                 purpose: match row.get::<_, i64>(10)? { 0 => crate::transport::NetworkPurpose::Standard, 1 => crate::transport::NetworkPurpose::Transfer, value => return Err(rusqlite::Error::IntegralValueOutOfRange(10, value)) },
                 req_id: u64::try_from(row.get::<_, i64>(11)?).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, -1))?,
+                document: row.get(12)?,
             })
         })
         .optional()
@@ -101,7 +103,7 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
     };
     connection.execute(
         include_str!("sql/session_state/store_pending.sql"),
-        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, kind, operation_id, item_id, step, match pending.purpose { crate::transport::NetworkPurpose::Standard => 0, crate::transport::NetworkPurpose::Transfer => 1 }, i64::try_from(pending.req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, i64::MAX))?],
+        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, kind, operation_id, item_id, step, match pending.purpose { crate::transport::NetworkPurpose::Standard => 0, crate::transport::NetworkPurpose::Transfer => 1 }, i64::try_from(pending.req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, i64::MAX))?, pending.document],
     )?;
     Ok(())
 }

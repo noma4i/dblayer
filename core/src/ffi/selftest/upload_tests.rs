@@ -19,7 +19,7 @@ use crate::owners::write::upload::{UploadFile, MEBIBYTE};
 
 /// A transport that only takes the PUTs of the file steps: it records each range and answers with an etag.
 #[derive(Default)]
-struct Puts(Mutex<Vec<(u64, u64)>>);
+pub(super) struct Puts(Mutex<Vec<(u64, u64)>>);
 
 pub(super) struct UploadHttp(pub(super) Arc<FakeServer>, pub(super) serde_json::Value);
 
@@ -44,7 +44,7 @@ impl FakeTransport for Puts {
     }
 }
 
-fn executed(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
+pub(super) fn executed(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()
 }
 
@@ -53,7 +53,7 @@ async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
 }
 
 /// The row 42 comes the way the app gets rows: the server answers the feed and the load stores it.
-async fn opened_with_row(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
+pub(super) async fn opened_with_row(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
     let database = opened_with_model(rig, puts, moment_spec(), json!([{"id": "42", "text": "clip"}])).await;
     let document = "query Feed { moments { id text } }";
     rig.server.register(document);
@@ -108,7 +108,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     database.close_now();
 }
 
-fn request(path: &std::path::Path) -> WireUploadRequest { WireUploadRequest::of(&UploadFile::new(path.to_str().unwrap())) }
+pub(super) fn request(path: &std::path::Path) -> WireUploadRequest { WireUploadRequest::of(&UploadFile::new(path.to_str().unwrap())) }
 
 /// xfer_ready_start, xfer_completed, xfer_mutation_confirmed: a small file takes one blob step, then its mutation carries the signed id.
 #[tokio::test(flavor = "multi_thread")]
@@ -126,25 +126,6 @@ async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id
     let made = executed(&rig, "MakeMoment");
     assert_eq!(made.len(), 1);
     assert!(made[0]["variables"].to_string().contains("sid"), "the mutation has no signed id: {}", made[0]["variables"]);
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_final_mutation_of_an_upload_lands_on_the_first_send_on_a_server_with_an_empty_registry() {
-    let rig = SessionRig::new();
-    let database = opened_with_row(&rig, Arc::new(Puts::default())).await;
-    rig.server.spend_sequence_on_miss();
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("clip.mp4");
-    std::fs::write(&source, b"abc").unwrap();
-    let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    let outcome = bound(database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
-    let sequenced: Vec<_> = rig.server.seen().into_iter().filter(|request| request["body"]["operationName"].is_string() && request["body"]["operationName"] != "Feed" && request["sequence"].is_i64()).collect();
-    let numbers: Vec<i64> = sequenced.iter().map(|request| request["sequence"].as_i64().unwrap()).collect();
-    assert_eq!(numbers.windows(2).filter(|pair| pair[1] != pair[0] + 1).count(), 0, "a number repeated or skipped: {numbers:?}");
-    assert!(sequenced.iter().all(|request| request["body"]["query"].is_string()), "a sequenced request went without its document");
-    assert_eq!(executed(&rig, "MakeMoment").len(), 1);
     database.close_now();
 }
 

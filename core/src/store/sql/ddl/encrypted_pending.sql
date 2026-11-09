@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS encrypted_pending (
   sequence INTEGER NOT NULL,
   path TEXT NOT NULL,
   body TEXT NOT NULL,
+  document TEXT,
   owner_kind TEXT,
   owner_operation_id INTEGER,
   owner_item_id TEXT,
