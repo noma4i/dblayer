@@ -246,3 +246,29 @@ async fn matrix_call_admission_uploads() {
     }
     matrix.finish();
 }
+
+/// E isolation: an upload on a missing row answers `NotFound` and leaves the database open for the next call.
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_upload_missing_row_leaves_the_database_open() {
+    let mut matrix = Matrix::new("E-upload-missing-row");
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"video").unwrap();
+    let request = || WireUploadRequest { path: Some(source.to_string_lossy().into_owned()), name: None, mime: None, variables_json: "{}".into() };
+    let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
+    matrix.check("upload(missing row)", "first call", "missing_row", "NotFound", observed(&first.map(|_| ())));
+    let next = database.peek_row(epoch, "Moment".into(), row.clone());
+    matrix.check("peek_row(present row)", "next call on the same database", "after the refused upload", "admitted", observed(&next.map(|_| ())));
+    let again = database.upload(epoch + 1000, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
+    matrix.check("upload(stale epoch, missing row)", "second upload", "after the refused upload", "NoSession", observed(&again.map(|_| ())));
+    let valid = database.upload(epoch, "Moment".into(), row.clone(), "upload_clip".into(), request()).await;
+    matrix.check("upload(valid row)", "first call", "valid arguments", "admitted", observed(&valid.map(|_| ())));
+    let _ = bound(crate::ffi::settled(&database)).await;
+    let after = database.peek_row(epoch, "Moment".into(), row);
+    matrix.check("peek_row(present row)", "next call after a valid upload", "the server has no scripted answer", "admitted", observed(&after.map(|_| ())));
+    matrix.finish();
+}
