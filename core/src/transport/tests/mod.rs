@@ -1,6 +1,7 @@
 use super::*;
 
 mod cancel_tests;
+mod mock_contract_tests;
 mod mock_tests;
 mod put_tests;
 mod request_tests;
