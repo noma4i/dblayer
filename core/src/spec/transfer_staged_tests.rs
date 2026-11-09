@@ -102,11 +102,9 @@ fn xfer_staged_promote_failure_restart() {
     twin.commit();
     let out = twin.post(TransferInput::StagedPromoteFailed { transfer_id: id, detail: "rename".into() });
     let written = out.rows().into_iter().next().map(|(row, _)| (row.staged, row.source.clone()));
-    assert_eq!(
-        (out.writes(), written, out.deleted(), twin.stage(id)),
-        (1, Some((false, old_source)), vec![staged_file_id(id)], TransferStage::Failed),
-        "a failed rename writes the old copy back durably (staged cleared, old source) before the reply, not only in memory: {out:?}",
-    );
+    assert_eq!((out.writes(), written, out.deleted()), (1, Some((false, old_source)), Vec::new()), "a failed rename writes the old copy back (staged cleared, old source) before any file effect: {out:?}");
+    let committed = twin.commit();
+    assert_eq!((committed.deleted(), twin.stage(id)), (vec![staged_file_id(id)], TransferStage::Failed), "Committed deletes the staged file and leaves Failed with the old copy: {committed:?}");
 }
 
 /// xfer_staged_clear_rejected_keeps_upload (K1, D-226, transfer.md:27): the retry reply is handed out and the
