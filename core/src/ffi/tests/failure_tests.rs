@@ -55,7 +55,7 @@ async fn inv_api_03_a_refused_call_keeps_its_kind_and_details_and_is_sent_once()
                 _ => db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap_err(),
             };
             match answer {
-                Err(_) => assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{call}: {error:?}"),
+                Err(_) => assert!(matches!(&error, DbError::Unauthorized { .. }), "{call}: {error:?}"),
                 Ok(_) => assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{call}: {error:?}"),
             }
             assert_eq!(transport.calls.load(Ordering::SeqCst), 1, "{call}");
