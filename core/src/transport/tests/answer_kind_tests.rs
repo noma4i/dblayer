@@ -37,6 +37,8 @@ fn wire_classify_table() {
         ("replayed with a sequence", answer(Some(4), json!({ "error": "REPLAYED_REQUEST" })), true, AnswerKind::Refused { code: SessionCode::ReplayedRequest }),
         ("unauthenticated with a sequence", answer(Some(4), json!({ "error": "UNAUTHENTICATED" })), true, AnswerKind::Refused { code: SessionCode::Unauthenticated }),
         ("any code with a sequence", answer(Some(4), code_body("FORBIDDEN")), true, AnswerKind::Answered { sequence: Some(4) }),
+        ("session code with a sequence", answer(Some(4), code_body("RATE_LIMITED")), true, AnswerKind::Refused { code: SessionCode::RateLimited }),
+        ("retryable code without a sequence", answer(None, code_body("SERVICE_UNAVAILABLE")), true, transient()),
         ("retryable code, plain", answer(None, code_body("SERVICE_UNAVAILABLE")), false, transient()),
         ("timeout code, plain", answer(None, code_body("TIMEOUT")), false, transient()),
         ("other code, plain", answer(None, code_body("FORBIDDEN")), false, AnswerKind::Answered { sequence: None }),
