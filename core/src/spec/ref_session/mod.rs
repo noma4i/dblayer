@@ -43,6 +43,7 @@ pub enum Fail {
     Invalid,
     Reason(Reason),
     Session(crate::transport::SessionCode),
+    Graphql(String),
     Storage,
     SessionExists,
     NoCredential,
@@ -554,8 +555,8 @@ fn names_missing_document(body: &str) -> bool {
     parsed["errors"].as_array().is_some_and(|errors| errors.iter().any(|error| error["extensions"]["code"] == "PERSISTED_QUERY_NOT_FOUND"))
 }
 
-fn code_of_answer(body: &str) -> crate::transport::SessionCode {
+fn fail_of_answer(body: &str) -> Fail {
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
     let name = parsed["error"].as_str().or(parsed["errors"][0]["extensions"]["code"].as_str()).unwrap_or("OTHER");
-    crate::transport::SessionCode::named(name).unwrap_or(crate::transport::SessionCode::Other)
+    match crate::transport::SessionCode::named(name) { Some(code) => Fail::Session(code), None => Fail::Graphql(name.to_string()) }
 }

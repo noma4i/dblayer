@@ -478,8 +478,8 @@ impl Session {
                     let sequence = pending.sequence;
                     self.land(pending, Ok(body), identity, Some(sequence), false, out);
                 } else if sequence.is_none() && pending.class == Class::Login {
-                    let code = super::code_of_answer(&body);
-                    self.land(pending, Err(Fail::Session(code)), None, None, false, out);
+                    let failure = super::fail_of_answer(&body);
+                    self.land(pending, Err(failure), None, None, false, out);
                 } else if sequence.is_none() && pending.document.is_some() && super::names_missing_document(&body) {
                     let full = pending.document.clone().unwrap_or_default();
                     self.persist(Pending { body: full, document: None, ..pending }, None, out);

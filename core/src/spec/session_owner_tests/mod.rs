@@ -255,7 +255,7 @@ impl Twin {
             Input::RestoreReady { epoch } => SessionInput::RestoreReady { epoch },
             Input::RestoreFailed { epoch, error } => SessionInput::RestoreFailed { epoch, error },
             Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
-            Input::Response { request_id, attempt_id, body, sequence, refusal } => SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind: crate::transport::AnswerKind::Answered { sequence: sequence.and_then(|value| i64::try_from(value).ok()) } },
+            Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
             Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
@@ -503,4 +503,12 @@ fn matrix_owner_state_input_session() {
     ];
     state_input_pairs(&mut matrix, "reference ref_session", vec![("idle", Twin::new), ("persisting", persisting), ("calling", calling), ("calling a mutation", calling_mutate), ("pending held", held), ("generating a credential", generating), ("storing a credential", storing), ("clearing", clearing), ("landing", landing_one), ("blocked storage", blocked_storage)], alphabet, |twin: &mut Twin, input| { let input = concrete(twin, input); twin.feed(input); });
     matrix.finish();
+}
+
+/// The kind of an answer as the one classifier types it for the pair that was sent: sequenced when the pair carries a number, with the document when the pair went by hash.
+fn kind_of(history: &[RefEffect], request_id: u64, body: &str, sequence: Option<u64>) -> crate::transport::AnswerKind {
+    let pending = history.iter().rev().find_map(|effect| match effect { RefEffect::HttpRequest { pending, .. } if pending.request_id == request_id => Some(pending), _ => None });
+    let (sequenced, has_document) = pending.map_or((sequence.is_some(), false), |pending| (pending.class != Class::Sessionless, pending.document.is_none()));
+    let body: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: sequence.and_then(|value| i64::try_from(value).ok()), body }, sequenced, has_document)
 }

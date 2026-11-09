@@ -413,7 +413,7 @@ fn sess_calling_no_sequence_login() {
     assert!(matches!(&cleared[..], [RefEffect::ClearSecret { .. }]), "{cleared:?}");
     let op = twin.op();
     twin.feed(Input::SecretCleared { op, ok: true });
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Session(SessionCode::Other)))], "the caller gets a typed error, not Ok");
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Graphql("INVALID_INPUT".into())))], "the caller gets the GraphQL error of the body, not Ok (wire.md: an unknown name is Graphql{{code}})");
     assert_eq!(twin.reference.credential, None);
     assert!(matches!(&twin.feed(call_of("login", 2))[..], [RefEffect::GenerateCredential { .. }]), "the next sign-in goes as the first");
 }
