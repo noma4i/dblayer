@@ -32,7 +32,7 @@ impl TransportError {
     pub(crate) fn graphql_answer(code: String, body: String) -> Self {
         match serde_json::from_str::<super::Response>(&body) {
             Ok(response) if !response.errors.is_empty() => Self::GraphqlAnswer { response: Box::new(response) },
-            _ => Self::Graphql { messages: vec![code], extensions: None },
+            _ => Self::Graphql { messages: vec![code.clone()], extensions: Some(super::GraphqlExtensions { code: Some(code), transaction_disposition: None, fields: Default::default() }) },
         }
     }
 
