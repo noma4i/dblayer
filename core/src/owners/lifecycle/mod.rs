@@ -156,6 +156,7 @@ pub struct LifecycleState {
     cell_publication: PublicationId,
     ended_up_to: Option<Epoch>,
     restoring: Option<Restoring>,
+    open_reply: Option<ReplyId>,
     next_publication: PublicationId,
     next_erase: EraseId,
     /// `issued_generation`: the highest generation reserved for an erase.
@@ -189,7 +190,7 @@ impl Default for LifecycleState {
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {
-        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, allocated: 0 }
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, open_reply: None, next_publication: 1, next_erase: 1, allocated: 0 }
     }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }
@@ -271,7 +272,13 @@ impl LifecycleState {
         self.published.state = PublishedState::Closing;
         self.published.closed = true;
         self.publish(None, Vec::new(), fx);
-        self.end_restoring(fx);
+        self.drop_restoring(Err(LifecycleError::Closed), fx);
+        if let Some(id) = self.open_reply.take() {
+            if let Some(publication) = self.publishing.iter_mut().find(|publication| publication.replies.contains(&id)) {
+                publication.replies.retain(|reply| *reply != id);
+                reply_all(vec![id], Err(LifecycleError::Closed), fx);
+            }
+        }
         if let Some(epoch) = end {
             self.ended(epoch);
             fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::Close });

@@ -16,6 +16,7 @@ impl LifecycleState {
                     self.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Peer::Session].into(), open_reply: reply });
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
                 } else {
+                    self.open_reply = reply;
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), reply.into_iter().collect(), fx);
                 }
                 return;
