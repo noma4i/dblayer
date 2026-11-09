@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::Notify;
@@ -41,6 +40,7 @@ pub enum CableOutcome {
 struct Queue {
     events: VecDeque<SocketEvent>,
     ended: bool,
+    socket_closed: bool,
 }
 
 /// The bounded queue between the platform socket and the reader. It never blocks the platform: a full queue ends the connection.
@@ -100,6 +100,11 @@ impl Mailbox {
 
     pub(super) fn is_ended(&self) -> bool { crate::lock::acquire(&self.queue).ended }
 
+    fn is_socket_closed(&self) -> bool { crate::lock::acquire(&self.queue).socket_closed }
+
+    /// Marks the socket closed and says whether it was closed before.
+    fn close_socket_once(&self) -> bool { std::mem::replace(&mut crate::lock::acquire(&self.queue).socket_closed, true) }
+
     fn shut(&self) {
         {
             let mut queue = crate::lock::acquire(&self.queue);
@@ -138,19 +143,18 @@ impl CableEvents for Mailbox {
 pub(super) struct ForeignSocket {
     connection: Arc<dyn PlatformSocket>,
     mailbox: Arc<Mailbox>,
-    closed: AtomicBool,
 }
 
 impl ForeignSocket {
     pub(super) fn new(connection: Arc<dyn PlatformSocket>, mailbox: Arc<Mailbox>) -> Self {
         *crate::lock::acquire(&mailbox.connection) = Some(connection.clone());
-        let socket = Self { connection, mailbox, closed: AtomicBool::new(false) };
+        let socket = Self { connection, mailbox };
         if socket.mailbox.is_ended() { socket.shut(NORMAL); }
         socket
     }
 
     fn shut(&self, code: u16) {
-        if self.closed.swap(true, Ordering::SeqCst) { return; }
+        if self.mailbox.close_socket_once() { return; }
         crate::lock::assert_no_library_lock("PlatformSocket::close");
         self.connection.close(code, String::new());
     }
@@ -167,7 +171,7 @@ impl Drop for ForeignSocket {
 impl crate::transport::CableSocket for ForeignSocket {
     async fn send(&self, text: String) -> Result<(), TransportError> {
         crate::lock::assert_no_library_lock("PlatformSocket::send");
-        if self.closed.load(Ordering::SeqCst) || self.mailbox.is_ended() { return Err(TransportError::Interrupted("the cable socket is closed".into())); }
+        if self.mailbox.is_socket_closed() || self.mailbox.is_ended() { return Err(TransportError::Interrupted("the cable socket is closed".into())); }
         if crate::lock::effect(|| self.connection.send(text)) { Ok(()) } else { Err(TransportError::Network("the cable socket refused the text frame".into())) }
     }
 

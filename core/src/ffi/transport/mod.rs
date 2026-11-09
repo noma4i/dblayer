@@ -59,22 +59,27 @@ enum SignalTarget {
 
 /// The foreground registrations of one sink: a delivery counts only while its token is live, and revoking waits for the deliveries in flight.
 #[derive(Default)]
-pub(crate) struct Registrations { live: std::sync::RwLock<std::collections::BTreeSet<u64>>, next: std::sync::atomic::AtomicU64 }
+pub(crate) struct Registrations { live: std::sync::RwLock<Registered> }
+
+#[derive(Default)]
+struct Registered { tokens: std::collections::BTreeSet<u64>, next: u64 }
 
 impl Registrations {
     fn issue(&self) -> u64 {
-        let token = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(token);
+        let mut state = self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.next += 1;
+        let token = state.next;
+        state.tokens.insert(token);
         token
     }
 
-    fn revoke(&self, token: u64) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&token); }
+    fn revoke(&self, token: u64) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).tokens.remove(&token); }
 
-    pub(crate) fn revoke_all(&self) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); }
+    pub(crate) fn revoke_all(&self) { self.live.write().unwrap_or_else(std::sync::PoisonError::into_inner).tokens.clear(); }
 
     fn deliver(&self, token: u64, send: impl FnOnce()) {
-        let live = self.live.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if live.contains(&token) { send(); }
+        let state = self.live.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.tokens.contains(&token) { send(); }
     }
 }
 

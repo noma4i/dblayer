@@ -280,9 +280,8 @@ impl ReadStream {
 
     /// Takes the stream for one reader and returns its number or the reason the claim ended.
     pub async fn claim_reader(&self) -> ReadClaim {
-        static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let Some(life) = self.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
-        let reader = READERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let reader = crate::runtime::next_id(crate::runtime::Counter::Reader);
         if life.claim_reader(self.stream, reader).await { ReadClaim::Claimed { reader } } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
     }
 
