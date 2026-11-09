@@ -22,7 +22,7 @@ use crate::transport::answer_kind::transient_failure;
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
-use crate::transport::{NetworkPurpose, SessionCode, TransportError};
+use crate::transport::{NetworkPurpose, TransportError};
 
 struct Wire {
     id: String,
