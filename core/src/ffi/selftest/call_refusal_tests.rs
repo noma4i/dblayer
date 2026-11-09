@@ -69,6 +69,7 @@ async fn call_refusal_order_table() {
     let stand = Stand::new();
     let operations = [OPERATIONS[0], OPERATIONS[1], OPERATIONS[2], CREATE_MOMENT];
     let database = stand.open(None, &operations).await;
+    database.set_online(false).unwrap();
     let epoch = database.session_epoch();
     let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let directory = tempfile::tempdir().unwrap();
