@@ -58,6 +58,21 @@ pub(super) fn build_sources(stage: Option<WindowStage>) -> Twin {
 }
 
 #[test]
+fn win_rows_of_derived_at_open() {
+    let saved = Read::Saved { landed_at: NOW - 1_000, fresh_until: NOW + 300_000, stale: false, generation_ok: true };
+    let mut written = build_sources(Some(WindowStage::Idle));
+    assert_eq!(written.step(Input::SourceChanged { revision: 7 }), [Effect::DerivePreload { revision: 7 }], "a source write derives the RowsOf keys");
+    let mut opened = Twin::with_sources();
+    opened.hold.store(true, Ordering::SeqCst);
+    opened.watch();
+    let at_open = opened.step(Input::Read(saved));
+    assert!(at_open.iter().any(|effect| matches!(effect, Effect::DerivePreload { .. })), "open derives the RowsOf keys from the saved source, not only a Store commit");
+    opened.post(w::WindowsInput::RegisterOperations { now: NOW });
+    let (at_register, _) = opened.split(take(&opened.log));
+    assert!(at_register.iter().any(|effect| matches!(effect, Effect::DerivePreload { .. })), "RegisterOperations re-derives the RowsOf keys from the saved source");
+}
+
+#[test]
 fn win_nodes_empty() {
     let mut twin = Twin::new();
     let nodes = WindowKey::nodes("Moment", &[]);

@@ -377,6 +377,33 @@ fn win_landing_stale_generation_offline() {
 }
 
 #[test]
+fn win_register_in_flight_nothing() {
+    for state in ["opening", "loading", "landing", "waiting"] {
+        let mut twin = match state {
+            "opening" => { let mut t = Twin::new(); t.hold.store(true, Ordering::SeqCst); t.watch(); t }
+            "loading" => loading(),
+            "landing" => landing(),
+            "waiting" => waiting(),
+            _ => unreachable!(),
+        };
+        let before = twin.stage();
+        take(&twin.log);
+        twin.post(w::WindowsInput::RegisterOperations { now: NOW });
+        let (effects, outcomes) = twin.split(take(&twin.log));
+        assert!(effects.is_empty() && outcomes.is_empty(), "RegisterOperations leaves the request in flight untouched: {state}");
+        assert_eq!(twin.stage(), before, "the state is unchanged: {state}");
+        match state {
+            "opening" => { twin.step(Input::Read(Read::None)); twin.finish(None); }
+            "loading" => { twin.finish(None); }
+            "landing" => { twin.land(); }
+            "waiting" => { twin.step(Input::Online(true)); twin.finish(None); }
+            _ => unreachable!(),
+        }
+        assert_eq!(twin.stage(), Some(WindowStage::Idle), "the window lands after its request finishes: {state}");
+    }
+}
+
+#[test]
 fn win_loading_leave_forced_waiter() {
     let mut twin = Twin::new();
     let mut sent = requests(&twin.step(Input::Load { id: 1, goal: Goal::First, force: true }));
