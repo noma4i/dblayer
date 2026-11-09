@@ -169,6 +169,8 @@ pub enum StoreOp {
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
     UploadRoundError { key: String, error: Option<String> },
+    /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
+    UploadShown { key: String, shown: crate::owners::write::transfer::Shown },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
     UploadOrphan { upload_id: String, key: String },
     RemoveOrphan { upload_id: String },

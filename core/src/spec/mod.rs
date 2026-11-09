@@ -79,3 +79,4 @@ mod rounds_tests;
 mod transfer_prop_tests;
 mod transfer_wait_tests;
 mod transfer_pending_tests;
+mod transfer_shown_tests;

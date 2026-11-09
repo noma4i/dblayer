@@ -81,6 +81,21 @@ pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u
     Ok(())
 }
 
+fn shown_columns(shown: &crate::owners::write::transfer::Shown) -> (Option<String>, Option<String>, Option<String>) {
+    use crate::owners::write::transfer::Shown;
+    use crate::owners::write::upload::{UploadStage, UploadStatus};
+    let (status, stage) = match shown {
+        Shown::Copying => (UploadStatus::Preparing, Some(UploadStage::Prepare)),
+        Shown::WaitingSource => (UploadStatus::Waiting, Some(UploadStage::Prepare)),
+        Shown::Queued => (UploadStatus::Queued, Some(UploadStage::Prepare)),
+        Shown::Uploading { progress: 100.. } => (UploadStatus::Sending, Some(UploadStage::Mutation)),
+        Shown::Uploading { .. } => (UploadStatus::Uploading, Some(UploadStage::Part)),
+        Shown::Failed { .. } => (UploadStatus::Failed, None),
+        Shown::Gone => return (None, None, None),
+    };
+    (super::operation::enum_text(&status), stage.and_then(|stage| super::operation::enum_text(&stage)), shown.wait_reason().and_then(|reason| super::operation::enum_text(&reason)))
+}
+
 pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool, StoreError> {
     match op {
         StoreOp::Upload { row, kind } => put_upload(connection, row, *kind)?,
@@ -88,6 +103,11 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
         StoreOp::UploadRoundError { key, error } => {
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
+        }
+        StoreOp::UploadShown { key, shown } => {
+            let [model, id, action] = key_parts(key)?;
+            let (status, stage, wait) = shown_columns(shown);
+            connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait])?;
         }
         StoreOp::UploadBatch { batch_id, op_id, joint } => {
             connection.execute(include_str!("sql/upload_ops/apply_upload_insert_sync_upload_batch.sql"), params![i64::try_from(*batch_id).unwrap_or(i64::MAX), i64::try_from(*op_id).unwrap_or(i64::MAX), joint])?;
