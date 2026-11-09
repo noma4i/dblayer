@@ -475,11 +475,12 @@ impl TransferState {
                 (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
                 (None, None) => None,
             };
+            let rescheduled = !matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession);
             if let (StoreKind::UploadId, Some((upload_id, key))) = (pending.kind, minted) {
                 self.orphans.insert(upload_id, key);
-                self.send_orphans(false, fx);
+                if !rescheduled { self.send_orphans(false, fx); }
             }
-            if !matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession) {
+            if rescheduled {
                 self.owe_minted(&pending, fx);
             }
             return;
