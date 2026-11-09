@@ -438,6 +438,13 @@ impl Windows {
         }
     }
 
+    /// The RowsOf keys of a source window that rests with rows: one derivation for open, `RegisterOperations` and a source write.
+    pub(super) fn derive_source(state: &mut WindowsState, key: &WindowKey, out: &mut Effects<Self>) {
+        let Some(window) = state.windows.get(key).filter(|window| state.sources.contains(key) && window.stage() == WindowStage::Idle && window.machine.has_rows) else { return };
+        let revision = window.machine.store_seen;
+        Self::on(state, key, Ev::SourceChanged { revision }, out);
+    }
+
     pub(super) fn interest_passive(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
         state.ensure(&key, out);
         Self::on(state, &key, Ev::InterestPassive { id }, out);
@@ -538,6 +545,10 @@ impl StateOwner for Windows {
             WindowsInput::RegisterOperations { now } => {
                 state.operations_awaited = false;
                 Self::start_preload(state, now, &mut out);
+                let sources: Vec<WindowKey> = state.sources.iter().cloned().collect();
+                for key in sources {
+                    Self::derive_source(state, &key, &mut out);
+                }
             }
             WindowsInput::StoreCommitted { models, revision } => {
                 let keys: Vec<WindowKey> = state.windows.keys().cloned().collect();
@@ -576,6 +587,7 @@ impl StateOwner for Windows {
                 let saved = result.unwrap_or(None);
                 let emits = window.opened(saved, (&mut state.request_ids, &mut state.next_attempt));
                 Self::emitted(state, &key, emits, &mut out);
+                Self::derive_source(state, &key, &mut out);
             }
             WindowsInput::TaskFailed { id } if id & REQUEST_TASK != 0 => {
                 let (request, attempt) = task_request(id);
