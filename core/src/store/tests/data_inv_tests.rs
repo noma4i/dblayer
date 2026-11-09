@@ -34,7 +34,7 @@ fn inv_row_06_count_exists_and_first_follow_the_query() {
 
 pub(super) fn intent(op_id: u64) -> StoreOp {
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
-    StoreOp::Intent { op_id, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }
+    StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn transfer_effects_become_intent_without_reapplying_or_losing_prior() {
     let state: String = db.read_locked(|connection| connection.query_row("SELECT intent_state FROM op WHERE seq = 5", [], |row| row.get(0))).unwrap();
     assert_eq!(state, "effects_only");
     assert_eq!(texts(&db, &Query::new("moments")), vec![json!("edit")]);
-    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Intent { op_id, model, row_id, action, payload, effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: 1 } }]);
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model, row_id, action, payload, effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: 1 } }]);
     let state: String = db.read_locked(|connection| connection.query_row("SELECT intent_state FROM op WHERE seq = 5", [], |row| row.get(0))).unwrap();
     assert_eq!(state, "ready");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id }]);
@@ -128,7 +128,7 @@ fn store_retry_preserves_transfer_outcome() {
     };
     write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Upload { row, kind: UploadKind::Failed }]);
     let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin: IntentOrigin::Transfer { transfer_id: 3 } }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model, row_id, action, payload, effects, origin: IntentOrigin::Transfer { transfer_id: 3 } }]);
     let first = OutboxOutcome::Failed { error: "refused".into() };
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: first.clone() }]);
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::MarkError { op_id: 5, error: None }, StoreOp::Attempt { op_id: 5, attempts: 1, cycle_id: 2 }]);
@@ -419,7 +419,7 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
     let temp = crate::identity::RowId::generate_temp(None).to_string();
     let values = json!({"id": temp, "userId": "u1", "text": "a"}).to_string();
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "a"}));
     let answer = crate::owners::store::RowValue { row_id: "m9".into(), values: json!({"id": "m9", "userId": "u1", "text": "a"}).to_string() };
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![
@@ -435,7 +435,7 @@ pub(super) fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
     let temp = crate::identity::RowId::generate_temp(None).to_string();
     let values = json!({"id": temp, "userId": "u1", "text": text}).to_string();
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
-    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     temp
 }
 
@@ -484,7 +484,7 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     append(&db, "b", &second);
     let leave = crate::owners::store::EffectMember { model: "moments".into(), list: "feed".into(), row_id: "b".into(), order_key: String::new(), leave: true };
     let effects = IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "b".into() }], members: vec![leave], ..Default::default() };
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     put(&db, "moments", json!({"id": "x", "userId": "u1", "text": "x"}));
     append(&db, "x", &second);
     write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::RollBack { op_id: 3 }, StoreOp::RemoveIntent { op_id: 3 }]);
@@ -504,7 +504,7 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
         let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     }
     let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
     let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();
@@ -522,7 +522,7 @@ fn candidates_of_one_event_row(unrelated: u64) -> usize {
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
     let db = Arc::new(Store::open_models(None, specs, None).unwrap());
     for op_id in 0..unrelated {
-        let intent = StoreOp::Intent { op_id: 100 + op_id, model: "users".into(), row_id: format!("u{op_id}"), action: "edit".into(), payload: "{}".into(), effects: IntentEffects::default(), origin: crate::owners::store::IntentOrigin::Api };
+        let intent = StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 100 + op_id, model: "users".into(), row_id: format!("u{op_id}"), action: "edit".into(), payload: "{}".into(), effects: IntentEffects::default(), origin: crate::owners::store::IntentOrigin::Api };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent]);
     }
     sent_create(&db, 1, "one");

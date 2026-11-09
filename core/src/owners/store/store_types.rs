@@ -146,7 +146,7 @@ pub enum StoreOp {
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.
-    Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin },
+    Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin, attempts: u32, cycle_id: u64 },
     Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
     TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.

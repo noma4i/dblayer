@@ -82,7 +82,7 @@ fn data_sets_swap() {
 
 fn intent_creating(db: &Arc<Store>, op_id: u64, row: &RowValue) {
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "messages".into(), row_id: row.row_id.clone(), values: row.values.clone() }], ..Default::default() };
-    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id, model: "messages".into(), row_id: row.row_id.clone(), action: "react".into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: "messages".into(), row_id: row.row_id.clone(), action: "react".into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
 }
 
 #[test]

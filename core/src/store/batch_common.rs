@@ -64,9 +64,12 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
         StoreOp::Show { .. } => {}
-        StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin } => {
+        StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin, attempts, cycle_id } => {
             results.push(super::intent_write::intent(writer, *op_id, (model, row_id, action), payload, effects, false)?);
             super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
+            let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+            let cycle_id = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
+            if writer.connection.execute(include_str!("sql/batch_common/intent_attempts.sql"), rusqlite::params![seq, i64::from(*attempts), cycle_id])? != 1 { return Err(StoreError::Constraint("the intent was not written".into())); }
         }
         StoreOp::Effects { op_id, model, row_id, action, payload, effects } => {
             use rusqlite::OptionalExtension;

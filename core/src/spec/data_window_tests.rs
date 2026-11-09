@@ -272,7 +272,7 @@ fn created_window_membership_uses_the_committed_window() {
         roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
     }]);
     let row_id = planned.row_id.to_string();
-    commit(BatchAuthor::Outbox, vec![StoreOp::Intent {
+    commit(BatchAuthor::Outbox, vec![StoreOp::Intent { attempts: 1, cycle_id: 1,
         op_id: 1, model: "Moment".into(), row_id: row_id.clone(), action: "create".into(),
         payload: "{}".into(), effects: planned.effects, origin: crate::owners::store::IntentOrigin::Api,
     }]);

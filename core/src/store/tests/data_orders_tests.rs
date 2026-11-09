@@ -72,7 +72,7 @@ fn data_orders_real_row_around_the_create_answer_and_the_file() {
                 Create => {
                     let values = json!({"id": temp, "userId": "u1", "text": "a"}).to_string();
                     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
-                    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }]);
+                    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }]);
                 }
                 Attach => write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![attach(&temp, vec![7; 40])]),
                 Real => put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "a"})),
@@ -181,7 +181,7 @@ fn data_orders_equal_keys_in_every_insertion_order() {
 
 fn intent_on(op_id: u64, row_id: &str) -> StoreOp {
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: row_id.into(), values: json!({"id": row_id, "userId": "u1", "text": format!("edit{op_id}")}).to_string() }], ..Default::default() };
-    StoreOp::Intent { op_id, model: "moments".into(), row_id: row_id.into(), action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }
+    StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: "moments".into(), row_id: row_id.into(), action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn data_orders_removed_member_and_a_reused_order_key() {
                 Remove => {
                     let leave = crate::owners::store::EffectMember { model: "moments".into(), list: "feed".into(), row_id: "b".into(), order_key: String::new(), leave: true };
                     let effects = IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "b".into() }], members: vec![leave], ..Default::default() };
-                    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }]);
+                    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }]);
                 }
                 Reuse => append("x", &second),
                 Restore => write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::RollBack { op_id: 3 }, StoreOp::RemoveIntent { op_id: 3 }]),

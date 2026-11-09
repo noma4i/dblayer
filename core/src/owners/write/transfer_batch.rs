@@ -130,7 +130,7 @@ impl TransferState {
         let op_id = if joint { entry.and_then(|entry| entry.op_id) } else { transfer.op_id };
         let Some(op_id) = op_id else { return };
         let origin = match (joint, group) { (true, Some(batch_id)) => IntentOrigin::TransferGroup { batch_id, transfer_ids: ids.to_vec() }, (false, _) => IntentOrigin::Transfer { transfer_id: first }, (true, None) => return };
-        let op = StoreOp::Intent { op_id, model: op.model.clone(), row_id: op.row_id.clone(), action: op.action.clone(), payload: op.body.clone(), effects: Default::default(), origin };
+        let op = StoreOp::Intent { op_id, model: op.model.clone(), row_id: op.row_id.clone(), action: op.action.clone(), payload: op.body.clone(), effects: Default::default(), origin, attempts: 1, cycle_id: 1 };
         let batch_id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(batch_id, Pending { ids: ids.to_vec(), kind: StoreKind::BatchIntent, orphan: None });

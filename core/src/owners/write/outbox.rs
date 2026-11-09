@@ -215,6 +215,8 @@ impl OutboxState {
         let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
                 op_id,
+                attempts: operation.attempts,
+                cycle_id: operation.cycle_id,
                 model: operation.op.model.clone(),
                 row_id: operation.op.row_id.clone(),
                 action: operation.op.action.clone(),
