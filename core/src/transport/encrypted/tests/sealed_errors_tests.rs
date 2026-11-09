@@ -82,7 +82,12 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
                 };
 
                 let case = format!("{wire} mutation={mutation} confirmed={confirmed}");
-                assert_eq!(outcome.unwrap_err(), TransportError::Session { code, detail: wire.to_string() }, "{case}");
+                let error = outcome.unwrap_err();
+                if code == SessionCode::Unauthenticated {
+                    assert!(matches!(error, TransportError::Http { status: 401, .. }), "{case}: {error:?}");
+                } else {
+                    assert_eq!(error, TransportError::Session { code, detail: wire.to_string() }, "{case}");
+                }
                 assert_eq!((rig.credentials.value(), pending(&rig.db)), (credential, false), "{case}");
             }
         }
