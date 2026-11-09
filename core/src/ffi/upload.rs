@@ -164,8 +164,8 @@ impl Database {
         Ok(Joint { minimum: batch.min, maximum: batch.max, items_key, mutation: template, renumber })
     }
 
-    async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
-        match self.await_life(waiter).await? {
+    async fn transfer_answer(&self, epoch: u64, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
+        match self.in_epoch(epoch, "upload", self.await_life(waiter)).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) => Err(refused(fault, what)),
             LifeReply::Transfer(answer) => Ok(answer),
             _ => Err(super::database::foreign_reply()),
@@ -185,7 +185,7 @@ impl Database {
         let database = self.me.upgrade().ok_or_else(super::command::closed)?;
         let (name, verb, target) = (model.clone(), action.clone(), row.clone());
         let source = self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?;
-        match self.transfer_answer(self.life.supply_source(epoch, key_of(&model, row.as_str(), &action), source), "supply source").await? {
+        match self.transfer_answer(epoch, self.life.supply_source(epoch, key_of(&model, row.as_str(), &action), source), "supply source").await? {
             TransferAnswer::Ok => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }
@@ -193,7 +193,7 @@ impl Database {
 
     pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> {
         let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
-        match self.transfer_answer(self.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
+        match self.transfer_answer(epoch, self.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
             TransferAnswer::Ok => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }
@@ -208,7 +208,7 @@ impl Database {
         let effects = self.offload(move || Ok(db.plan_act(&name, &verb, &target, Map::new(), args)?.effects)).await?;
         let item = self.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.life.now());
-        let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
+        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value))
     }
@@ -236,7 +236,7 @@ impl Database {
         let built: Vec<BatchItem> = planned.iter().map(|(_, _, built)| built.clone()).collect();
         let joint = self.joint_of(&model, &request)?;
         let waiter = self.life.accept_upload_batch(epoch, built, joint, self.life.now());
-        let TransferAnswer::Receipts(held) = self.transfer_answer(waiter, "upload batch").await? else { return Err(DbError::Internal { detail: "the owner answered a batch with no receipts".into() }) };
+        let TransferAnswer::Receipts(held) = self.transfer_answer(epoch, waiter, "upload batch").await? else { return Err(DbError::Internal { detail: "the owner answered a batch with no receipts".into() }) };
         let mut items = Vec::new();
         for ((item, planned, _), held) in planned.into_iter().zip(held) {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
@@ -250,7 +250,7 @@ impl Database {
         let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         if self.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
         let waiter = self.life.cancel_upload(epoch, key_of(&model, &row, &action));
-        match self.transfer_answer(waiter, "cancel upload").await? {
+        match self.transfer_answer(epoch, waiter, "cancel upload").await? {
             TransferAnswer::Cancelled(cancelled) => Ok(cancelled),
             _ => Err(DbError::Internal { detail: "the owner answered a cancel with no result".into() }),
         }
@@ -268,7 +268,7 @@ impl Database {
         let single = self.single_of(&request.model, &upload.action, &file)?;
         let item = self.single_upload((&request.model, planned.row_id.as_str(), &upload.action), single, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.life.now());
-        let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
+        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&request.model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {} is not shown", planned.row_id, request.model) })?;
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
     }
@@ -283,7 +283,7 @@ impl Database {
             Some(self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?)
         } else { None };
         let waiter = self.life.retry_upload(epoch, key_of(&model, row.as_str(), &action), source);
-        let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
+        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value))
     }
@@ -291,7 +291,7 @@ impl Database {
     /// `discard` of the transfer of an action.
     pub(super) async fn discard_transfer(&self, epoch: u64, model: &str, row: &str, action: &str) -> Result<(), DbError> {
         let waiter = self.life.discard_upload(epoch, key_of(model, row, action));
-        self.transfer_answer(waiter, "discard").await.map(drop)
+        self.transfer_answer(epoch, waiter, "discard").await.map(drop)
     }
 
     /// The outcome of the receipt of a transfer.

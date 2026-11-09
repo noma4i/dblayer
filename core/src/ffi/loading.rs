@@ -267,7 +267,7 @@ impl Database {
         let LifeReply::Window(outcome) = reply? else { return Err(super::database::foreign_reply()) };
         match *outcome {
             WindowOutcome::Loaded { has_more, fetched, .. } => {
-                if !self.admits(call.epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
+                if let Some(cause) = self.admission_end(call.epoch) { return Err(super::cause_error(&cause)); }
                 Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore })
             }
             WindowOutcome::Failed { failure } => Err(failure),

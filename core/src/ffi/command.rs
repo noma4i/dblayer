@@ -33,9 +33,9 @@ impl Database {
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current, and a result read after the epoch moved is not returned.
     pub(super) async fn in_epoch<T>(&self, epoch: u64, _target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         self.account_call(epoch)?;
-        let result = work.await?;
-        if !self.admits(epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
-        Ok(result)
+        let result = work.await;
+        if let Some(cause) = self.admission_end(epoch) { return Err(super::cause_error(&cause)); }
+        result
     }
 
     /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.
@@ -47,9 +47,8 @@ impl Database {
         let value = self.in_epoch(epoch, target, work).await;
         crate::runtime::release_holds();
         drop(kept);
-        let value = value?;
-        if !answer.admits(epoch) { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
-        Ok(value)
+        if let Some(cause) = answer.admission_end(epoch) { return Err(super::cause_error(&cause)); }
+        value
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {
@@ -62,7 +61,15 @@ impl Database {
     }
 
     /// Whether the epoch is still the one the receipt belongs to.
-    pub(super) fn admits(&self, epoch: u64) -> bool { self.life.verdict(epoch) == crate::owners::life::CallVerdict::Pass }
+    pub(super) fn admission_end(&self, epoch: u64) -> Option<super::EndCause> {
+        use crate::owners::life::CallVerdict;
+        match self.life.verdict(epoch) {
+            CallVerdict::Pass => None,
+            CallVerdict::Closed => Some(super::EndCause::Closed),
+            CallVerdict::Refuse(crate::owners::calls::CallError::Storage) => Some(super::EndCause::Storage { error: "the database could not save its state".into() }),
+            CallVerdict::Refuse(_) => Some(super::EndCause::SessionEnded),
+        }
+    }
 
     /// A call that holds no future: refused when the epoch of the caller is not current.
     pub(super) fn admit_now(&self, epoch: u64) -> Result<(), DbError> {
