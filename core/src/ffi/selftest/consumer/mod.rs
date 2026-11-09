@@ -14,3 +14,4 @@ mod universal_properties_tests;
 mod stream_lifecycle_tests;
 mod crash_image_tests;
 mod mode_axis_tests;
+mod window_page_tail_tests;
