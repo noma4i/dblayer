@@ -369,6 +369,28 @@ fn xfer_minted_write_other() {
     }
 }
 
+/// xfer_minted_write_other_no_abort (K1, D-192, transfer.md:201, 459): the minted upload_id of a LIVE transfer
+/// is written to Store, and that write is Rejected(Invalid | StaleGeneration) while online. The upload_id is not
+/// an orphan yet: the transfer stays alive and the rewrite is scheduled. No abort may leave before the row says
+/// the upload is an orphan; the abort is owed only after a removal records it. Prod inserts the live id into
+/// orphans and sends the abort at once (send_orphans while online), deleting the server multipart of a transfer
+/// that keeps uploading.
+#[test]
+fn xfer_minted_write_other_no_abort() {
+    for reason in [RejectReason::Invalid, RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 0 }] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        let out = minted(&mut twin, id, "u1");
+        assert_eq!(out.writes(), 1, "{reason:?}: the minted id of the live transfer is written");
+        let refused = twin.reject(reason.clone());
+        assert_eq!(
+            (refused.orphan_aborts(), refused.aborts(), refused.timers, twin.t(id).upload_id.as_deref()),
+            (Vec::<String>::new(), 0, 1, Some("u1")),
+            "{reason:?}: no abort leaves for the live upload, the debt is kept and scheduled: {refused:?}",
+        );
+    }
+}
+
 /// xfer_minted_write_retry (P-XFER-41, D-192): the tick of a refused write sends the write again with the current row, and Committed of the repeat settles the debt and keeps the id durable.
 #[test]
 fn xfer_minted_write_retry() {
