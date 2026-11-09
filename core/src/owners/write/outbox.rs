@@ -64,6 +64,8 @@ pub struct OutboxState {
     /// Restored operations that wait for `RestoreReady` to write their next attempt.
     pub(super) deferred: Vec<OpId>,
     pub(super) waiting: BTreeMap<OpId, (StoredOp, bool)>,
+    pub(super) removed: BTreeSet<OpId>,
+    pub(super) removing: BTreeSet<OpId>,
     pub(super) aliases: BTreeMap<(String, String), String>,
     pub(super) copying: BTreeMap<u64, (ReplyId, LocalCall, Time)>,
     pub(super) next_copy: u64,
@@ -110,6 +112,8 @@ impl OutboxState {
             declarations: BTreeSet::new(),
             deferred: Vec::new(),
             waiting: BTreeMap::new(),
+            removed: BTreeSet::new(),
+            removing: BTreeSet::new(),
             aliases: BTreeMap::new(),
             copying: BTreeMap::new(),
             next_copy: 1,
@@ -150,7 +154,7 @@ impl OutboxState {
         if !self.online {
             return;
         }
-        let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued).map(|operation| operation.op_id).collect();
+        let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued && !self.removed.contains(&operation.op_id)).map(|operation| operation.op_id).collect();
         for op_id in queued {
             self.try_start(op_id, fx);
         }
@@ -240,7 +244,8 @@ impl OutboxState {
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
             CommitKind::Requeue => vec![StoreOp::Requeue { op_id }],
-            CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
+            CommitKind::RemoveRow => vec![StoreOp::RemoveIntent { op_id }, StoreOp::ReleasePendingOwner { request_id: operation.request_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
+            CommitKind::LocalWrite => Vec::new(),
         };
         let terminal = match kind {
             CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone(), row_id: None }),
@@ -564,7 +569,7 @@ impl OutboxState {
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
             OutboxInput::RowsGone { ops } => self.rows_gone(ops, fx),
-            OutboxInput::RowRemoved { .. } => {}
+            OutboxInput::RowRemoved { model, row_id, .. } => self.row_removed(&model, &row_id, fx),
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
             OutboxInput::Tick(_) => {}

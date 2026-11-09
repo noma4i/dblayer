@@ -153,7 +153,7 @@ impl OutboxState {
                 }
             }
             OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
-            held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. }) => self.held.push(held),
+            held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. } | OutboxInput::RowRemoved { .. }) => self.held.push(held),
             held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
             OutboxInput::ModelsReset(reset) => {

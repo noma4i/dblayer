@@ -200,7 +200,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }
             StoreEffect::DisarmExpiry { epoch, model, row_id } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::DisarmExpiry { model, row: row_id }),
             StoreEffect::ArmReset { epoch, reset } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmReset { reset }),
-            StoreEffect::RowsRemoved { epoch, rows, revision } => for (model, row_id) in rows { wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::RowRemoved { model, row_id, revision }); },
+            StoreEffect::RowsRemoved { epoch, rows, revision } => for (model, row_id) in rows { wiring.to_outbox_at(EpochStamp::Epoch(epoch), OutboxInput::RowRemoved { model, row_id, revision }); },
             StoreEffect::OperationsGone { epoch, ops } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::RowsGone { ops }),
             StoreEffect::BroadcastCommitted(notice) => wiring.tell_committed(notice),
             StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),

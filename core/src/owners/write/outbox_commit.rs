@@ -33,6 +33,17 @@ impl OutboxState {
 
     pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
+        if kind == CommitKind::RemoveRow && self.removed.remove(&op_id) {
+            self.removing.remove(&op_id);
+            if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
+            self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
+            self.finish(op_id, OutboxOutcome::Discarded, true, fx);
+            return;
+        }
+        if self.removed.contains(&op_id) {
+            self.remove_row_operation(op_id, fx);
+            return;
+        }
         match (kind, stage) {
             (CommitKind::Intent, Stage::Submitting) => {
                 let shown = shown.into_iter().last().flatten();
@@ -166,6 +177,19 @@ impl OutboxState {
 
     pub(super) fn operation_rejected(&mut self, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
+        if self.removed.contains(&op_id) {
+            if kind == CommitKind::RemoveRow { self.removing.remove(&op_id); }
+            match reason {
+                RejectReason::NoSession | RejectReason::Closed => {
+                    self.removed.remove(&op_id);
+                    self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
+                    self.finish(op_id, OutboxOutcome::Interrupted, false, fx);
+                }
+                RejectReason::Storage(_) => self.retry_timer(op_id, fx),
+                _ => self.remove_row_operation(op_id, fx),
+            }
+            return;
+        }
         let ours = matches!(
             (kind, stage),
             (CommitKind::Intent, Stage::Submitting)

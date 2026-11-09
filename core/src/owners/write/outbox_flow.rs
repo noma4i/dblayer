@@ -32,6 +32,7 @@ impl OutboxState {
     }
 
     pub(super) fn on_response(&mut self, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+        if self.removed.contains(&op_id) { return; }
         let Answered { rows, swaps, stale, result, missing } = answer;
         self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
@@ -54,6 +55,7 @@ impl OutboxState {
     }
 
     pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, fx: &mut Effects<Outbox>) {
+        if self.removed.contains(&op_id) { return; }
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
@@ -78,6 +80,9 @@ impl OutboxState {
     pub(super) fn retry_due(&mut self, op_id: OpId, cycle_id: u64, fx: &mut Effects<Outbox>) {
         if self.ops.get(&op_id).is_none_or(|operation| operation.cycle_id != cycle_id) {
             return;
+        }
+        if self.removed.contains(&op_id) {
+            return self.remove_row_operation(op_id, fx);
         }
         if self.stage_of(op_id) == Some(Stage::Sending) && !self.ops[&op_id].waiting_retry {
             return;
@@ -206,6 +211,21 @@ impl OutboxState {
         }
     }
 
+    pub(super) fn row_removed(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
+        let ids: Vec<_> = self.ops.values().filter(|operation| operation.stage != Stage::Done && operation.op.model == model && operation.op.row_id == row).map(|operation| operation.op_id).collect();
+        for op_id in ids {
+            self.removed.insert(op_id);
+            self.waiting.remove(&op_id);
+            self.remove_row_operation(op_id, fx);
+        }
+    }
+
+    pub(super) fn remove_row_operation(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, .. } if *id == op_id)) { return; }
+        self.removing.insert(op_id);
+        self.store(op_id, CommitKind::RemoveRow, fx);
+    }
+
     pub(super) fn outcome(&mut self, receipt: Receipt, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if receipt.epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
@@ -295,6 +315,7 @@ impl OutboxState {
         use crate::owners::contract::ErrorClass;
         use crate::owners::session::AuthorOutcome;
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
+        if self.removed.contains(&op_id) { return; }
         match outcome {
             AuthorOutcome::Response(body) => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
