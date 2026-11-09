@@ -120,7 +120,7 @@ impl Calls {
             Input::RetryDue { call_id, attempt } => self.retry(call_id, attempt, &mut out),
             Input::Deadline { call_id } => {
                 if let Some(CallState::Sending { request_id, kind, .. }) = self.state(call_id) {
-                    let error = self.retries.get(&call_id).map_or(Fail::Network, |entry| entry.1.clone());
+                    let error = self.retries.get(&call_id).map(|entry| entry.1.clone()).filter(|error| *error != Fail::Dropped).unwrap_or(Fail::Network);
                     out.effects.push(if kind == Kind::Query { Effect::Cancel { request_id, kind } } else { Effect::Release { request_id } });
                     self.done(call_id, Err(error), &mut out);
                 }
