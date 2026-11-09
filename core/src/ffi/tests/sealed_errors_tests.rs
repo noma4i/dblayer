@@ -84,7 +84,9 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     if code == SessionCode::Unauthenticated {
                         assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
                     } else {
-                        assert_eq!(session(error), (code, wire.to_string()), "{case}");
+                        let (got, detail) = session(error);
+                        let refusal = serde_json::from_str::<serde_json::Value>(&detail).ok().and_then(|body| body["error"].as_str().map(str::to_string));
+                        assert_eq!((got, refusal.as_deref()), (code, Some(wire)), "{case}: the error carries the refusal body unchanged, got {detail:?}");
                     }
                     assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential.clone(), 0), "{case}");
                 }
