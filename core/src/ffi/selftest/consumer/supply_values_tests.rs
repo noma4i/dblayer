@@ -20,6 +20,7 @@ fn row_of(stand: &Stand, id: &str) -> Value {
 async fn consumer_supplied_values_reach_the_row_before_the_blob_transfer() {
     for mode in ["single", "batch"] {
         let stand = Stand::open().await;
+        stand.script_put(200, Some("etag"));
         let database = &stand.database;
         let epoch = database.session_epoch();
         stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());

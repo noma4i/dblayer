@@ -8,6 +8,8 @@ use crate::ffi::{ReadRequest, ReadValue, WireOperationOutcome};
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
     let stand = Stand::open().await;
+    stand.script_put(200, Some("etag"));
+    stand.script_put(200, Some("etag"));
     let database = &stand.database;
     let epoch = database.session_epoch();
     let items = (0..3).map(|index| WireUploadItem {

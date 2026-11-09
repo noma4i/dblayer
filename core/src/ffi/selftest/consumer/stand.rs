@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::{json, Value};
@@ -18,6 +18,7 @@ pub(super) const OPERATIONS: &str = include_str!("../../../../tests/corpus/consu
 struct Cable {
     peer: CablePeer,
     puts: StdMutex<Vec<String>>,
+    put_script: StdMutex<VecDeque<(u16, Option<String>)>>,
     hold_put: std::sync::atomic::AtomicBool,
     put_started: tokio::sync::watch::Sender<usize>,
     put_release: tokio::sync::Notify,
@@ -29,11 +30,14 @@ impl FakeTransport for Cable {
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, progress: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> {
-        self.puts.lock().unwrap().push(file.path);
+        self.puts.lock().unwrap().push(file.path.clone());
         progress.sent(2);
         crate::lock::effect(|| self.put_started.send_modify(|count| *count += 1));
         if self.hold_put.swap(false, std::sync::atomic::Ordering::SeqCst) { self.put_release.notified().await; }
-        Ok(crate::ffi::PutReply { status: 200, etag: Some("etag".into()) })
+        match self.put_script.lock().unwrap().pop_front() {
+            Some((status, etag)) => Ok(crate::ffi::PutReply { status, etag }),
+            None => panic!("unscripted PUT for {}", file.path),
+        }
     }
 }
 
@@ -147,7 +151,7 @@ impl Stand {
         let clock = crate::ffi::TestClock::new(1_000_000);
         let mut peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
         if let Some(contract) = contract { peer = peer.with_contract(contract, clock.manual()); }
-        let cable = Arc::new(Cable { peer, puts: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
+        let cable = Arc::new(Cable { peer, puts: StdMutex::default(), put_script: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, clock.clone())).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
@@ -182,6 +186,9 @@ impl Stand {
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
 
     pub(super) fn puts(&self) -> usize { self.cable.puts.lock().unwrap().len() }
+
+    /// The next PUT the storage receives answers with `status` and `etag`; an unscripted PUT fails the test.
+    pub(super) fn script_put(&self, status: u16, etag: Option<&str>) { self.cable.put_script.lock().unwrap().push_back((status, etag.map(str::to_string))); }
 
     pub(super) fn hold_put(&self) { self.cable.hold_put.store(true, std::sync::atomic::Ordering::SeqCst); }
 
