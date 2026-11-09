@@ -62,15 +62,19 @@ pub fn submit(s: &mut State, epoch: Epoch, spec: &OpSpec, flags: &SubmitFlags, e
     if spec.destroy {
         if let Some(cid) = unsent_create {
             row(e, "out_destroy_unsent_create");
-            e.push(Effect::Store { op: id, what: "Commit{remove intents of create and later operations of the row,rollback effects}" });
-            let behind: Vec<OpId> = s.ops.values().filter(|o| o.model == op.model && o.row_id == op.row_id && o.id >= cid && o.stage == Stage::Queued).map(|o| o.id).collect();
-            for b in behind {
-                let mut dead = s.ops.remove(&b).unwrap();
-                finish(&mut dead, Outcome::Discarded, e);
-                s.ops.insert(b, dead);
+            op.cancels = Some(cid);
+            op.stage = Stage::Submitting;
+            op.submit_reply = true;
+            let chain: Vec<OpId> = s.ops.values().filter(|o| o.model == op.model && o.row_id == op.row_id && o.id >= cid && o.stage != Stage::Done).map(|o| o.id).collect();
+            for member in chain {
+                let mut other = s.ops.remove(&member).unwrap();
+                other.cancels = Some(cid);
+                other.cause = Cause::Discard;
+                other.stage = Stage::RollingBack;
+                other.waiting_retry = false;
+                s.ops.insert(member, other);
             }
-            reply(e, Addr::Call, id, "Receipt{Confirmed}");
-            finish(&mut op, Outcome::Confirmed, e);
+            e.push(Effect::Store { op: cid, what: "Commit{Rollback,remove intents of create and later operations,no Tombstone}" });
             s.ops.insert(id, op);
             return;
         }

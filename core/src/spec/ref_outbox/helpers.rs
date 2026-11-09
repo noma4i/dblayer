@@ -108,7 +108,7 @@ pub fn blank_op(id: OpId, spec: &OpSpec) -> Op {
         waiting_retry: false, keep: spec.keep, effects_empty: spec.effects_empty, destroy: spec.destroy, response_ignore: spec.response_ignore,
         batch: spec.batch, error: None, cause: Cause::Refusal, deferred: false, restored: false, ever_sent: false, cycle_sent: false,
         pending_owned: false, release_sent: false, submit_reply: false, retry_waiter: 0, swap: None, discard_waiters: Vec::new(), outcome_waiters: 0,
-        item: None, land: LandFacts::default(), outcome: None,
+        item: None, land: LandFacts::default(), outcome: None, cancels: None,
     }
 }
 
@@ -139,4 +139,19 @@ pub fn release_if_owned(op: &mut Op, e: &mut Vec<Effect>) {
 /// Earlier operation of the same row in Failed.
 pub fn behind_failed(s: &State, op: &Op) -> bool {
     s.ops.values().any(|o| o.model == op.model && o.row_id == op.row_id && o.id < op.id && o.stage == Stage::Failed)
+}
+
+/// A `destroy` cancelling an unsent `create` confirms once that create's rollback commits; the later operations of the chain end `Discarded`.
+pub fn finish_cancelled(s: &mut State, created: OpId, e: &mut Vec<Effect>) {
+    let members: Vec<OpId> = s.ops.values().filter(|o| o.id != created && o.cancels == Some(created)).map(|o| o.id).collect();
+    for member in members {
+        let mut op = s.ops.remove(&member).unwrap();
+        if op.stage == Stage::Submitting {
+            if op.submit_reply { reply(e, Addr::Call, op.id, "Receipt"); op.submit_reply = false; }
+            finish(&mut op, Outcome::Confirmed, e);
+        } else {
+            finish(&mut op, Outcome::Discarded, e);
+        }
+        s.ops.insert(member, op);
+    }
 }

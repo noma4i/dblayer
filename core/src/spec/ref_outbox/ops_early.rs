@@ -7,6 +7,7 @@ fn foreign(e: &mut Vec<Effect>) { row(e, "rule_R2_foreign"); }
 
 pub fn submitting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     match i {
+        Input::Committed { .. } if op.cancels.is_some() => foreign(e),
         Input::Committed { .. } => {
             row(e, "out_submitting_committed_revision");
             let out = goes_out(s, op) && slot_free(s);

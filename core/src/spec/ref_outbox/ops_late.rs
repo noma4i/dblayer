@@ -50,7 +50,7 @@ pub fn landing(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     }
 }
 
-pub fn rolling_back(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
+pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     match i {
         Input::Committed { .. } => {
             let (o, id) = match op.cause {
@@ -63,6 +63,7 @@ pub fn rolling_back(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>)
             for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, "Ok"); }
             if op.cause != Cause::DiscardRestoreFailed { transfer_outcome(op, o, e); }
             finish(op, o, e);
+            if op.cancels == Some(op.id) { finish_cancelled(s, op.id, e); }
         }
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_rollback_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{Rollback,basis=generations}" }); }
         Input::Rejected { reason: Reason::NoSession, .. } => {

@@ -205,6 +205,7 @@ pub struct Op {
     pub item: Option<RestoreItem>,
     pub land: LandFacts,
     pub outcome: Option<Outcome>,
+    pub cancels: Option<OpId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
