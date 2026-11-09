@@ -210,7 +210,7 @@ impl MockTransport {
 
     async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
-        let pair = request.wire.map(|wire| Request::from_wire(&format!("{:?}", wire.author), &json!({ "requestId": wire.request_id.to_string(), "sequence": null, "body": { "operationName": request.operation_name, "variables": request.variables } })));
+        let pair = request.wire.map(|wire| Request::from_wire(&format!("{:?}", wire.author), &json!({ "requestId": wire.request_id.to_string(), "sequence": null, "body": { "operationName": request.operation_name, "variables": request.variables, "query": request.document } })));
         let repeated = pair.as_ref().and_then(|pair| match self.lock().contract.admit(pair) {
             Admission::Stored(reply) => Some(reply),
             Admission::TwoBodies => panic!("the pair {} went with two bodies: {} {}", pair.request_id, request.operation_name, request.variables),

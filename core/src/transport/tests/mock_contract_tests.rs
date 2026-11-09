@@ -58,3 +58,16 @@ async fn mock_contract_operation_put_and_extensions_rows() {
     };
     assert!(matches!(mock.put(request).await, Err(TransportError::Unscripted(_))), "a PUT nobody scripted is refused");
 }
+
+/// P-SESS-23, sess_pair_document_diff: the pair carries the document in its body, so a second attempt of the same id and variables with another document is two bodies, not a repeat.
+#[tokio::test(flavor = "multi_thread")]
+async fn sess_pair_document_diff() {
+    let mock = MockTransport::new();
+    mock.enqueue("Ping", Reply::data(json!(1)));
+    let first = GraphQLRequest::new("query Ping { a }", "Ping", json!({ "n": 1 })).by(super::WireIds::new(super::Author::Outbox, 1, 1));
+    assert_eq!(mock.mutate(first).await.unwrap().data, Some(json!(1)), "the first body of the pair is answered");
+    let second = GraphQLRequest::new("query Ping { b }", "Ping", json!({ "n": 1 })).by(super::WireIds::new(super::Author::Outbox, 1, 2));
+    let mock = mock.clone();
+    let outcome = tokio::spawn(async move { mock.mutate(second).await }).await;
+    assert!(outcome.is_err(), "sess_pair_document_diff: a second document under one pair is two bodies, not the stored reply: {outcome:?}");
+}
