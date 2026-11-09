@@ -99,7 +99,7 @@ async fn matrix_write_path_kind() {
         ("mood", json!("loud"), json!("loud"), Some(json!(5))),
         ("fallback", json!("z"), json!("z"), Some(json!(5))),
         ("tags", json!(["a", "b"]), json!(["a", "b"]), Some(json!("a"))),
-        ("note", json!("n"), json!("n"), Some(json!(5))),
+        ("note", json!("n"), Value::Null, None),
         ("box", json!({"label": "L", "inner": {"depth": 2, "leaf": {"value": "v"}}}), json!(["L", null, [2, ["v"]]]), Some(json!({"label": 5}))),
         ("boxes", json!([{"name": "n"}]), json!([["n"]]), Some(json!([{"name": 5}]))),
         ("attachment", json!({"__typename": "KindWord", "text": "t"}), json!(["KindWord", ["t"]]), Some(json!({"__typename": "KindWord", "text": 5}))),
@@ -119,7 +119,7 @@ async fn matrix_write_path_kind() {
         if let Some(bad) = bad {
             let result = create(json!({"title": "t", *field: bad.clone()})).await.map(|receipt| receipt.optimistic_value.unwrap());
             matrix.check(&format!("create.{field}"), "invalid", &bad.to_string(), "Invalid", &invalid_names(&result, field));
-        } else {
+        } else if *field != "note" {
             matrix.check(&format!("create.{field}"), "invalid", "any JSON", "N/A{json accepts any value}", "N/A{json accepts any value}");
         }
     }
@@ -138,7 +138,7 @@ async fn matrix_write_path_kind() {
     // unknown enum from the app
     let result = create(json!({"title": "t", "mood": "weird"})).await.map(|receipt| receipt.optimistic_value.unwrap());
     matrix.check("create.mood", "unknown enum case", "\"weird\"", "Invalid", &invalid_names(&result, "mood"));
-    // the file field is not writable by create; the local key is writable only by set_local
+    // the file field is not writable by create; the local field (note) is excluded from create and update and written only by set_local
     let result = create(json!({"title": "t", "photo": "x"})).await.map(|receipt| receipt.optimistic_value.unwrap());
     matrix.check("create.photo", "file", "\"x\"", "Invalid", &invalid_names(&result, "photo"));
 
