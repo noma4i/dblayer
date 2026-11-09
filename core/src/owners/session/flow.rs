@@ -237,7 +237,7 @@ impl SessionState {
     pub(super) fn land(&mut self, pending: PendingCall, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, fx: &mut Vec<SessionEffect>) {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
-        let erase_session = login_failed(&pending, &answer, server_ended);
+        let erase_session = server_ended || login_failed(&pending, &answer, server_ended);
         fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
         self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
     }

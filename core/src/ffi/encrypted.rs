@@ -56,24 +56,6 @@ impl core::CredentialSlot for ForeignCredentials {
     fn clear(&self) -> Result<(), core::TransportError> { crate::lock::assert_no_library_lock("CredentialStore::clear"); self.0.clear().map_err(transport_error) }
 }
 
-fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
-    let kind = crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, false, true);
-    match kind {
-        crate::transport::AnswerKind::Refused { code: SessionCode::Unauthenticated } => Err(DbError::Unauthorized { detail: answer.body.to_string() }),
-        crate::transport::AnswerKind::Refused { code } | crate::transport::AnswerKind::PermanentSession { code } | crate::transport::AnswerKind::NotConsumed { code } => Err(DbError::Session { code, detail: answer.body.to_string() }),
-        crate::transport::AnswerKind::Revoked => Err(DbError::Session { code: SessionCode::SessionEnded, detail: answer.body.to_string() }),
-        _ if answer.body.get("data").is_some_and(|data| !data.is_null()) => Ok(answer),
-        _ => match crate::transport::refusal(&answer.body) {
-            Some(refusal) => {
-                let name = match refusal { crate::transport::Refusal::Session(code) => code.name().to_string(), crate::transport::Refusal::Graphql(name) => name };
-                let response = serde_json::from_value::<crate::transport::Response>(answer.body).ok();
-                Err(DbError::Graphql { messages: response.as_ref().map(|response| response.errors.iter().map(|error| error.message.clone()).collect()).filter(|messages: &Vec<String>| !messages.is_empty()).unwrap_or_else(|| vec![name]), extensions: response.and_then(|response| response.extensions()) })
-            }
-            None => Ok(answer),
-        },
-    }
-}
-
 pub(super) fn wire(
     db: &Arc<Store>,
     clock: &Arc<dyn crate::runtime::Clock>,
@@ -133,18 +115,13 @@ impl RetrySubscription {
     pub fn cancel(&self) { crate::lock::effect(|| self.stopped.send_replace(true)); }
 }
 
-fn session_body(body: &str) -> Result<String, DbError> {
-    let answer = core::Answer { sequence: None, body: parse_json(body)? };
-    Ok(refused(answer)?.body.to_string())
-}
-
 #[uniffi::export]
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         self.not_closed()?;
         let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
         match self.await_call(self.life.session_call(operation, body_json)).await? {
-            LifeReply::Session(Ok(body)) => self.offload(move || session_body(&body)).await,
+            LifeReply::Session(Ok(body)) => Ok(body),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
         }
@@ -152,7 +129,7 @@ impl Database {
 
     pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> {
         match self.await_life(self.life.interrupted_session_answer()).await? {
-            LifeReply::SessionResume(Ok(Some(body))) => self.offload(move || session_body(&body)).await.map(Some),
+            LifeReply::SessionResume(Ok(Some(body))) => Ok(Some(body)),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
             LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
             _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
@@ -188,6 +165,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),
         Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => DbError::Internal { detail: format!("the request was refused by the store: {reason:?}") },
         Failed::Session { code, body } => DbError::from(core::TransportError::Session { code, detail: body }),
+        Failed::Graphql { code, body } => DbError::from(core::TransportError::graphql_answer(code, body)),
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },

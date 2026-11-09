@@ -29,6 +29,13 @@ pub enum TransportError {
 }
 
 impl TransportError {
+    pub(crate) fn graphql_answer(code: String, body: String) -> Self {
+        match serde_json::from_str::<super::Response>(&body) {
+            Ok(response) if !response.errors.is_empty() => Self::GraphqlAnswer { response: Box::new(response) },
+            _ => Self::Graphql { messages: vec![code], extensions: None },
+        }
+    }
+
     pub fn refusal(code: &str) -> Self {
         match super::answer_kind::refusal_code(code.to_string()) {
             super::Refusal::Session(session) => Self::Session { code: session, detail: code.to_string() },

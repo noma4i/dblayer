@@ -525,18 +525,25 @@ impl SessionState {
                     }
                 }
                 self.answer_kind = Some(kind);
+                let answer = if pending.author.is_none() {
+                    let value = serde_json::from_str::<serde_json::Value>(&body).ok();
+                    match value.as_ref().filter(|value| !value.get("data").is_some_and(|data| !data.is_null())).and_then(crate::transport::refusal) {
+                        Some(crate::transport::Refusal::Graphql(code)) => Err(SessionError::Graphql { code, body: body.clone() }),
+                        _ => Ok(body.clone()),
+                    }
+                } else { Ok(body.clone()) };
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
                     let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session { code, body: body.clone() } };
                     self.land(pending, Err(error), None, confirmed, false, fx);
                 } else if pending.class == OperationClass::Sessionless {
-                    self.land(pending, Ok(body), None, None, false, fx);
+                    self.land(pending, answer, None, None, false, fx);
                 } else if sequence == Some(pending.sequence) {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
-                    self.land(pending, Ok(body), identity, Some(sequence), false, fx);
+                    self.land(pending, answer, identity, Some(sequence), false, fx);
                 } else if sequence.is_none() {
-                    self.land(pending, Ok(body), None, None, false, fx);
+                    self.land(pending, answer, None, None, false, fx);
                 } else {
                     self.resume_finish_retained(&pending, Err(SessionError::SequenceConflict), true, fx);
                     self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::SequenceConflict, landing: None };

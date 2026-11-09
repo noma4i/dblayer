@@ -32,6 +32,7 @@ pub enum SessionError {
     Invalid,
     Rejected(RejectReason),
     Session { code: crate::transport::SessionCode, body: String },
+    Graphql { code: String, body: String },
     Storage(String),
     SessionExists,
     NoCredential,
