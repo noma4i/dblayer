@@ -2,7 +2,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use super::outbox_harness::{OutboxEffect, Policy, Twin};
-use super::ref_outbox::{step, Addr, Batch, Effect, Input as RIn, Kind, LandFacts, OpOrigin, OpSpec, Phase, Resp, SendKind, Sel, Stage as RStage, State, SubmitFlags};
+use super::ref_outbox::{step, Addr, Batch, Effect, Input as RIn, Kind, LandFacts, OpOrigin, OpSpec, Phase, Resp, RestoreItem, SendKind, Sel, Stage as RStage, State, SubmitFlags};
 use crate::owners::write::outbox::{OutboxAnswer, OutboxInput};
 use crate::test_matrix::Matrix;
 
@@ -21,6 +21,9 @@ enum Step {
     EpochEnd,
     Close,
     Stray,
+    SubmitStale,
+    SubmitExpiring,
+    Age,
 }
 
 fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
@@ -80,12 +83,16 @@ fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
 struct Reference { state: State, pairs: std::collections::BTreeMap<u64, u64> }
 
 impl Reference {
-    fn new() -> Self {
+    fn new(base: Base) -> Self {
         let mut reference = Self { state: State::new(), pairs: Default::default() };
+        let (queue, pending, next_seq) = match base {
+            Base::Fresh => (Vec::new(), Vec::new(), 1),
+            Base::Restored { attempts, pending } => (vec![RestoreItem { op_id: 1, spec: spec(1, false, false), cycle_id: 1, request_id: 41, attempts, sent: pending, restore_failed: false, has_error_mark: false, answer: None }], if pending { vec![41] } else { Vec::new() }, 2),
+        };
         for input in [
             RIn::EpochStarted { epoch: 1, identity: true, generations: Default::default() },
             RIn::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] },
-            RIn::Restored { epoch: 1, next_seq: 1, queue: Ok(Vec::new()), pending: Vec::new(), pending_lost: false },
+            RIn::Restored { epoch: 1, next_seq, queue: Ok(queue), pending, pending_lost: false },
             RIn::RestoreReady { epoch: 1 },
             RIn::Online(true),
         ] { reference.feed(input); }
@@ -125,6 +132,9 @@ impl Reference {
             Step::EpochEnd => self.feed(RIn::EpochEnded(1)),
             Step::Close => self.feed(RIn::Closing),
             Step::Stray => self.feed(RIn::TransportError { op_id: 999, cycle_id: 1, temporary: true, pending_retained: None }),
+            Step::SubmitStale => self.feed(RIn::Submit { epoch: 2, op: spec(1, false, false), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
+            Step::SubmitExpiring => { let mut op = spec(1, false, false); op.expires_after = Some(10_000); self.feed(RIn::Submit { epoch: 1, op, flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }) }
+            Step::Age => self.feed(RIn::Now(11_000)),
         };
         let mut tokens = ref_tokens(&effects);
         for token in tokens.iter_mut().filter(|token| token.starts_with("send ")) {
@@ -140,7 +150,19 @@ impl Reference {
 struct Owner { twin: Twin, pairs: std::collections::BTreeMap<u64, (u64, u64)> }
 
 impl Owner {
-    fn new() -> Self { Self { twin: Twin::new(), pairs: Default::default() } }
+    fn new(base: Base) -> Self {
+        match base {
+            Base::Fresh => Self { twin: Twin::new(), pairs: Default::default() },
+            Base::Restored { attempts, pending } => {
+                let mut twin = Twin::bare();
+                twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
+                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r1", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, restore_failed: None, restore_element: None };
+                twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
+                twin.post(OutboxInput::RestoreReady { epoch: super::outbox_harness::EPOCH });
+                Self { twin, pairs: Default::default() }
+            }
+        }
+    }
 
     fn stages(&self) -> String {
         let mut ids: Vec<u64> = self.twin.state().ops.keys().copied().collect();
@@ -164,6 +186,9 @@ impl Owner {
             Step::EpochEnd => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.end_epoch(super::outbox_harness::EPOCH, crate::runtime::Cause::SessionReset); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Close => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.close(); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Stray => self.twin.post(I::TransportError { op_id: 999, temporary: true }),
+            Step::SubmitStale => self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH + 1, op: super::outbox_harness::model_op("r1", Policy::Rollback, false), reply: 950 }),
+            Step::SubmitExpiring => { let op = crate::owners::write::outbox::NewOp { expires_after: Some(std::time::Duration::from_secs(10)), ..super::outbox_harness::model_op("r1", Policy::Rollback, false) }; self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH, op, reply: 951 }) }
+            Step::Age => self.twin.post(I::Tick(crate::runtime::Time(11_000))),
         };
         let mut tokens = own_tokens(&effects);
         let sends: Vec<(u64, (u64, u64))> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Send { op_id, request_id, sequence } => Some((*op_id, (*request_id, *sequence))), _ => None }).collect();
@@ -178,21 +203,63 @@ impl Owner {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Base { Fresh, Restored { attempts: u32, pending: bool } }
+
 const R1: Step = Step::Submit { row: 1, keep: false, transfer: false };
 
-fn contexts() -> Vec<(&'static str, Vec<Step>)> {
+struct Context {
+    name: &'static str,
+    base: Base,
+    prefix: Vec<Step>,
+    target: u64,
+    restored: bool,
+}
+
+fn contexts() -> Vec<Context> {
+    let fresh = |name, prefix, target| Context { name, base: Base::Fresh, prefix, target, restored: false };
     vec![
-        ("online", vec![]),
-        ("offline", vec![Step::Online(false)]),
-        ("row busy", vec![Step::Submit { row: 1, keep: false, transfer: false }, Step::Commit(1)]),
+        fresh("online", vec![], 1),
+        fresh("offline", vec![Step::Online(false)], 1),
+        fresh("row busy", vec![Step::Submit { row: 1, keep: false, transfer: false }, Step::Commit(1)], 2),
+        fresh("slot taken", vec![Step::Submit { row: 2, keep: false, transfer: false }, Step::Commit(1)], 2),
+        Context { name: "attempts exhausted", base: Base::Restored { attempts: 39, pending: false }, prefix: vec![], target: 1, restored: true },
+        Context { name: "restored with pending pair", base: Base::Restored { attempts: 1, pending: true }, prefix: vec![], target: 1, restored: true },
     ]
 }
 
-fn scripts(context: &str) -> Vec<(&'static str, Vec<Step>)> {
+/// The stage a script must bring the target operation to (`""` = no operation).
+fn goal(name: &str) -> &'static str {
+    match name {
+        "none" => "",
+        "submitting" => "Submitting",
+        "queued or sending" => "Queued|Sending",
+        "landing" => "Landing",
+        "waiting retry" | "transfer origin sending" => "Sending",
+        "persisting attempt" => "PersistingAttempt",
+        "marking failed" => "MarkingFailed",
+        "failed" => "Failed",
+        "marking retry" => "MarkingRetry",
+        "rolling back" | "discarding" => "RollingBack",
+        "expired queued" => "Queued",
+        _ => "",
+    }
+}
+
+fn scripts(context: &Context) -> Vec<(&'static str, Vec<Step>)> {
     use Step::*;
-    let target = if context == "row busy" { 2 } else { 1 };
-    let t = target;
-    vec![
+    let t = context.target;
+    if context.restored {
+        return vec![
+            ("none", vec![]),
+            ("queued or sending", vec![Commit(t)]),
+            ("landing", vec![Commit(t), Response(t)]),
+            ("waiting retry", vec![Commit(t), Error { op: t, temporary: true }]),
+            ("persisting attempt", vec![Commit(t), Error { op: t, temporary: true }, Tick(t)]),
+            ("marking failed", vec![Commit(t), Error { op: t, temporary: false }]),
+        ];
+    }
+    let mut list = vec![
         ("none", vec![]),
         ("submitting", vec![R1]),
         ("queued or sending", vec![R1, Commit(t)]),
@@ -205,7 +272,9 @@ fn scripts(context: &str) -> Vec<(&'static str, Vec<Step>)> {
         ("rolling back", vec![R1, Commit(t), Error { op: t, temporary: false }]),
         ("discarding", vec![R1, Commit(t), Discard]),
         ("transfer origin sending", vec![Submit { row: 1, keep: false, transfer: true }, Commit(t)]),
-    ]
+    ];
+    if context.name == "offline" { list.push(("expired queued", vec![SubmitExpiring, Commit(t), Age])); }
+    list
 }
 
 fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
@@ -214,7 +283,7 @@ fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
         ("-", None), ("Commit", Some(Commit(target))), ("Response", Some(Response(target))),
         ("TransportError temporary", Some(Error { op: target, temporary: true })), ("TransportError permanent", Some(Error { op: target, temporary: false })),
         ("Dropped", Some(Dropped(target))), ("Tick", Some(Tick(target))), ("Offline", Some(Online(false))), ("Online", Some(Online(true))),
-        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)),
+        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Submit with another epoch", Some(SubmitStale)),
     ]
 }
 
@@ -228,23 +297,36 @@ fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
     payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default().lines().next().unwrap_or("").chars().take(110).collect()
 }
 
-#[test]
-fn matrix_owner_state_input_outbox() {
+fn run(index: usize) {
     let _ = OutboxInput::Online;
-    let mut matrix = Matrix::new("S-outbox-v2");
+    let mut matrix = Matrix::new(Box::leak(format!("S-outbox-v2-{index}").into_boxed_str()));
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    for (context, prefix) in contexts() {
-        let target = if context == "row busy" { 2 } else { 1 };
-        for (name, script) in scripts(context) {
+    for context in contexts().into_iter().skip(index).take(1) {
+        let target = context.target;
+        for (name, script) in scripts(&context) {
+            let path = format!("{} / {name}", context.name);
+            let reach = catch_unwind(AssertUnwindSafe(|| {
+                let (mut reference, mut owner) = (Reference::new(context.base), Owner::new(context.base));
+                for what in context.prefix.iter().copied().chain(script.iter().copied()) { reference.apply(what); owner.apply(what); }
+                (reference.state.ops.get(&target).map_or(String::new(), |op| format!("{:?}", op.stage)), owner.twin.stage(target).map_or(String::new(), |stage| format!("{stage:?}").split('(').next().unwrap_or("").to_string()))
+            }));
+            let wanted = goal(name);
+            let reached = |stage: &str| wanted.split('|').any(|option| option == stage);
+            match &reach {
+                Ok((left, right)) => {
+                    let observed = if reached(left) && reached(right) { wanted.to_string() } else { format!("not reached: reference {left:?}, owner {right:?}") };
+                    matrix.check(&path, "reach", "target stage", wanted, &observed);
+                }
+                Err(_) => { matrix.check(&path, "reach", "target stage", wanted, "not reached: the script panics"); }
+            }
             for (second_name, second) in seconds(target) {
-                let path = format!("{context} / {name}");
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    let (mut reference, mut owner) = (Reference::new(), Owner::new());
-                    let mut seen: Vec<(String, String, String, String, String)> = Vec::new();
-                    for what in prefix.iter().copied().chain(script.iter().copied()).chain(second).chain(second.map(|_| Step::Commit(target))) {
+                    let (mut reference, mut owner) = (Reference::new(context.base), Owner::new(context.base));
+                    let mut seen: Vec<(String, String, String)> = Vec::new();
+                    for what in context.prefix.iter().copied().chain(script.iter().copied()).chain(second).chain(second.map(|_| Step::Commit(target))) {
                         let (left, right) = (reference.apply(what), owner.apply(what));
-                        seen.push((format!("{what:?}"), split_line(&reference.stages(), &left), split_line(&owner.stages(), &right), reference.stages(), owner.stages()));
+                        seen.push((format!("{what:?}"), split_line(&reference.stages(), &left), split_line(&owner.stages(), &right)));
                     }
                     seen
                 }));
@@ -262,3 +344,21 @@ fn matrix_owner_state_input_outbox() {
     std::panic::set_hook(hook);
     matrix.finish();
 }
+
+#[test]
+fn matrix_owner_state_input_outbox_online() { run(0) }
+
+#[test]
+fn matrix_owner_state_input_outbox_offline() { run(1) }
+
+#[test]
+fn matrix_owner_state_input_outbox_row_busy() { run(2) }
+
+#[test]
+fn matrix_owner_state_input_outbox_slot_taken() { run(3) }
+
+#[test]
+fn matrix_owner_state_input_outbox_attempts_exhausted() { run(4) }
+
+#[test]
+fn matrix_owner_state_input_outbox_restored_pending() { run(5) }
