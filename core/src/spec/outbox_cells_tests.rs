@@ -116,6 +116,31 @@ fn out_submit_stale() {
 }
 
 #[test]
+fn out_submit() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    assert_eq!((twin.stage(id), kinds(&twin.last), twin.last.len()), (Some(St::Submitting), vec![CommitKind::Intent], 1));
+    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 1"));
+}
+
+#[test]
+fn out_submitting_stale_generation() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    let effects = twin.rejected(id, RReason::StaleGeneration);
+    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Intent, generation, .. }] if *generation == NEW_GENERATION));
+    assert_eq!(twin.stage(id), Some(St::Submitting));
+}
+
+#[test]
+fn out_submitting_discard() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(St::Submitting), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
+}
+
+#[test]
 fn out_sending_temp() {
     for dropped in [false, true] {
         let mut twin = Twin::new();
