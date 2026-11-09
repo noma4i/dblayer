@@ -576,7 +576,7 @@ pub(super) fn reply(fx: &mut Fx, reply: ReplyId, answer: TransferAnswer) { run(f
 
 /// The row of `sync_upload` of a transfer after a batch of `kind`.
 pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
-    let supplied = transfer.supply_back.and_then(|_| transfer.new_source.as_ref()).filter(|_| transfer.stage == TransferStage::PersistingCopy);
+    let supplied = transfer.supply_back.and(transfer.new_source.as_ref()).filter(|_| transfer.stage == TransferStage::PersistingCopy);
     let source = transfer.source.as_ref();
     let steps = transfer.steps.as_ref();
     let mut fields = transfer.fields.clone();

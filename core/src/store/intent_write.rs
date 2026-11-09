@@ -85,7 +85,7 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }
 
-pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id: &str, action: &str, payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
+pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, action): (&str, &str, &str), payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
     let reader = Reader::new(writer.connection, writer.models);
     let (mut envelope, prior) = effects(&reader, writes, writer)?;
     let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
