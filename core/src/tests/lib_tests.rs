@@ -144,3 +144,24 @@ fn xfer_source_one_representation() {
     strays.dedup();
     assert_eq!(strays, Vec::<String>::new(), "the upload source triple (path, name, mime) is declared outside ffi/upload_wire.rs; the source is one WireSource value to the owner (D-199)");
 }
+
+/// P-WIRE-02 (wire_prop_retry_only_by_policy): no retry goes outside RetryPolicy. The number of sends respects `allows`, and the jitter comes from the process seed in the policy range (two equal delays are allowed; the test checks the range and the seed independence).
+#[test]
+fn wire_prop_retry_only_by_policy() {
+    use crate::runtime::RetryPolicy;
+    use std::time::Duration;
+    for policy in [RetryPolicy::Http, RetryPolicy::QueryNetwork, RetryPolicy::QueryServer, RetryPolicy::Outbox, RetryPolicy::Upload, RetryPolicy::Cable, RetryPolicy::Bootstrap] {
+        match policy.limit() {
+            Some(limit) => {
+                assert!(policy.allows(1) && policy.allows(limit), "{policy:?}: the first send and the limit send are allowed");
+                assert!(!policy.allows(limit + 1), "{policy:?}: no send past the limit");
+            }
+            None => assert!(policy.allows(u32::MAX), "{policy:?}: no limit, the retry waits for an event"),
+        }
+        let samples: Vec<Duration> = (0..256u64).map(|seed| policy.delay_seeded(3, seed)).collect();
+        let max = *samples.iter().max().unwrap();
+        let min = *samples.iter().min().unwrap();
+        assert!(min < max, "{policy:?}: the jitter depends on the seed");
+        assert!(min >= max.mul_f64(0.5) && samples.iter().all(|delay| *delay <= max), "{policy:?}: every delay stays within the jitter band of the ceiling");
+    }
+}
