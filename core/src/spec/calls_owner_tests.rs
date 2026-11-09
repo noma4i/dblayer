@@ -412,13 +412,15 @@ fn call_transport_error() {
 
 #[test]
 fn call_dropped() {
-    let out = sending().feed(Input::Dropped { call_id: 1 });
-    assert_eq!(out.replies, vec![(10, Err(Fail::Dropped))], "the query is not repeated");
+    let mut query = sending();
+    let out = query.feed(Input::Dropped { call_id: 1 });
+    assert!(out.replies.is_empty() && out.effects.is_empty());
+    assert!(matches!(query.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { call_id: 1, kind: Kind::Query, .. }]));
     let mut mutation = Twin::new();
     mutation.feed(run_mutate(11));
     let out = mutation.feed(Input::Dropped { call_id: 1 });
-    assert_eq!(out.effects, vec![RefEffect::Release { request_id: 1 }], "Session keeps the pair of a dropped mutation");
-    assert_eq!(out.replies, vec![(11, Err(Fail::Dropped))]);
+    assert!(out.effects.is_empty() && out.replies.is_empty());
+    assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { request_id: 1, kind: Kind::Mutate, .. }]));
 }
 
 #[test]
@@ -606,7 +608,7 @@ fn call_prop_reply_once() {
                 seen.push(*id);
             }
         }
-        let runs = twin.history.iter().filter(|e| matches!(e, CallsEffect::Request { .. })).count();
+        let runs = twin.history.iter().filter_map(|e| if let CallsEffect::Request { call_id, .. } = e { Some(*call_id) } else { None }).collect::<std::collections::BTreeSet<_>>().len();
         assert!(seen.len() >= runs, "every request ends with an answer");
     }
 }
@@ -646,10 +648,14 @@ fn call_prop_answer_shape() {
 fn call_prop_single_request() {
     for seed in 1..=40 {
         let twin = random_trace(seed);
-        let requests = twin.history.iter().filter(|e| matches!(e, CallsEffect::Request { .. })).count();
-        let mut ids: Vec<u64> = twin.history.iter().filter_map(|e| match e { CallsEffect::Request { request_id, .. } => Some(*request_id), _ => None }).collect();
-        ids.dedup();
-        assert_eq!(ids.len(), requests, "no repeat of a request");
+        let mut requests = std::collections::BTreeMap::<u64, Vec<(u64, CallKind)>>::new();
+        for effect in &twin.history {
+            if let CallsEffect::Request { call_id, request_id, kind, .. } = effect { requests.entry(*call_id).or_default().push((*request_id, *kind)); }
+        }
+        for sent in requests.values() {
+            if sent[0].1 == CallKind::Mutate { assert!(sent.iter().all(|entry| entry.0 == sent[0].0)); }
+            else { assert_eq!(sent.iter().map(|entry| entry.0).collect::<std::collections::BTreeSet<_>>().len(), sent.len()); }
+        }
     }
     let _: CallAnswer = Ok(String::new());
 }
