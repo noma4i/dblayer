@@ -6,6 +6,7 @@ use super::outbox::{Fault, OutboxInput, ReserveTarget};
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::{RejectReason, ReplyId};
+use crate::owners::store::StoreOp;
 use crate::runtime::{Effect, Epoch, Outbound, Time};
 
 impl TransferState {
@@ -326,6 +327,13 @@ impl TransferState {
             transfer.stage = TransferStage::Removing;
             transfer.removal = Some(removal);
         }
+    }
+
+    /// The temporary file took the place of the copy: the marker of the row goes, a call that waits for the swap gets its answer.
+    pub(super) fn staged_promoted(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some((key, waiting)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage == TransferStage::PersistingCopy)) else { return };
+        self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
+        if waiting { self.copy_committed(&[id], fx); }
     }
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.

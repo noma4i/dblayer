@@ -87,6 +87,7 @@ impl TransferState {
 
     fn classify_declared(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         let id = self.insert_restored(&row, TransferStage::Ready);
+        if row.staged { run(fx, TransferEffect::PromoteStaged { transfer_id: id }); }
         if let Some(saved) = outcomes.get(&id) {
             if let Some(transfer) = self.transfers.get_mut(&id) { transfer.outcomes = saved.clone(); }
         }
