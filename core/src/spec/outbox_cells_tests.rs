@@ -556,6 +556,28 @@ fn out_rollback_other() {
 }
 
 #[test]
+fn out_submit_after_closing() {
+    let mut twin = Twin::new();
+    twin.det.close();
+    twin.run();
+    let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: SUBMIT_REPLY });
+    assert_eq!((answers(&effects, SUBMIT_REPLY), effects.len(), twin.state().ops.len()), (vec![OutboxAnswer::Err(Fault::Closed)], 1, 0));
+}
+
+#[test]
+fn out_done_closing() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.committed(id);
+    take_fx(&twin.log, None);
+    twin.det.close();
+    twin.run();
+    let effects = take_fx(&twin.log, state_of(&twin.det));
+    assert_eq!((twin.stage(id), effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), effects.len()), (Some(St::Done), 1, 1));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
