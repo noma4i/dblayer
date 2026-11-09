@@ -421,8 +421,10 @@ pub struct Transfer {
     /// The cache entry of the content is old: the write of the copy removes it.
     pub cache_stale: bool,
     pub round_error: Option<String>,
-    /// The columns of `sync_upload` that the last shown value wrote.
+    /// The columns of `sync_upload` that the last shown value wrote: `None` while no batch wrote the row.
     pub stored_shown: Option<(u8, bool)>,
+    /// The value the readers of the transfer got last.
+    pub last_shown: Option<Shown>,
     pub removal: Option<Removal>,
     pub prior: Option<TransferStage>,
     /// A batch of the Store for the failure mark carries `abort`.

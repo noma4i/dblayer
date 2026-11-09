@@ -17,6 +17,7 @@ impl TransferState {
             transfer.transfer_id = id;
             transfer.seq = row.seq;
             transfer.restored = true;
+            transfer.stored_shown = Some((u8::MAX, false));
             transfer.pending_step = row.pending_step;
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;

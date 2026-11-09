@@ -46,7 +46,8 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let key = transfer.key.clone();
         let columns = shown.columns();
-        if shown != Shown::Gone && transfer.stored_shown != Some(columns) {
+        transfer.last_shown = Some(shown.clone());
+        if shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != columns) {
             transfer.stored_shown = Some(columns);
             self.send_batch(vec![StoreOp::UploadShown { key: key.clone(), shown: shown.clone() }], fx);
         }
@@ -113,7 +114,7 @@ impl TransferState {
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
-                    let shown = self.shown_now(transfer.transfer_id);
+                    let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
                     if shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
                         ops.push(StoreOp::UploadShown { key: transfer.key.clone(), shown });
                     }
@@ -160,9 +161,13 @@ impl TransferState {
             })
             .chain(numbers)
             .collect();
-        for id in ids {
-            let columns = self.shown_now(*id).columns();
-            if let Some(transfer) = self.transfers.get_mut(id).filter(|_| kind != StoreKind::Removed) { transfer.stored_shown = Some(columns); }
+        let written: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
+            StoreOp::Upload { row, kind } => Some((row.key.clone(), kind.shown().columns())),
+            StoreOp::UploadShown { key, shown } => Some((key.clone(), shown.columns())),
+            _ => None,
+        }).collect();
+        for transfer in self.transfers.values_mut() {
+            if let Some(columns) = written.get(&transfer.key) { transfer.stored_shown = Some(*columns); }
         }
         let id = self.next_batch;
         self.next_batch += 1;
