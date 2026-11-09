@@ -34,7 +34,7 @@ fn item(kind: Kind2) -> RestoreItem {
 }
 
 fn stored(kind: Kind2) -> StoredOp {
-    let mut op = model_op("r1", Policy::Rollback, false);
+    let mut op = model_op("r", Policy::Rollback, false);
     let (mut attempts, mut pending, mut error_mark, mut restore_failed, mut answered) = (1, None, false, None, None);
     match kind {
         Kind2::Plain => {}

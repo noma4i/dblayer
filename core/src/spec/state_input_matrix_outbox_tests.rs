@@ -24,10 +24,17 @@ enum Step {
     SubmitStale,
     SubmitExpiring,
     Age,
+    ResponseError { op: u64, temporary: bool },
+    ResponseSwap(u64),
+    RetryAny,
+    DiscardAny,
+    ModelsReset,
 }
 
+pub(super) fn row_name(row: u8) -> String { if row == 1 { "r".to_string() } else { format!("r{row}") } }
+
 pub(super) fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
-    OpSpec { op_id: None, model: "Moment".into(), row_id: format!("r{row}"), action: "update".into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
+    OpSpec { op_id: None, model: "Moment".into(), row_id: row_name(row), action: "update".into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
 }
 
 fn kind_name(what: &str) -> &'static str {
@@ -44,11 +51,13 @@ pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
     effects.iter().filter_map(|effect| match effect {
         Effect::Row(_) => None,
         Effect::Undefined { row, .. } => Some(format!("undefined {row}")),
+        Effect::Store { what, .. } if what.starts_with("Swap{") => None,
         Effect::Store { op, what } => Some(format!("store {op} {}", kind_name(what))),
         Effect::Session { op, what } if what.starts_with("Mutate") => Some(format!("send {op}")),
         Effect::Session { what, .. } if what.starts_with("Cancel") => Some("cancel".to_string()),
         Effect::Session { .. } => None,
         Effect::Schedule { .. } => Some("schedule".to_string()),
+        Effect::Transfer { what, .. } if what.starts_with("SelectRow") => None,
         Effect::Transfer { what, .. } => Some(format!("transfer {}", what.trim_start_matches("MutationOutcome(").trim_end_matches(')'))),
         Effect::Reply { what, .. } => Some(format!("reply {what}")),
         Effect::Drained(which) if *which == "LocalWrites" => None,
@@ -106,6 +115,17 @@ impl Reference {
         effects
     }
 
+    /// A Retry or Discard without an action asks Transfer which operation of the row is the smallest; Transfer owns none here, so the smallest open operation of the row answers.
+    fn select(&mut self, input: RIn) -> Vec<Effect> {
+        let mut effects = self.feed(input);
+        let asked: Vec<u64> = self.state.selects.keys().copied().collect();
+        for reply in asked {
+            let open = self.state.ops.values().find(|op| op.row_id == "r" && op.stage != RStage::Done).map(|op| op.action.clone());
+            effects.extend(self.feed(match open { Some(action) => RIn::SelectedOutbox { reply, action }, None => RIn::SelectedNone { reply } }));
+        }
+        effects
+    }
+
     fn stages(&self) -> String { self.state.ops.values().map(|op| format!("{}:{:?}", op.id, op.stage)).collect::<Vec<_>>().join(",") }
 
     fn apply(&mut self, what: Step) -> Vec<String> {
@@ -126,8 +146,8 @@ impl Reference {
             Step::Dropped(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Dropped { op_id: op, cycle_id: cycle, pending_retained: None }) }
             Step::Tick(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Tick { op_id: op, cycle_id: cycle }) }
             Step::Online(on) => self.feed(RIn::Online(on)),
-            Step::Retry => self.feed(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
-            Step::Discard => self.feed(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
+            Step::Retry => self.feed(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
+            Step::Discard => self.feed(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
             Step::Outcome(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Outcome { receipt: super::ref_outbox::Receipt { epoch: 1, op_id: op, cycle_id: cycle } }) }
             Step::EpochEnd => self.feed(RIn::EpochEnded(1)),
             Step::Close => self.feed(RIn::Closing),
@@ -135,6 +155,11 @@ impl Reference {
             Step::SubmitStale => self.feed(RIn::Submit { epoch: 2, op: spec(1, false, false), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
             Step::SubmitExpiring => { let mut op = spec(1, false, false); op.expires_after = Some(10_000); self.feed(RIn::Submit { epoch: 1, op, flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }) }
             Step::Age => self.feed(RIn::Now(11_000)),
+            Step::ResponseError { op, temporary } => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: if temporary { Resp::Temporary { has_sequence: false } } else { Resp::Permanent }, swap: None, pending_retained: None }) }
+            Step::RetryAny => self.select(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
+            Step::DiscardAny => self.select(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
+            Step::ModelsReset => self.feed(RIn::ModelsReset { models: vec!["Moment".into()], generations: [("Moment".to_string(), 1)].into_iter().collect() }),
+            Step::ResponseSwap(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::Data(LandFacts { root_present: true, ..LandFacts::default() }), swap: Some(("temp-1".into(), "real-1".into())), pending_retained: None }) }
         };
         let mut tokens = ref_tokens(&effects);
         for token in tokens.iter_mut().filter(|token| token.starts_with("send ")) {
@@ -156,7 +181,7 @@ impl Owner {
             Base::Restored { attempts, pending } => {
                 let mut twin = Twin::bare();
                 twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
-                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r1", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, restore_failed: None, restore_element: None };
+                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, restore_failed: None, restore_element: None };
                 twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
                 twin.post(OutboxInput::RestoreReady { epoch: super::outbox_harness::EPOCH });
                 Self { twin, pairs: Default::default() }
@@ -173,22 +198,27 @@ impl Owner {
     fn apply(&mut self, what: Step) -> Vec<String> {
         use crate::owners::write::outbox::OutboxInput as I;
         let effects = match what {
-            Step::Submit { row, keep, transfer } => { self.twin.submit(&format!("r{row}"), if keep { Policy::Keep } else { Policy::Rollback }, transfer); self.twin.last.clone() }
+            Step::Submit { row, keep, transfer } => { self.twin.submit(&row_name(row), if keep { Policy::Keep } else { Policy::Rollback }, transfer); self.twin.last.clone() }
             Step::Commit(op) => { if self.twin.batches.contains_key(&op) { self.twin.committed(op) } else { Vec::new() } }
             Step::Response(op) => self.twin.post(I::Response { op_id: op, rows: super::outbox_harness::server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
             Step::Error { op, temporary } => self.twin.post(I::TransportError { op_id: op, temporary }),
             Step::Dropped(op) => self.twin.post(I::Dropped { op_id: op }),
             Step::Tick(op) => self.twin.post(I::RetryDue { op_id: op, cycle_id: 1 }),
             Step::Online(on) => self.twin.post(I::Online(crate::owners::contract::Online(on))),
-            Step::Retry => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()), reply: 900 }),
-            Step::Discard => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()), reply: 901 }),
+            Step::Retry => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 900 }),
+            Step::Discard => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 901 }),
             Step::Outcome(op) => { let mut receipt = self.twin.receipt(op, super::outbox_harness::EPOCH); if let Some(found) = self.twin.state().ops.get(&op) { receipt.cycle_id = found.cycle_id; } self.twin.post(I::Outcome { receipt, reply: 902 }) }
             Step::EpochEnd => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.end_epoch(super::outbox_harness::EPOCH, crate::runtime::Cause::SessionReset); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Close => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.close(); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Stray => self.twin.post(I::TransportError { op_id: 999, temporary: true }),
-            Step::SubmitStale => self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH + 1, op: super::outbox_harness::model_op("r1", Policy::Rollback, false), reply: 950 }),
-            Step::SubmitExpiring => { let op = crate::owners::write::outbox::NewOp { expires_after: Some(std::time::Duration::from_secs(10)), ..super::outbox_harness::model_op("r1", Policy::Rollback, false) }; self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH, op, reply: 951 }) }
+            Step::SubmitStale => self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH + 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), reply: 950 }),
+            Step::SubmitExpiring => { let op = crate::owners::write::outbox::NewOp { expires_after: Some(std::time::Duration::from_secs(10)), ..super::outbox_harness::model_op("r", Policy::Rollback, false) }; self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH, op, reply: 951 }) }
             Step::Age => self.twin.post(I::Tick(crate::runtime::Time(11_000))),
+            Step::ResponseError { op, temporary } => self.twin.post(I::Response { op_id: op, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(temporary) }),
+            Step::RetryAny => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 903 }),
+            Step::DiscardAny => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 904 }),
+            Step::ModelsReset => self.twin.post(I::ModelsReset(crate::owners::contract::ModelsReset { epoch: super::outbox_harness::EPOCH, generation: 1, models: vec!["Moment".into()] })),
+            Step::ResponseSwap(op) => self.twin.post(I::Response { op_id: op, rows: super::outbox_harness::server_rows(), swaps: vec![("temp-1".to_string(), "real-1".to_string())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
         };
         let mut tokens = own_tokens(&effects);
         let sends: Vec<(u64, (u64, u64))> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Send { op_id, request_id, sequence } => Some((*op_id, (*request_id, *sequence))), _ => None }).collect();
@@ -283,7 +313,7 @@ fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
         ("-", None), ("Commit", Some(Commit(target))), ("Response", Some(Response(target))),
         ("TransportError temporary", Some(Error { op: target, temporary: true })), ("TransportError permanent", Some(Error { op: target, temporary: false })),
         ("Dropped", Some(Dropped(target))), ("Tick", Some(Tick(target))), ("Offline", Some(Online(false))), ("Online", Some(Online(true))),
-        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Submit with another epoch", Some(SubmitStale)),
+        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Response with temporary errors", Some(ResponseError { op: target, temporary: true })), ("Response with permanent errors", Some(ResponseError { op: target, temporary: false })), ("Response with a swap", Some(ResponseSwap(target))), ("Retry without an action", Some(RetryAny)), ("Discard without an action", Some(DiscardAny)), ("ModelsReset", Some(ModelsReset)), ("Submit with another epoch", Some(SubmitStale)),
     ]
 }
 
