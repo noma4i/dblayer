@@ -1483,7 +1483,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func registerOperations(defsJson: String) async throws 
     
-    func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws  -> WireOperationReceipt
+    func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadSource?) async throws  -> WireOperationReceipt
     
     func setOnline(online: Bool) throws 
     
@@ -1539,6 +1539,10 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func subscribeValues(epoch: UInt64, request: ReadRequest)  -> ReadStream
     
     func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String) async throws  -> Bool
+    
+    func failSource(epoch: UInt64, model: String, rowId: String, action: String, message: String) async throws 
+    
+    func supplySource(epoch: UInt64, model: String, rowId: String, action: String, source: WireUploadSource) async throws 
     
     func upload(epoch: UInt64, model: String, rowId: String, action: String, request: WireUploadRequest) async throws  -> WireOperationReceipt
     
@@ -1798,12 +1802,12 @@ open func registerOperations(defsJson: String)async throws   {
         )
 }
     
-open func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?)async throws  -> WireOperationReceipt  {
+open func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadSource?)async throws  -> WireOperationReceipt  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_retry(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterOptionString.lower(action),FfiConverterOptionTypeWireUploadRequest.lower(source)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterOptionString.lower(action),FfiConverterOptionTypeWireUploadSource.lower(source)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -2080,6 +2084,38 @@ open func cancelUpload(epoch: UInt64, model: String, rowId: String, action: Stri
             completeFunc: ffi_dblayer_rust_future_complete_i8,
             freeFunc: ffi_dblayer_rust_future_free_i8,
             liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+open func failSource(epoch: UInt64, model: String, rowId: String, action: String, message: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_fail_source(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterString.lower(action),FfiConverterString.lower(message)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+open func supplySource(epoch: UInt64, model: String, rowId: String, action: String, source: WireUploadSource)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_supply_source(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterString.lower(action),FfiConverterTypeWireUploadSource_lower(source)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -8158,14 +8194,14 @@ public func FfiConverterTypeWireUploadEntry_lower(_ value: WireUploadEntry) -> R
 
 public struct WireUploadItem: Equatable, Hashable {
     public var valuesJson: String
-    public var path: String
+    public var path: String?
     public var name: String?
     public var mime: String?
     public var variablesJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(valuesJson: String, path: String, name: String?, mime: String?, variablesJson: String) {
+    public init(valuesJson: String, path: String?, name: String?, mime: String?, variablesJson: String) {
         self.valuesJson = valuesJson
         self.path = path
         self.name = name
@@ -8190,7 +8226,7 @@ public struct FfiConverterTypeWireUploadItem: FfiConverterRustBuffer {
         return
             try WireUploadItem(
                 valuesJson: FfiConverterString.read(from: &buf), 
-                path: FfiConverterString.read(from: &buf), 
+                path: FfiConverterOptionString.read(from: &buf), 
                 name: FfiConverterOptionString.read(from: &buf), 
                 mime: FfiConverterOptionString.read(from: &buf), 
                 variablesJson: FfiConverterString.read(from: &buf)
@@ -8199,7 +8235,7 @@ public struct FfiConverterTypeWireUploadItem: FfiConverterRustBuffer {
 
     public static func write(_ value: WireUploadItem, into buf: inout [UInt8]) {
         FfiConverterString.write(value.valuesJson, into: &buf)
-        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionString.write(value.mime, into: &buf)
         FfiConverterString.write(value.variablesJson, into: &buf)
@@ -8223,14 +8259,14 @@ public func FfiConverterTypeWireUploadItem_lower(_ value: WireUploadItem) -> Rus
 
 
 public struct WireUploadRequest: Equatable, Hashable {
-    public var path: String
+    public var path: String?
     public var name: String?
     public var mime: String?
     public var variablesJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(path: String, name: String?, mime: String?, variablesJson: String) {
+    public init(path: String?, name: String?, mime: String?, variablesJson: String) {
         self.path = path
         self.name = name
         self.mime = mime
@@ -8253,7 +8289,7 @@ public struct FfiConverterTypeWireUploadRequest: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireUploadRequest {
         return
             try WireUploadRequest(
-                path: FfiConverterString.read(from: &buf), 
+                path: FfiConverterOptionString.read(from: &buf), 
                 name: FfiConverterOptionString.read(from: &buf), 
                 mime: FfiConverterOptionString.read(from: &buf), 
                 variablesJson: FfiConverterString.read(from: &buf)
@@ -8261,7 +8297,7 @@ public struct FfiConverterTypeWireUploadRequest: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: WireUploadRequest, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionString.write(value.mime, into: &buf)
         FfiConverterString.write(value.variablesJson, into: &buf)
@@ -8281,6 +8317,72 @@ public func FfiConverterTypeWireUploadRequest_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeWireUploadRequest_lower(_ value: WireUploadRequest) -> RustBuffer {
     return FfiConverterTypeWireUploadRequest.lower(value)
+}
+
+
+public struct WireUploadSource: Equatable, Hashable {
+    public var path: String
+    public var name: String?
+    public var mime: String?
+    public var valuesJson: String
+    public var variablesJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, name: String?, mime: String?, valuesJson: String, variablesJson: String) {
+        self.path = path
+        self.name = name
+        self.mime = mime
+        self.valuesJson = valuesJson
+        self.variablesJson = variablesJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension WireUploadSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWireUploadSource: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireUploadSource {
+        return
+            try WireUploadSource(
+                path: FfiConverterString.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                mime: FfiConverterOptionString.read(from: &buf), 
+                valuesJson: FfiConverterString.read(from: &buf), 
+                variablesJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WireUploadSource, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.mime, into: &buf)
+        FfiConverterString.write(value.valuesJson, into: &buf)
+        FfiConverterString.write(value.variablesJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireUploadSource_lift(_ buf: RustBuffer) throws -> WireUploadSource {
+    return try FfiConverterTypeWireUploadSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireUploadSource_lower(_ value: WireUploadSource) -> RustBuffer {
+    return FfiConverterTypeWireUploadSource.lower(value)
 }
 
 
@@ -10055,7 +10157,7 @@ public enum ReadValue: Equatable, Hashable {
     case lost(first: UInt64, last: UInt64
     )
     case gap
-    case status(revision: Int64, state: String, progress: UInt64, error: String?, localUrl: String?, processing: WireProcessing?
+    case status(revision: Int64, state: String, waitReason: String?, progress: UInt64, error: String?, localUrl: String?, processing: WireProcessing?
     )
     case retry(attempts: UInt32, phase: String
     )
@@ -10113,7 +10215,7 @@ public struct FfiConverterTypeReadValue: FfiConverterRustBuffer {
         
         case 10: return .gap
         
-        case 11: return .status(revision: try FfiConverterInt64.read(from: &buf), state: try FfiConverterString.read(from: &buf), progress: try FfiConverterUInt64.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf), localUrl: try FfiConverterOptionString.read(from: &buf), processing: try FfiConverterOptionTypeWireProcessing.read(from: &buf)
+        case 11: return .status(revision: try FfiConverterInt64.read(from: &buf), state: try FfiConverterString.read(from: &buf), waitReason: try FfiConverterOptionString.read(from: &buf), progress: try FfiConverterUInt64.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf), localUrl: try FfiConverterOptionString.read(from: &buf), processing: try FfiConverterOptionTypeWireProcessing.read(from: &buf)
         )
         
         case 12: return .retry(attempts: try FfiConverterUInt32.read(from: &buf), phase: try FfiConverterString.read(from: &buf)
@@ -10195,10 +10297,11 @@ public struct FfiConverterTypeReadValue: FfiConverterRustBuffer {
             writeInt(&buf, Int32(10))
         
         
-        case let .status(revision,state,progress,error,localUrl,processing):
+        case let .status(revision,state,waitReason,progress,error,localUrl,processing):
             writeInt(&buf, Int32(11))
             FfiConverterInt64.write(revision, into: &buf)
             FfiConverterString.write(state, into: &buf)
+            FfiConverterOptionString.write(waitReason, into: &buf)
             FfiConverterUInt64.write(progress, into: &buf)
             FfiConverterOptionString.write(error, into: &buf)
             FfiConverterOptionString.write(localUrl, into: &buf)
@@ -11768,8 +11871,8 @@ fileprivate struct FfiConverterOptionTypeWireRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeWireUploadRequest: FfiConverterRustBuffer {
-    typealias SwiftType = WireUploadRequest?
+fileprivate struct FfiConverterOptionTypeWireUploadSource: FfiConverterRustBuffer {
+    typealias SwiftType = WireUploadSource?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -11777,13 +11880,13 @@ fileprivate struct FfiConverterOptionTypeWireUploadRequest: FfiConverterRustBuff
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeWireUploadRequest.write(value, into: &buf)
+        FfiConverterTypeWireUploadSource.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeWireUploadRequest.read(from: &buf)
+        case 1: return try FfiConverterTypeWireUploadSource.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -12709,7 +12812,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_register_operations() != 38484) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_retry() != 11122) {
+    if (uniffi_dblayer_checksum_method_database_retry() != 55271) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_online() != 62209) {
@@ -12761,6 +12864,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_cancel_upload() != 26565) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_fail_source() != 36753) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_supply_source() != 23787) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_upload() != 53276) {
