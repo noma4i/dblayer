@@ -287,6 +287,9 @@ impl Twin {
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, data: None, errors: errors.into_iter().map(|message| crate::transport::GraphQLError { message, path: None, extensions: None }).collect(), kind: crate::transport::AnswerKind::Answered { sequence: None } }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
+            Input::RetryDue { call_id, attempt } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::RetryDue { call_id, attempt }),
+            Input::Deadline { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Deadline { call_id }),
+            Input::CallerCancel { reply } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::CallerCancel { reply }),
             Input::Online(online) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Online(Online(online))),
             Input::Snapshot(online) => self.det.post(self.addr, EpochStamp::Epoch(self.epoch), CallsInput::Snapshot(Online(online))),
             Input::EpochStarted(epoch) => { self.epoch = epoch; self.det.start_epoch(epoch) }

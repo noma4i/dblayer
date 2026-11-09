@@ -34,6 +34,9 @@ pub enum Input {
     Response { call_id: CallId, body: Option<String>, errors: Vec<String> },
     TransportError { call_id: CallId, error: Fail },
     Dropped { call_id: CallId },
+    RetryDue { call_id: CallId, attempt: u32 },
+    Deadline { call_id: CallId },
+    CallerCancel { reply: ReplyId },
     Online(bool),
     Snapshot(bool),
     EpochStarted(u64),
@@ -69,13 +72,14 @@ pub struct Calls {
     pub generation: u64,
     pub calls: BTreeMap<CallId, (CallState, ReplyId)>,
     awaiting: Vec<(String, ReplyId)>,
+    retries: BTreeMap<CallId, (u32, Fail, bool, String)>,
     next: u64,
     drained: bool,
 }
 
 impl Calls {
     pub fn new(epoch: u64, online: Option<bool>, declared: &[(&str, Kind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), awaiting: Vec::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), awaiting: Vec::new(), retries: BTreeMap::new(), next: 1, drained: false }
     }
 
     pub fn state(&self, call: CallId) -> Option<CallState> { self.calls.get(&call).map(|(state, _)| *state) }
@@ -109,10 +113,16 @@ impl Calls {
                 };
                 self.done(call_id, answer, &mut out);
             }
-            Input::TransportError { call_id, error } if self.sending(call_id) => self.done(call_id, Err(error), &mut out),
-            Input::Dropped { call_id } if self.sending(call_id) => {
-                if let Some(CallState::Sending { request_id, kind: Kind::Mutate, .. }) = self.state(call_id) { out.effects.push(Effect::Release { request_id }); }
-                self.done(call_id, Err(Fail::Dropped), &mut out);
+            Input::TransportError { call_id, error } if self.sending(call_id) => self.failed(call_id, error, &mut out),
+            Input::Dropped { call_id } if self.sending(call_id) => self.failed(call_id, Fail::Dropped, &mut out),
+            Input::RetryDue { call_id, attempt } => self.retry(call_id, attempt, &mut out),
+            Input::Deadline { call_id } => {
+                if let Some((_, error, _, _)) = self.retries.get(&call_id).cloned() { self.done(call_id, Err(error), &mut out); }
+                else if self.sending(call_id) { self.done(call_id, Err(Fail::Network), &mut out); }
+            }
+            Input::CallerCancel { reply } => {
+                if let Some((_, (state, _))) = self.calls.iter_mut().find(|(_, (_, found))| *found == reply) { *state = CallState::Done; }
+                self.awaiting.retain(|(_, found)| *found != reply);
             }
             Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
             Input::Online(online) if self.online.is_some() => self.online = Some(online),
@@ -154,6 +164,29 @@ impl Calls {
         let (call_id, request_id) = (self.next, self.next);
         self.next += 1;
         self.calls.insert(call_id, (CallState::Sending { request_id, kind, generation: self.generation }, reply));
+        self.retries.insert(call_id, (1, Fail::Network, false, operation.clone()));
+        out.effects.push(Effect::Request { call_id, request_id, operation, kind });
+    }
+
+    fn failed(&mut self, call_id: CallId, error: Fail, out: &mut Out) {
+        let Some((attempt, _, _, operation)) = self.retries.get(&call_id).cloned() else { return };
+        let Some(CallState::Sending { request_id, kind, .. }) = self.state(call_id) else { return };
+        let limit = if kind == Kind::Query { 3 } else { 40 };
+        if !matches!(error, Fail::Network | Fail::Dropped) || attempt >= limit {
+            if kind == Kind::Mutate && error == Fail::Dropped { out.effects.push(Effect::Release { request_id }); }
+            self.done(call_id, Err(error), out);
+        } else {
+            self.retries.insert(call_id, (attempt + 1, error, self.online != Some(true), operation));
+        }
+    }
+
+    fn retry(&mut self, call_id: CallId, attempt: u32, out: &mut Out) {
+        let Some((next, error, waiting_network, operation)) = self.retries.get(&call_id).cloned() else { return };
+        if next != attempt + 1 || waiting_network { return; }
+        let Some(CallState::Sending { request_id, kind, generation }) = self.state(call_id) else { return };
+        let request_id = if kind == Kind::Query { let id = self.next; self.next += 1; id } else { request_id };
+        if let Some((state, _)) = self.calls.get_mut(&call_id) { *state = CallState::Sending { request_id, kind, generation }; }
+        self.retries.insert(call_id, (next, error, false, operation.clone()));
         out.effects.push(Effect::Request { call_id, request_id, operation, kind });
     }
 
