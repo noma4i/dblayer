@@ -79,6 +79,20 @@ fn feed_keepalive_half_open() {
     assert_ne!(twin.state().mode(), f::Mode::Live);
 }
 
+#[test]
+fn feed_keepalive_rearm() {
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    let recv_counter = twin.counter(connection, Counter::Expected);
+    twin.post(FeedInput::Tick(Time(4_000)));
+    take(&twin.log);
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Ping { ts: 4.into() } });
+    let emitted = take(&twin.log);
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { connection: found, frame: Outgoing::Pong { .. }, .. }) if *found == connection)));
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == std::time::Duration::from_secs(25) && input.starts_with("Keepalive"))));
+}
+
 fn alphabet() -> Vec<(&'static str, Input)> {
     vec![
         ("WantPlus Chat", plus("Chat")),
