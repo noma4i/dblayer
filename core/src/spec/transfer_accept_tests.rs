@@ -139,7 +139,7 @@ fn xfer_accepting_rejected() {
     twin.reserve_batch(&ids);
     let out = twin.reject(RejectReason::NoSession);
     assert_eq!(out.all_replies(), 1, "a batch has one answer and no receipt");
-    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::Rejected(RejectReason::NoSession)));
+    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::Interrupted), "a refusal of the ended session is Interrupted (D-249)");
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
 }
 

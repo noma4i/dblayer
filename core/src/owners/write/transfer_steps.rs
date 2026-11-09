@@ -318,20 +318,22 @@ impl TransferState {
     pub(super) fn mutation_outcome(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
         if !self.waits_for_discard(id) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
-        let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
+        let failed_waiting = waiting && self.stage_of(id) == Some(TransferStage::Failed);
+        let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(failed_waiting && !matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Discarded))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
             OutboxOutcome::Confirmed { revision, result, row_id } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
-                    let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
-                    for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
+                    if let Some((waiter, _)) = transfer.cancel_reply.take() { reply(fx, waiter, TransferAnswer::Cancelled(false)); }
+                    for waiter in std::mem::take(&mut transfer.discard_waiters) {
                         reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
                     }
                 }
                 self.remove_with_batch(id, Removal::Confirmed { revision, result, row_id }, fx)
             }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
-            OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),
-            OutboxOutcome::Failed { .. } if waiting => {}
+            OutboxOutcome::Rejected { .. } if waiting && !failed_waiting => self.remove_with_batch(id, Removal::Discarded, fx),
+            OutboxOutcome::Failed { .. } if waiting && !failed_waiting => {}
+            _ if failed_waiting => {}
             OutboxOutcome::Rejected { error } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
                 self.begin_failure(id, error, false, fx);

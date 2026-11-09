@@ -134,7 +134,7 @@ impl TransferState {
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
     pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, now: Time, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
-            return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Interrupted } else { Fault::NoSession }));
+            return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Closed } else { Fault::NoSession }));
         }
         if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
@@ -243,7 +243,7 @@ impl TransferState {
 
     /// `Accepting x Rejected`: no receipt, nothing is accepted.
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        let fault = if matches!(reason, RejectReason::Storage(_)) { Fault::Rejected(reason) } else if self.closing { Fault::Interrupted } else { Fault::Rejected(reason) };
+        let fault = if self.closing || matches!(reason, RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. }) { Fault::Interrupted } else { Fault::Rejected(reason) };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let group_reply = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
