@@ -22,6 +22,7 @@ impl Window {
             max_pages: 1000,
             members_complete: false,
             cursor_reset_used: false,
+            replace_all: false,
             has_rows: false,
             landed_revision: 0,
             foreground_seen: 0,
@@ -100,6 +101,7 @@ impl Window {
     /// A load of `page`: a request online, `Waiting` otherwise. `announce` adds `WindowState`.
     fn begin(&mut self, page: u32, force: bool, announce: bool) -> Vec<Effect> {
         let mut effects = Vec::new();
+        self.replace_all = false;
         if self.is_online() && !self.deferred() {
             let (request, attempt) = self.request_ids();
             self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
@@ -370,7 +372,7 @@ impl Window {
                 self.answered_at = self.now;
                 self.page_count = if page == 1 { 1 } else { self.page_count + 1 };
                 self.state = State::Landing { request, page, cursor, rows };
-                vec![Effect::Commit { request }]
+                vec![Effect::Commit { request, replace_all: self.replace_all }]
             }
             Input::TransportError { request: got, attempt: got_attempt, failure } if mine(got, got_attempt) => self.failed(request, page, force, attempts, failure),
             Input::Dropped { request: got, attempt: got_attempt } if mine(got, got_attempt) => self.failed(request, page, force, attempts, Failure::Network),
@@ -400,6 +402,7 @@ impl Window {
         if failure == Failure::InvalidCursor && !self.cursor_reset_used {
             let (new_request, new_attempt) = self.request_ids();
             self.cursor_reset_used = true;
+            self.replace_all = true;
             self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page: 1, force, attempts: 0 };
             return vec![self.issue_effect(new_request, new_attempt, 1)];
         }
