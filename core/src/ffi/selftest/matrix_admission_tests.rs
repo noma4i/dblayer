@@ -291,8 +291,8 @@ async fn matrix_upload_missing_row_leaves_the_database_open() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
-    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     database.set_online(false).unwrap();
+    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();

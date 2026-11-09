@@ -1,4 +1,4 @@
-//! D-263 (class K-ENDCAUSE): every public wait of the bridge that ends by a cause carries that cause to the caller by one mapping. `pull`, the load wait, the write and upload outcome waits map `Closed` -> `Closed`, `SessionEnded` -> `NoSession`, `Cancelled`/`Discarded` -> `Interrupted` with the cause in the detail. `call` and `session_call` are excluded (D-253 keeps `Interrupted`). The table drives each wait to each cause through the public API on the Rig and the upload Stand.
+//! D-263 (class K-ENDCAUSE): every public wait of the bridge that ends by a cause carries that cause to the caller by one mapping; a cancelled upload ends with the outcome `Discarded` of its removal (transfer.md Removing x Committed{Cancel}). `pull`, the load wait, the write and upload outcome waits map `Closed` -> `Closed`, `SessionEnded` -> `NoSession`, `Cancelled`/`Discarded` -> `Interrupted` with the cause in the detail. `call` and `session_call` are excluded (D-253 keeps `Interrupted`). The table drives each wait to each cause through the public API on the Rig and the upload Stand.
 use std::sync::Arc;
 
 use super::rig_tests::{bound, Rig, BOUND};
@@ -106,7 +106,7 @@ async fn load_cancelled() -> String {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let gate = rig.world.hold_next("MyProfile");
-    let request = rig.database.begin_load(epoch, "User".into(), Some("profile".into()), "{}".into()).unwrap();
+    let request = rig.database.begin_load_all(epoch, "User".into(), Some("profile".into()), "{}".into(), true).unwrap();
     gate.entered().await;
     request.cancel();
     let observed = result_tag(within_named(BOUND, "load cancelled wait", request.result()).await);
@@ -215,7 +215,7 @@ async fn boundary_end_cause_per_wait() {
 
     matrix.check("upload outcome", kind, "Closed", &cause_tag(&EndCause::Closed), &upload_outcome(End::Close).await);
     matrix.check("upload outcome", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &upload_outcome(End::SessionEnd).await);
-    matrix.check("upload outcome", kind, "Cancelled", &cause_tag(&EndCause::Cancelled), &upload_outcome(End::Cancel).await);
+    matrix.check("upload outcome", kind, "Cancelled", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Cancel).await);
     matrix.check("upload outcome", kind, "Discarded", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Discard).await);
 
     matrix.check("stream pull", kind, "Closed", &cause_tag(&EndCause::Closed), &stream_closed().await);

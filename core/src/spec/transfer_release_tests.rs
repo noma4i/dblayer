@@ -25,6 +25,7 @@ fn all(outs: &[&Out]) -> Vec<u64> { outs.iter().flat_map(|out| out.releases()).c
 #[test]
 fn xfer_release_pending_step() {
     let (mut twin, ready) = opened(saved(50), true);
+    assert_eq!(ready.kinds(), vec![crate::owners::store::UploadKind::Failed], "exhausted attempts: the restore writes Failed before anything else");
     let written = twin.commit();
     assert_eq!((twin.stage(1), all(&[&ready, &written])), (TransferStage::Failed, vec![STEP]), "exhausted attempts: one Release of the saved step");
 
@@ -41,7 +42,10 @@ fn xfer_release_pending_step() {
     assert_eq!((twin.stage(1), all(&[&ready, &ended])), (TransferStage::Done, vec![STEP]), "Done by EpochEnded");
 
     let (mut twin, ready) = opened(saved(0), true);
-    let started = twin.commit();
-    assert_eq!(started.steps().len(), 0, "online, the transfer starts no step of its own and waits for the Session answer of the held pair");
-    assert_eq!((twin.stage(1), all(&[&ready, &started])), (TransferStage::Ready, Vec::<u64>::new()), "while Session still owns the saved pair the transfer stays with pending_step and releases nothing");
+    assert_eq!((ready.steps().len(), twin.stage(1), all(&[&ready])), (0, TransferStage::Ready, Vec::<u64>::new()), "online, the transfer starts no step of its own and releases nothing while Session owns the saved pair (D-246)");
+    let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: crate::owners::session::AuthorOutcome::Dropped });
+    assert_eq!((answered.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "a dropped held pair clears pending_step and starts one plain attempt (D-269)");
+    let failed = twin.step_error(1, false);
+    let (_, discarded) = twin.discard(KEY);
+    assert_eq!(all(&[&ready, &answered, &failed, &discarded]), Vec::<u64>::new(), "a replayed and answered step releases nothing");
 }
