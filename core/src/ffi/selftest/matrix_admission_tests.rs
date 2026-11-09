@@ -87,10 +87,10 @@ fn exported_calls() -> Vec<String> {
 }
 
 /// Calls that carry no model and no row: they have no admission steps 3 to 5.
-const WITHOUT_ROW: [&str; 24] = [
+const WITHOUT_ROW: [&str; 25] = [
     "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch",
     "interrupted_session_answer", "session_reset", "session_call", "set_round_jobs", "round_started", "round_refused", "round_ended", "outcome",
-    "call", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch",
+    "call", "cable_closes", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch",
 ];
 
 async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
@@ -225,6 +225,7 @@ async fn matrix_call_admission_uploads() {
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
     let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    database.set_online(false).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
@@ -257,6 +258,7 @@ async fn matrix_upload_missing_row_leaves_the_database_open() {
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
     let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    database.set_online(false).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
