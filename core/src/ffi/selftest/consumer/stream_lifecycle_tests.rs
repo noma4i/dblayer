@@ -15,6 +15,8 @@ fn requests() -> Vec<(&'static str, ReadRequest)> {
         ("Count", ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) }),
         ("Operations", ReadRequest::Operations),
         ("Changes", ReadRequest::Changes),
+        ("Events", ReadRequest::Events { model: "Chat".into() }),
+        ("Blob", ReadRequest::Blob { model: "Message".into(), id: "m1".into(), action: "send_files".into() }),
     ]
 }
 
@@ -113,3 +115,9 @@ async fn stream_lifecycle_operations() { lifecycle("Operations").await }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stream_lifecycle_changes() { lifecycle("Changes").await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_lifecycle_events() { lifecycle("Events").await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_lifecycle_blob() { lifecycle("Blob").await }
