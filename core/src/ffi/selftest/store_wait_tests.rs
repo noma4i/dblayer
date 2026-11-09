@@ -1,4 +1,4 @@
-use crate::ffi::{Config, Database, DbError};
+use crate::ffi::{Config, Database, DbError, QuerySpec};
 
 async fn stand() -> (std::sync::Arc<Database>, u64, String, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
@@ -33,6 +33,21 @@ async fn store_wait_read_row() {
     assert!(no_session(db.read_row(epoch + 1, "Files".into(), id.clone()).await));
     db.close_database().await.unwrap();
     assert!(closed(db.read_row(epoch, "Files".into(), id).await));
+}
+
+fn all_files() -> QuerySpec {
+    QuerySpec { model: "Files".into(), relation: None, params_json: "{}".into(), conditions: vec![], order: vec![], limit: None, offset: None, refresh_on_connect: false }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn store_wait_read() {
+    let (db, epoch, id, _directory) = stand().await;
+    let rows = db.read_query(epoch, all_files()).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, id);
+    assert!(no_session(db.read_query(epoch + 1, all_files()).await));
+    db.close_database().await.unwrap();
+    assert!(closed(db.read_query(epoch, all_files()).await));
 }
 
 #[tokio::test(flavor = "multi_thread")]
