@@ -10,6 +10,52 @@ static LOCATION: std::sync::Mutex<String> = std::sync::Mutex::new(String::new())
 
 const KEY: &str = "Moment:r1:upload";
 
+#[test]
+fn xfer_accepting_closing() {
+    use crate::owners::write::outbox::Fault;
+    use crate::owners::write::transfer::{TransferAnswer, TransferStage};
+    for committed in [true, false] {
+        let mut twin = Twin::new();
+        let (id, reply, _) = twin.accepting(KEY, 2);
+        let closing = twin.close();
+        assert_eq!((twin.stage(id), closing.all_replies(), closing.drained(), closing.writes()), (TransferStage::Accepting, 0, 0, 0));
+        let out = if committed { twin.commit() } else { twin.reject(crate::owners::contract::RejectReason::Storage("disk".into())) };
+        assert_eq!((twin.stage(id), out.replies(reply), out.drained(), out.copies()), (TransferStage::Done, vec![TransferAnswer::Err(Fault::Interrupted)], 1, 0));
+    }
+}
+
+#[test]
+fn xfer_outcome_unknown() {
+    use crate::owners::write::outbox::Fault;
+    use crate::owners::write::transfer::{TransferAnswer, TransferInput};
+    let mut twin = Twin::new();
+    let receipt = crate::owners::write::outbox::Receipt { epoch: 1, op_id: 99, cycle_id: 1, revision: 0, optimistic: None };
+    let out = twin.post(TransferInput::Outcome { receipt, reply: 20 });
+    assert_eq!((out.replies(20), out.all_replies(), out.writes(), out.runs.len()), (vec![TransferAnswer::Err(Fault::NotFound)], 1, 0, 1));
+    assert!(twin.state().transfers.is_empty());
+}
+
+#[test]
+fn xfer_completing_stray() {
+    use crate::owners::write::transfer::{TransferInput, TransferStage, TransferTick};
+    use crate::runtime::Time;
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 2);
+    twin.step_ok(id, 1, Some("u1"));
+    twin.commit();
+    twin.commit();
+    twin.step_ok(id, 2, None);
+    twin.commit();
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Completing);
+    let attempt_id = twin.attempt(id) + 1;
+    twin.ignores(id, vec![
+        TransferInput::Completed { transfer_id: id, attempt_id, signed_id: Some("signed".into()) },
+        TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true, error: "error".into() },
+        TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } },
+    ]);
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
