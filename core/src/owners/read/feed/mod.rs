@@ -385,13 +385,11 @@ impl Feed {
                 Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick(Time(0)) }),
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
                 Fx::Resubscribe { connection, attempt } => {
-                    let after = RetryPolicy::Cable.delay(attempt);
-                    out.push(Effect::Schedule { id: ScheduleId(connection), after, input: FeedInput::Resubscribe { connection_id: connection } });
+                    out.push(Effect::Backoff { id: ScheduleId(connection), policy: RetryPolicy::Cable, attempt, input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
-                    let after = RetryPolicy::Cable.delay(attempt);
-                    out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel, now: Time(0) } });
+                    out.push(Effect::Backoff { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), policy: RetryPolicy::Cable, attempt, input: FeedInput::ChannelResubscribe { connection_id: connection, channel, now: Time(0) } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),

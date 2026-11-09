@@ -1,7 +1,6 @@
 //! Owner `SessionCalls`: the credential, `sequence`, `encrypted_session` and `encrypted_pending`.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::time::Duration;
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
 use super::read::deliveries::StreamId;
@@ -215,7 +214,7 @@ pub enum SessionEffect {
     CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, erase_session: bool },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
-    /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Schedule` (R5).
+    /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Backoff` (R5b).
     ScheduleTick { attempts: u64 },
     GenerateCredential { secret_op_id: SecretOpId },
     StoreSecret { credential: Digest, secret_op_id: SecretOpId },
@@ -390,11 +389,6 @@ fn refuse(fx: &mut Vec<SessionEffect>, queued: Queued, error: SessionError) {
 /// The only retry timer of Session: a new `Schedule` replaces the previous one.
 const RETRY_TICK: ScheduleId = ScheduleId(1);
 
-/// Backoff of Http for the attempt number `attempts` (>= 1).
-fn http_delay(attempts: u64) -> Duration {
-    crate::runtime::RetryPolicy::Http.delay(u32::try_from(attempts.max(1)).unwrap_or(u32::MAX))
-}
-
 pub struct SessionCalls;
 
 impl StateOwner for SessionCalls {
@@ -417,7 +411,7 @@ impl StateOwner for SessionCalls {
             if !matches!(state.phase, SessionPhase::Closed) { fx.push(SessionEffect::RetryState { stream_id, attempts: view.0, phase: view.1 }); }
         }
         fx.into_iter().map(|effect| match effect {
-            SessionEffect::ScheduleTick { attempts } => Effect::Schedule { id: RETRY_TICK, after: http_delay(attempts), input: SessionInput::Tick(Time(0)) },
+            SessionEffect::ScheduleTick { attempts } => Effect::Backoff { id: RETRY_TICK, policy: crate::runtime::RetryPolicy::Http, attempt: u32::try_from(attempts.max(1)).unwrap_or(u32::MAX), input: SessionInput::Tick(Time(0)) },
             other => Effect::Run(other),
         }).collect()
     }

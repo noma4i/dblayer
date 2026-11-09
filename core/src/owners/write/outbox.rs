@@ -334,8 +334,7 @@ impl OutboxState {
 
     pub(super) fn retry_timer(&self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        let after = RetryPolicy::Outbox.delay(operation.attempts.max(1));
-        fx.push(Effect::Schedule { id: ScheduleId(op_id), after, input: OutboxInput::RetryDue { op_id, cycle_id: operation.cycle_id } });
+        fx.push(Effect::Backoff { id: ScheduleId(op_id), policy: RetryPolicy::Outbox, attempt: operation.attempts.max(1), input: OutboxInput::RetryDue { op_id, cycle_id: operation.cycle_id } });
     }
 
     pub(super) fn reply(fx: &mut Effects<Outbox>, reply: ReplyId, answer: OutboxAnswer) { fx.push(Effect::Run(OutboxEffect::Reply { reply, answer })); }
