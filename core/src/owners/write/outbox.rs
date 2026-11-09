@@ -588,6 +588,15 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        if state.closing {
+            match &input {
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
+                OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),
+                OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Closed), &mut fx),
+                _ => {}
+            }
+            return fx;
+        }
         if let OutboxInput::ActivateEpoch(epoch) = &input {
             state.begin_epoch(*epoch);
             return fx;
