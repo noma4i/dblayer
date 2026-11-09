@@ -218,6 +218,27 @@ struct Scripted {
     seen: std::sync::Mutex<Vec<crate::transport::retry::RetrySnapshot>>,
 }
 
+/// The test clock of the world that records the retry snapshot each time a wait starts: the waiting entry is visible only while the sleep is pending.
+struct Waits<'a> {
+    clock: crate::runtime::TestClock,
+    progress: &'a crate::transport::retry::RetryCalls,
+    during: std::sync::Mutex<Vec<crate::transport::retry::RetrySnapshot>>,
+}
+
+impl crate::runtime::Clock for Waits<'_> {
+    fn now(&self) -> std::time::Duration { self.clock.now() }
+    fn sleep(&self, duration: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        self.during.lock().unwrap().push(self.progress.current());
+        self.clock.sleep(duration)
+    }
+    fn on_advance(&self, wake: Arc<dyn Fn() + Send + Sync>) { self.clock.on_advance(wake) }
+    fn armed(&self, count: u64) { self.clock.armed(count) }
+}
+
+fn waits(progress: &crate::transport::retry::RetryCalls) -> Waits<'_> {
+    Waits { clock: crate::test_wait::world_clock().unwrap(), progress, during: Default::default() }
+}
+
 #[async_trait::async_trait]
 impl HttpExchange for Scripted {
     async fn post(&self, _: &str, token: String, _: crate::transport::NetworkPurpose, _: crate::transport::WireIds) -> Result<HttpReply, TransportError> {
@@ -251,7 +272,11 @@ fn failing(kind: crate::transport::RawFailureKind) -> Step {
 }
 
 async fn run(http: Arc<dyn HttpExchange>, progress: &crate::transport::retry::RetryCalls, config: &EncryptedConfig) -> Result<ServerConfig, TransportError> {
-    fetch(config, &super::bootstrap::AppRelease { platform: AppPlatform::Ios, version: "1.2", build: None }, http, &crate::test_wait::world_clock().unwrap(), progress, &crate::transport::Connectivity::new(true)).await
+    run_with(http, progress, config, &waits(progress)).await
+}
+
+async fn run_with(http: Arc<dyn HttpExchange>, progress: &crate::transport::retry::RetryCalls, config: &EncryptedConfig, clock: &dyn crate::runtime::Clock) -> Result<ServerConfig, TransportError> {
+    fetch(config, &super::bootstrap::AppRelease { platform: AppPlatform::Ios, version: "1.2", build: None }, http, clock, progress, &crate::transport::Connectivity::new(true)).await
 }
 
 #[test]
@@ -328,30 +353,33 @@ fn life_bootstrap_http() { crate::test_wait::paused(async {
 
 #[test]
 fn life_bootstrap_retry() { crate::test_wait::paused(async {
+    use crate::transport::retry::{RetryEntry, RetryOwner, RetrySnapshot};
     let http = scripted(vec![status(500), status(408), status(429), failing(crate::transport::RawFailureKind::Unreachable), good()]);
-    assert!(run(http.clone(), &http.progress, &configuration()).await.is_ok());
+    let clock = waits(&http.progress);
+    assert!(run_with(http.clone(), &http.progress, &configuration(), &clock).await.is_ok());
     assert_eq!(http.calls.load(Ordering::SeqCst), 5);
     let ids = http.request_ids.lock().unwrap().clone();
     assert_eq!(ids.iter().collect::<std::collections::HashSet<_>>().len(), 5);
-    let seen = http.seen.lock().unwrap().clone();
-    let reasons = ["HTTP 500", "HTTP 408", "HTTP 429", "network"];
-    assert_eq!(seen[0], crate::transport::retry::RetrySnapshot::default());
-    for (index, snapshot) in seen[1..].iter().enumerate() {
-        let last = snapshot.last_attempt.clone().unwrap();
+    assert!(http.seen.lock().unwrap().iter().all(|snapshot| *snapshot == RetrySnapshot::default()), "no retry waits while a request is being sent");
+    let during = clock.during.lock().unwrap().clone();
+    assert_eq!(during.len(), 4, "one wait per failed attempt");
+    for (index, snapshot) in during.iter().enumerate() {
+        let [RetryEntry { owner, kind, id: _, attempt, delay_ms }] = snapshot.waiting.as_slice() else { panic!("wait {}: one waiting entry, got {snapshot:?}", index + 1) };
         let ceiling = 1000u64 * 2u64.pow(index as u32);
-        assert_eq!((snapshot.active_calls, last.attempt, last.reason.as_str()), (1, index as u64 + 1, reasons[index]));
-        assert!((ceiling * 8 / 10..=ceiling).contains(&last.delay_ms), "{} outside {ceiling}", last.delay_ms);
+        assert_eq!((*owner, *kind, *attempt), (RetryOwner::Bootstrap, crate::runtime::RetryPolicy::Bootstrap, index as u32 + 1));
+        assert!((ceiling * 8 / 10..=ceiling).contains(delay_ms), "{delay_ms} outside {ceiling}");
     }
-    assert_eq!(http.progress.current(), crate::transport::retry::RetrySnapshot::default());
+    assert_eq!(http.progress.current(), RetrySnapshot::default());
 }) }
 
 #[test]
 fn life_bootstrap_timeout() { crate::test_wait::paused(async {
     let http = scripted(vec![failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Io), good()]);
-    assert!(run(http.clone(), &http.progress, &configuration()).await.is_ok());
+    let clock = waits(&http.progress);
+    assert!(run_with(http.clone(), &http.progress, &configuration(), &clock).await.is_ok());
     assert_eq!(http.calls.load(Ordering::SeqCst), 4);
-    let attempts: Vec<_> = http.seen.lock().unwrap().iter().map(|snapshot| snapshot.last_attempt.as_ref().map(|attempt| attempt.attempt)).collect();
-    assert_eq!(attempts, [None, Some(1), Some(2), Some(3)]);
+    let attempts: Vec<Vec<u32>> = clock.during.lock().unwrap().iter().map(|snapshot| snapshot.waiting.iter().map(|entry| entry.attempt).collect()).collect();
+    assert_eq!(attempts, [vec![1], vec![2], vec![3]], "each timeout waits with the next attempt number");
 }) }
 
 struct DropFlag(Arc<AtomicUsize>);

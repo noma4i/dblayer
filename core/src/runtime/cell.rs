@@ -21,6 +21,7 @@ struct Scheduled<I> {
     id: ScheduleId,
     stamp: EpochStamp,
     input: I,
+    retry: bool,
 }
 
 pub(crate) enum Emitted {
@@ -57,11 +58,17 @@ pub(crate) struct Cell<O: StateOwner> {
     now: Time,
     executor_dead: bool,
     jitter: Box<dyn FnMut() -> u64 + Send>,
+    retry_owner: Option<crate::transport::RetryOwner>,
 }
 
 impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(super::process_seed) }
+        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(super::process_seed), retry_owner: None }
+    }
+
+    pub fn set_retry_owner(&mut self, name: &str) {
+        use crate::transport::RetryOwner::*;
+        self.retry_owner = match name { "session" => Some(Session), "windows" => Some(Window), "calls" => Some(Calls), "outbox" => Some(Outbox), "transfer" => Some(Transfer), "feed" => Some(Feed), _ => None };
     }
 
     pub fn set_jitter(&mut self, jitter: impl FnMut() -> u64 + Send + 'static) { self.jitter = Box::new(jitter); }
@@ -112,6 +119,7 @@ impl<O: StateOwner> Cell<O> {
         let Some(entry) = self.schedule.first_entry() else { return false };
         let scheduled = entry.remove();
         self.keys.remove(&scheduled.id);
+        if scheduled.retry { self.leave_retry(scheduled.id); }
         let (clock, input) = O::due(scheduled.input, self.now);
         if let Some(clock) = clock { self.push(EpochStamp::Control, clock); }
         self.push(scheduled.stamp, input);
@@ -171,17 +179,20 @@ impl<O: StateOwner> Cell<O> {
         let emitted = match effect {
                 Effect::Schedule { id, after, input } => {
                     let at = Time(self.now.0.saturating_add(u64::try_from(after.as_millis()).unwrap_or(u64::MAX)));
-                    self.schedule_input(id, at, out, input);
+                    self.schedule_input(id, at, out, input, false);
                     None
                 }
                 Effect::ScheduleAt { id, at, input } => {
-                    self.schedule_input(id, at, out, input);
+                    self.schedule_input(id, at, out, input, false);
                     None
                 }
                 Effect::Backoff { id, policy, attempt, input } => {
                     let delay = policy.delay_seeded(attempt, (self.jitter)());
                     let at = Time(self.now.0.saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)));
-                    self.schedule_input(id, at, out, input);
+                    self.schedule_input(id, at, out, input, true);
+                    if let Some(owner) = self.retry_owner {
+                        crate::transport::retry::retry_progress().record(crate::transport::RetryEntry { owner, kind: policy, id: id.0, attempt, delay_ms: u64::try_from(delay.as_millis()).unwrap_or(u64::MAX) });
+                    }
                     None
                 }
                 Effect::Cancel(id) => { self.cancel(id); None }
@@ -259,24 +270,36 @@ impl<O: StateOwner> Cell<O> {
 
     pub fn scheduled(&self) -> u64 { self.sequence }
 
-    fn schedule_input(&mut self, id: ScheduleId, at: Time, stamp: EpochStamp, input: O::Input) {
+    fn schedule_input(&mut self, id: ScheduleId, at: Time, stamp: EpochStamp, input: O::Input, retry: bool) {
         self.cancel(id);
         let key = (at, self.sequence);
         self.sequence += 1;
         self.keys.insert(id, key);
-        self.schedule.insert(key, Scheduled { id, stamp, input });
+        self.schedule.insert(key, Scheduled { id, stamp, input, retry });
     }
 
     fn cancel(&mut self, id: ScheduleId) {
         if let Some(key) = self.keys.remove(&id) {
-            self.schedule.remove(&key);
+            if self.schedule.remove(&key).is_some_and(|scheduled| scheduled.retry) { self.leave_retry(id); }
         }
     }
 
     fn purge_schedule(&mut self, remove: impl Fn(EpochStamp) -> bool) {
+        let removed: Vec<_> = self.schedule.values().filter(|scheduled| scheduled.retry && remove(scheduled.stamp)).map(|scheduled| scheduled.id).collect();
         self.schedule.retain(|_, scheduled| !remove(scheduled.stamp));
+        for id in removed { self.leave_retry(id); }
         let live: HashSet<ScheduleId> = self.schedule.values().map(|scheduled| scheduled.id).collect();
         self.keys.retain(|id, _| live.contains(id));
+    }
+
+    fn leave_retry(&self, id: ScheduleId) {
+        if let Some(owner) = self.retry_owner { crate::transport::retry::retry_progress().leave(owner, id.0); }
+    }
+}
+
+impl<O: StateOwner> Drop for Cell<O> {
+    fn drop(&mut self) {
+        for scheduled in self.schedule.values().filter(|scheduled| scheduled.retry) { self.leave_retry(scheduled.id); }
     }
 }
 

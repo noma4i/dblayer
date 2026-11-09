@@ -336,7 +336,7 @@ impl RuntimeBuilder {
         let own = self.boxes[slot].clone();
         let history = self.history[slot].clone();
         let runner: Box<dyn EffectRunner<O>> = Box::new(runner);
-        self.bodies[slot] = Some((name, Box::new(move |router, timeline| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, timeline))));
+        self.bodies[slot] = Some((name, Box::new(move |router, timeline| { let mut cell = Cell::new(state); cell.set_retry_owner(name); run_owner::<O>(OwnerThread { slot, name, cell, runner, mailbox: own, history }, router, timeline) })));
     }
 
     pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {

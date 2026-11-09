@@ -80,7 +80,7 @@ pub struct RetryProgress { pub(super) inner: Arc<core::RetryCalls> }
 #[uniffi::export]
 impl RetryProgress {
     #[uniffi::constructor]
-    pub fn new() -> Arc<Self> { Arc::new(Self { inner: Arc::default() }) }
+    pub fn new() -> Arc<Self> { Arc::new(Self { inner: core::retry::retry_progress().clone() }) }
 
     pub fn current(&self) -> core::RetrySnapshot { self.inner.current() }
 
@@ -117,6 +117,8 @@ impl RetrySubscription {
 
 #[uniffi::export]
 impl Database {
+    pub fn retry_progress(&self) -> Arc<RetryProgress> { RetryProgress::new() }
+
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         self.not_closed()?;
         let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
@@ -211,7 +213,7 @@ pub(super) struct Waits { pub connectivity: Arc<core::Connectivity>, pub clock: 
 
 pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, waits: Waits) -> Result<ServerConfig, DbError> {
     cancellable(async move {
-        let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
+        let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_else(|| core::retry::retry_progress().clone());
         core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(DbError::from)
     }).await?
 }

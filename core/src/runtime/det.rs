@@ -158,6 +158,7 @@ impl DetScheduler {
         let (arrivals, failures) = (inbox.clone(), inbox.clone());
         let back = Back::new(move |stamp, input| { arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Input(stamp, input)); wake_pumps(); }, move |pending| { failures.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Failed(pending)); wake_pumps(); });
         let mut cell = Cell::new(state);
+        cell.set_retry_owner(name);
         cell.set_now(self.now);
         let (seed, slot) = (self.jitter.clone(), self.slots.len() as u64);
         let mut draws = 0u64;

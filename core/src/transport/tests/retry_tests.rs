@@ -38,35 +38,35 @@ fn encrypted_temporary_codes_and_http_throttling_are_retriable() {
 #[tokio::test]
 async fn retry_progress_reports_unlimited_attempts_and_capped_jittered_sleeps() {
     use std::{sync::Mutex, time::Duration};
-    use super::retry::{RetryCalls, Retrying};
-    #[derive(Default)]
-    struct Time(Mutex<Vec<Duration>>);
-    impl crate::runtime::Clock for Time {
+    use super::retry::{RetryCalls, RetryEntry, RetryOwner, RetrySnapshot, Retrying};
+    /// A clock whose sleep returns at once and records the retry snapshot seen while the wait is pending.
+    struct Time<'a>(Mutex<Vec<(Duration, RetrySnapshot)>>, &'a RetryCalls);
+    impl crate::runtime::Clock for Time<'_> {
         fn now(&self) -> Duration { Duration::ZERO }
         fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-            self.0.lock().unwrap().push(duration);
+            self.0.lock().unwrap().push((duration, self.1.current()));
             Box::pin(std::future::ready(()))
         }
     }
-    let clock = Time::default();
     let progress = RetryCalls::default();
+    let clock = Time(Mutex::default(), &progress);
     let online = Connectivity::new(true);
     let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     assert!(clock.0.lock().unwrap().is_empty());
     for index in 0..40 {
         retry.failed(TransportError::Network("timeout".into())).await.unwrap();
         let ceiling = [1000, 2000, 4000, 8000, 16000].get(index).copied().unwrap_or(30000);
-        let snapshot = progress.current();
-        assert_eq!(snapshot.active_calls, 1);
-        let RetryAttempt { attempt, delay_ms: delay, reason } = snapshot.last_attempt.unwrap();
-        assert_eq!(attempt, index as u64 + 1);
-        assert!((ceiling * 8 / 10..=ceiling).contains(&delay), "attempt {attempt}: {delay} outside jittered ceiling {ceiling}");
-        assert_eq!(reason, "network");
-        assert_eq!(clock.0.lock().unwrap()[index].as_millis() as u64, delay);
+        let (slept, during) = clock.0.lock().unwrap()[index].clone();
+        let [RetryEntry { owner, kind, id: _, attempt, delay_ms: delay }] = during.waiting.as_slice() else { panic!("attempt {}: one waiting entry while the sleep is pending, got {during:?}", index + 1) };
+        assert_eq!((*owner, *kind, *attempt), (RetryOwner::Bootstrap, crate::runtime::RetryPolicy::Bootstrap, index as u32 + 1));
+        assert!((ceiling * 8 / 10..=ceiling).contains(delay), "attempt {attempt}: {delay} outside jittered ceiling {ceiling}");
+        assert_eq!(slept.as_millis() as u64, *delay);
+        assert!(progress.current().waiting.is_empty(), "attempt {attempt}: the entry leaves when the sleep ends");
     }
     retry.failed(TransportError::Http { status: 429, body: String::new() }).await.unwrap();
-    assert_eq!(progress.current().last_attempt.unwrap().reason, "HTTP 429");
-    assert_eq!(clock.0.lock().unwrap().len(), 41);
+    let sleeps = clock.0.lock().unwrap();
+    assert_eq!(sleeps.len(), 41);
+    assert_eq!(sleeps[40].1.waiting.len(), 1, "a retriable HTTP status waits like a network failure");
 }
 
 #[tokio::test]
@@ -96,13 +96,6 @@ async fn dropping_backoff_drops_the_clock_sleep() {
     assert!(dropped.load(Ordering::SeqCst));
 }
 
-struct Instant;
-
-impl crate::runtime::Clock for Instant {
-    fn now(&self) -> std::time::Duration { std::time::Duration::ZERO }
-    fn sleep(&self, _: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> { Box::pin(std::future::ready(())) }
-}
-
 async fn within<T>(wait: impl std::future::Future<Output = T>) -> T {
     crate::test_wait::within_secs(2, wait).await
 }
@@ -122,14 +115,15 @@ async fn retry_progress_releases_a_call_on_success_terminal_failure_and_cancel_a
     let mut first_wait: std::pin::Pin<Box<dyn Future<Output = _> + '_>> = Box::pin(first.failed(waiting()));
     let mut second_wait: std::pin::Pin<Box<dyn Future<Output = _> + '_>> = Box::pin(second.failed(waiting()));
     assert!(poll(&mut first_wait).is_pending() && poll(&mut second_wait).is_pending());
-    assert_eq!(progress.current().active_calls, 2);
+    assert_eq!(progress.current().waiting.len(), 2);
+    assert!(progress.current().waiting.iter().all(|entry| entry.owner == RetryOwner::Bootstrap));
 
     drop(first_wait);
     drop(first);
-    assert_eq!(progress.current().active_calls, 1, "a cancelled call leaves the other one active");
-    assert!(progress.current().last_attempt.is_some());
+    assert_eq!(progress.current().waiting.len(), 1, "a cancelled call leaves the other one active");
+    assert_eq!(progress.current().waiting.first().map(|entry| entry.owner), Some(RetryOwner::Bootstrap));
 
-    let delay = progress.current().last_attempt.unwrap().delay_ms;
+    let delay = progress.current().waiting[0].delay_ms;
     clock.advance(std::time::Duration::from_millis(delay - 1));
     assert!(poll(&mut second_wait).is_pending());
     clock.advance(std::time::Duration::from_millis(2));
@@ -138,27 +132,36 @@ async fn retry_progress_releases_a_call_on_success_terminal_failure_and_cancel_a
     assert!(matches!(within(second.failed(TransportError::Decode("fatal".into()))).await, Err(TransportError::Decode(_))));
     assert_eq!(progress.current(), RetrySnapshot::default(), "a terminal failure of the last call is idle with no attempt");
 
-    let instant = Instant;
-    let mut finished = Retrying::new(&instant, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
-    within(finished.failed(waiting())).await.unwrap();
-    assert_eq!(progress.current().active_calls, 1);
+    let mut finished = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
+    let mut finished_wait: std::pin::Pin<Box<dyn Future<Output = _> + '_>> = Box::pin(finished.failed(waiting()));
+    assert!(poll(&mut finished_wait).is_pending());
+    assert_eq!(progress.current().waiting.len(), 1);
+    let delay = progress.current().waiting[0].delay_ms;
+    clock.advance(std::time::Duration::from_millis(delay - 1));
+    assert!(poll(&mut finished_wait).is_pending(), "the retry still waits one millisecond before its delay");
+    clock.advance(std::time::Duration::from_millis(2));
+    assert!(matches!(poll(&mut finished_wait), Poll::Ready(Ok(()))));
+    drop(finished_wait);
     drop(finished);
-    assert_eq!(progress.current(), RetrySnapshot::default(), "a successful call leaves idle");
+    assert_eq!(progress.current(), RetrySnapshot::default(), "a fired retry leaves the snapshot idle");
 }
 
 #[tokio::test]
 async fn a_late_watcher_reads_the_current_snapshot_and_a_dropped_watcher_leaves_the_others() {
     use super::retry::{RetryCalls, Retrying};
-    let clock = Instant;
+    use std::{future::Future, task::{Context, Waker}};
+    let clock = crate::runtime::ManualClock::new(std::time::Duration::ZERO);
     let online = Connectivity::new(true);
     let progress = RetryCalls::default();
     let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     let early = progress.watch();
-    within(retry.failed(TransportError::Network("offline".into()))).await.unwrap();
+    let mut wait: std::pin::Pin<Box<dyn Future<Output = Result<(), TransportError>> + '_>> = Box::pin(retry.failed(TransportError::Network("offline".into())));
+    assert!(wait.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
 
     let mut late = progress.watch();
-    assert_eq!(late.borrow_and_update().active_calls, 1);
+    assert_eq!(late.borrow_and_update().waiting.len(), 1, "a late watcher reads the waiting retry");
     drop(early);
+    drop(wait);
     drop(retry);
     within(late.changed()).await.unwrap();
     assert_eq!(*late.borrow(), RetrySnapshot::default());

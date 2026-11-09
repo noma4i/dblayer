@@ -46,7 +46,7 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
             });
             crate::test_wait::within(clock.await_armed(0)).await;
             let reader = retries.subscribe();
-            assert_eq!(crate::test_wait::within(reader.next()).await.map(|snapshot| snapshot.active_calls), Some(1), "the first call returns the current snapshot");
+            assert_eq!(crate::test_wait::within(reader.next()).await.map(|snapshot| (snapshot.waiting.len(), snapshot.waiting[0].owner)), Some((1, crate::transport::RetryOwner::Bootstrap)), "the first call returns the current snapshot");
             let mut held: Held = Box::pin({
                 let reader = reader.clone();
                 async move { crate::test_wait::within(reader.next()).await }

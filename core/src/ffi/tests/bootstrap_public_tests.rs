@@ -95,11 +95,11 @@ async fn life_bootstrap_retry() {
     platform.go_online();
     within(clock.await_armed(0)).await;
     assert_eq!((http.requests.load(Ordering::SeqCst), clock.armed()), (1, 1));
-    assert_eq!(retries.current().last_attempt.map(|attempt| (attempt.attempt, attempt.reason)), Some((1, "HTTP 503".to_string())));
+    assert_eq!(retries.current().waiting.first().map(|attempt| (attempt.attempt, attempt.kind, attempt.owner)), Some((1, crate::runtime::RetryPolicy::Bootstrap, crate::transport::RetryOwner::Bootstrap)));
     clock.advance(1_000);
     within(clock.await_armed(1)).await;
     assert_eq!((http.requests.load(Ordering::SeqCst), clock.armed()), (2, 2));
-    assert_eq!(retries.current().last_attempt.map(|attempt| (attempt.attempt, attempt.reason)), Some((2, "HTTP 429".to_string())));
+    assert_eq!(retries.current().waiting.first().map(|attempt| (attempt.attempt, attempt.kind, attempt.owner)), Some((2, crate::runtime::RetryPolicy::Bootstrap, crate::transport::RetryOwner::Bootstrap)));
     clock.advance(2_000);
     let result = within(call).await.unwrap();
     assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}");
@@ -119,11 +119,12 @@ async fn life_bootstrap_cancel() {
     recv_within(&started);
     platform.go_online();
     within(clock.await_armed(0)).await;
-    assert_eq!(within(subscription.next()).await.unwrap().active_calls, 1);
+    let waiting = within(subscription.next()).await.unwrap().waiting;
+    assert_eq!((waiting.len(), waiting[0].owner), (1, crate::transport::RetryOwner::Bootstrap));
     call.abort();
     assert!(within(call).await.unwrap_err().is_cancelled());
     let last = within(subscription.next()).await.unwrap();
-    assert_eq!((last.active_calls, last.last_attempt), (0, None));
+    assert!(last.waiting.is_empty());
     crate::test_wait::signalled(&platform.stopped, "the platform observers stopped with the cancelled call", || platform.stops.load(Ordering::SeqCst) == 1).await;
     subscription.cancel();
     assert_eq!(http.requests.load(Ordering::SeqCst), 1);

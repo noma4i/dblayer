@@ -97,12 +97,13 @@ class BootstrapConfigTest {
         val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retries = retries) }
         val (first, second) = connected.await()
         assertNotEquals("the reader sees the current snapshot once", first, second)
-        val attempt = retries.flow.first { it.activeCalls == 1u }.lastAttempt!!
-        assertEquals(1uL, attempt.attempt)
+        val attempt = retries.flow.first { it.waiting.size == 1 }.waiting.first()
+        assertEquals(1u, attempt.attempt)
         assertTrue(attempt.delayMs in 800uL..1000uL)
-        assertEquals("network", attempt.reason)
+        assertEquals(RetryPolicy.BOOTSTRAP, attempt.kind)
+        assertEquals(RetryOwner.BOOTSTRAP, attempt.owner)
         call.cancelAndJoin()
-        assertEquals(RetrySnapshot(0u, null), retries.flow.first { it.activeCalls == 0u })
+        assertEquals(RetrySnapshot(emptyList()), retries.flow.first { it.waiting.isEmpty() })
         assertEquals(1, calls.get())
     }
 
@@ -115,7 +116,7 @@ class BootstrapConfigTest {
             override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply = error("the timeout script answers in send")
         }
         val retries = RetryProgress()
-        val idle = RetrySnapshot(0u, null)
+        val idle = RetrySnapshot(emptyList())
         val gate = CompletableDeferred<Unit>()
         val seen = kotlinx.coroutines.channels.Channel<RetrySnapshot>(kotlinx.coroutines.channels.Channel.UNLIMITED)
         val slow = launch { retries.flow.collect { seen.send(it); gate.await() } }
@@ -123,7 +124,7 @@ class BootstrapConfigTest {
         val fast = retries.subscribe()
         assertEquals(idle, fast.next())
         val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retries = retries) }
-        assertNotNull(fast.next()?.lastAttempt)
+        assertEquals(RetryOwner.BOOTSTRAP, fast.next()?.waiting?.firstOrNull()?.owner)
         call.cancelAndJoin()
         assertEquals(idle, fast.next())
         gate.complete(Unit)

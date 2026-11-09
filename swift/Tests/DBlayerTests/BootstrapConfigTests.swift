@@ -191,13 +191,13 @@ struct BootstrapConfigTests {
     let http = BootstrapHttp(peer, "timeout")
     let retries = RetryProgress()
     let changes = Cursor(retries.changes)
-    #expect(await changes.next("the snapshot at connect") == RetrySnapshot(activeCalls: 0, lastAttempt: nil))
+    #expect(await changes.next("the snapshot at connect") == RetrySnapshot(waiting: []))
     let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retries: retries) }
-    let attempt = try #require(await changes.next("the first retry")?.lastAttempt)
-    #expect(attempt.attempt == 1 && (800...1000).contains(attempt.delayMs) && attempt.reason == "network")
+    let attempt = try #require(await changes.next("the first retry")?.waiting.first)
+    #expect(attempt.attempt == 1 && (800...1000).contains(attempt.delayMs) && attempt.kind == .bootstrap && attempt.owner == .bootstrap)
     task.cancel()
     if case .success = await task.result { Issue.record("cancelled bootstrap succeeded") }
-    #expect(await changes.next("the cancelled call leaving") == RetrySnapshot(activeCalls: 0, lastAttempt: nil))
+    #expect(await changes.next("the cancelled call leaving") == RetrySnapshot(waiting: []))
     #expect(http.calls == 1)
   }
 
@@ -209,11 +209,11 @@ struct BootstrapConfigTests {
     let retries = RetryProgress()
     let slow = Cursor(retries.changes)
     let fast = Cursor(retries.changes)
-    let idle = RetrySnapshot(activeCalls: 0, lastAttempt: nil)
+    let idle = RetrySnapshot(waiting: [])
     #expect(await slow.next("the snapshot at connect") == idle)
     #expect(await fast.next("the snapshot at connect") == idle)
     let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retries: retries) }
-    #expect(await fast.next("the first retry")?.lastAttempt != nil)
+    #expect(await fast.next("the first retry")?.waiting.first?.owner == .bootstrap)
     task.cancel()
     _ = await task.result
     #expect(await fast.next("the cancelled call leaving") == idle)

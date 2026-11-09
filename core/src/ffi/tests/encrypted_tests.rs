@@ -230,8 +230,8 @@ pub(in super::super) async fn cancel_on_retry(retries: &super::RetryProgress, ca
     let mut waiting = retries.inner.watch();
     {
         let mut call = Box::pin(call);
-        crate::test_wait::within(async { tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {} } }).await;
-        assert!(waiting.borrow().active_calls > 0, "call completed before retry");
+        crate::test_wait::within(async { tokio::select! { _ = waiting.wait_for(|snapshot| !snapshot.waiting.is_empty()) => {}, _ = &mut call => {} } }).await;
+        assert!(!waiting.borrow().waiting.is_empty(), "call completed before retry");
     }
 }
 
@@ -397,11 +397,12 @@ async fn bridge_prop_bootstrap_reader() {
     crate::test_wait::within(clock.await_armed(0)).await;
     clock.advance(1_000);
     crate::test_wait::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts == 2)).await.expect("the request retried while the first delivery blocked").unwrap();
-    assert_eq!(retries.current().active_calls, 1);
+    crate::test_wait::within(clock.await_armed(1)).await;
+    assert_eq!((retries.current().waiting.len(), retries.current().waiting[0].owner), (1, crate::transport::RetryOwner::Bootstrap));
 
     let late = retries.subscribe();
     let first = crate::test_wait::within(late.next()).await.unwrap();
-    assert_eq!((first.active_calls, first.last_attempt.as_ref().map(|attempt| attempt.reason.as_str())), (1, Some("HTTP 503")));
+    assert_eq!((first.waiting.len(), first.waiting.first().map(|attempt| attempt.kind)), (1, Some(crate::runtime::RetryPolicy::Bootstrap)));
 
     let newest = crate::test_wait::within(slow.next()).await.unwrap();
     assert_eq!(newest, first, "the slow reader that pulled after two retries gets the newest snapshot as its first value");
@@ -410,7 +411,7 @@ async fn bridge_prop_bootstrap_reader() {
 
     call.abort();
     let last = crate::test_wait::within(late.next()).await.unwrap();
-    assert_eq!((last.active_calls, last.last_attempt), (0, None), "the other reader kept going and gets the final snapshot");
+    assert!(last.waiting.is_empty(), "the other reader kept going and gets the final snapshot");
 }
 
 /// Requirement: a call that the close ended answers `Closed`, a refused sign-in over a session answers `AlreadyAuthenticated`, a 401 answers `Unauthorized`.

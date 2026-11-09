@@ -57,20 +57,12 @@ pub struct RetryEntry {
     pub delay_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RetryAttempt {
-    pub attempt: u64,
-    pub delay_ms: u64,
-    pub reason: String,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
 pub struct RetrySnapshot {
-    pub active_calls: u32,
-    pub last_attempt: Option<RetryAttempt>,
+    pub waiting: Vec<RetryEntry>,
 }
 
-/// The calls that wait for a retry and the newest attempt among them. Calls join on their first retry and leave when they succeed, fail for good or are cancelled.
+/// The retries currently waiting for their timer.
 pub struct RetryCalls(tokio::sync::watch::Sender<RetrySnapshot>);
 
 impl Default for RetryCalls {
@@ -82,21 +74,25 @@ impl RetryCalls {
 
     pub fn watch(&self) -> tokio::sync::watch::Receiver<RetrySnapshot> { self.0.subscribe() }
 
-    fn record(&self, attempt: RetryAttempt, joined: &mut bool) {
-        let first = !std::mem::replace(joined, true);
+    pub(crate) fn record(&self, entry: RetryEntry) {
         crate::lock::effect(|| self.0.send_modify(|snapshot| {
-            snapshot.active_calls += u32::from(first);
-            snapshot.last_attempt = Some(attempt);
+            snapshot.waiting.retain(|old| (old.owner, old.id) != (entry.owner, entry.id));
+            snapshot.waiting.push(entry);
         }));
     }
 
-    fn leave(&self, joined: &mut bool) {
-        if !std::mem::replace(joined, false) { return; }
-        crate::lock::effect(|| self.0.send_modify(|snapshot| {
-            snapshot.active_calls -= 1;
-            if snapshot.active_calls == 0 { snapshot.last_attempt = None; }
+    pub(crate) fn leave(&self, owner: RetryOwner, id: u64) {
+        crate::lock::effect(|| self.0.send_if_modified(|snapshot| {
+            let before = snapshot.waiting.len();
+            snapshot.waiting.retain(|entry| (entry.owner, entry.id) != (owner, id));
+            snapshot.waiting.len() != before
         }));
     }
+}
+
+pub(crate) fn retry_progress() -> &'static std::sync::Arc<RetryCalls> {
+    static PROGRESS: std::sync::OnceLock<std::sync::Arc<RetryCalls>> = std::sync::OnceLock::new();
+    PROGRESS.get_or_init(|| std::sync::Arc::new(RetryCalls::default()))
 }
 
 pub(crate) struct Retrying<'a> {
@@ -104,38 +100,33 @@ pub(crate) struct Retrying<'a> {
     progress: &'a RetryCalls,
     policy: RetryPolicy,
     attempt: u64,
-    joined: bool,
+    id: u64,
     online: &'a Connectivity,
 }
 
 impl Drop for Retrying<'_> {
-    fn drop(&mut self) { self.progress.leave(&mut self.joined); }
+    fn drop(&mut self) { self.progress.leave(RetryOwner::Bootstrap, self.id); }
 }
 
 impl<'a> Retrying<'a> {
     pub(crate) fn new(clock: &'a dyn Clock, progress: &'a RetryCalls, online: &'a Connectivity, policy: RetryPolicy) -> Self {
-        Self { clock, progress, online, policy, attempt: 0, joined: false }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self { clock, progress, online, policy, attempt: 0, id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
     }
 
     pub(crate) async fn failed(&mut self, error: TransportError) -> Result<(), TransportError> {
         if RetryClass::of_error(&error) == RetryClass::Fatal || !self.policy.allows(u32::try_from(self.attempt.saturating_add(2)).unwrap_or(u32::MAX)) { return Err(self.refused(error)); }
-        self.online.online().await;
         let delay = self.policy.delay(u32::try_from(self.attempt.saturating_add(1)).unwrap_or(u32::MAX));
-        let reason = match &error {
-            TransportError::Network(_) => "network".to_string(),
-            TransportError::Http { status, .. } => format!("HTTP {status}"),
-            TransportError::Graphql { messages, extensions } => extensions.as_ref().and_then(|value| value.code.clone()).or_else(|| messages.first().cloned()).unwrap_or_default(),
-            TransportError::GraphqlAnswer { response } => response.errors.first().and_then(|error| error.code()).unwrap_or_default().to_string(),
-            _ => return Err(self.refused(error)),
-        };
         self.attempt = self.attempt.saturating_add(1);
-        self.progress.record(RetryAttempt { attempt: self.attempt, delay_ms: delay.as_millis() as u64, reason }, &mut self.joined);
+        self.progress.record(RetryEntry { owner: RetryOwner::Bootstrap, kind: self.policy, id: self.id, attempt: u32::try_from(self.attempt).unwrap_or(u32::MAX), delay_ms: delay.as_millis() as u64 });
+        self.online.online().await;
         self.online.wait(self.clock, delay).await;
+        self.progress.leave(RetryOwner::Bootstrap, self.id);
         Ok(())
     }
 
     fn refused(&mut self, error: TransportError) -> TransportError {
-        self.progress.leave(&mut self.joined);
+        self.progress.leave(RetryOwner::Bootstrap, self.id);
         error
     }
 }
