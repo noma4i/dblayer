@@ -408,6 +408,7 @@ impl Delivery {
             (Stage::Nothing, Input::OpenNoSession) => self.dead_on_open(Cause::SessionEnded, fx),
             (Stage::Nothing, Input::OpenInvalid) => self.dead_on_open(Cause::Invalid, fx),
             (Stage::Nothing, Input::Pull) => fx.push(Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))),
+            (Stage::Nothing, Input::Cancel { reply }) => fx.push(Effect::Cancelled(reply)),
             (Stage::Opening, input @ (Input::ReadDone { .. } | Input::CountDone { .. })) if self.interested && self.held_state.is_none() && self.kind.reads_rows() => self.pending_read = Some(input),
             (Stage::Opening, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 self.read_seen = self.read_seen.max(revision);

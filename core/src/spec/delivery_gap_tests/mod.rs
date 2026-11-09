@@ -160,6 +160,7 @@ impl Twin {
         for entry in entries {
             match entry {
                 Emitted::Run(DeliveryEffect::Drained(_)) => modelled.push(Effect::Drained),
+                Emitted::Run(DeliveryEffect::CancelAnswered { reply }) => modelled.push(Effect::Cancelled(reply)),
                 Emitted::Run(DeliveryEffect::Stream { stream, effect }) => {
                     assert_eq!(stream, STREAM);
                     modelled.push(match effect {
