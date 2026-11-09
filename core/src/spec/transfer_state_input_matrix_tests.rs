@@ -56,6 +56,30 @@ fn xfer_completing_stray() {
     ]);
 }
 
+#[test]
+fn xfer_accepting_rejected_interrupted() {
+    use super::transfer_harness::{item, joint, EPOCH};
+    use crate::owners::contract::RejectReason;
+    use crate::owners::write::outbox::Fault;
+    use crate::owners::write::transfer::{TransferAnswer, TransferInput, TransferStage};
+    use crate::runtime::Time;
+    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 2 }] {
+        let mut twin = Twin::new();
+        let (id, reply, _) = twin.accepting(KEY, 2);
+        let out = twin.reject(reason.clone());
+        assert_eq!((twin.stage(id), out.replies(reply), out.copies()), (TransferStage::Done, vec![TransferAnswer::Err(Fault::Interrupted)], 0));
+
+        let mut twin = Twin::new();
+        let keys = [KEY, "Moment:r2:upload"];
+        twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), joint: Box::new(joint()), reply: 50, now: Time(0) });
+        let ids: Vec<_> = keys.iter().map(|key| twin.state().open_id(key).unwrap()).collect();
+        twin.reserve_batch(&ids);
+        let out = twin.reject(reason);
+        assert_eq!((out.replies(50), out.all_replies(), out.copies()), (vec![TransferAnswer::Err(Fault::Interrupted)], 1, 0));
+        assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
