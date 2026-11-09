@@ -16,7 +16,7 @@ fn same(kind: AnswerKind, expected: &AnswerKind) -> bool {
 #[test]
 fn wire_classify_table() {
     let cases: Vec<(&str, WireOutcome, bool, AnswerKind)> = vec![
-        ("unsent, sequenced", WireOutcome::Unsent("dns".into()), true, transient()),
+        ("unsent, sequenced", WireOutcome::Unsent("dns".into()), true, AnswerKind::Unknown),
         ("unsent, plain", WireOutcome::Unsent("dns".into()), false, transient()),
         ("lost, sequenced", WireOutcome::Lost, true, AnswerKind::Unknown),
         ("lost, plain", WireOutcome::Lost, false, transient()),
@@ -45,10 +45,11 @@ fn wire_classify_table() {
         ("data, plain", answer(None, json!({ "data": {} })), false, AnswerKind::Answered { sequence: None }),
         ("401, sequenced", WireOutcome::Status(401), true, AnswerKind::Refused { code: SessionCode::Unauthenticated }),
         ("401, plain", WireOutcome::Status(401), false, AnswerKind::Refused { code: SessionCode::Unauthenticated }),
-        ("408", WireOutcome::Status(408), true, transient()),
+        ("408", WireOutcome::Status(408), true, AnswerKind::Unknown),
         ("425", WireOutcome::Status(425), false, transient()),
-        ("429", WireOutcome::Status(429), true, transient()),
-        ("500", WireOutcome::Status(500), true, transient()),
+        ("425, sequenced", WireOutcome::Status(425), true, AnswerKind::Unknown),
+        ("429", WireOutcome::Status(429), true, AnswerKind::Unknown),
+        ("500", WireOutcome::Status(500), true, AnswerKind::Unknown),
         ("503", WireOutcome::Status(503), false, transient()),
         ("599", WireOutcome::Status(599), false, transient()),
         ("400", WireOutcome::Status(400), true, AnswerKind::Permanent { status: Some(400) }),
