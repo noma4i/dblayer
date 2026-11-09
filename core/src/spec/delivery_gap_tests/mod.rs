@@ -591,3 +591,25 @@ fn dlv_opening_window() {
 
 mod delivery_cells_tests;
 mod delivery_properties_tests;
+
+#[test]
+fn matrix_owner_state_input_delivery() {
+    use crate::test_matrix::{state_input_pairs, Matrix};
+    let mut matrix = Matrix::new("S-delivery");
+    fn open_count() -> Twin { open_as(Kind::Count) }
+    fn open_entity() -> Twin { open_as(Kind::Entity(Fetch::Stale)) }
+    let alphabet: Vec<(&str, Input)> = vec![
+        ("Open list", Input::Open { kind: Kind::List, epoch_current: true }), ("Open stale epoch", Input::Open { kind: Kind::List, epoch_current: false }), ("OpenNoSession", Input::OpenNoSession), ("OpenInvalid", Input::OpenInvalid),
+        ("Committed touching", Input::Committed { revision: 2, touches: true }), ("Committed not touching", Input::Committed { revision: 3, touches: false }),
+        ("Changed", Input::Changed { revision: 2, rows: vec![("Moment".into(), "r1".into())], reset: false }), ("Changed reset", Input::Changed { revision: 3, rows: vec![], reset: true }),
+        ("ReadDone", Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }), ("ReadOverflow", Input::ReadOverflow { revision: 2 }), ("CountDone", Input::CountDone { revision: 2, count: 3 }),
+        ("ReadStale", Input::ReadStale { revision: 1, rows: rows(&["r1"]) }), ("ReadFailed", Input::ReadFailed { revision: 2 }), ("ReadFailedStale", Input::ReadFailedStale),
+        ("WindowState idle", Input::WindowState(Ws::idle())), ("WindowState loaded", Input::WindowState(Ws::loaded_at(2))),
+        ("Joined", Input::Joined { position: 0 }), ("ModelReady", Input::ModelReady), ("ModelEvent", Input::ModelEvent { position: 1, payload: "p".into() }), ("ModelLost", Input::ModelLost { first: 2, last: 3 }), ("ModelGap", Input::ModelGap),
+        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into() }), ("Retry", Input::Retry { attempts: 1 }),
+        ("Pull", Input::Pull), ("PullCancelled matched", Input::PullCancelled { matched: true }), ("Cancel", Input::Cancel { reply: 5 }), ("Release", Input::Release), ("SinkClosed", Input::SinkClosed),
+        ("EpochEnded own", Input::EpochEnded { own: true }), ("EpochEnded other", Input::EpochEnded { own: false }), ("EpochClosed", Input::EpochClosed), ("ModelsReset own", Input::ModelsReset { own_model: true }), ("Closing", Input::Closing),
+    ];
+    state_input_pairs(&mut matrix, "reference ref_delivery", vec![("new", Twin::new), ("open rows", open_rows), ("live rows", live_rows), ("open events", open_events), ("open count", open_count), ("open entity", open_entity), ("ended by epoch", ended_by_epoch)], alphabet, |twin: &mut Twin, input| { twin.step(input); });
+    matrix.finish();
+}
