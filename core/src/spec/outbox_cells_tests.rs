@@ -362,6 +362,34 @@ fn out_done_refuses() {
 }
 
 #[test]
+fn out_failed_retry() {
+    let mut twin = Twin::new();
+    let id = failed(&mut twin);
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::MarkingRetry), vec![CommitKind::ClearMark], 1));
+    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 2"));
+}
+
+#[test]
+fn out_failed_discard() {
+    let mut twin = Twin::new();
+    let id = failed(&mut twin);
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback], 1));
+    assert!(twin.store_text.contains("RemoveAnswer"));
+}
+
+#[test]
+fn out_submitting_retry() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
+    assert_eq!((twin.stage(id), effects.len()), (Some(St::Submitting), 0));
+    let effects = twin.committed(id);
+    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
