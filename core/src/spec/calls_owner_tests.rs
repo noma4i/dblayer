@@ -431,3 +431,23 @@ fn call_prop_single_request() {
     }
     let _: CallAnswer = Ok(String::new());
 }
+
+#[test]
+fn matrix_owner_state_input_calls() {
+    use crate::test_matrix::{state_input_pairs, Matrix};
+    let mut matrix = Matrix::new("S-calls");
+    fn offline() -> Twin { Twin::with(Some(false)) }
+    fn sending_mutation() -> Twin { let mut twin = Twin::new(); twin.feed(run_mutate(11)); twin }
+    fn done() -> Twin { let mut twin = sending(); twin.feed(response(1)); twin }
+    fn undeclared_online() -> Twin { Twin::with(None) }
+    let alphabet: Vec<(&str, Input)> = vec![
+        ("Run query", run(20)), ("Run mutation", run_mutate(21)), ("Run unknown", Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 22 }), ("Run stale epoch", Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 23 }),
+        ("Declare other", Input::Declare(vec![("Other".into(), Kind::Query)])), ("Declare none", Input::Declare(vec![])),
+        ("Response body", response(1)), ("Response without body", Input::Response { call_id: 1, body: None, errors: vec![] }), ("Response errors", Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }), ("Response stray call", response(9)),
+        ("TransportError network", Input::TransportError { call_id: 1, error: Fail::Network }), ("TransportError http", Input::TransportError { call_id: 1, error: Fail::Http }), ("TransportError stray", Input::TransportError { call_id: 9, error: Fail::Network }),
+        ("Dropped", Input::Dropped { call_id: 1 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
+        ("EpochEnded", Input::EpochEnded), ("Closing", Input::Closing),
+    ];
+    state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
+    matrix.finish();
+}

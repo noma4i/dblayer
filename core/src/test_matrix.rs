@@ -58,3 +58,28 @@ impl Matrix {
         assert!(red + unclassified == 0, "{summary}\n{table}");
     }
 }
+
+fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
+    let text = payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default();
+    text.lines().next().unwrap_or("").chars().take(140).collect()
+}
+
+/// Matrix S on a twin: every start state x every input x every second input. The twin compares the owner with its reference after each step and panics on a divergence; a panic is a red cell with its first line.
+pub(crate) fn state_input_pairs<S, I: Clone>(matrix: &mut Matrix, reference: &str, starts: Vec<(&str, fn() -> S)>, alphabet: Vec<(&str, I)>, step: impl Fn(&mut S, I)) {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    for (start_name, start) in &starts {
+        for (first_name, first) in &alphabet {
+            for (second_name, second) in std::iter::once(("-", None)).chain(alphabet.iter().map(|(name, input)| (*name, Some(input.clone())))) {
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut twin = start();
+                    step(&mut twin, first.clone());
+                    if let Some(second) = second { step(&mut twin, second); }
+                }));
+                let observed = match &outcome { Ok(()) => "owner and reference agree".to_string(), Err(payload) => first_line(payload.as_ref()) };
+                matrix.check(start_name, reference, &format!("{first_name} then {second_name}"), "owner and reference agree", &observed);
+            }
+        }
+    }
+    std::panic::set_hook(hook);
+}
