@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Test doubles refuse unscripted requests and a second body under one pair.
+
 ## 6.20.0 - 2026-11-09
 
 ### Added
