@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn dlv_cancelling_pull_twice() {
+    let mut twin = live_rows();
+    twin.step(Input::Cancel { reply: 7 });
+    twin.step(Input::Pull);
+    let outcome = twin.answers.register(EPOCH).id();
+    take(&twin.log);
+    twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
+    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))]);
+    assert_eq!(twin.step(Input::SinkClosed), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled))), Effect::Cancelled(7)]);
+}
+
+#[test]
+fn dlv_ended_pull_again() {
+    let mut twin = ended_by_epoch();
+    twin.step(Input::Pull);
+    let outcome = twin.answers.register(EPOCH).id();
+    take(&twin.log);
+    twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
+    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::SessionEnded)))]);
+}
+
+#[test]
+fn dlv_live_committed_seen() {
+    let mut twin = live_rows();
+    take(&twin.log);
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 1, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    assert!(Twin::modelled(take(&twin.log)).is_empty());
+}
+
+#[test]
 fn dlv_opening_event() {
     let mut twin = open_rows();
     for input in [Input::Joined { position: 3 }, Input::ModelReady, Input::ModelEvent { position: 1, payload: "c1".into() }, Input::ModelLost { first: 2, last: 3 }, Input::ModelGap] {
