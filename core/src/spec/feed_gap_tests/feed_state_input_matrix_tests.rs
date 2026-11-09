@@ -93,6 +93,32 @@ fn feed_keepalive_rearm() {
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == std::time::Duration::from_secs(25) && input.starts_with("Keepalive"))));
 }
 
+#[test]
+fn feed_frame_protocol_error() {
+    for reason in [ProtocolReason::Decrypt, ProtocolReason::Frame] {
+        let mut twin = live();
+        let connection = twin.connection(To::Active);
+        take(&twin.log);
+        twin.post(FeedInput::ProtocolError { connection_id: connection, reason });
+        let effects = take(&twin.log);
+        assert!(matches!(twin.state().mode(), f::Mode::Draining { connection: found, then: f::Resume::Reopen } if found == connection));
+        assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Close { connection: found, .. }) if *found == connection)));
+        assert!(effects.iter().any(|effect| matches!(effect, Emitted::Schedule { input, .. } if input.starts_with("Drain"))));
+    }
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    let counter = twin.counter(connection, Counter::Expected) + 1;
+    take(&twin.log);
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Pong });
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Close { .. }))));
+    let mut twin = opening();
+    let connection = twin.connection(To::Opening);
+    take(&twin.log);
+    twin.post(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake });
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, Emitted::Schedule { input, .. } if input.starts_with("Resubscribe"))));
+}
+
 fn alphabet() -> Vec<(&'static str, Input)> {
     vec![
         ("WantPlus Chat", plus("Chat")),
