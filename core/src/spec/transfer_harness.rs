@@ -136,6 +136,8 @@ impl Out {
 
     pub fn staged_cleared(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadStaged { key } = op { Some(key.clone()) } else { None }).collect() }
 
+    pub fn outcomes_written(&self) -> Vec<(u64, u64, OutboxOutcome)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } = op { Some((*transfer_id, *cycle_id, outcome.clone())) } else { None }).collect() }
+
     pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
     pub fn writes(&self) -> usize { self.batches.len() }

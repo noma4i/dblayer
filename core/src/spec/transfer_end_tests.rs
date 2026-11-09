@@ -535,3 +535,15 @@ fn xfer_failed_row_carries_failed_at() {
     let out = twin.step_error(id, false);
     assert_eq!(out.rows().iter().map(|(row, _)| row.failed_at).collect::<Vec<_>>(), vec![Some(6 * DAY)], "the batch of the transition writes the time of it");
 }
+
+#[test]
+fn xfer_end_discard_cancel_write_outcome() {
+    for cancel in [true, false] {
+        let mut twin = Twin::new();
+        let (id, _, _) = twin.accepting(KEY, 2);
+        twin.commit();
+        let cycle = twin.t(id).cycle_id;
+        let (_, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+        assert_eq!(out.outcomes_written(), vec![(id, cycle, OutboxOutcome::Discarded)], "cancel={cancel}");
+    }
+}
