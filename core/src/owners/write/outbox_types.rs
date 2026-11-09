@@ -203,8 +203,9 @@ pub enum OutboxInput {
     RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
     Discard { model: String, row_id: String, action: Option<String>, reply: ReplyId },
     /// Transfer found no open transfer of the row that precedes `outbox_min`: the call continues here with the action of that operation.
-    SelectedOutbox { model: String, row_id: String, action: String, kind: SelectKind, reply: ReplyId },
-    SelectedNone { reply: ReplyId },
+    SelectedOutbox { model: String, row_id: String, action: String, kind: SelectKind, reply: ReplyId, version: u64 },
+    SelectedNone { reply: ReplyId, version: u64 },
+    SelectedTransfer { reply: ReplyId, transfer_id: u64, version: u64 },
     Outcome { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },

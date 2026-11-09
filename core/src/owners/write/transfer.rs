@@ -583,7 +583,8 @@ impl TransferState {
             TransferInput::SupplySource { epoch, key, source, reply } => self.supply_source(epoch, &key, source, reply, fx),
             TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),
-            TransferInput::SelectRow { model, rows, outbox_min, kind, reply } => self.select_row((model, rows), outbox_min, kind, reply, fx),
+            TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version } => self.select_row((model, rows), outbox_min, kind, reply, version, fx),
+            TransferInput::SelectConfirmed { reply } => { self.selecting.remove(&reply); }
             TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
             TransferInput::SlotFreed => self.start_in_order(fx),
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),

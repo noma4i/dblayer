@@ -82,7 +82,7 @@ impl TransferState {
     }
 
     /// The smallest `op_id` among the open transfers of the row decides: a transfer that does not follow the operation of Outbox answers the call itself.
-    pub(super) fn select_row(&mut self, (model, rows): (String, Vec<String>), outbox_min: Option<(super::outbox::OpId, String)>, kind: super::outbox_types::SelectKind, rep: ReplyId, fx: &mut Fx) {
+    pub(super) fn select_row(&mut self, (model, rows): (String, Vec<String>), outbox_min: Option<(super::outbox::OpId, String)>, kind: super::outbox_types::SelectKind, rep: ReplyId, version: u64, fx: &mut Fx) {
         let named = |key: &str| rows.iter().any(|row| key.strip_prefix(&format!("{model}:{row}:")).is_some());
         let first = self.scan().filter(|transfer| transfer.stage != TransferStage::Done && named(&transfer.key)).filter_map(|transfer| {
             let op_id = transfer.op_id.or_else(|| self.group_entry(transfer.transfer_id).and_then(|group| self.groups.get(&group)?.op_id))?;
@@ -95,9 +95,9 @@ impl TransferState {
             },
             (_, Some((_, action))) => {
                 let row_id = rows.into_iter().next().unwrap_or_default();
-                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedOutbox { model, row_id, action, kind, reply: rep })));
+                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedOutbox { model, row_id, action, kind, reply: rep, version })));
             }
-            (_, None) => fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedNone { reply: rep }))),
+            (_, None) => fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedNone { reply: rep, version }))),
         }
     }
 

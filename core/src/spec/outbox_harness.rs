@@ -265,12 +265,13 @@ impl Twin {
             let Some(asked) = self.asked.pop() else { self.last = effects.clone(); return effects };
             let asked = &asked;
             let reply = number_after(asked, "reply: ").expect("the reply of the question");
+            let version = number_after(asked, "version: ").expect("the version of the question");
             let kind = if asked.contains("kind: Retry") { o::SelectKind::Retry } else { o::SelectKind::Discard };
             let asked_row = asked.split("row_id: \"").nth(1).and_then(|rest| rest.split('"').next()).unwrap_or("r").to_string();
             let smallest = self.state().ops.values().find(|operation| operation.op.row_id == asked_row && operation.stage != Stage::Done).map(|operation| operation.op.action.clone());
             effects.extend(self.post_input(match smallest {
-                Some(action) => OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: asked_row.clone(), action, kind, reply },
-                None => OutboxInput::SelectedNone { reply },
+                Some(action) => OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: asked_row.clone(), action, kind, reply, version },
+                None => OutboxInput::SelectedNone { reply, version },
             }));
         }
     }

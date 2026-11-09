@@ -247,7 +247,8 @@ pub enum TransferInput {
     Retry { key: Key, source: Option<SuppliedSource>, reply: ReplyId },
     Discard { key: Key, reply: ReplyId },
     /// A `retry` or `discard` without an action: `rows` are the names of the row, `outbox_min` the smallest open operation of the row in Outbox.
-    SelectRow { model: String, rows: Vec<String>, outbox_min: Option<(OpId, String)>, kind: super::outbox_types::SelectKind, reply: ReplyId },
+    SelectRow { model: String, rows: Vec<String>, outbox_min: Option<(OpId, String)>, kind: super::outbox_types::SelectKind, reply: ReplyId, version: u64 },
+    SelectConfirmed { reply: ReplyId },
     SlotFreed,
     Online(Online),
     PowerSaving(bool),
@@ -525,6 +526,7 @@ pub struct TransferState {
     /// The row a confirmed cycle showed in the batch of its removal.
     pub(super) landed_rows: std::collections::HashMap<(TransferId, u64), crate::store::Row>,
     pub(super) groups: BTreeMap<u64, Group>,
+    pub(super) selecting: BTreeMap<ReplyId, (TransferId, super::outbox_types::SelectKind)>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) subscribers: BTreeMap<Key, BTreeSet<StreamId>>,
     pub(super) declarations: BTreeSet<(String, String)>,
@@ -569,6 +571,7 @@ impl TransferState {
             completed: std::collections::HashMap::new(),
             landed_rows: std::collections::HashMap::new(),
             groups: BTreeMap::new(),
+            selecting: BTreeMap::new(),
             pending: BTreeMap::new(),
             subscribers: BTreeMap::new(),
             declarations: BTreeSet::new(),

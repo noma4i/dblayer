@@ -516,7 +516,7 @@ impl OutboxState {
             };
         };
         let rows = std::iter::once(row_id).chain(resolved).collect();
-        fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply })));
+        fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version: 0 })));
     }
 
     /// Transfer named the smallest open operation of the row here: an operation of a transfer goes on through its Transfer, any other by its own cell.
@@ -618,8 +618,9 @@ impl OutboxState {
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
             OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
-            OutboxInput::SelectedOutbox { model, row_id, action, kind, reply } => self.selected((model, row_id), action, kind, reply, fx),
-            OutboxInput::SelectedNone { reply } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
+            OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, .. } => self.selected((model, row_id), action, kind, reply, fx),
+            OutboxInput::SelectedNone { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
+            OutboxInput::SelectedTransfer { .. } => {}
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
