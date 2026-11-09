@@ -120,7 +120,7 @@ fn out_submit() {
     let mut twin = Twin::new();
     let id = twin.submit("r", Policy::Rollback, false);
     assert_eq!((twin.stage(id), kinds(&twin.last), twin.last.len()), (Some(St::Submitting), vec![CommitKind::Intent], 1));
-    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 1"));
+    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 1"), "{}", twin.store_text);
 }
 
 #[test]
@@ -367,7 +367,7 @@ fn out_failed_retry() {
     let id = failed(&mut twin);
     let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::MarkingRetry), vec![CommitKind::ClearMark], 1));
-    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 2"));
+    assert!(twin.store_text.contains("attempts: 1") && twin.store_text.contains("cycle_id: 2"), "{}", twin.store_text);
 }
 
 #[test]
