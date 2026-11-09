@@ -637,7 +637,7 @@ fn out_queued_persist_attempt() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::Online(Online(false)));
-    tick(&mut twin, id);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
     assert_eq!(twin.stage(id), Some(St::Queued));
     let effects = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::PersistingAttempt), vec![CommitKind::Attempt], 0));
