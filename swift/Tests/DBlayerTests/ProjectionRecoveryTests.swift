@@ -44,7 +44,7 @@ struct ProjectionDomainTests {
   @Test
   func bridge_prop_numeric_domain_aQueryWindowOutsideTheCoreDomainIsInvalidInsteadOfClamped() throws {
     for query in [Query<Moment>().limit(-1), Query<Moment>().offset(-1), Query<Moment>().limit(Int(UInt32.max) + 1)] {
-      #expect(throws: DbError.self) { try query.spec() }
+      expectDbErrorNow("Invalid") { try query.spec() }
     }
     let spec = try Query<Moment>().limit(Int(UInt32.max)).offset(0).spec()
     #expect((spec.limit, spec.offset) == (UInt32.max, 0))

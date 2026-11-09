@@ -174,7 +174,7 @@ extension BridgeProbeTests {
     try await DB.sessionCall("logout", body: NoBody())
     try await DB.sessionReset()
     try await DB.sessionReset()
-    await #expect(throws: DbError.self) { try await entity.loaded() }
+    await expectDbError("Interrupted") { try await entity.loaded() }
   }
 
   /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.

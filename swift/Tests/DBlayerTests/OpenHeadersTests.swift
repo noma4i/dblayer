@@ -35,9 +35,9 @@ struct OpenHeadersTests {
     try await DB.open(headers: { ["X-Token": token.value] }, encrypted: encrypted, credentials: HeaderCredential(), modelsJSON: emptySpecs)
 
     try DB.database.setOnline(online: true)
-    await #expect(throws: DbError.self) { try await DB.sessionCall("login_link", body: HeaderLogin(account: "A")) }
+    await expectDbError("Http") { try await DB.sessionCall("login_link", body: HeaderLogin(account: "A")) }
     token.value = "second"
-    await #expect(throws: DbError.self) { try await DB.sessionCall("login_link", body: HeaderLogin(account: "A")) }
+    await expectDbError("Http") { try await DB.sessionCall("login_link", body: HeaderLogin(account: "A")) }
 
     let tokens = server.requests.compactMap { request in
       request.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("x-token:") }.map { $0.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces) }

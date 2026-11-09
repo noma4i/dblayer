@@ -32,10 +32,10 @@ struct JSONValueNumberTests {
   }
 
   @Test func aMistypedCellThrowsInsteadOfConverting() throws {
-    #expect(throws: DbError.self) { _ = try CellReader([.int(value: 7)]).req(0, \.asId) }
-    #expect(throws: DbError.self) { _ = try CellReader([.int(value: 2)]).req(0, \.asDouble) }
-    #expect(throws: DbError.self) { _ = try CellReader([.keyed(entries: [CellEntry(key: "k", value: .null), CellEntry(key: "k", value: .null)])]).json(0) }
-    #expect(throws: DbError.self) { _ = try CellReader([.seq(items: [.text(value: "f1"), .int(value: -1), .null, .null, .null])]).file(0) }
+    expectDbErrorNow("Invalid") { try CellReader([.int(value: 7)]).req(0, \.asId) }
+    expectDbErrorNow("Invalid") { try CellReader([.int(value: 2)]).req(0, \.asDouble) }
+    expectDbErrorNow("Invalid") { try CellReader([.keyed(entries: [CellEntry(key: "k", value: .null), CellEntry(key: "k", value: .null)])]).json(0) }
+    expectDbErrorNow("Invalid") { try CellReader([.seq(items: [.text(value: "f1"), .int(value: -1), .null, .null, .null])]).file(0) }
     #expect(throws: DecodingError.self) { _ = try JSONValue.integer(1).objectValue }
     #expect(JSONValue.number(3.0).intValue == nil)
   }

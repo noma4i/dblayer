@@ -75,7 +75,7 @@ struct MockTransportStrictTests {
     #expect(try await transport.mutate(request: other) == "second")
     #expect(try await transport.mutate(request: other) == "second")
     let unrecorded = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, purpose: .standard, author: .window, requestId: 3, attempt: 1)
-    await #expect(throws: DbError.self) { try await transport.mutate(request: unrecorded) }
+    await expectDbError("Network") { try await transport.mutate(request: unrecorded) }
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -94,7 +94,7 @@ struct MockTransportStrictTests {
       }
     }
     #expect(try await transport.mutate(request: other) == "second")
-    await #expect(throws: DbError.self) { try await transport.mutate(request: TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: "{}", purpose: .standard, author: .window, requestId: 3)) }
+    await expectDbError("Network") { try await transport.mutate(request: TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: "{}", purpose: .standard, author: .window, requestId: 3)) }
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -103,7 +103,7 @@ struct MockTransportStrictTests {
     transport.enqueue("Ping", failure: DbError.Network(detail: "down"))
     transport.enqueue("Ping", reply: "second")
     let repeated = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, purpose: .standard, author: .window, requestId: 1, attempt: 2)
-    await #expect(throws: DbError.self) { try await transport.mutate(request: request) }
+    await expectDbError("Network") { try await transport.mutate(request: request) }
     #expect(try await transport.mutate(request: repeated) == "second")
     #expect(try await transport.mutate(request: request) == "second")
   }
@@ -120,7 +120,7 @@ struct MockTransportStrictTests {
     #expect(try await transport.query(request: first) == "one")
     #expect(try await transport.query(request: second) == "queued")
     let third = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":3}"#, purpose: .standard, author: .window, requestId: 3)
-    await #expect(throws: DbError.self) { try await transport.query(request: third) }
+    await expectDbError("Network") { try await transport.query(request: third) }
   }
 }
 

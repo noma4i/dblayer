@@ -170,8 +170,8 @@ extension BridgeProbeTests {
     try await projectionB.loaded()
     await eventually("B shows") { projectionB.value?.name == "B" }
 
-    await #expect(throws: DbError.self) { try await late.value }
-    await #expect(throws: DbError.self) { _ = try await old.send(Moment.self, values: ["text": .string("late")]) }
+    await expectDbError("Interrupted") { try await late.value }
+    await expectDbError("NoSession") { try await old.send(Moment.self, values: ["text": .string("late")]) }
     #expect(server.operationRequests("CreateMoment") == 0)
     #expect(projectionB.value?.name == "B")
   }
@@ -287,9 +287,9 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     try await Self.signIn("B")
 
-    await #expect(throws: DbError.self) { _ = try await row.update(values: ["name": .string("hijacked")], in: scopeA) }
-    await #expect(throws: DbError.self) { _ = try await User.profile.read(in: scopeA) }
-    await #expect(throws: DbError.self) { _ = try await User.profile.readRow(row.id, in: scopeA) }
+    await expectDbError("NoSession") { try await row.update(values: ["name": .string("hijacked")], in: scopeA) }
+    await expectDbError("NoSession") { try await User.profile.read(in: scopeA) }
+    await expectDbError("NoSession") { try await User.profile.readRow(row.id, in: scopeA) }
     let current = try await User.profile.read().first
     #expect(current?.name == "B", "a command of A changed the row of B")
   }
@@ -310,7 +310,7 @@ extension BridgeProbeTests {
     let state = try #require(profile.state)
     var bad = try #require(try await DB.database.readQuery(epoch: scope.epoch, query: try User.profile.spec()).first)
     bad.layout = "another layout"
-    #expect(throws: DbError.self) { try projection.apply(.snapshot(revision: 1, rows: [bad], edits: [], state: state)) }
+    expectDbErrorNow("Invalid") { try projection.apply(.snapshot(revision: 1, rows: [bad], edits: [], state: state)) }
     #expect(projection.rows.isEmpty && projection.revision == nil, "a row that does not decode changed the projection")
     let whole = try #require(try await DB.database.readQuery(epoch: scope.epoch, query: try User.profile.spec()).first)
     try projection.apply(.snapshot(revision: 2, rows: [whole], edits: [], state: state))
@@ -338,8 +338,8 @@ extension BridgeProbeTests {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
 
-    await #expect(throws: DbError.self) { _ = try await row.update(values: ["name": .string("hijacked")], in: oldScope) }
-    await #expect(throws: DbError.self) { _ = try await User.profile.read(in: oldScope) }
+    await expectDbError("Closed") { try await row.update(values: ["name": .string("hijacked")], in: oldScope) }
+    await expectDbError("Closed") { try await User.profile.read(in: oldScope) }
     let current = try await User.profile.read().first
     #expect(current?.name == "A", "a command of the old scope changed the new database")
   }

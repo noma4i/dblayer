@@ -94,10 +94,10 @@ struct EncryptedSessionTests {
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport(), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .sessionless), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", class: .sessionless), "social": EncryptedSessionOperation(path: "/api/auth/social", class: .sessionless), "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
     try database.setOnline(online: true)
 
-    await #expect(throws: DbError.self) { try await database.sessionCall(operation: "ticket", bodyJson: "{}") }
+    await expectDbError("Http") { try await database.sessionCall(operation: "ticket", bodyJson: "{}") }
     #expect(credentials.current == nil)
-    await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
-    await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
+    await expectDbError("Http") { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
+    await expectDbError("Http") { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
 
     let posts = http.posts
     #expect(posts.map(\.path) == ["/api/ticket", "/api/auth/otp", "/api/auth/otp"])
