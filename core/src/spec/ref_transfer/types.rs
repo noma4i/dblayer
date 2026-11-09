@@ -18,6 +18,9 @@ pub struct TransferKey { pub model: String, pub row_id: String, pub action: Stri
 pub enum Source { File { path: String }, Pending }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AbortFault { pub temporary: bool, pub status: Option<u16> }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Supplied { pub path: String, pub name: String, pub mime: String, pub values: Vec<String>, pub variables: Vec<String>, pub valid: bool, pub values_declared: bool }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +115,7 @@ pub enum Input {
     UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String, key: TransferKey },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: String },
     CompleteError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool, error: Failure },
-    AbortDone { upload_id: String, result: Result<(), bool> },
+    AbortDone { upload_id: String, result: Result<(), AbortFault> },
     MutationOutcome(MutTarget),
     DiscardOutcome { transfer_id: TransferId, result: Result<(), Fault> },
     RetryOutcome { target: Target, result: Result<u64, Fault> },

@@ -230,9 +230,9 @@ pub fn dispatch_inner(g: &mut G, e: &mut Vec<Effect>, owe: bool) {
     }
 }
 
-pub fn abort_done(g: &mut G, upload_id: &str, result: &Result<(), bool>, e: &mut Vec<Effect>) {
-    let temporary = matches!(result, Err(true));
-    if !temporary {
+pub fn abort_done(g: &mut G, upload_id: &str, result: &Result<(), AbortFault>, e: &mut Vec<Effect>) {
+    let gone = matches!(result, Ok(()) | Err(AbortFault { status: Some(404 | 410), .. }));
+    if gone {
         row(e, "xfer_orphan_abort_done");
         g.orphan_flight.remove(upload_id);
         g.orphan_owed.remove(upload_id);
@@ -253,7 +253,8 @@ pub fn abort_done(g: &mut G, upload_id: &str, result: &Result<(), bool>, e: &mut
             g.orphan_flight.remove(upload_id);
         }
     } else {
-        row(e, "xfer_orphan_abort_retry_later");
+        let temporary = matches!(result, Err(AbortFault { temporary: true, .. }));
+        row(e, if temporary { "xfer_orphan_abort_retry_later" } else { "xfer_orphan_abort_refused_keeps_debt" });
         g.orphan_flight.remove(upload_id);
     }
 }
