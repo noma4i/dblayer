@@ -120,6 +120,7 @@ struct CallAttempt {
     attempt: u32,
     last: Option<CallError>,
     waiting_network: bool,
+    waiting_retry: bool,
 }
 
 fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::RetryPolicy> {
@@ -160,10 +161,11 @@ impl CallsState {
             if let Some(id) = held { finished.push(id); }
             return;
         };
-        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
+        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; id });
+        deadlines.push(id);
         self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: self.generation }, reply));
         self.by_reply.insert(reply, id);
-        self.attempts.insert(id, CallAttempt { operation: operation.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false });
+        self.attempts.insert(id, CallAttempt { operation: operation.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
         fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: self.epoch });
     }
 
@@ -192,8 +194,11 @@ impl CallsState {
             return;
         }
         attempt.last = Some(error);
+        let previous = attempt.attempt;
+        attempt.attempt += 1;
+        attempt.waiting_retry = true;
         if self.online != Some(true) { attempt.waiting_network = true; return; }
-        scheduled.push((call_id, attempt.attempt, policy));
+        scheduled.push((call_id, previous, policy));
     }
 
     fn send_again(&mut self, call_id: CallId, fx: &mut Vec<CallsEffect>) {
@@ -204,7 +209,7 @@ impl CallsState {
             if let Some((phase, _)) = self.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind, generation }; }
         }
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
-        attempt.attempt += 1;
+        attempt.waiting_retry = false;
         attempt.waiting_network = false;
         fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), kind, epoch: attempt.epoch });
     }
@@ -230,15 +235,15 @@ impl StateOwner for Calls {
                 state.next += 1;
                 state.awaiting.insert(reply, (id, operation, variables));
                 state.awaiting_by_id.insert(id, reply);
-                deadlines.push(id);
             }
             CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), None, &mut fx, &mut deadlines, &mut finished),
             CallsInput::Response { call_id, body, data, errors, kind } if state.sending(call_id) => {
                 let response = crate::transport::Response { data, errors };
-                let answer = match (response.errors.is_empty(), body) {
-                    (false, _) => Err(CallError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() }),
-                    (true, Some(body)) => Ok(body),
-                    (true, None) => Err(CallError::InvalidResponse),
+                let answer = match (&kind, response.errors.is_empty(), body) {
+                    (crate::transport::AnswerKind::Transient { reason }, true, None) if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Query, .. })) => Err(CallError::Graphql { messages: vec![reason.clone()], extensions: None }),
+                    (_, false, _) => Err(CallError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() }),
+                    (_, true, Some(body)) => Ok(body),
+                    (_, true, None) => Err(CallError::InvalidResponse),
                 };
                 let retry = match (&answer, state.phase(call_id), kind) { (Err(_), Some(CallPhase::Sending { kind: CallKind::Query, .. }), crate::transport::AnswerKind::Transient { .. }) => Some(crate::runtime::RetryPolicy::QueryServer), _ => None };
                 if let (Some(policy), Err(error)) = (retry, &answer) { state.retry(call_id, error.clone(), policy, &mut fx, &mut scheduled, &mut finished); }
@@ -253,13 +258,6 @@ impl StateOwner for Calls {
             CallsInput::Dropped { call_id } if state.sending(call_id) => {
                 let policy = if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) { crate::runtime::RetryPolicy::Http } else { crate::runtime::RetryPolicy::QueryNetwork };
                 state.retry(call_id, CallError::Dropped, policy, &mut fx, &mut scheduled, &mut finished);
-            }
-            CallsInput::Deadline { call_id } if state.awaiting_by_id.contains_key(&call_id) => {
-                if let Some(reply) = state.awaiting_by_id.remove(&call_id) {
-                    state.awaiting.remove(&reply);
-                    finished.push(call_id);
-                    fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Network) });
-                }
             }
             CallsInput::Deadline { call_id } if state.sending(call_id) => {
                 let phase = state.phase(call_id);
@@ -281,7 +279,7 @@ impl StateOwner for Calls {
                     }
                 }
             }
-            CallsInput::RetryDue { call_id, attempt } if state.sending(call_id) && state.attempts.get(&call_id).is_some_and(|current| current.attempt == attempt) => {
+            CallsInput::RetryDue { call_id, attempt } if state.sending(call_id) && state.attempts.get(&call_id).is_some_and(|current| current.waiting_retry && !current.waiting_network && current.attempt == attempt + 1) => {
                 if state.online == Some(true) { state.send_again(call_id, &mut fx); }
                 else if let Some(current) = state.attempts.get_mut(&call_id) { current.waiting_network = true; }
             }
