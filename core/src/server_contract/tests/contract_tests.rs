@@ -103,3 +103,13 @@ fn server_contract_session_number_known_or_adopted() {
     let cold = request("a", "r3", Some(8), hash_only("M", json!({})));
     assert!(matches!(contract.admit(&cold), Admission::Refused(body) if code_of(&body) == "PERSISTED_QUERY_NOT_FOUND"));
 }
+
+/// C2: a request id is one pair for good, so it never goes again with another number, in this scope or after a reopen of the same server.
+#[test]
+fn server_contract_request_id_is_one_pair() {
+    let mut contract: Contract<String> = Contract::new();
+    contract.register(HASH);
+    assert!(matches!(contract.admit(&request("a", "r1", Some(1), hash_only("M", json!({})))), Admission::Fresh));
+    assert!(matches!(contract.admit(&request("a", "r1", Some(2), hash_only("M", json!({})))), Admission::TwoBodies), "the id r1 went with the number 1");
+    assert!(matches!(contract.admit(&request("b", "r1", Some(1), hash_only("M", json!({})))), Admission::Fresh), "the same id of another scope is another pair");
+}
