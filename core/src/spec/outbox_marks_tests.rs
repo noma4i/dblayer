@@ -124,10 +124,12 @@ fn out_marking_retry_storage() {
 
 #[test]
 fn out_marking_retry_no_session() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    let effects = refuse(&mut twin, id, RejectReason::NoSession);
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Done), vec![OutboxAnswer::Err(Fault::Interrupted)]));
+    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = marking_retry(&mut twin);
+        let effects = refuse(&mut twin, id, reason.clone());
+        assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Done), vec![OutboxAnswer::Err(Fault::Rejected(reason))]));
+    }
 }
 
 #[test]
