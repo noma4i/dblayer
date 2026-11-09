@@ -21,6 +21,7 @@ impl Window {
             page_count: 0,
             max_pages: 1000,
             members_complete: false,
+            source: false,
             cursor_reset_used: false,
             replace_all: false,
             has_rows: false,
@@ -218,6 +219,7 @@ impl Window {
                 for held in held {
                     effects.extend(self.step(held));
                 }
+                if self.source && matches!(read, Read::Saved { .. }) { effects.push(Effect::DerivePreload { revision: 0 }); }
                 effects
             }
             Input::EpochEnded | Input::Closing => {

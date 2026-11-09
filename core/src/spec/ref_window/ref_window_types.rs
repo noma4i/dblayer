@@ -177,6 +177,8 @@ pub(in super::super) struct Window {
     pub(in super::super) page_count: u32,
     pub(in super::super) max_pages: u32,
     pub(in super::super) members_complete: bool,
+    /// The key is a `RowsOf` source of a `preload` declaration.
+    pub(in super::super) source: bool,
     pub(in super::super) cursor_reset_used: bool,
     pub(in super::super) replace_all: bool,
     pub(in super::super) has_rows: bool,
