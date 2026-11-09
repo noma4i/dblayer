@@ -80,6 +80,33 @@ fn xfer_accepting_rejected_interrupted() {
     }
 }
 
+#[test]
+fn xfer_awaiting_source_expires() {
+    use super::transfer_harness::{item, DAY, EPOCH};
+    use crate::owners::contract::Online;
+    use crate::owners::write::outbox::ReserveTarget;
+    use crate::owners::write::transfer::{TransferInput, TransferStage, TransferTick};
+    use crate::runtime::Time;
+    let mut twin = Twin::offline();
+    let mut pending = item(KEY, 1);
+    pending.source = None;
+    pending.steps = None;
+    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 30, now: Time(0) });
+    let id = twin.state().open_id(KEY).unwrap();
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::AwaitingSource);
+    for input in [
+        TransferInput::Online(Online(true)),
+        TransferInput::RestoreReady { epoch: EPOCH },
+        TransferInput::Tick { now: Time(60 * DAY), kind: TransferTick::Expire },
+    ] {
+        let out = twin.post(input);
+        assert_eq!(twin.stage(id), TransferStage::AwaitingSource);
+        assert!(Twin::quiet(&out), "{out:?}");
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
