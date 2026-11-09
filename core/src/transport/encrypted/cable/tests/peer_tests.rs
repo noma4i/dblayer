@@ -36,6 +36,7 @@ pub(crate) struct CablePeer {
     connections: Arc<Mutex<HashMap<String, Arc<Connection>>>>,
     next: Arc<AtomicUsize>,
     observer: Option<Observer>,
+    contract: Option<(Arc<Mutex<crate::server_contract::CableContract>>, Arc<dyn crate::runtime::Clock>)>,
 }
 
 struct PeerLink {
@@ -61,7 +62,20 @@ impl PlatformSocket for PeerLink {
 
 impl CablePeer {
     pub(crate) fn new(config: crate::transport::EncryptedConfig) -> Self {
-        Self { config, connections: Arc::default(), next: Arc::default(), observer: None }
+        Self { config, connections: Arc::default(), next: Arc::default(), observer: None, contract: None }
+    }
+
+    pub(crate) fn with_contract(mut self, contract: Arc<Mutex<crate::server_contract::CableContract>>, clock: Arc<dyn crate::runtime::Clock>) -> Self {
+        self.contract = Some((contract, clock));
+        self
+    }
+
+    pub(crate) fn expire_idle(&self, token: &str) {
+        let Some((contract, clock)) = &self.contract else { return };
+        let expired = contract.lock().unwrap().expire(clock.now().as_millis() as u64);
+        if expired {
+            if let Some(connection) = self.connection(token) { connection.events.ended(Some(4408), Some("idle".into()), None); }
+        }
     }
 
     pub(crate) fn observed(config: crate::transport::EncryptedConfig, observer: impl Fn(PeerEvent) + Send + Sync + 'static) -> Self {
@@ -122,6 +136,10 @@ impl CablePeer {
         let key = connection.keys.lock().unwrap().as_ref().unwrap().1;
         let plain = Aes256Gcm::new_from_slice(&key).unwrap().decrypt(Nonce::from_slice(&iv), Payload { msg: &sealed, aad: parts[0].as_bytes() }).unwrap();
         let body: Value = serde_json::from_slice(&plain)?;
+        if let Some((contract, clock)) = &self.contract {
+            let response = contract.lock().unwrap().receive(clock.now().as_millis() as u64, &body);
+            if let Some(response) = response { self.emit(token, response); }
+        }
         if body["t"] == "subscribe" {
             let id = body["id"].as_str().unwrap().to_string();
             connection.subscribes.lock().unwrap().push(body.clone());

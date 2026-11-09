@@ -104,6 +104,7 @@ pub(super) struct Stand {
     server: Arc<Server>,
     cable: Arc<Cable>,
     subscribed: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    pub(super) clock: Arc<crate::ffi::TestClock>,
 }
 
 impl Stand {
@@ -118,18 +119,24 @@ impl Stand {
 
     /// The same core on a file and a credential store that outlive the process: `reopen` is the next launch of the app.
     pub(super) async fn prepare_on(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>) -> Stand {
+        Self::prepare_contract(path, credentials, None).await
+    }
+
+    pub(super) async fn prepare_contract(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>) -> Stand {
         let server = Arc::new(Server::default());
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("otp".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         let (opened, subscribed) = tokio::sync::mpsc::unbounded_channel();
-        let peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
+        let clock = crate::ffi::TestClock::new(1_000_000);
+        let mut peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
+        if let Some(contract) = contract { peer = peer.with_contract(contract, clock.manual()); }
         let cable = Arc::new(Cable { peer, puts: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
-        let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+        let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, clock.clone())).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(true).unwrap();
-        Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed) }
+        Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed), clock }
     }
 
     pub(super) async fn sign_in(&self) {
@@ -188,6 +195,12 @@ impl Stand {
 
     /// The socket of the subscription breaks.
     pub(super) fn drop_cable(&self, token: &str) { assert!(self.cable.peer.close(token), "the socket is open"); }
+
+    pub(super) fn expire_cable(&self, token: &str) { self.cable.peer.expire_idle(token); }
+
+    pub(super) fn cable_connects(&self) -> usize { self.cable.peer.connects() }
+
+    pub(super) fn cable_ping(&self, token: &str) { self.cable.peer.emit(token, json!({"t":"ping", "ts":1})); }
 
     /// The events of the model: its stream opens the change feed of the app.
     pub(super) async fn events(&self, model: &str) -> (Arc<ReadStream>, String) {
