@@ -509,6 +509,39 @@ fn out_rollback_no_session() {
 }
 
 #[test]
+fn out_rollback_discard() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 803 });
+    assert_eq!((twin.stage(id), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), 0));
+    let effects = twin.committed(id);
+    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Ok]);
+    assert_eq!(answers(&effects, 803), vec![OutboxAnswer::Ok]);
+}
+
+#[test]
+fn out_submitting_committed_queued() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    let effects = twin.committed(id);
+    assert_eq!((twin.stage(id), sends(&effects), effects.len()), (Some(St::Queued), 0, 1));
+    assert!(matches!(answers(&effects, SUBMIT_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id));
+}
+
+#[test]
+fn out_submitting_committed() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    let effects = twin.committed(id);
+    assert_eq!((twin.stage(id), sends(&effects), twin.state().ops[&id].attempts), (Some(St::Sending), 1, 1));
+    assert!(matches!(answers(&effects, SUBMIT_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id && receipt.cycle_id == 1 && receipt.revision == twin.revision));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
