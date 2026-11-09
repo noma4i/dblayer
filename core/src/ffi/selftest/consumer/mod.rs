@@ -11,3 +11,4 @@ mod registry_tests;
 mod supply_values_tests;
 mod matrix_write_server_tests;
 mod universal_properties_tests;
+mod stream_lifecycle_tests;
