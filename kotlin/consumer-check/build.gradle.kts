@@ -15,6 +15,6 @@ dependencies {
 
 androidComponents {
   onVariants { variant ->
-    variant.sources.kotlin?.addStaticSourceDirectory("../src/test/kotlin/com/noma4i/dblayer/models")
+    variant.sources.kotlin?.addStaticSourceDirectory(providers.gradleProperty("matrixKotlin").getOrElse("../src/test/kotlin/com/noma4i/dblayer/models"))
   }
 }
