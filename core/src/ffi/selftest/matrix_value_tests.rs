@@ -4,11 +4,15 @@ use std::path::{Path, PathBuf};
 
 use crate::test_matrix::{crate_dir, Matrix};
 
+type Members = Vec<(String, String)>;
+
 #[derive(Default, Debug)]
 struct Shape {
-    fields: Vec<(String, String)>,
-    cases: Vec<String>,
+    fields: Members,
+    cases: Vec<(String, Members)>,
     is_enum: bool,
+    stream: Option<String>,
+    skipped: bool,
 }
 
 fn files(directory: &Path, extension: &str, skip: &str, found: &mut Vec<std::path::PathBuf>) {
@@ -21,18 +25,69 @@ fn files(directory: &Path, extension: &str, skip: &str, found: &mut Vec<std::pat
 
 fn identifier(text: &str) -> String { text.chars().take_while(|character| character.is_alphanumeric() || *character == '_').collect() }
 
+fn payload(rest: &str) -> Members {
+    let Some((_, tail)) = rest.split_once('(') else { return Vec::new() };
+    let mut depth = 1i32;
+    let close = tail.char_indices().find(|(_, character)| { match character { '(' => depth += 1, ')' => depth -= 1, _ => {} } depth == 0 }).map_or(tail.len(), |(at, _)| at);
+    let inside = &tail[..close];
+    split_top(inside).into_iter().map(|part| match part.split_once(':') {
+        Some((label, field_type)) if !label.contains('<') && !label.contains('[') => (label.trim().to_string(), field_type.trim().to_string()),
+        _ => (String::new(), part),
+    }).collect()
+}
+
+fn strip_annotations(text: &str) -> String {
+    let mut result = String::new();
+    let characters: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    while at < characters.len() {
+        if characters[at] != '@' { result.push(characters[at]); at += 1; continue; }
+        at += 1;
+        while at < characters.len() && (characters[at].is_alphanumeric() || characters[at] == '_' || characters[at] == ':') { at += 1; }
+        if characters.get(at) == Some(&'(') {
+            let mut depth = 0;
+            while at < characters.len() { if characters[at] == '(' { depth += 1; } if characters[at] == ')' { depth -= 1; if depth == 0 { at += 1; break; } } at += 1; }
+        }
+    }
+    result
+}
+
+fn without_block_comments(text: &str) -> String {
+    let mut result = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("/*") {
+        result.push_str(&rest[..at]);
+        rest = rest[at..].find("*/").map_or("", |end| &rest[at + end + 2..]);
+    }
+    result.push_str(rest);
+    result.lines().map(|line| line.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
+}
+
+fn body_end(lines: &[&str], start: usize) -> usize {
+    let (mut depth, mut cursor, mut opened) = (0i32, start, false);
+    while cursor < lines.len() {
+        depth += lines[cursor].matches('{').count() as i32 - lines[cursor].matches('}').count() as i32;
+        opened |= lines[cursor].contains('{');
+        cursor += 1;
+        if opened && depth <= 0 { break; }
+        if !opened && cursor > start && !lines[cursor - 1].trim_end().ends_with([',', '(']) && !lines[cursor - 1].contains('(') { break; }
+    }
+    cursor
+}
+
 fn swift_types(text: &str) -> BTreeMap<String, Shape> {
     let mut types = BTreeMap::new();
+    let text = without_block_comments(text);
     let lines: Vec<&str> = text.lines().collect();
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index].trim_start();
         let (keyword, is_enum) = if line.starts_with("public struct ") { ("public struct ", false) } else if line.starts_with("public enum ") { ("public enum ", true) } else { index += 1; continue };
         let name = identifier(&line[keyword.len()..]);
-        let indent = lines[index].len() - line.len();
         let mut shape = Shape { is_enum, ..Shape::default() };
         let mut depth = 0i32;
         let mut cursor = index;
+        let mut element = None;
         loop {
             let current = lines[cursor];
             let trimmed = current.trim_start();
@@ -43,15 +98,19 @@ fn swift_types(text: &str) -> BTreeMap<String, Shape> {
                         shape.fields.push((identifier(field.trim()), field_type));
                     }
                 }
-                if let Some(rest) = trimmed.strip_prefix("case ") {
-                    for case in rest.split(',') { let case = identifier(case.trim()); if !case.is_empty() { shape.cases.push(case); } }
+                if let Some(rest) = trimmed.strip_prefix("public typealias Element = ") { element = Some(rest.trim().to_string()); }
+                if let Some(rest) = trimmed.strip_prefix("indirect case ").or_else(|| trimmed.strip_prefix("case ")) {
+                    let members = payload(rest);
+                    if members.is_empty() { for case in rest.split(',') { let case = identifier(case.trim()); if !case.is_empty() { shape.cases.push((case, Vec::new())); } } } else { shape.cases.push((identifier(rest), members)); }
                 }
             }
             depth += current.matches('{').count() as i32 - current.matches('}').count() as i32;
             cursor += 1;
             if cursor >= lines.len() || (depth <= 0 && cursor > index) { break; }
         }
-        let _ = indent;
+        let header = lines[index];
+        shape.stream = header.contains("AsyncSequence").then(|| element.clone().unwrap_or_default());
+        shape.skipped = header.contains("CodingKey") || (is_enum && shape.cases.is_empty());
         types.insert(name, shape);
         index = cursor;
     }
@@ -60,11 +119,37 @@ fn swift_types(text: &str) -> BTreeMap<String, Shape> {
 
 fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
     let mut types = BTreeMap::new();
+    let text = without_block_comments(text);
     let lines: Vec<&str> = text.lines().collect();
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index].trim_start();
+        let line = strip_annotations(line);
+        let line = line.trim_start();
         let line = line.strip_prefix("public ").unwrap_or(line);
+        let sealed = line.strip_prefix("sealed class ").or_else(|| line.strip_prefix("sealed interface "));
+        if let Some(rest) = sealed {
+            let name = identifier(rest);
+            let end = body_end(&lines, index);
+            let mut shape = Shape { is_enum: true, ..Shape::default() };
+            let mut at = index + 1;
+            while at < end {
+                let member = strip_annotations(lines[at].trim());
+                let member = member.trim();
+                let nested = member.strip_prefix("data class ").or_else(|| member.strip_prefix("data object ")).or_else(|| member.strip_prefix("object ")).or_else(|| member.strip_prefix("class "));
+                if let Some(nested) = nested {
+                    let mut header = member.to_string();
+                    let mut last = at;
+                    while header.matches('(').count() > header.matches(')').count() && last + 1 < end { last += 1; header.push(' '); header.push_str(lines[last].trim()); }
+                    shape.cases.push((identifier(nested), payload(&header).into_iter().map(|(field, field_type)| (field.trim_start_matches("val ").trim_start_matches("var ").trim().to_string(), field_type)).collect()));
+                    at = last;
+                }
+                at += 1;
+            }
+            types.insert(name, shape);
+            index = end;
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("data class ") {
             let name = identifier(rest);
             let mut shape = Shape::default();
@@ -72,7 +157,7 @@ fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
             let mut header = String::new();
             let mut opened = 0i32;
             loop {
-                header.push_str(lines[cursor]);
+                header.push_str(&strip_annotations(lines[cursor]));
                 header.push('\n');
                 opened += lines[cursor].matches('(').count() as i32 - lines[cursor].matches(')').count() as i32;
                 cursor += 1;
@@ -80,18 +165,9 @@ fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
             }
             let inside = header.split_once('(').map_or("", |(_, rest)| rest);
             let inside = inside.rsplit_once(')').map_or(inside, |(body, _)| body);
-            let mut depth = 0i32;
-            let mut current = String::new();
-            let mut parts = Vec::new();
-            for character in inside.chars() {
-                match character { '<' | '(' | '[' => depth += 1, '>' | ')' | ']' => depth -= 1, _ => {} }
-                if character == ',' && depth == 0 { parts.push(std::mem::take(&mut current)); } else { current.push(character); }
-            }
-            parts.push(current);
-            for part in parts {
-                let part = part.trim();
-                let part = part.split('=').next().unwrap_or(part).trim();
-                let part = part.strip_prefix("val ").or_else(|| part.strip_prefix("var ")).unwrap_or(part);
+            for part in split_top(inside) {
+                let part = part.split('=').next().unwrap_or(&part).trim();
+                let part = part.rsplit_once("val ").or_else(|| part.rsplit_once("var ")).map_or(part, |(_, rest)| rest);
                 if let Some((field, field_type)) = part.split_once(':') { shape.fields.push((identifier(field.trim()), field_type.trim().to_string())); }
             }
             types.insert(name, shape);
@@ -105,10 +181,10 @@ fn kotlin_types(text: &str) -> BTreeMap<String, Shape> {
             let mut depth = lines[index].matches('{').count() as i32 - lines[index].matches('}').count() as i32;
             while cursor < lines.len() && depth > 0 {
                 let current = lines[cursor].trim();
-                if depth == 1 && !current.starts_with("//") && !current.starts_with('*') && !current.starts_with("/*") {
+                if depth == 1 {
                     for case in current.split([',', ';']).take(8) {
                         let case = identifier(case.trim());
-                        if !case.is_empty() && case.chars().next().is_some_and(char::is_uppercase) && !case.starts_with("val") { shape.cases.push(case); }
+                        if !case.is_empty() && case.chars().next().is_some_and(char::is_uppercase) && !case.starts_with("val") { shape.cases.push((case, Vec::new())); }
                     }
                 }
                 depth += lines[cursor].matches('{').count() as i32 - lines[cursor].matches('}').count() as i32;
@@ -163,17 +239,36 @@ fn matrix_value_platform() {
     let swift_text: String = swift_files.iter().filter_map(|file| std::fs::read_to_string(file).ok()).collect();
     let kotlin_text: String = kotlin_files.iter().filter_map(|file| std::fs::read_to_string(file).ok()).collect();
     let names: std::collections::BTreeSet<&String> = swift.keys().chain(kotlin.keys()).collect();
+    let mapped = ["JSONValue", "NoFiles"];
     for name in names {
-        match (swift.get(name), kotlin.get(name)) {
+        let (left, right) = (swift.get(name), kotlin.get(name));
+        if left.is_some_and(|shape| shape.skipped) || mapped.contains(&name.as_str()) { continue; }
+        if let Some(Shape { stream: Some(element), .. }) = left {
+            let element = to_kotlin(element);
+            let element = element.split('<').next().unwrap_or("");
+            let found = kotlin_text.contains(&format!("Flow<{element}"));
+            let wanted = format!("Kotlin Flow of {element}");
+            matrix.check(name, "stream idiom", &format!("Swift AsyncSequence of {element}"), &wanted, if found { &wanted } else { "no Flow of that element on Kotlin" });
+            continue;
+        }
+        match (left, right) {
             (Some(left), Some(right)) => {
                 if left.is_enum != right.is_enum { matrix.check(name, "kind of type", "enum or struct", "same on both", "enum on one platform only"); continue; }
                 if left.is_enum {
-                    let (mut a, mut b) = (left.cases.clone(), right.cases.clone());
-                    a.iter_mut().for_each(|case| *case = case.to_lowercase());
-                    b.iter_mut().for_each(|case| *case = case.to_lowercase());
+                    let case_name = |case: &(String, Members)| case.0.to_lowercase();
+                    let (mut a, mut b): (Vec<String>, Vec<String>) = (left.cases.iter().map(case_name).collect(), right.cases.iter().map(case_name).collect());
                     a.sort();
                     b.sort();
                     matrix.check(name, "enum cases", "set of cases", &a.join(","), &b.join(","));
+                    for (case, swift_members) in &left.cases {
+                        let Some((_, kotlin_members)) = right.cases.iter().find(|(other, _)| other.to_lowercase() == case.to_lowercase()) else { continue };
+                        let wanted: Vec<String> = swift_members.iter().map(|(_, member_type)| squash(&to_kotlin(member_type))).collect();
+                        let observed: Vec<String> = kotlin_members.iter().map(|(_, member_type)| squash(member_type)).collect();
+                        matrix.check(&format!("{name}.{case}"), "case payload types", &wanted.join(","), &wanted.join(","), &observed.join(","));
+                        for ((label, _), (field, _)) in swift_members.iter().zip(kotlin_members) {
+                            if !label.is_empty() { matrix.check(&format!("{name}.{case}.{label}"), "case field name", &label.to_lowercase(), &label.to_lowercase(), &field.to_lowercase()); }
+                        }
+                    }
                     continue;
                 }
                 let kotlin_fields: BTreeMap<&String, &String> = right.fields.iter().map(|(field, field_type)| (field, field_type)).collect();
@@ -341,7 +436,7 @@ fn matrix_value_core_wrapper() {
                 for (platform, found) in [("swift", swift.get(public)), ("kotlin", kotlin.get(public))] {
                     let Some(found) = found.filter(|found| found.is_enum) else { continue };
                     compared += 1;
-                    let (mut wanted, mut seen): (Vec<String>, Vec<String>) = (variants.iter().map(|variant| variant.to_lowercase()).collect(), found.cases.iter().map(|case| case.to_lowercase()).collect());
+                    let (mut wanted, mut seen): (Vec<String>, Vec<String>) = (variants.iter().map(|variant| variant.to_lowercase()).collect(), found.cases.iter().map(|case| case.0.to_lowercase()).collect());
                     wanted.sort();
                     seen.sort();
                     matrix.check(public, platform, "enum cases", &wanted.join(","), &seen.join(","));
