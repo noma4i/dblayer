@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import kotlinx.serialization.json.put
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -90,7 +91,9 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
 
     private class Reply(val body: String?, val failure: DbException?, val hold: Hold? = null)
 
-    private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
+    private val contract = ServerContract()
+    private val replies = ConcurrentHashMap<String, Reply>()
+    private val tokens = java.util.concurrent.atomic.AtomicLong()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
     private val responders = ConcurrentHashMap<String, (TransportRequest) -> String?>()
 
@@ -125,9 +128,16 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         return hold
     }
 
+    private fun store(reply: Reply): String {
+        val token = "r${tokens.incrementAndGet()}"
+        replies[token] = reply
+        return token
+    }
+
+    /** The server contract holds the order of the scripted replies: the transport keeps the reply behind each token. */
     private fun push(operation: String, reply: Reply) {
         failTestThread()
-        synchronized(replies) { replies.getOrPut(operation) { java.util.ArrayDeque() }.add(reply) }
+        contract.script(operation, store(reply))
     }
 
     fun respondWith(operation: String, responder: (TransportRequest) -> String?) {
@@ -164,21 +174,29 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         }
     }
 
-    /** The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one. */
-    private val settled = ConcurrentHashMap<Pair<Author, ULong>, Reply>()
+    private fun wireOf(request: TransportRequest): String = kotlinx.serialization.json.buildJsonObject {
+        put("requestId", request.requestId.toString())
+        put("sequence", kotlinx.serialization.json.JsonNull)
+        put("body", kotlinx.serialization.json.buildJsonObject {
+            put("operationName", request.operationName)
+            put("variables", kotlinx.serialization.json.Json.parseToJsonElement(request.variablesJson))
+        })
+    }.toString()
 
+    /** The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. The server contract decides: a repeat of a pair gets the reply of the first send, a second body under one pair and a request nobody scripted are refused. */
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
         TestPulse.pulse()
-        val identity = request.author to request.requestId
-        settled[identity]?.let { return deliver(it) }
-        responders[request.operationName]?.invoke(request)?.let { body ->
-            val answered = Reply(body, null)
-            settled[identity] = answered
-            return deliver(answered)
+        val scope = request.author.toString()
+        val wire = wireOf(request)
+        val settle = { reply: Reply -> contract.settle(scope, wire, store(Reply(reply.body, reply.failure))) }
+        val reply = when (val admitted = contract.admit(scope, wire)) {
+            is ContractAdmission.Stored -> replies.getValue(admitted.token)
+            is ContractAdmission.TwoBodies -> refuse(request, "MockTransport got the pair $scope#${request.requestId} with a second body: ${request.operationName} variables=${request.variablesJson}")
+            is ContractAdmission.Refused -> refuse(request)
+            is ContractAdmission.Fresh -> responders[request.operationName]?.invoke(request)?.let { body -> Reply(body, null).also(settle) }
+                ?: (contract.take(request.operationName)?.let { replies[it] } ?: refuse(request)).also { if (!lostAnswer(it.failure)) settle(it) }
         }
-        val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
-        if (!lostAnswer(reply.failure)) settled[identity] = Reply(reply.body, reply.failure)
         reply.hold?.pass()
         return deliver(reply)
     }
@@ -191,10 +209,10 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         return reply.body ?: "{}"
     }
 
-    private fun refuse(request: TransportRequest): Nothing = when (unanswered) {
-        Unanswered.NetworkError -> throw DbException.Network("no reply queued for ${request.operationName}")
-        Unanswered.Strict -> {
-            val detail = "MockTransport has no reply queued for ${request.operationName} variables=${request.variablesJson}"
+    private fun refuse(request: TransportRequest, given: String? = null): Nothing = when {
+        unanswered == Unanswered.NetworkError && given == null -> throw DbException.Network("no reply queued for ${request.operationName}")
+        else -> {
+            val detail = given ?: "MockTransport has no reply queued for ${request.operationName} variables=${request.variablesJson}"
             missed.add(Missed(this, "$detail (mock created at $createdAt)"))
             unscripted.add(request)
             TestPulse.pulse()

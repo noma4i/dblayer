@@ -153,7 +153,7 @@ class TransferTest {
         try {
             for (case in cases) {
                 val lose = case != "live"
-                val server = SealedServer(deduplicate = true) { path, body ->
+                val server = SealedServer { path, body ->
                     when {
                         path == "/api/auth/login_link" -> Json.parseToJsonElement("""{"sessionId":"A"}""").jsonObject
                         body["operationName"]?.jsonPrimitive?.content == "CreateBlob" -> {

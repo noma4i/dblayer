@@ -26,7 +26,7 @@ class RequestPurpose(val value: NetworkPurpose) : kotlin.coroutines.AbstractCoro
 }
 
 /** An encrypted server that opens every sealed request with the fixture key and seals the answer, so tests run the real encrypted session path and fake only the HTTP exchange. */
-class SealedServer(private val deduplicate: Boolean = false, private val answer: suspend (path: String, body: JsonObject) -> JsonObject) : ScriptedHttp {
+class SealedServer(private val answer: suspend (path: String, body: JsonObject) -> JsonObject) : ScriptedHttp {
     companion object {
         const val SERVER_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
         private const val PRIVATE_KEY_BODY = "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"
@@ -41,7 +41,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
     private val parked = CopyOnWriteArrayList<kotlinx.coroutines.CompletableDeferred<Unit>>()
     private val arrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val lostAnswers = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-    private val cached = java.util.concurrent.ConcurrentHashMap<String, Pair<JsonObject, String>>()
+    private val contract = ServerContract.adopting().also { it.cacheEverything() }
     private val lostFile = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private val lost = AtomicBoolean(false)
     val effects = CopyOnWriteArrayList<JsonObject>()
@@ -91,11 +91,13 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         TestPulse.pulse()
         routes.add(sent["operationName"]?.jsonPrimitive?.content to purpose)
         if (refusing.get()) return EncryptedReply(500u, "")
-        val requestId = request.getValue("requestId").jsonPrimitive.content
-        val stable = JsonObject(request.filterKeys { it != "issuedAt" })
-        if (deduplicate) cached[requestId]?.let {
-            if (it.first != stable) throw DbException.Invalid("request ID reused with different content")
-            return EncryptedReply(200u, it.second)
+        val wire = request.toString()
+        if (path.startsWith("/api/auth/") && request["sequence"]?.jsonPrimitive?.content == "1") contract.setLast(0)
+        when (val admitted = contract.admit("sealed", wire)) {
+            is ContractAdmission.Stored -> return EncryptedReply(200u, admitted.token)
+            is ContractAdmission.TwoBodies -> throw DbException.Invalid("request ID reused with different content")
+            is ContractAdmission.Refused -> return EncryptedReply(200u, seal(request, Json.parseToJsonElement(admitted.body).jsonObject, spending = false))
+            is ContractAdmission.Fresh -> Unit
         }
         val reply = try { kotlinx.coroutines.withContext(RequestPurpose(purpose)) { answer(path, sent) } } catch (failure: DbException) {
             when (failure) {
@@ -126,7 +128,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
         }
         val sealed = seal(request, reply)
-        if (deduplicate) cached[requestId] = stable to sealed
+        contract.settle("sealed", wire, sealed)
         val filename = sent["variables"]?.jsonObject?.get("filename")?.jsonPrimitive?.content
         val wanted = lostFile.get()
         if (filename != null && filename == wanted && lostFile.compareAndSet(wanted, null)) {
@@ -149,11 +151,11 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         return Json.parseToJsonElement(String(plain)).jsonObject
     }
 
-    fun seal(request: JsonObject, body: JsonObject): String {
+    fun seal(request: JsonObject, body: JsonObject, spending: Boolean = true): String {
         val header = encode("""{"alg":"dir","enc":"A256GCM"}""".toByteArray())
         val plain = buildJsonObject {
             put("requestId", request.getValue("requestId"))
-            put("sequence", request["sequence"] ?: JsonNull)
+            put("sequence", if (spending) request["sequence"] ?: JsonNull else JsonNull)
             put("body", body)
         }.toString().toByteArray()
         val iv = ByteArray(12) { 7 }
