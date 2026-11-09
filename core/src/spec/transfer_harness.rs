@@ -348,7 +348,20 @@ impl Twin {
 
     pub fn answer(&mut self, reply: impl FnOnce(BatchId) -> TransferInput) -> Out {
         let batch = self.unanswered.remove(0);
-        self.post(reply(batch))
+        let mut out = self.post(reply(batch));
+        let mut waiting = out.shown.clone();
+        while let Some(shown) = waiting.pop() {
+            let next = self.commit_shown(shown.id);
+            waiting.extend(next.shown.clone());
+            out.runs.extend(next.runs);
+            out.batches.extend(next.batches);
+            out.outbox.extend(next.outbox);
+            out.rounds.extend(next.rounds);
+            out.timers += next.timers;
+            out.schedules.extend(next.schedules);
+            out.cancels += next.cancels;
+        }
+        out
     }
 
     /// `Committed` for the oldest batch the Store has not answered.

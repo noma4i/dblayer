@@ -317,6 +317,8 @@ pub enum StoreKind {
     LateOrphan,
     /// The record of an orphan whose abort the server answered: it goes after `Committed`.
     OrphanRemoved,
+    /// The shown value of a row: readers get it after `Committed`.
+    Shown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -500,6 +502,8 @@ pub(super) struct Pending {
     pub ids: Vec<TransferId>,
     pub kind: StoreKind,
     pub orphan: Option<(String, Key)>,
+    /// The columns each transfer shows once the batch commits.
+    pub written: BTreeMap<TransferId, (u8, bool)>,
 }
 
 #[derive(Debug)]

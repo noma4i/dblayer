@@ -52,13 +52,34 @@ impl TransferState {
         let key = transfer.key.clone();
         let columns = shown.columns();
         transfer.last_shown = Some(shown.clone());
-        if shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != columns) {
-            transfer.stored_shown = Some(columns);
-            let op = Self::shown_op(transfer, shown.clone());
-            self.send_batch(vec![op], fx);
+        let write = shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != columns);
+        if write {
+            let waiting = self.pending.values().any(|pending| pending.kind == StoreKind::Shown && pending.written.get(&id) == Some(&columns));
+            if !waiting {
+                let op = Self::shown_op(transfer, shown);
+                let batch = self.send_batch(vec![op], fx);
+                self.pending.insert(batch, Pending { ids: Vec::new(), kind: StoreKind::Shown, orphan: None, written: BTreeMap::from([(id, columns)]) });
+            }
+            return;
         }
-        for stream_id in self.subscribers.get(&key).into_iter().flatten() {
-            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.clone(), shown: shown.clone() });
+        self.publish_shown(&key, shown, fx);
+    }
+
+    fn publish_shown(&self, key: &str, shown: Shown, fx: &mut Fx) {
+        for stream_id in self.subscribers.get(key).into_iter().flatten() {
+            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone() });
+        }
+    }
+
+    /// The Store holds `columns` of the row: a later value of the transfer is written, the value of this batch is published when `publish`.
+    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), publish: bool, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.stored_shown = Some(columns);
+        let key = transfer.key.clone();
+        match transfer.last_shown.clone() {
+            Some(shown) if shown != Shown::Gone && shown.columns() != columns => self.show(id, shown, fx),
+            Some(shown) if publish => self.publish_shown(&key, shown, fx),
+            _ => {}
         }
     }
 
@@ -170,17 +191,15 @@ impl TransferState {
             })
             .chain(numbers)
             .collect();
-        let written: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
+        let columns: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
             StoreOp::Upload { row, kind } => Some((row.key.clone(), kind.shown().columns())),
             StoreOp::UploadShown { key, shown, .. } => Some((key.clone(), shown.columns())),
             _ => None,
         }).collect();
-        for transfer in self.transfers.values_mut() {
-            if let Some(columns) = written.get(&transfer.key) { transfer.stored_shown = Some(*columns); }
-        }
+        let written: BTreeMap<TransferId, (u8, bool)> = ids.iter().filter_map(|id| self.transfers.get(id).and_then(|transfer| columns.get(&transfer.key)).map(|columns| (*id, *columns))).collect();
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None });
+        self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None, written });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
         let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
         let entries = batch.models().into_iter().map(|model| {
@@ -213,7 +232,7 @@ impl TransferState {
             return None;
         }
         let id = self.send_batch(ops, fx);
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None, written: BTreeMap::new() });
         Some(id)
     }
 
@@ -243,7 +262,7 @@ impl TransferState {
         };
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::OrphanRemoved, orphan: Some((upload_id.clone(), key)) });
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::OrphanRemoved, orphan: Some((upload_id.clone(), key)), written: BTreeMap::new() });
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
@@ -370,6 +389,8 @@ impl TransferState {
     fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
+        for (id, columns) in &pending.written { self.shown_committed(*id, *columns, pending.kind == StoreKind::Shown, fx); }
+        if pending.kind == StoreKind::Shown { return; }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {
                 self.orphans.remove(&upload_id);
@@ -678,7 +699,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown => UploadKind::SyncUpload,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,
