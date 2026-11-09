@@ -16,6 +16,20 @@ fn call_transport_network() {
     assert!(matches!(super::calls_runner::answer_input(5, "root", outcome), CallsInput::TransportError { call_id: 5, error: CallError::Network }));
 }
 
+#[test]
+fn call_http_auth_status() {
+    use crate::owners::calls::{CallError, CallsInput};
+    use crate::transport::TransportError;
+    for status in [401, 403] {
+        let result = super::calls_runner::calls_input(5, "root", Err(TransportError::Http { status, body: "refused".into() }));
+        match (status, result) {
+            (401, CallsInput::TransportError { error: CallError::Unauthorized, .. }) => {},
+            (403, CallsInput::TransportError { error: CallError::Http { status: 403, .. }, .. }) => {},
+            (_, other) => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
 /// call_transport_error (P-BND-04, D-195): the type and the fields of a refusal of the transport or of the owner Session reach the answer of the call; a permanent refusal is no network retry.
 #[test]
 fn call_transport_error_keeps_the_type_and_the_fields() {

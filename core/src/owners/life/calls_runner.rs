@@ -23,7 +23,7 @@ pub(super) struct CallsRunner {
     running: HashMap<u64, AbortHandle>,
 }
 
-fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
+pub(super) fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
     match result {
         Ok(response) => {
             if response.shape().outcome() != ResponseOutcome::Commit {
@@ -41,6 +41,7 @@ fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Respon
 fn call_error(error: crate::ffi::DbError) -> CallError {
     use crate::ffi::DbError;
     match error {
+        DbError::Http { status: 401, .. } | DbError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => CallError::Unauthorized,
         DbError::Network { .. } => CallError::Network,
         DbError::Graphql { messages, extensions } => CallError::Graphql { messages, extensions },
         DbError::Session { code, detail } => CallError::Session { code, detail },

@@ -516,6 +516,20 @@ fn only_a_revoked_logout_answer_is_revoked() {
 }
 
 #[test]
+fn session_http_auth_status() {
+    use crate::owners::session::SessionInput;
+    use crate::transport::TransportError;
+    for status in [401, 403] {
+        let input = super::session_runner::session_input(1, 1, false, true, Err(TransportError::Http { status, body: "refused".into() }));
+        match (status, input) {
+            (401, SessionInput::HttpError { auth: true, .. }) => {},
+            (403, SessionInput::HttpError { auth: false, status: 403, temporary: false, .. }) => {},
+            (_, other) => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landing() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{StoreBatch, StoreOp};

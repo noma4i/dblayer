@@ -202,7 +202,7 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: None }
         }
         Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
-        Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
+        Err(TransportError::Http { status: 401, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
         Err(error) if matches!(&error, TransportError::Http { status, .. } if matches!(classify_answer(&WireOutcome::Status(*status), true), AnswerKind::Permanent { .. })) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
