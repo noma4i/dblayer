@@ -129,6 +129,8 @@ pub enum Fault {
     NoSession,
     SessionEnded,
     NotFound,
+    /// The row of the batch element at this index does not exist.
+    NotFoundAt(usize),
     InFlight,
     Ended(crate::ffi::EndCause),
     Closed,

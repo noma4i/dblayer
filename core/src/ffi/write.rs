@@ -30,6 +30,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
         Fault::SessionEnded => DbError::Session { code: crate::transport::SessionCode::SessionEnded, detail: "the session ended".into() },
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
+        Fault::NotFoundAt(index) => DbError::NotFound { detail: format!("{what}: the row of the item {index} does not exist") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
         Fault::Ended(cause) => super::cause_error(&cause),
         Fault::Closed => super::command::closed(),

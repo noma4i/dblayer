@@ -96,7 +96,7 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), mutation: self.upload_mutation(plan, mutation)?, steps, row_exists: true })
     }
 
     fn single_of(&self, model: &str, action: &str, file: &UploadFile) -> Result<Single, DbError> {

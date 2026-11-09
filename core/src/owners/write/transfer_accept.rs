@@ -56,7 +56,7 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, fields, urgent, source, mutation, steps } = item;
+        let BatchItem { key, fields, urgent, source, mutation, steps, .. } = item;
         let transfer = Transfer {
             transfer_id,
             key,
@@ -146,6 +146,9 @@ impl TransferState {
         });
         if items.iter().any(|item| self.open_id(&item.key).is_some()) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
+        }
+        if let Some(index) = items.iter().position(|item| !item.row_exists) {
+            return reply(fx, rep, TransferAnswer::Err(Fault::NotFoundAt(index)));
         }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
             self.create(item, group, now, TransferStage::Reserving)
