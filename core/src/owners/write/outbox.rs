@@ -564,6 +564,7 @@ impl OutboxState {
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
             OutboxInput::RowsGone { ops } => self.rows_gone(ops, fx),
+            OutboxInput::RowRemoved { .. } => {}
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
             OutboxInput::Tick(_) => {}

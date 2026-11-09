@@ -221,6 +221,8 @@ pub enum OutboxInput {
     ArmReset { reset: crate::owners::store::EphemeralReset },
     ResetField { reset: crate::owners::store::EphemeralReset },
     RowsGone { ops: Vec<OpId> },
+    /// The server deleted a row (event or NOT_FOUND answer), cascade children included: every operation of it ends `Discarded`.
+    RowRemoved { model: String, row_id: String, revision: u64 },
     ExpireRow { model: String, row: String, revision: u64 },
     Tick(Time),
 }

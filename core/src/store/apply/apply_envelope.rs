@@ -179,6 +179,10 @@ pub(in super::super) fn apply_envelope_at(
         result.revision = Some(revision);
         result.rows = changes.changes;
         result.replaced = replaced;
+        for removed in destroyed.iter().filter(|removed| removed.reason == DestroyReason::Server) {
+            let Ok(id) = crate::identity::RowId::new(&removed.id) else { continue };
+            result.server_removed.push(RowRef::new(removed.model.clone(), id));
+        }
         for seq in result.operations.iter() {
             result.queue_operations.insert(*seq, crate::store::operation::read_operation(connection, *seq)?);
         }

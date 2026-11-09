@@ -260,6 +260,7 @@ pub struct WriteDone {
     pub removed_memory: Vec<(String, String)>,
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
+    pub removed_rows: Vec<(String, String)>,
     pub resets: Vec<EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
     pub shown: Vec<Option<crate::store::Row>>,
@@ -297,6 +298,7 @@ pub enum StoreEffect {
     /// The server removed rows: their operations left the queue in the batch.
     ArmReset { epoch: Epoch, reset: EphemeralReset },
     OperationsGone { epoch: Epoch, ops: Vec<u64> },
+    RowsRemoved { epoch: Epoch, rows: Vec<(String, String)>, revision: u64 },
     ReadIntents { epoch: Epoch, direct: bool },
     CloseReads,
     CloseConnections,

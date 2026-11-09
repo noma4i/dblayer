@@ -328,6 +328,8 @@ pub struct CommitResult {
     pub operations: BTreeSet<i64>,
     pub(crate) queue_operations: BTreeMap<i64, Option<crate::owners::write::operation_status::Operation>>,
     pub replaced: Vec<(RowRef, RowId)>,
+    /// The rows a server delete (event or NOT_FOUND answer) removed, cascade children included.
+    pub server_removed: Vec<RowRef>,
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
@@ -347,6 +349,7 @@ impl CommitResult {
             operations: BTreeSet::new(),
             queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
+            server_removed: Vec::new(),
             unknown_operation_acks: 0,
             snapshot: None,
             item_snapshots: Vec::new(),

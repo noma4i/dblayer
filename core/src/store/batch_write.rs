@@ -23,7 +23,7 @@ struct WrittenBatch<'a> {
 }
 
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
-type ResetParts = (Vec<u64>, Vec<crate::owners::store::EphemeralReset>);
+type ResetParts = (Vec<u64>, Vec<(String, String)>, Vec<crate::owners::store::EphemeralReset>);
 
 pub(crate) struct BatchWritten {
     pub revision: u64,
@@ -33,6 +33,8 @@ pub(crate) struct BatchWritten {
     pub removed_memory: Vec<(String, String)>,
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
+    /// The rows a server delete removed: the Outbox discards every operation of them.
+    pub removed_rows: Vec<(String, String)>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
     /// The row of each `Show` of the batch, in the order of the ops.
@@ -53,7 +55,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, resets), candidates, shown }) => {
+            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, shown }) => {
                 self.lock().counters.outbox_candidates += candidates;
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
@@ -67,7 +69,7 @@ impl Store {
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown, files_removed })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed })
             }
         }
     }
@@ -135,6 +137,7 @@ impl Store {
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
         let stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
+        let removed_rows: Vec<(String, String)> = results.iter().flat_map(|result| result.server_removed.iter()).map(|row| (row.model.to_string(), row.id.to_string())).collect();
         let target_revision = if writes_database { revision } else { base_revision };
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
         let mut shown = Vec::new();
@@ -161,6 +164,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, arms), candidates, shown })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, shown })
     }
 }

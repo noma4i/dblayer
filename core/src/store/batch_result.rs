@@ -45,6 +45,7 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
         combined.renewed.extend(result.renewed);
         combined.scopes.extend(result.scopes);
         combined.members.extend(result.members);
+        combined.server_removed.extend(result.server_removed);
         combined.operations.extend(result.operations);
         combined.queue_operations.extend(result.queue_operations);
         combined.replaced.extend(result.replaced);
