@@ -401,3 +401,40 @@ fn out_prop_restore_ready_row_freed_once() {
         assert_eq!((sends(&started), twin.stage(8)), (1, Some(St::Sending)), "freed_first={freed_first}: {started:?}");
     }
 }
+
+#[test]
+fn out_restore_attempt_number() {
+    let mut twin = Twin::bare();
+    declare(&mut twin);
+    let restored = restore(&mut twin, vec![StoredOp { attempts: 3, pending: None, ..stored(7, "r") }]);
+    assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&restored), sends(&restored)), (Some(St::PersistingAttempt), 3, Vec::new(), 0), "the written attempts are kept with no +1 and no network before RestoreReady");
+    let readied = ready(&mut twin);
+    assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&readied), sends(&readied)), (Some(St::PersistingAttempt), 3, vec![CommitKind::Attempt], 0), "RestoreReady writes the attempt, the counter waits for Committed");
+    let started = twin.committed(7);
+    assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, sends(&started)), (Some(St::Sending), 4, 1), "the first new send is attempt N + 1 and counts as a send");
+}
+
+#[test]
+fn out_restore_ready_once() {
+    let mut twin = Twin::bare();
+    declare(&mut twin);
+    restore(&mut twin, vec![stored(7, "a"), stored(8, "b")]);
+    let first = ready(&mut twin);
+    let order: Vec<_> = first.iter().filter_map(|effect| match effect { OutboxEffect::Store { op_id, .. } => *op_id, _ => None }).collect();
+    assert_eq!((twin.state().phase, kinds(&first), order, twin.stage(7), twin.stage(8)), (Phase::Ready, vec![CommitKind::Attempt], vec![7], Some(St::PersistingAttempt), Some(St::Queued)), "one review by seq writes the lowest op once");
+    let again = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((again.is_empty(), twin.stage(7), twin.stage(8)), (true, Some(St::PersistingAttempt), Some(St::Queued)), "a second RestoreReady reviews nothing and is not a stray input: {again:?}");
+}
+
+#[test]
+fn out_open_restores_pending() {
+    let mut twin = Twin::bare();
+    declare(&mut twin);
+    let restored = restore(&mut twin, vec![StoredOp { pending: Some((41, 42)), ..stored(7, "r") }]);
+    assert_eq!((twin.stage(7), kinds(&restored), sends(&restored)), (Some(St::PersistingAttempt), Vec::new(), 0), "the held pair classifies to PersistingAttempt with no network before RestoreReady");
+    let readied = ready(&mut twin);
+    assert_eq!((kinds(&readied), sends(&readied)), (vec![CommitKind::Attempt], 0), "RestoreReady writes the attempt, the request waits for its Committed");
+    let started = twin.committed(7);
+    let pairs: Vec<_> = started.iter().filter_map(|effect| match effect { OutboxEffect::Send { request_id, sequence, .. } => Some((*request_id, *sequence)), _ => None }).collect();
+    assert_eq!((twin.stage(7), pairs), (Some(St::Sending), vec![(41, 42)]), "the held pair repeats with no new sequence");
+}

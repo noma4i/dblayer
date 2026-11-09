@@ -172,3 +172,27 @@ fn out_sending_tick_no_slot() {
     twin.post(OutboxInput::Response { op_id: second, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(twin.stage(first), Some(St::PersistingAttempt), "the freed slot gives the retry its next attempt");
 }
+
+#[test]
+fn out_expiry_clock_at_select() {
+    let after_tick = |now_ms: u64| -> (Twin, OpId) {
+        let mut twin = Twin::new();
+        let blocker = twin.submit("b", Policy::Rollback, false);
+        twin.committed(blocker);
+        assert_eq!(twin.stage(blocker), Some(St::Sending), "the blocker holds the one slot");
+        let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
+        let id = submit_op(&mut twin, op, 30);
+        twin.committed(id);
+        twin.waiter(id);
+        assert_eq!(twin.stage(id), Some(St::Queued), "the slot is busy");
+        let ticked = twin.post(OutboxInput::Tick(Time(now_ms)));
+        assert_eq!((ticked.is_empty(), twin.stage(id)), (true, Some(St::Queued)), "a Tick advances the clock but selects nothing: {ticked:?}");
+        twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        twin.committed(blocker);
+        (twin, id)
+    };
+    let (twin, id) = after_tick(9_000);
+    assert_eq!(twin.stage(id), Some(St::Sending), "the slot-freed selection at a now below the deadline sends the operation");
+    let (twin, id) = after_tick(11_000);
+    assert_eq!(twin.stage(id), Some(St::RollingBack(RWhy::Rejected)), "the selection at a later now expires it, the earlier Tick did not");
+}

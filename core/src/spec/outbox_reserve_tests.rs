@@ -375,3 +375,90 @@ fn out_group_answer_waits_membership() {
     twin.commit_batch(second);
     assert!(twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed") && !twin.store_text.contains("TransferOutcome { transfer_id: 12"), "then the answer lands on [11]: {}", twin.store_text);
 }
+
+#[test]
+fn out_group_outcome_each_member() {
+    use crate::owners::write::outbox::{OpSource, TransferMember};
+    let group = |twin: &mut Twin, policy: Policy| {
+        let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into() }];
+        let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
+        twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+        assert_eq!(twin.stage(4), Some(St::Sending), "the group is Sending");
+    };
+
+    let mut twin = Twin::new();
+    group(&mut twin, Policy::Rollback);
+    twin.post(OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
+    assert!(twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: Rejected") && twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: Rejected"), "Rejected reaches each member with its cycle_id: {}", twin.store_text);
+
+    let mut twin = Twin::new();
+    group(&mut twin, Policy::Keep);
+    twin.post(OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
+    assert!(twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: Failed") && twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: Failed"), "Failed reaches each member with its cycle_id: {}", twin.store_text);
+
+    let mut twin = Twin::new();
+    group(&mut twin, Policy::Rollback);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    assert!(twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: Discarded"), "RowRemoved discards the member with its cycle_id: {}", twin.store_text);
+
+    let mut twin = Twin::new();
+    group(&mut twin, Policy::Rollback);
+    take_fx(&twin.log, None);
+    twin.det.end_epoch(EPOCH, Cause::SessionReset);
+    twin.run();
+    let (sends, _) = settle(&mut twin);
+    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("11: Ended(SessionEnded)") && text.contains("12: Ended(SessionEnded)")), "EpochEnded reaches every member: {sends:?}");
+
+    let mut twin = Twin::new();
+    group(&mut twin, Policy::Rollback);
+    take_fx(&twin.log, None);
+    twin.det.close();
+    twin.run();
+    let (sends, _) = settle(&mut twin);
+    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("11: Ended(Closed)") && text.contains("12: Ended(Closed)")), "Closing reaches every member: {sends:?}");
+}
+
+#[test]
+fn out_retry_outcome_target() {
+    use crate::owners::contract::{Committed, Rejected, RejectReason};
+    use crate::owners::write::outbox::OpSource;
+    let committed = |revision: i64| Committed { batch: 2, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 };
+    let failed = |twin: &mut Twin| {
+        let op = crate::owners::write::outbox::NewOp { origin: OpSource::Transfer { transfer_id: 1, cycle_id: 1 }, ..model_op("r", Policy::Keep, false) };
+        raw(twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+        raw(twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
+        raw(twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        raw(twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 1, uploads: vec![upload(1, 2)] });
+    };
+    let retry_outcome = |sends: &[(usize, String)]| -> Vec<String> { sends.iter().filter(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome")).map(|(_, text)| text.clone()).collect() };
+
+    let mut twin = Twin::new();
+    failed(&mut twin);
+    let (sends, _) = raw(&mut twin, OutboxInput::Committed(committed(21)));
+    let found = retry_outcome(&sends);
+    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Ok(21)")), "Committed is addressed to the target (1, 2): {sends:?}");
+
+    let mut twin = Twin::new();
+    failed(&mut twin);
+    let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::Storage("disk".into()) }));
+    let found = retry_outcome(&sends);
+    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Rejected(Storage")), "Rejected(Storage) is addressed to the target (1, 2): {sends:?}");
+
+    let mut twin = Twin::new();
+    failed(&mut twin);
+    let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::NoSession }));
+    let found = retry_outcome(&sends);
+    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Rejected(NoSession")), "Rejected(NoSession) is addressed to the target (1, 2): {sends:?}");
+}
+
+#[test]
+fn out_retry_transfer_not_failed() {
+    use crate::owners::write::outbox::OpSource;
+    let mut twin = Twin::new();
+    let op = crate::owners::write::outbox::NewOp { origin: OpSource::Transfer { transfer_id: 1, cycle_id: 1 }, ..model_op("r", Policy::Rollback, false) };
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    assert_eq!(twin.state().stage_of(4), Some(Stage::Sending), "the operation is not Failed");
+    let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 5, uploads: vec![upload(1, 2)] });
+    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome") && text.contains("(1, 2)") && text.contains("Err(InFlight)")), "RetryTransfer outside Failed answers Err(InFlight) to the target: {sends:?}");
+    assert_eq!((twin.state().stage_of(4), sends.iter().any(|(to, _)| *to == STORE_AT)), (Some(Stage::Sending), false), "the operation is unchanged and nothing is written");
+}

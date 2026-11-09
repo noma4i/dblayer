@@ -269,3 +269,18 @@ fn out_sending_answered_too_large() {
     let failure = crate::owners::write::failure::parse(&failed);
     assert_eq!(failure.kind, FailureKind::RequestTooLarge { size: 300_000, limit: 262_144 });
 }
+
+#[test]
+fn out_mark_failed_rejected_no_outcome() {
+    let mut twin = Twin::new();
+    let id = marking_failed(&mut twin, true);
+    twin.waiter(id);
+    let rejected = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+    assert_eq!((twin.stage(id), answers(&rejected, WAITER), transfer_outcomes(&rejected), timers(&rejected)), (Some(St::MarkingFailed), Vec::new(), Vec::new(), 1), "Rejected MarkFailed delivers no Failed, the op stays MarkingFailed, a retry timer is set");
+    let reticked = tick(&mut twin, id);
+    assert_eq!((twin.stage(id), kinds(&reticked)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]), "the next owner input re-writes MarkFailed");
+    let done = twin.committed(id);
+    assert_eq!(twin.stage(id), Some(St::Failed));
+    assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Failed { .. }))), "{done:?}");
+    assert!(matches!(transfer_outcomes(&done).as_slice(), [OutboxOutcome::Failed { .. }]), "Failed reaches the waiter and Transfer only after Committed: {done:?}");
+}
