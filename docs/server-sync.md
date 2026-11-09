@@ -115,7 +115,7 @@ DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 ```
 
-`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Swift without an answer type returns nothing; in Kotlin name `JsonElement` as the answer type to ignore the answer. `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. After `logout()` the core keeps background reads and subscriptions idle until a call you made (`sessionCall`, `run`, `load`, `refresh`, `node` or `waitForInitialLoad` of a held entity) succeeds while a credential is stored. `waitForInitialLoad` of a held entity makes its own read once while the session is ended. A failed read, or a transport without a session, leaves the session ended. `sessionReset()` and a confirmed server logout clear the credential, so they never reopen them. After that `waitForInitialLoad` of a held entity throws an interrupted error without a request.
+`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Swift without an answer type returns nothing; in Kotlin name `JsonElement` as the answer type to ignore the answer. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. See [Ending a session](#ending-a-session).
 
 Each `EncryptedSessionOperation` declares `path` and `class`: `login` creates the credential and fails with `AlreadyAuthenticated` while one exists, `authenticated` signs with the credential, `sessionless` sends none.
 For `class: .sessionless`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
@@ -141,6 +141,19 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 | `stateLost` | a stored credential has no matching sequence state, final without automatic retry | kept, recovery belongs to the application |
 | `other` | any other `error` value, the text is in `detail` | kept |
 
+### Ending a session
+
+| Event | What the app sees | Credential and data |
+| ----- | ----------------- | ------------------- |
+| `sessionReset()` | Returns after the clearing. Work of the old session ends: a call gets `Interrupted` or `NoSession`, a stream of the old `AccountScope` ends with `ended(sessionEnded)`, a receipt `outcome()` is `interrupted` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
+| The `logout` session operation, answer `revoked` | `sessionCall("logout", ...)` returns the answer. The session ends as after `sessionReset()` | The stored state is cleared first, the credential second |
+| Any other call, answer `revoked` | The call fails with the session code `sessionEnded`. The session ends | Cleared as above |
+| HTTP 401 or 403 on a call | The call fails with `Unauthorized`. The session stays | Kept |
+
+`Unauthorized` means the server refused this request. `Revoked` means the server ended the session. After a revoked answer the app signs in again with a new `AccountScope`.
+Call `sessionReset()` for every sign-out of the app. The library clears the data itself.
+If `CredentialStore.clear` fails during a revoked logout, the logout still succeeds and the next open clears the credential that has no stored state.
+
 ### Session errors in loads and mutations
 
 A sealed answer of the encrypted session that carries an `error` field with a session code throws `DbError.Session(code:detail:)` (`DbException.Session` with `code` and `detail` in Kotlin). It is the same case that `sessionCall` throws, with the same `SessionCode`. No `Graphql` error and no text is parsed. `detail` holds the code text of the server.
@@ -150,9 +163,9 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.call(_:variables:)` and generated `Operations.*` calls (`DBlayer.call` in Kotlin) | the call got the sealed refusal |
 | Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
-| streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
+| streams (`scope.stream`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
+`retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `revoked` answer. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` reach the rejected outcome with the same code. The action's declaration decides whether to keep its optimistic value.
 
@@ -202,7 +215,7 @@ Upload failures retain their typed `SessionCode` in Swift and Kotlin.
 A batch upload stores one `op` for the final mutation and one `sync_upload` row per file, including its source, progress, and saved steps.
 The final mutation carries all remaining items in their original order and uses the operation's existing delivery key.
 An uncertain final delivery keeps every member until explicit retry or discard.
-A direct `run` mutation has no queued owner and creates no operation.
+A direct `call` mutation has no queued owner and creates no operation.
 
 ```swift
 do {
@@ -366,7 +379,7 @@ UniFFI generates non-throwing `current` with `try!`, so cancelling every async c
 
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
 It is optional. Without it, retries behave identically. There is no process-wide instance.
-`RetryProgress.changes` in Swift (an `AsyncThrowingStream`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
+`RetryProgress.changes` in Swift (an `AsyncSequence` that you iterate with `for await`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
 A reader gets the current snapshot first, then the newest one. A slow reader sees the newest snapshot and delays no request.
 Cancelling a read ends only that reader. The calls and the other readers go on.
 A call becomes active after its first temporary failure. It leaves when it succeeds, fails for good or is cancelled.
@@ -441,7 +454,6 @@ The final content mutation follows the [write rules](files.md#rules-1): a confir
 - `sessionReset()` ends the session without contacting the server. It ends the work of the old session, deletes the credential and the stored state, and clears the data of the account. It returns after the clearing. Signing out of the app is this one call.
 - Sign-in returns after the new session identity is visible to subsequent calls.
 - A receipt's `outcome()` returns `Interrupted` if session reset ends its epoch while the wait starts.
-- A `logout` answer with `revoked` clears the stored state first and the credential second, without confirming the sequence first. If your `CredentialStore.clear` fails, the logout still succeeds and the next open clears the credential that has no stored state.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
 
 ### Persisted queries
@@ -853,7 +865,7 @@ model User do
 end
 ```
 
-The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The core listens only while a credential is committed. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `Model.events()` collector and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. A `Model.events()` stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
+The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them when the session ends. The core listens only while a credential is committed. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `scope.events(Model)` reader and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. The `scope.events(Model)` stream of a scope ends when its session ends: its last item is `ended`. Subscriptions that a refusal stopped restart with the next committed credential.
 
 ## Automatic refetching
 

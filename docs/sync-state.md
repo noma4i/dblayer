@@ -88,6 +88,8 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 `operations()` streams every write that has not ended, oldest first: the whole list when you open it and again after each change, then one `ended` item with the cause of the core (`OperationQueueItem.Ended` in Kotlin). A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
 
+Each item of the list is an `OperationInfo`:
+
 | Field | Meaning |
 | ----- | ------- |
 | `seq` | the order of the write |
@@ -101,7 +103,7 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 ```swift
 let scope = try DB.account()
 for await item in scope.operations() {
-  guard case let .queue(queue) = item else { break }
+  guard case let .queue(_, queue) = item else { break }
   badge = queue.filter { $0.status == .failed }.count
   if let refused = queue.first(where: { $0.status == .failed }) {
     try await scope.retry(model: refused.model, id: refused.rowId, action: refused.action)
@@ -127,7 +129,7 @@ The network decides what happens to a mutation that did not get an answer:
 - Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send one such record again, call `retry(action)`.
 
 Later changes to the same record wait behind it.
-- Offline (`setOnline(false)`): the change waits and spends no attempts. When `setOnline(true)` is called, waiting changes are sent by themselves.
+- Offline (the platform reports no network): the change waits and spends no attempts. When the network returns, waiting changes are sent by themselves.
 - A plain transfer started without a confirmed answer, or the app stopped while sending: the library sends the same saved request again with the same request id, and the record stays `sending` until the server answers or the retries end in `failed`.
 - Encrypted requests with saved Pending repeat temporary failures using the saved identity. See [Retries](server-sync.md#retries).
 
@@ -186,12 +188,12 @@ Later changes to the same record wait behind a `failed` change and are sent afte
 
 ## Online and offline
 
-Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The wrappers hand one observer object of the platform to the core: it starts with the database and the core stops it before `close` returns. Each OS value (network path, app foreground, power saving mode) goes to the core as one input. An app calls nothing for them.
+Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The bindings hand one observer object of the platform to the core: it starts with the database and the core stops it before `close` returns. Each OS value (network path, app foreground, power saving mode) goes to the core as one input. An app calls nothing for them.
 Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, an action that needs the server fails at once with `Offline`, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
 
 ## Refreshing
 
-A whole list refreshes with `refresh()`. The load phase of the relation (`LoadPhase`: `notLoaded`, `loading`, `loaded`, `empty`, `failed`) is live, see [live data](live-data.md).
+A whole list refreshes with `refresh()`. The load state of the relation (`phase`: `idle`, `loading`, `loaded`, `failed`, with `error`, `settled` and `hasMore`) is part of every list delivery, see [live data](live-data.md#state-of-a-stream).
 
 Stored window read failures appear in the load snapshot, including its first delivery.
 With rows, the phase is `loaded` with an error. Without rows, it is `failed`.

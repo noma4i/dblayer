@@ -1,6 +1,6 @@
 # Threading and performance
 
-Every call is asynchronous and returns without waiting for SQLite or the network. Values reach you from library threads as snapshots and deltas of a stream. The wrappers hold no lock and keep no registry.
+Every call is asynchronous and returns without waiting for SQLite or the network. Values reach you from library threads as snapshots and deltas of a stream. The Swift and Kotlin bindings hold no lock and keep no registry.
 
 ## Rules
 
@@ -11,13 +11,13 @@ Each piece of mutable state in the core has one owner with one queue. The owner 
 - Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.
 - Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. A projection decodes rows off the main thread and assigns ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
 - A stream delivers values from library threads. A Kotlin `Projected` publishes its `StateFlow` from `Dispatchers.Default`, and a Swift `Projected` applies values on the main actor.
-- A delivery touches only the rows it carries. The wrappers hold no lock for it.
+- A delivery touches only the rows it carries. The bindings hold no lock for it.
 - A call waits for the outcome of its owner and nothing else. A session end, a reset, a close or the cancellation of your task or coroutine gives every waiting call a defined end (`Interrupted`, `Closed` or `NoSession`).
 - Await `discard(action)` and `sessionReset()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations is asynchronous. A live query attaches off the caller thread when it is collected.
 - Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`) run on a background thread of the library, never on the caller thread.
 - Upload metadata reads, checksums and byte-range reads use the blocking pool. Cancelling a transfer does not wait for queued file work.
-- `cachedRow` and the edge value reads answer without the caller thread waiting for the database lock and decode their rows off the caller thread. They are `async` in Swift and `suspend` in Kotlin, as are the bridge calls `peekRow` and `edgeValues` underneath. See [live data](live-data.md#reading-before-the-first-delivery).
+- `cachedRow` and the edge value reads answer without the caller thread waiting for the database lock and decode their rows off the caller thread. They are `async` in Swift and `suspend` in Kotlin, as is `Query.edgeValues`. See [live data](live-data.md#reading-before-the-first-delivery).
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
 - Disk databases use WAL with 2 read-only connections and 1 writer. Each read holds a transaction across rows, nested values and synchronization metadata. Reading the current database generation does not wait for the writer. A read waits when both read connections are occupied.
 - Reads involving temporary models use their owning connection. Entirely in-memory databases also share their connection with the writer.

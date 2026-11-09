@@ -37,19 +37,26 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 
 ## Documentation
 
-- [Releasing](docs/releasing.md)
 - [Getting started](docs/getting-started.md)
 - [Describing models](docs/models.md)
 - [Local and synced models](docs/storage-models.md)
+- [Nested value types](docs/nested-types.md)
+- [Parent fields copied from children](docs/parent-fields.md)
 - [Live data and queries](docs/live-data.md)
 - [Value bridge](docs/value-bridge.md)
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
+- [Cable protocol](docs/cable-protocol.md)
 - [Files](docs/files.md)
 - [Threading and performance](docs/threading.md)
 - [Testing](docs/testing.md)
+- [Errors](docs/errors.md)
 - [Architecture](docs/architecture.md)
+- [App migration](docs/app-migration.md)
+- [Public API index](docs/api-index.md)
+- [Android R8 checks](docs/android-r8.md)
+- [Releasing](docs/releasing.md)
 
 Core tests check shared behavior. Swift and Kotlin tests check bindings and platform APIs. The full check also rejects missing network coverage reports.
 
@@ -127,7 +134,7 @@ try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")   
 ```kotlin
 class FeedModel(me: User, scope: AccountScope) : ViewModel() {
   private val query = Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc).limit(20)
-  val moments = Projected(scope.stream(query), query.decoder, viewModelScope)   // rows: moments.projection
+  val moments = Projected(scope.stream(query), Moment, viewModelScope)   // rows: moments.projection
 }
 
 val moment = Moment.create(text = "hello", account = scope).optimisticValue   // shown at once, queued, synced

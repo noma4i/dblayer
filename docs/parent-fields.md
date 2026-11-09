@@ -14,5 +14,5 @@ let lastNoteAt = group.value?.lastNoteAt
 
 ```kotlin
 val group = Projected(scope.entity(Group, groupId), Group, screenScope)
-val lastNoteAt = group.value.value?.lastNoteAt
+val lastNoteAt = group.value?.lastNoteAt
 ```

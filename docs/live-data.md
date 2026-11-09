@@ -34,6 +34,8 @@ scope.events(Message).events(Message).collect { item -> show(item) }
 scope.changes().collect { item -> refresh(item) }
 ```
 
+Every delivery of a list stream is one value with its rows, its `state` (`phase`, `error`, `loaded`, `hasMore`, `settled`, `total`) and its `revision`. A screen never reads the rows and the load state in two steps.
+
 A stream lives while its reader lives. Release the model or close its scope and the core drops the stream. A stream has one reader: the first iterator or collector takes it, a second one ends at once with `ended(.invalid)`, and a reader that stops ends the stream in the core also while the `ValueStream` is held.
 
 ## What a delta contains
@@ -42,7 +44,7 @@ A delta carries the steps from the rows the reader holds to the rows of its revi
 
 | Part | Meaning |
 | --- | --- |
-| `edits` | The steps in order: `insert` and `rewrite` carry the row, `remove` carries the id, `move` carries two indexes. An index is a place in the list as it stands after the steps before. |
+| `edits` | The steps in order, as `ListEdit` values: `insert` and `rewrite` carry the row, `remove` carries the id, `move` carries two indexes. An index is a place in the list as it stands after the steps before. |
 | `state` | The load state, `hasMore`, `total`, the error. |
 
 A projection applies the steps in order and decides nothing: the core fixed the order.
@@ -107,11 +109,13 @@ An explicit null in a top-level `from` path clears the projected nullable field.
 ```swift
 try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20).offset(40)
 Moment.recent                       // a named scope
+Moment.ids(["a", "b"])              // the rows with these ids
 ```
 
 ```kotlin
-Moment.where(Moment.userId eq id).order(Moment.createdAt.desc()).limit(20).offset(40)
+Moment.where(Moment.userId eq id).order(Moment.createdAt.desc).limit(20).offset(40)
 Moment.recent                       // a named scope
+Moment.ids(listOf("a", "b"))        // the rows with these ids
 ```
 
 `limit` is at least 1 and `offset` is 0 or more, else the read fails with `Invalid`. A count ignores both.

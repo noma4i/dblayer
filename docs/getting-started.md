@@ -62,7 +62,7 @@ Android binding generation reads the static archive, which retains UniFFI metada
 Native builds reuse their artifacts. `scripts/native_source_hash.sh` fingerprints the content of `core/src`, `gen/`, the manifests, `Cargo.lock`, `core/uniffi.toml`, the build scripts, the toolchain versions, the build flags in the environment and the target list.
 The Android ABI libraries, the host library for Kotlin bindings and the iOS slices store the fingerprint next to the artifact. The iOS device check stores it in `target/ios-device-check.SOURCE_HASH`.
 When the stored fingerprint equals the current one and the artifacts exist, the step prints `native build skipped: inputs unchanged, fingerprint <hash>` and builds nothing. Any change of an input rebuilds, including the release profile in `Cargo.toml`.
-See [release profile measurements](release-profile-measurements.md) for the size, query CPU and compilation CPU comparisons.
+See [Android R8 checks](android-r8.md) for the consumer rules.
 
 The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
 

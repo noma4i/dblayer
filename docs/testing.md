@@ -2,7 +2,7 @@
 
 ## In your app
 
-Open a database in memory or in a temporary directory and give it a mock transport. `DB.close()` is async and runs on the main actor. Calling it before the first `open` fails with `NotOpen`, and calling it on a closed database is a success. The mock replies by operation name, can delay or fail replies, and can break a subscription. A mock transport alone opens a database without a session, which serves local models. For server models, sign in with `openSigned` (see below).
+Open a database in memory or in a temporary directory and give it a mock transport. `DB.close()` and `DBlayer.close()` are async. Calling it before the first `open` fails with `NotOpen`, and calling it on a closed database is a success. The mock replies by operation name, can delay or fail replies, and can break a subscription. A mock transport alone opens a database without a session, which serves local models. For server models, sign in with `openSigned` (see below).
 
 ```swift
 import DBlayerTesting
@@ -32,9 +32,11 @@ transport.respondWith("MomentsFeed") { request -> if (request.variablesJson.cont
 
 `transport.calls` lists the requests it received. `emit` pushes a subscription event.
 
+A file upload needs one scripted reply for each PUT: `enqueuePut(url, etag:)` in Swift, and `enqueuePut` in Kotlin, answer one PUT of that URL. A PUT without a queued reply fails like a call without one, and `putCalls` lists the URLs the library sent. A failure takes `enqueuePut(url, failure:)`.
+
 For model events, open the reader before calling `emit`: `let events = try scope.events(Message.self)` in Swift, `val events = scope.events(Message).events(Message)` in Kotlin. The call returns after the stream is registered in the core. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.
 
-Keep the projections and streams of a test alive until every asynchronous assertion finishes. A stream ends in the core when its reader is released.
+Keep the projections and streams of a test alive until every asynchronous assertion finishes. A stream ends in the core when its reader is released. A stream has one reader: a test that iterates one `ValueStream` twice sees `ended(.invalid)` on the second iterator.
 
 A live query sends one request when its first reader subscribes. Another reader or `load()` of the same window sends nothing until its `freshness` ends, and the test clock moves only on `advance`. `refresh` always sends. Queue one reply per expected request and assert the exact list in `transport.calls`. A reply left in the queue answers the next request of its operation, so a spare reply hides an extra request.
 
@@ -154,8 +156,7 @@ It also runs optimized JVM bytecode against the host Rust library, checking stru
 Both mappings must rename `Config`, which rejects a package-wide keep rule.
 Use `-Prules=/absolute/path/to/rules.pro` to check a changed rule file.
 Android device execution remains a separate check.
-See [Android R8 checks](android-r8.md) for the rules, mutation results and measured DEX sizes.
-The [release profile and keep-rules report](release-profile-keep-report.md) records the combined checks and artifact sizes.
+See [Android R8 checks](android-r8.md) for the rules.
 
 Test conventions:
 
@@ -163,7 +164,7 @@ Test conventions:
 - Kotlin tests that open the shared database run sequentially with JUnit 4. Keep that shared state sequential if changing the test runner. Tests using independent database handles can run concurrently on either platform.
 - Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered. A closed socket also precedes the connection actor's completion and its reconnect sleep registration. Read the actor's closed state, then await that sleep. After a reopen delay, await the new socket rather than a fixed settling interval. For terminal closure, await the client's start task before advancing time.
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators, `runBlocking` and pauses (`Task.sleep`, `Thread.sleep`, `delay(`) in tests. A test that needs time to pass moves the test clock.
-- A test that must see a row after upload runs or other commits reads storage (`Query<Asset>().readRow(id)`), not `peekRow`: a commit evicts the row from the row cache, so a cache read passes or fails with the timing of background runs.
+- A test that must see a row after upload runs or other commits reads storage (`Query<Asset>().readRow(id)`), not `cachedRow`: a commit evicts the row from the row cache, so a cache read passes or fails with the timing of background runs.
 - The step timer of `run_bounded` freezes the process tree (`SIGSTOP`) before it lists the descendants, so a step that spawns a child at the moment of expiry cannot leave it running. The self test of this (`step_runner_a_step_past_its_limit_leaves_no_process` in `scripts/check_steps_test.sh`, run by `bash scripts/check_steps_test.sh`) lets the limit expire at once and the child appear between the listing and the kill.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
@@ -193,6 +194,6 @@ Test conventions:
 
 `core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
 
-Swift and Kotlin run the login, exit, account switch, local-only exit, close with a held request, already-authenticated login and harness orders once through the wrappers: `LifecycleSessionTests.swift`, `SwitchableHarnessTests.swift`, `LifecycleSessionTest.kt`, `SwitchableHarnessTest.kt`.
+Swift and Kotlin run the login, exit, account switch, local-only exit, close with a held request, already-authenticated login and harness orders once through the bindings: `LifecycleSessionTests.swift`, `SwitchableHarnessTests.swift`, `LifecycleSessionTest.kt`, `SwitchableHarnessTest.kt`.
 
 Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Group`, `Note`).

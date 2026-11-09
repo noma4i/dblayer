@@ -361,7 +361,7 @@ val online = Projected(scope.stream(Presence.where(Presence.room eq "lobby")), P
 ### Notices in memory
 
 A local scope of a memory model accepts `subscribe` without `query`. A disk model must not declare it.
-The subscription starts at the first reader of the scope and is shared between readers. It closes after the last reader leaves, after `live_linger`.
+The subscription starts at the first reader of the scope and is shared between readers. It closes after the last reader leaves.
 Events are lost while no reader exists. The server does not replay them on connect.
 An event without an id gets a new UUID. `expires_in` deletes the row, and the data never reaches the SQLite file or the outbox.
 A model must not repeat the same subscription.
@@ -511,7 +511,7 @@ val primary = Group.list(GroupList.Primary)
 val secondary = Group.list(GroupList.Secondary)
 ```
 
-**Stable order.** A group thread must not reorder rows the user has seen. `stable_order: true` on a scope with `query`, `where` columns and an `order` (and no parameter without `where`) gives each row a place in the list when it joins, and later changes of the `order` values never move it. A message that the server confirms with a lower `sequenceNumber`, the answer that replaces its temporary id, an event that edits the number and a reloaded first page leave the rows where the user saw them. A row from the server (a page, an event) that is not in the list takes the place its `order` values give it among the rows already listed, so a page of older messages lands before the rows shown. A row this device creates goes after the last row. The places live in the cache: they survive a restart, and a reset or `logout()` drops them, so the pages that load afterwards come in the order of the server. Finding the place of a row costs work that does not grow with the size of the list.
+**Stable order.** A group thread must not reorder rows the user has seen. `stable_order: true` on a scope with `query`, `where` columns and an `order` (and no parameter without `where`) gives each row a place in the list when it joins, and later changes of the `order` values never move it. A message that the server confirms with a lower `sequenceNumber`, the answer that replaces its temporary id, an event that edits the number and a reloaded first page leave the rows where the user saw them. A row from the server (a page, an event) that is not in the list takes the place its `order` values give it among the rows already listed, so a page of older messages lands before the rows shown. A row this device creates goes after the last row. The places live in the cache: they survive a restart, and a session reset drops them, so the pages that load afterwards come in the order of the server. Finding the place of a row costs work that does not grow with the size of the list.
 
 ```ruby
 model Note do
@@ -871,7 +871,7 @@ subscribe "RecordSignal", from: "recordSignal", id: "recordId", apply: { effect:
 
 Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
 Observers receive 1 change for the removal.
-Observing a model opens the shared subscription. The last cancel releases it after `live_linger`.
+Observing a model opens the shared subscription. The last cancel releases it.
 After a reconnect, only observed reads whose answers have expired are reread.
 Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
 A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving and never runs on a low-RAM Android device.
@@ -1000,7 +1000,7 @@ val groups = Group.nodes(ids)
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
 - `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
-- An answer that arrives after the database was reset (a logout or a cache reset of the model) is dropped. Nothing is written, `node` returns nil and `nodes` returns an empty list.
+- An answer that arrives after a session reset or a cache reset of the model ends the read with `Interrupted`. Nothing is written.
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 

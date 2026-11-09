@@ -37,17 +37,18 @@ val thread = Projected(scope.stream(Message.thread(id)), Message, screenScope)
 | `lost` | The events at the positions `first` to `last` are gone: the reader was slow or the event could not be read. |
 | `ended` | The stream ended by itself: session ended, database closed, query invalid. |
 
-The core keeps the values of a stream in one journal of at most 256 values. The sink of a stream only hears that values wait, and the reader takes them one by one with `readStream`. Swift and Kotlin do this and keep no buffer of their own.
+The core keeps the values of a stream in one journal of at most 256 values. The reader takes them one by one: `for await` over a `ValueStream` in Swift, `ValueStream.values` in Kotlin. Swift and Kotlin keep no buffer of their own.
+A stream has one reader. The first iterator or collector claims it, a second one gets one `ended` value with the cause `invalid`, and a reader that leaves ends the stream in the core.
 Every value names its stream, its epoch and its position in the journal. A `lost` value takes the place of the positions it names.
 A full journal of a list drops the values that a new snapshot replaces and sends that snapshot. A full journal of events keeps the newest events and one `lost` range for the oldest ones.
 The end of a stream is kept apart from the journal and comes once, after every other value. When the session ends or the database closes, the values of the old account that were not read are dropped and only the end follows.
 Each state says whether the first load `settled` and up to which `revision` of the database its rows are read.
 A projection ignores a value of another epoch.
-A projection applies each delivery as it arrives and decides nothing. A row that cannot be decoded is reported to the core with `resync()`, and the core sends one snapshot.
+A projection applies each delivery as it arrives and decides nothing. A row that cannot be decoded makes the projection ask the core for one new snapshot.
 
 ## Cell types
 
-The core sends each cell of a row in the form its field declares. Swift and Kotlin read a cell as that type and nothing else: a cell of another type throws, and the stream asks the core for a snapshot with `resync()`.
+The core sends each cell of a row in the form its field declares. Swift and Kotlin read a cell as that type and nothing else: a cell of another type throws, and the projection asks the core for a new snapshot.
 
 | Declared type | Cell |
 | --- | --- |
@@ -67,8 +68,8 @@ The core sends each cell of a row in the form its field declares. Swift and Kotl
 
 ## Reading a projection on screen
 
-The first delivery of a stream is a snapshot. It carries no list of edits: `edits` is `nil` and the screen reads `rows` again.
-Edits come only with deltas, as the steps from the rows before to the rows after.
+The first delivery of a stream is a snapshot. It carries its own edits: the steps from the rows the reader holds (none at first, so every row is an insert) to the rows of the snapshot.
+A delta carries the steps from the rows before to the rows after.
 `edits` holds the steps of the last delivery only: the core merges the deliveries a reader did not take.
 
 On iOS 17 a SwiftUI view reads `Projected` through `@Observable`: it tracks the properties it reads, and `withObservationTracking` reports the next change.
@@ -97,8 +98,8 @@ The call that opens a stream never reads the database on your thread.
 
 ## Every path is a stream
 
-Queries, counts, a row by id, model events and upload status use the same values. See [live data](live-data.md).
-One owner in the core serves each stream. The wrappers keep no registry, no lock and no cache for it.
+Queries, counts, a row by id, model events, row changes, the queue of operations and upload status use the same values. See [live data](live-data.md).
+One owner in the core serves each stream. The Swift and Kotlin bindings keep no registry, no lock and no cache for it.
 
 ## Calls on a stream
 

@@ -95,8 +95,8 @@ The client validates code shapes without copying the server's vocabulary.
 | `t` and field names | Closed message grammar. Unknown message types and fields remain invalid |
 
 An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
-With `retryable=false`, the feed records `SubscriptionStatus.failure` and stops until the next committed credential.
-The next committed credential restarts every stopped live subscription with a saved failure, including GraphQL refusals. The foreground event and the return of the network restart only stopped subscriptions whose saved failure is not a session refusal, and they send no cable resume command. A session refusal (`SessionCode` or a terminal close) stays stopped until explicit resume or `listen`.
+With `retryable=false`, the feed records the typed subscription error and stops until the next committed credential.
+The next committed credential restarts every stopped live subscription with a saved failure, including GraphQL refusals. The foreground event and the return of the network restart only stopped subscriptions whose saved failure is not a session refusal, and they send no cable resume command. A session refusal (`SessionCode` or a terminal close) stays stopped until the next committed credential.
 With `retryable=true`, the feed retains the GraphQL error and retries after backoff.
 Code spelling never selects retry behavior. For example, `REFUSED` can stop or retry according to the flag.
 Removing the last subscription closes the socket without cable retry attempts, timers or a new connection.
@@ -117,9 +117,9 @@ After an event is applied, the core publishes a model event with the rows before
 `recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
 Other kinds use the HTTP reread through the encrypted client and the normal SQLite column write.
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expires_in` deletes them.
-A local scope with `subscribe` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
+A local scope with `subscribe` opens the subscription at the first reader. It releases the subscription after the last reader leaves.
 Events are lost while no reader exists. The server does not replay them.
-Undeclared areas increase `SubscriptionStatus.rejected`.
+Undeclared areas increase `refusedEvents` of `subscriptionCensus()`.
 A repeated `Ready` rereads only expired observed selections of models with `changed_by`. Reopening a subscription uses the same freshness check.
 The check uses each read's `freshness`, including its shorter `empty_in` duration. Missing answers and invalidated selections need a reread.
 Node reads and remote relations default to `5.minutes`. A zero duration always expires. The first `Ready` starts no extra reread.
@@ -141,7 +141,7 @@ Unknown subscription ids, malformed or empty responses and unmatched pongs prese
 Offline state and an empty subscription list use no attempts and add no retry delay.
 Going offline drops a pending retry delay. Coming back online reopens at once while subscriptions remain, and the failure count stays.
 The last cancellation, offline transition or transport drop interrupts a pending socket open or handshake receive.
-`Sync.set_online` passes the connection state to the transport.
+The platform observer reports the connection state to the core, which passes it to the transport.
 
 | Close | Result |
 | --- | --- |
@@ -155,10 +155,8 @@ The last cancellation, offline transition or transport drop interrupts a pending
 No close deletes the credential. Cable receives only the function that reads the credential.
 Terminal refusals also reject later subscriptions without opening sockets or triggering rereads.
 A committed credential clears the refusal and restarts stopped subscriptions.
-Each watched query receives one `LiveChange.error` with the typed session failure until that explicit restart.
-`SubscriptionStatus.failure` retains the typed subscription error. User-initiated configuration requests and queries remain available.
+Each watched query reports the typed session failure once in the `error` of its stream state until the next committed credential. User-initiated configuration requests and queries remain available.
 `DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.
-Swift `LiveChange.error` takes `DbError`. Kotlin uses `DbException`.
 
 The fixtures `fixtures/change-events/subscriptions.json` hold the requests and responses of all 4 subscriptions.
 `fixtures/change-events/changes.dbl` shows the choice of HTTP reads. A fake socket checks the full exchange, the HTTP JWE and the row write.

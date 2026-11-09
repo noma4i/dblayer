@@ -60,9 +60,8 @@ Transfer metadata reads, MD5 calculation and byte-range reads run in the blockin
 
 Waiting files are ordered by operation sequence and item position. A transfer reserves its file slot before its task starts. The slot covers preparation and transfer retries, and is released before the final content mutation. Abort and content mutation tasks do not consume file slots.
 
-Synchronization reads outgoing operation metadata once at startup. Commits update affected entries, and sending reads inputs for the selected operation. Upload progress does not reload the outgoing queue.
-Inline bytes are written to the cache and cleanup after a finished or cancelled run is removed in the blocking pool. `wait_uploads` waits for both. A run keeps the executor handle it started on, so dropping it on any thread still queues the cleanup there. File removal after a confirmed destroy or a server destroy event also runs in the blocking pool. Queued file work is never cancelled when the `Sync` is dropped.
-Discarding an upload (or any removal of its operation) that holds a multipart `uploadId` records the abort in `upload_orphan` in the same commit, with or without confirmed parts, and never sends `complete`. The abort is sent when the app is online: at the first flush after start and when connectivity returns, and the row is removed only after the server answers. A failed upload older than 7 days (`UploadConfig.failed_ttl`, measured from the failure) is removed by the same rollback path at those two events. No timer runs for this.
+Upload progress does not reload the outgoing queue. Cleanup of inline bytes after a finished or cancelled run, and file removal after a confirmed destroy or a server destroy event, run off the caller thread.
+Discarding an upload (or any removal of its operation) that holds a multipart `uploadId` records the abort in the same commit, with or without confirmed parts, and never sends `complete`. The abort is sent when the app is online: at the first send after start and when the network returns, and the row is removed only after the server answers. A failed upload older than 7 days, counted from its failure, is removed by the same rollback at those two events, and one of exactly 7 days stays. No timer runs for this.
 Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
 The database format changes with these tables. Opening a database of another format keeps queued uploads when the layout of their tables is unchanged and clears them otherwise.
@@ -95,7 +94,7 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = models,
     operations = listOf(MomentCreateFile, CreateBlob, InitMultipart, PresignParts, CompleteMultipart, AbortMultipart),
     uploadNotification = notification)
 val request = UploadRequest(path = file.path, variables = variables)
-AccountScope.current().upload(moment, "upload_clip", request, UploadClipAnswer.serializer())
+AccountScope.current().upload(moment, "upload_clip", request, Moment)
 moment.uploads["upload_clip"]?.status       // Uploading
 moment.uploads["upload_clip"]?.progress      // 42.0
 moment.cancelUpload("upload_clip")
@@ -103,7 +102,7 @@ moment.cancelUpload("upload_clip")
 
 ### Android background transfer
 
-On iOS uploads go through the outbox of the core while the app runs.
+On iOS a transfer is a plain `URLSession` PUT while the app runs. The outbox keeps an upload that the app stopped and sends it after the next start.
 
 On Android the app gives the text and the small icon of the notification to `DBlayer.open` as `uploadNotification = UploadNotification(title, text, icon)`.
 
@@ -263,23 +262,23 @@ The final content mutation does not hold a file permit.
 
 | Field | Meaning |
 | ----- | ------- |
-| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed` |
-| `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer). A step that waits for the network or for power saving to end is `queued` |
+| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`, `cancelled` |
+| `waitReason` | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `offline`. A step that waits for the network or for power saving to end is `queued` |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts |
 | `progress` | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown |
 | `attempts` | saved attempts for the current unfinished step, preserved across restarts |
-| `error` | kind and message, `isRetryable` is false for a rejection |
+| `error` | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions` |
 | `localUrl` | the file URL of the copy of the library while the transfer holds it, `nil` otherwise |
 | `processing` | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
-A finished upload closes its operation and removes its entry from `uploads`. The record becomes `synced` when no other operation remains open. Progress advances when a part is confirmed and never decreases within a phase. A restarted phase begins with its confirmed parts.
+A finished upload closes its operation and removes its entry from `uploads`, except that an action with a declared `processing` keeps an entry with status `done` and the `processing` progress while the server works on the file. The record becomes `synced` when no other operation remains open. Progress advances when a part is confirmed and never decreases within a phase. A restarted phase begins with its confirmed parts.
 
 ### Rules
 
-- Transport errors retry with backoff. Offline waits for `setOnline(true)` without starting another attempt.
+- Transport errors retry with backoff. Offline waits for the network to return without starting another attempt.
 - Each step saves its attempt count before starting a network request. A restart or network change does not refund that attempt.
 - A successful part starts the next step with a fresh budget. Each step permits up to 50 attempts.
 - An explicit `retry(action)` after failure saves a fresh attempt budget before restarting unfinished work.
@@ -292,6 +291,9 @@ A finished upload closes its operation and removes its entry from `uploads`. The
 - A restarted unfinished PUT saves another attempt before sending. `retry(action)` after a failed content mutation skips confirmed transfers.
 - A multipart failure calls `abort` only while parts remain unconfirmed. After all parts are confirmed, a failed `complete` preserves their ETags and upload id.
 - `retry(action)` and `discard(action)` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
-- Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.
+- Offline cancellation returns without a network call and keeps the multipart upload id. When the network returns, the saved cancellation aborts the multipart and removes the operation.
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one open upload per declared action.
+- `upload` on a row that does not exist fails with `NotFound` for every model. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action), then `NotFound` for the row.
+- `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
+- `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
