@@ -96,7 +96,7 @@ A created row joins, at the front, the list of every remote scope whose paramete
 
 Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `outcome()` waits for that operation alone.
 
-If the storage format changes, the library clears the server cache and keeps queued intentions. An operation whose row is absent is sent without restoring that row. Its declaration decides how a refusal is handled.
+If the storage format changes, the library clears the server cache and keeps queued intentions.
 
 ```swift
 let receipt = try await user.update(name: name)
@@ -150,7 +150,7 @@ With `on_failure: :keep`, a refusal such as `IN_PROGRESS` or `DUPLICATE_CLIENT_K
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
 - A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry(action)` hides it again and sends the destroy, `discard(action)` keeps the record and drops the destroy. `discard(action)` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
 - A `failed` record is sent again only by `retry(action)`, or rolled back by `discard(action)` ([sync state](sync-state.md)).
-- Responses that cannot be understood are moved to quarantine instead of being lost.
+- A temporary row left without its operation after a crash, and a damaged reset intent, are moved to quarantine instead of being lost.
 - The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is sent again with the same request id after the restart.
 
 ```swift
@@ -310,7 +310,7 @@ end
 When the library picks a queued operation for its first send and its waiting time is over, it does not send it. An operation that was sent at least once is never expired. It rolls back the optimistic change and ends the operation with the outcome `rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
 
 `outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
-A model without a server mutation for `create` writes rows that only this device holds.
+A model with `storage: :local` writes rows that only this device holds, see [storage rules](storage-models.md).
 
 ## What the server answered
 

@@ -3,7 +3,6 @@
 DBlayer talks to a GraphQL endpoint. You describe operations and models once. Requests, pagination, retries, refetching and subscriptions are handled for you.
 
 See [Retries](#retries) for request ownership, delays, budgets and cancellation.
-`Ready` alone does not reset failure history or clear degraded status. The first `Next` after `Ready` confirms recovery.
 HTTP subscription errors follow query retry classification: 5xx errors retry, while terminal errors including 401 and 403 stop.
 
 ## Connecting
@@ -185,7 +184,7 @@ Recovery depends on the response and whether it confirms the sequence:
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
 The [retry owner](#retries) preserves Pending across temporary failures.
-HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
+HTTP 401, 403 and every other unlisted status return immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
 Opening the database with a session sends the stored request. The application calls nothing.
 
@@ -369,9 +368,6 @@ The next attempt uses that new sequence and the same operation body.
 Cancellation preserves Pending and never advances an unconfirmed sequence.
 Dropping the Rust future stops the request and its backoff.
 Swift Task and Kotlin coroutine cancellation also stop bootstrap and `sessionCall`.
-The Swift generator connects these calls to UniFFI cancellation and serializes cancel/free of each native future handle.
-Other Swift async calls keep their existing cancellation behavior.
-UniFFI generates non-throwing `current` with `try!`, so cancelling every async call would crash that method.
 
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
 It is optional. Without it, retries behave identically. There is no process-wide instance.
@@ -793,7 +789,7 @@ end
 - Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes after the last reader leaves.
-- After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
+- After a dropped connection, the library reconnects and rereads once the watched relations of the models that lost events, fresh or not. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
 - A WebSocket close frame ends the current subscription even without a GraphQL `complete` message.
 - Bursts of events are merged into one commit.
 - Each active declaration keeps its own debounce interval and row effects, regardless of which reader opened first.
@@ -856,7 +852,7 @@ The core starts these subscriptions when a session credential is committed (a se
 | `freshness` expired | refetched when next read or when the app resumes |
 | App returns to the foreground, network returns after offline | the library reloads the stale relations with readers in small groups. Events that coincide share one run. An offline foreground does nothing, close cancels the run, stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. |
 | Network is back | the queue is sent and stale relations are refetched |
-| Subscription reconnects | stale watched relations are refetched |
+| Subscription reconnects after lost events | watched relations of the affected models are refetched once |
 
 You never write "if the mutation worked, reload the list".
 
