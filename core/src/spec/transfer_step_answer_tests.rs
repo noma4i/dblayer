@@ -57,7 +57,9 @@ fn xfer_step_answer_failed() {
 /// so the restored held pair waits for Session to re-drive it, repeating the step (a second blob).
 #[test]
 fn xfer_step_answer_restart() {
-    let (mut twin, _) = Twin::opened(vec![saved()], Default::default());
+    let mut answered = saved();
+    answered.saved_answer = Some((STEP, "{\"ok\":true}".into()));
+    let (mut twin, _) = Twin::opened(vec![answered], Default::default());
     twin.online(true);
     let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(

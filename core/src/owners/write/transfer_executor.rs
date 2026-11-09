@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use super::failure;
 use super::transfer::{file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
-use super::wire::{Flights, Running, StepIds, Wire};
+use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
@@ -24,7 +24,8 @@ pub struct Link {
     gate: Arc<crate::runtime::EpochGate>,
     epoch: Option<Epoch>,
     minted: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ids: StepIds,
+    /// The cycle and the part of the step the link serves: with the key and the step they give the request id.
+    identity: (u64, u32),
     /// The answer of the saved pair of a restored step: the first request under its id gets it without the network.
     seeded: Option<(u64, Response)>,
     seed_used: std::sync::atomic::AtomicBool,
@@ -36,16 +37,18 @@ impl Drop for Link {
 
 impl Link {
     #[cfg(test)]
-    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch, ids: StepIds) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, ids, seeded: None, seed_used: Default::default() } }
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (1, 0), seeded: None, seed_used: Default::default() } }
 
-    /// `step` names the request: its id is minted by the owner and a repeat of the step carries it again.
+    /// `step` names the request: its id is the function of the step, so a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
-        let id = (self.ids.mint)(step);
+        let id = match step {
+            crate::transport::RequestOwner::Transfer { item_id, step, .. } if *step != crate::owners::write::upload::UploadStage::Abort => super::wire::step_request_id(item_id, self.identity.0, *step, self.identity.1),
+            _ => crate::owners::contract::next_request_id(),
+        };
         if let Some((seeded_id, response)) = self.seeded.as_ref().filter(|(seeded_id, _)| *seeded_id == id) {
             if !self.seed_used.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 let _ = seeded_id;
-                (self.ids.settle)(id);
                 return Ok(response.clone());
             }
         }
@@ -54,7 +57,6 @@ impl Link {
         if response.kind.is_none() {
             response.kind = Some(response.answer_kind().map_err(|error| TransportError::Decode(error.to_string()))?);
         }
-        (self.ids.settle)(id);
         Ok(response)
     }
 
@@ -107,6 +109,7 @@ fn seeded_response(seeded: Option<(u64, String, crate::transport::AnswerKind)>) 
 }
 
 struct StepAsk {
+    cycle_id: u64,
     operation: u64,
     part: Option<u32>,
     upload_id: Option<String>,
@@ -200,7 +203,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, ids: self.wire.ids.clone(), seeded: None, seed_used: Default::default() })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (1, 0), seeded: None, seed_used: Default::default() })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
@@ -231,7 +234,7 @@ impl TransferExecutor {
     }
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
-        let StepAsk { operation, part, upload_id, source, steps, key, seeded } = ask;
+        let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded } = ask;
         let source = self.local(transfer_id, source);
         let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id, key: key.clone() }) };
         self.task(
@@ -241,6 +244,7 @@ impl TransferExecutor {
             TransferInput::StepError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
+                link.identity = (cycle_id, part.unwrap_or(0));
                 link.seeded = seeded_response(seeded);
                 Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
             },
@@ -251,7 +255,7 @@ impl TransferExecutor {
         );
     }
 
-    fn complete(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), key: String, (upload_id, parts): (Option<String>, Vec<(u32, Option<String>)>), seeded: Option<(u64, String, crate::transport::AnswerKind)>) {
+    fn complete(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id, cycle_id): (TransferId, u64, u64), key: String, (upload_id, parts): (Option<String>, Vec<(u32, Option<String>)>), seeded: Option<(u64, String, crate::transport::AnswerKind)>) {
         self.task(
             stamp,
             back,
@@ -259,6 +263,7 @@ impl TransferExecutor {
             TransferInput::CompleteError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.seeded = seeded_response(seeded);
+                link.identity = (cycle_id, 0);
                 Box::pin(async move { codec.complete(&link, &key, upload_id.as_deref(), &parts).await })
             },
             move |result| match result {
@@ -344,11 +349,11 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 }
             }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Step { transfer_id, attempt_id, key, operation, part, purpose, upload_id, source, steps, seeded, .. } => {
+            TransferEffect::Step { transfer_id, attempt_id, cycle_id, key, operation, part, purpose, upload_id, source, steps, seeded, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
-                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { operation, part, upload_id, source, steps, key, seeded });
+                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded });
             }
-            TransferEffect::Complete { transfer_id, attempt_id, key, upload_id, parts, seeded, .. } => self.complete(stamp, back, (transfer_id, attempt_id), key, (upload_id, parts), seeded),
+            TransferEffect::Complete { transfer_id, attempt_id, cycle_id, key, upload_id, parts, seeded, .. } => self.complete(stamp, back, (transfer_id, attempt_id, cycle_id), key, (upload_id, parts), seeded),
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),
             TransferEffect::AbortOrphan { key, upload_id } => self.abort_orphan(stamp, back, key, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),

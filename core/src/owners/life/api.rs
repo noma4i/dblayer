@@ -105,9 +105,9 @@ impl Life {
     }
 
     /// One `Mutate` of a direct call: the outcome comes to the waiter, a repeat is the business of its caller.
-    pub fn mutate_for_call(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
-        let req_id = match &owner {
-            Some(owner @ crate::transport::RequestOwner::Transfer { .. }) => self.wiring.request_of(owner),
+    pub fn mutate_for_call(&self, owner: Option<crate::owners::session::MutateOwner>, wire_id: Option<RequestId>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+        let req_id = match (&owner, wire_id) {
+            (Some(crate::transport::RequestOwner::Transfer { .. }), Some(id)) => id,
             _ => crate::owners::contract::next_request_id(),
         };
         self.mutate_answered(owner, req_id, path, body, purpose)

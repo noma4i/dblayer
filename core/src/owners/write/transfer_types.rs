@@ -122,6 +122,8 @@ pub struct StoredTransfer {
     pub blob_created_at: Option<Time>,
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
+    /// The answer of the step Session saved before the process died: `(request id, body)`.
+    pub saved_answer: Option<(u64, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -345,8 +347,8 @@ pub enum TransferEffect {
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
-    Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
+    Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },
@@ -478,6 +480,8 @@ pub struct Transfer {
     pub blob_created_at: Option<Time>,
     /// The answer of the pair Session re-sent for a restored step: `(request id, body)`, served to the first request of the step.
     pub seeded: Option<(u64, String, crate::transport::AnswerKind)>,
+    /// The saved answer the batch of the attempt removes from the Store with the attempt it starts.
+    pub answer_saved: Option<u64>,
     pub closing: bool,
 }
 

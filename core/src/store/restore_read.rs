@@ -75,6 +75,19 @@ pub(crate) struct Restore {
     pub transfer_pending_orphan: bool,
 }
 
+/// The answer Session saved for the step this row would send next, found by the id the step carries.
+fn saved_answer_of(row: &crate::owners::write::transfer::StoredTransfer, answers: &std::collections::BTreeMap<u64, crate::store::session_state::StoredAnswer>) -> Option<(u64, String)> {
+    use crate::owners::write::upload::UploadStage;
+    let source = row.source.as_ref()?;
+    if row.restore_failed.is_some() || row.failed.is_some() || row.completed || row.aborted || row.copying { return None; }
+    let part = row.confirmed_parts + 1;
+    let steps: Vec<(UploadStage, u32)> = if row.confirmed_parts >= source.parts { vec![(UploadStage::Complete, 0)] } else { vec![(UploadStage::Create, part), (UploadStage::Init, part), (UploadStage::Presign, part)] };
+    steps.into_iter().find_map(|(step, part)| {
+        let id = crate::owners::write::wire::step_request_id(&row.key, row.cycle_id.max(1), step, part);
+        match answers.get(&id)? { crate::store::session_state::StoredAnswer::Ok(body) => Some((id, body.clone())), _ => None }
+    })
+}
+
 fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTransfer], owner: &crate::transport::RequestOwner) -> Option<&'a crate::owners::write::transfer::StoredTransfer> {
     use crate::owners::write::upload::UploadStage;
     let crate::transport::RequestOwner::Transfer { item_id, step, .. } = owner else { return None };
@@ -90,11 +103,12 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, aliases) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)) = self.read_models(&[], |reader| {
             let connection = reader.connection();
             let aliases = connection.prepare(include_str!("sql/restore_read/read_aliases.sql"))?.query_map([], |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?), row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
             let pending = crate::store::session_state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::store::session_state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
+            let answers_by_id = crate::store::session_state::answers(connection).map_err(crate::store::StoreError::from)?;
             let effects_only = connection.prepare(include_str!("sql/restore_read/read_restore_select_op.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let cycles = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_2.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
@@ -103,7 +117,7 @@ impl Store {
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, aliases))
+            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
@@ -140,18 +154,26 @@ impl Store {
             let intent_members = origins.valid.values().find_map(|origin| match origin { OpSource::TransferGroup { batch_id, members } if *batch_id == id => Some(members.iter().map(|member| member.transfer_id).collect()), _ => None }).unwrap_or_default();
             Some((id, crate::owners::write::transfer::StoredGroup { joint: crate::owners::write::transfer::Joint::from_text(&text)?, op_id: op_id.and_then(|op| u64::try_from(op).ok()), intent_members }))
         }).collect();
-        let orphan_answers = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
+        let mut orphan_answers: Vec<u64> = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
         let transfer_pending_orphan = match (&pending, &transfers) {
             (Some(held), Ok(rows)) => held.owner.as_ref().is_some_and(|owner| matches!(owner, crate::transport::RequestOwner::Transfer { .. }) && transfer_asking_again(rows, owner).is_none()),
             _ => false,
         };
+        let mut claimed = Vec::new();
         let transfers = transfers.map(|mut rows| {
+            for row in &mut rows {
+                if let Some((id, body)) = saved_answer_of(row, &answers_by_id) {
+                    claimed.push(id);
+                    row.saved_answer = Some((id, body));
+                }
+            }
             let asking = pending.as_ref().and_then(|held| held.owner.as_ref().and_then(|owner| transfer_asking_again(&rows, owner)).map(|row| (row.transfer_id, held.req_id)));
             if let Some((id, req_id)) = asking {
                 if let Some(row) = rows.iter_mut().find(|row| row.transfer_id == id) { row.pending_step = Some(req_id); }
             }
             rows
         });
+        orphan_answers.retain(|id| !claimed.contains(id));
         Ok(Restore { aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
     }
 

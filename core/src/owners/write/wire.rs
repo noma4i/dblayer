@@ -36,19 +36,15 @@ impl Tasks for TokioTasks {
     }
 }
 
-/// The request ids of the steps of Transfer: the owner mints the id of a step (or of the abort of an orphan), a repeat of the step carries the held id until an answer settles it.
-#[derive(Clone)]
-pub struct StepIds {
-    pub mint: Arc<dyn Fn(&crate::transport::RequestOwner) -> u64 + Send + Sync>,
-    pub settle: Arc<dyn Fn(u64) + Send + Sync>,
-}
-
-impl StepIds {
-    pub fn held() -> Self {
-        let held: Arc<crate::runtime::HeldIds<crate::transport::RequestOwner>> = Arc::default();
-        let settled = held.clone();
-        Self { mint: Arc::new(move |key| held.id_of(key, crate::owners::contract::next_request_id)), settle: Arc::new(move |id| settled.settle(id)) }
-    }
+/// The request id of a step of Transfer: a function of the transfer key, the cycle, the step and the part, so a repeat and a restart carry the same id (bit 62 keeps it apart from the counter ids).
+pub fn step_request_id(key: &str, cycle_id: u64, step: crate::owners::write::upload::UploadStage, part: u32) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| for byte in bytes { hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3); };
+    feed(key.as_bytes());
+    feed(&cycle_id.to_le_bytes());
+    feed(&[step as u8]);
+    feed(&part.to_le_bytes());
+    (hash & ((1 << 62) - 1)) | (1 << 62)
 }
 
 /// The network of an executor: the transport and the gate of the epoch it works in.
@@ -56,7 +52,6 @@ impl StepIds {
 pub struct Wire {
     pub gate: Arc<crate::runtime::EpochGate>,
     pub tasks: Arc<dyn Tasks>,
-    pub ids: StepIds,
 }
 
 impl Drop for Wire {

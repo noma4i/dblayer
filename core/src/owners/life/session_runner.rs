@@ -71,9 +71,6 @@ impl SessionRunner {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();
         let digests = restored.digest.iter().cloned().collect();
         let (mint, minted) = std::sync::mpsc::channel();
-        if let Some(pending) = &restored.pending {
-            if let Some(owner @ crate::transport::RequestOwner::Transfer { .. }) = &pending.owner { wiring.hold_request(owner.clone(), pending.request_id); }
-        }
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
         Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations }
     }

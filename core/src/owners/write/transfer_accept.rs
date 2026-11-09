@@ -88,6 +88,7 @@ impl TransferState {
             steps,
             restored: false,
             pending_step: None,
+            answer_saved: None,
             urgent,
             op_id: None,
             submitted: false,

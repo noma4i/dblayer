@@ -20,7 +20,11 @@ impl TransferState {
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
             transfer.stored_shown = Some((u8::MAX, false));
-            transfer.pending_step = row.pending_step;
+            transfer.pending_step = row.pending_step.filter(|_| row.saved_answer.is_none());
+            if let Some((request_id, body)) = &row.saved_answer {
+                transfer.seeded = Some((*request_id, body.clone(), crate::transport::AnswerKind::Answered { sequence: None }));
+                transfer.answer_saved = Some(*request_id);
+            }
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;
             transfer.attempts = row.attempts;

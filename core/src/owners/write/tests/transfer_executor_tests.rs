@@ -87,7 +87,7 @@ fn world() -> World {
     let (answers, shown) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
     let (to_answers, to_shown) = (answers.clone(), shown.clone());
     let executor = TransferExecutor::new(
-        Wire { gate: open_gate(EPOCH, Arc::new(stub.clone())), tasks: Arc::new(spawn.clone()), ids: super::wire::StepIds::held() },
+        Wire { gate: open_gate(EPOCH, Arc::new(stub.clone())), tasks: Arc::new(spawn.clone()) },
         codec.clone(),
         files.clone(),
         TransferSinks {
@@ -340,7 +340,7 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     let stub = Stub::default();
     stub.hang_puts();
     let gate = open_gate(EPOCH, Arc::new(stub.clone()));
-    let link = Arc::new(Link::over(gate.clone(), EPOCH, super::wire::StepIds::held()));
+    let link = Arc::new(Link::over(gate.clone(), EPOCH));
     let put = || PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
     let inside = crate::task::spawn_on(&tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
     crate::test_wait::signalled(stub.signal(), "the PUT is inside the transport", || stub.put_tokens().len() == 1).await;

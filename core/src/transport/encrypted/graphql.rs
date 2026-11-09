@@ -45,9 +45,9 @@ impl EncryptedTransport {
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
-    async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<(Answer, crate::transport::AnswerKind), TransportError> {
+    async fn mutate_owned(&self, path: &str, body: Value, (owner, wire_id): (Option<crate::transport::RequestOwner>, Option<u64>), purpose: crate::transport::NetworkPurpose) -> Result<(Answer, crate::transport::AnswerKind), TransportError> {
         let life = self.life.get().and_then(Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
-        let waiter = life.mutate_for_call(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
+        let waiter = life.mutate_for_call(owner, wire_id, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
                 crate::owners::session::AuthorOutcome::Response { body, kind } => Ok((Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }, kind)),
@@ -142,7 +142,7 @@ impl Upstream for EncryptedTransport {
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        let (answer, kind) = self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?;
+        let (answer, kind) = self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), (request.owner, request.wire.map(|wire| wire.request_id)), request.purpose).await?;
         response_from_answer_with_kind(answer, kind)
     }
 

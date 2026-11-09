@@ -157,6 +157,9 @@ impl TransferState {
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
+                    if let (TransferStage::PersistingAttempt, Some(request_id)) = (transfer.stage, transfer.answer_saved) {
+                        ops.push(StoreOp::RemoveAnswer { request_id });
+                    }
                     let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
                     if shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
                         ops.push(Self::shown_op(transfer, shown));

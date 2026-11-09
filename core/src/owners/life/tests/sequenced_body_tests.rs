@@ -142,7 +142,7 @@ async fn sess_prop_sequenced_body_one_per_pair_restart() {
                 server.drop_next_request();
             }
         });
-        let waiter = life.mutate_for_call(None, GRAPHQL.into(), mutation("Restart"), 0);
+        let waiter = life.mutate_for_call(None, None, GRAPHQL.into(), mutation("Restart"), 0);
         crate::test_wait::settled(&life, "the full pair was never stored", || pending_of(&db).is_some_and(|pending| pending.body.contains("\"query\""))).await;
         drop(waiter);
         let _ = crate::test_wait::within(life.close().wait()).await;
