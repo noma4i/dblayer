@@ -55,6 +55,7 @@ mod outbox_restore_tests;
 mod outbox_open_cells_tests;
 mod outbox_landing_cells_tests;
 mod outbox_end_cells_tests;
+mod outbox_prop_cells_tests;
 mod outbox_release_tests;
 mod outbox_local_tests;
 mod outbox_wait_tests;
