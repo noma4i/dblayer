@@ -341,6 +341,15 @@ fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
 }
 
 #[test]
+fn store_alias_written_with_swap() {
+    let db = open();
+    put(&db, "moments", json!({"id": "temp-1", "userId": "u1"}));
+    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id": "m5", "userId": "u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "m5".into() }]);
+    let real: String = db.read(&["moments"], |reader| Ok(reader.connection().query_row("SELECT real FROM row_alias WHERE model = ?1 AND temp = ?2", ["moments", "temp-1"], |row| row.get(0))?)).unwrap();
+    assert_eq!(real, "m5");
+}
+
+#[test]
 fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_threshold() {
     let directory = tempfile::tempdir().unwrap();
     let db = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None).map(Arc::new).unwrap();
