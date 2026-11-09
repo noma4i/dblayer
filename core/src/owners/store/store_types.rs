@@ -113,6 +113,8 @@ pub struct UploadRow {
     pub aborted: bool,
     /// The new copy is committed and the rename of the temporary file is not.
     pub staged: bool,
+    /// `Clock.now()` of the move to `Failed`: the expiry counts from it.
+    pub failed_at: Option<u64>,
     /// The operation the optimistic effects of the transfer belong to (`ReserveOp`).
     pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).

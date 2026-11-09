@@ -185,6 +185,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         mutation: mutation(key),
         steps: Some(Steps { path: "/upload".into(), body: String::new() }),
         staged: false,
+        failed_at: None,
         restore_failed: None,
         pending_step: None,
     }

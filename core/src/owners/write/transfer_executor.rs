@@ -259,10 +259,7 @@ impl TransferExecutor {
         };
         let (codec, back) = (self.codec.clone(), back.clone());
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let answered = match codec.discard_upload(&link, &key, Some(&upload_id)).await {
-                Ok(()) => true,
-                Err(error) => !temporary(&error),
-            };
+            let answered = abort_answered(&codec.discard_upload(&link, &key, Some(&upload_id)).await);
             back.reply(stamp, TransferInput::AbortDone { upload_id, answered });
         }));
     }
@@ -296,6 +293,14 @@ fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::store::fi
     } else {
         files.materialize(id, "source", data)?;
         Ok(crate::store::files::Location::Table)
+    }
+}
+
+/// The server answered the abort: success or no such upload (404, 410).
+pub(super) fn abort_answered(result: &Result<(), TransportError>) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(error) => !temporary(error),
     }
 }
 

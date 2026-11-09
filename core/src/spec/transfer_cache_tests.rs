@@ -70,3 +70,19 @@ fn xfer_blob_cache_by_content() {
     assert_eq!(twin.commit().submits(), 1);
     assert_eq!(twin.stage(id), TransferStage::Mutating);
 }
+
+#[test]
+fn xfer_blob_cache_created_at_is_the_createblob_answer() {
+    let mut twin = Twin::new();
+    let id = twin.copying(KEY, 1);
+    copied(&mut twin, id, CachedBlob::Miss);
+    twin.commit();
+    twin.commit();
+    twin.post(TransferInput::Clock(crate::runtime::Time(1000)));
+    twin.step_ok(id, 1, None);
+    twin.commit();
+    twin.commit();
+    twin.post(TransferInput::Clock(crate::runtime::Time(5000)));
+    let written = twin.completed(id);
+    assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 1000 }], "the term of the cache is the term of the server blob from its creation, not from complete");
+}

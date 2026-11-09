@@ -354,3 +354,13 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     inside.abort_handle().abort();
     crate::test_wait::signalled(stub.signal(), "the aborted PUT is dropped", || stub.dropped() == 1).await;
 }
+
+#[test]
+fn exec_xfer_abort_answered_only_by_success_or_missing_upload() {
+    use super::transfer_executor::abort_answered;
+    let http = |status: u16| Err(TransportError::Http { status, body: String::new() });
+    let table = [(Ok(()), true), (http(404), true), (http(410), true), (http(403), false), (http(500), false), (Err(TransportError::Network("down".into())), false)];
+    for (result, answered) in table {
+        assert_eq!(abort_answered(&result), answered, "{result:?}");
+    }
+}

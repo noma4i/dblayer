@@ -115,6 +115,7 @@ impl TransferState {
             discard_sent: false,
             new_source: None,
             previous: None,
+            failed_at: None,
             closing: false,
         };
         self.transfers.insert(transfer_id, transfer);

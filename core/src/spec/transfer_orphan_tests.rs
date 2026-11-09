@@ -373,3 +373,16 @@ fn xfer_minted_write_committed() {
     let refused_abort = twin.post(TransferInput::AbortDone { upload_id: "u1".into(), answered: false });
     assert_eq!(refused_abort.orphans_removed().len(), 0, "an unanswered abort keeps the record");
 }
+
+#[test]
+fn xfer_orphan_remove_rejected() {
+    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+    twin.online(true);
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: true });
+    assert_eq!(out.orphans_removed(), vec!["u9".to_string()]);
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty(), "no second abort while the removal is not committed");
+    twin.reject(RejectReason::Storage("disk".into()));
+    twin.online(false);
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "the refused removal keeps the debt and the abort goes again");
+}

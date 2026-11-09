@@ -513,3 +513,25 @@ fn xfer_done() {
     }
     assert_eq!(twin.stage(id), TransferStage::Done);
 }
+
+#[test]
+fn xfer_expiry_counts_from_failed_at() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 2);
+    twin.post(TransferInput::Clock(Time(6 * DAY)));
+    twin.step_error(id, false);
+    twin.commit();
+    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    assert!(Twin::quiet(&out) && twin.stage(id) == TransferStage::Failed, "two days after the failure the transfer is kept: {out:?}");
+    let out = twin.post(TransferInput::Tick { now: Time(13 * DAY + 1), kind: TransferTick::Expire });
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "a week and a millisecond after the failure it expires");
+}
+
+#[test]
+fn xfer_failed_row_carries_failed_at() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 2);
+    twin.post(TransferInput::Clock(Time(6 * DAY)));
+    let out = twin.step_error(id, false);
+    assert_eq!(out.rows().iter().map(|(row, _)| row.failed_at).collect::<Vec<_>>(), vec![Some(6 * DAY)], "the batch of the transition writes the time of it");
+}

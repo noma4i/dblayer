@@ -118,6 +118,7 @@ pub struct StoredTransfer {
     pub steps: Option<Steps>,
     /// The row was dropped by the layout move or cannot be read.
     pub staged: bool,
+    pub failed_at: Option<Time>,
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
 }
@@ -452,6 +453,7 @@ pub struct Transfer {
     pub new_source: Option<ActiveSource>,
     /// The state before a retry with a new source: the copy and the metadata stay until the new copy is committed.
     pub previous: Option<Box<Transfer>>,
+    pub failed_at: Option<Time>,
     pub closing: bool,
 }
 
@@ -635,6 +637,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
         staged: transfer.previous.is_some(),
+        failed_at: transfer.failed_at.map(|at| at.0),
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
     }
