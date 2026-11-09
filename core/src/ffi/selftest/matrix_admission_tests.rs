@@ -142,6 +142,9 @@ fn observed(result: &Result<(), DbError>) -> &'static str {
     }
 }
 
+/// A read answers `None` for a missing row (store.md), a local or ephemeral value waits for its row (outbox.md, P-DATA-14): only a write that needs the row answers `NotFound`.
+const MISSING_ROW_ADMITTED: [&str; 11] = ["peek_row", "read_row", "file", "read", "url", "edge_values", "node", "nodes", "refresh", "set_local", "set_ephemeral"];
+
 fn expected(closed: bool, stale: bool, invalid: bool, missing: bool) -> &'static str {
     if closed { "Closed" } else if stale { "NoSession" } else if invalid { "Invalid" } else if missing { "NotFound" } else { "admitted" }
 }
@@ -189,7 +192,7 @@ async fn admission_group(group: usize) {
             if missing { args.row = "absent-row".into(); }
             let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
             match invoke_bounded(name, &database, &args).await {
-                Some(result) => matrix.check(name, "open", &input, expected(false, stale, invalid, missing), observed(&result)),
+                Some(result) => matrix.check(name, "open", &input, expected(false, stale, invalid, missing && !MISSING_ROW_ADMITTED.contains(&name.as_str())), observed(&result)),
                 None => matrix.unclassified(name, "open", &input, "the matrix has no way to call this export"),
             }
         }
