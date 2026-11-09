@@ -54,6 +54,8 @@ pub(super) enum Fault {
     Http(u16),
     Business,
     Answer(Value),
+    /// The server answers 200 with a body that is no sealed answer.
+    Unreadable,
     /// The request does not reach the server: the caller sees a network error.
     Down,
 }
@@ -304,6 +306,7 @@ impl World {
             Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
             Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
             Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
+            Some(Fault::Unreadable) => return Ok("not json".into()),
             Some(Fault::Refuse { code, .. }) => return Ok(json!({"errors": [{"message": code, "extensions": {"code": code}}]}).to_string()),
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
@@ -340,6 +343,7 @@ impl FakeHttp for World {
             Some(Fault::Http(status)) => return Ok(EncryptedReply { status, body: String::new() }),
             Some(Fault::Business) => answer = json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
             Some(Fault::Answer(value)) => answer = value,
+            Some(Fault::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Refuse { code, confirmed }) => {
                 answer = json!({"error": code});
