@@ -164,6 +164,7 @@ impl TransferState {
         transfer.cycle_id += 1;
         transfer.stage = TransferStage::Ready;
         transfer.error = None;
+        transfer.failed_at = None;
         let rep = transfer.retry_reply.take();
         let receipt = self.receipt(id);
         if let Some(rep) = rep {
@@ -180,6 +181,7 @@ impl TransferState {
         transfer.cycle_id += 1;
         transfer.stage = if group.is_some() { TransferStage::BatchReady } else { TransferStage::PersistingBatchIntent };
         transfer.error = None;
+        transfer.failed_at = None;
         let rep = transfer.retry_reply.take();
         if let Some(entry) = group.and_then(|group| self.groups.get_mut(&group)) { entry.phase = BatchPhase::Singles; }
         if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Receipt(self.receipt(id))); }
@@ -344,7 +346,7 @@ impl TransferState {
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
     pub(super) fn expire(&mut self, fx: &mut Fx) {
-        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
+        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.failed_at.unwrap_or(transfer.created_at).0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
             self.discard_failed(id, None, fx);
         }

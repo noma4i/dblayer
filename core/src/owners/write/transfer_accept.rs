@@ -369,6 +369,7 @@ impl TransferState {
             transfer.confirmed_parts = 0;
             transfer.upload_id = None;
             transfer.error = None;
+            transfer.failed_at = None;
             transfer.etags.clear();
             let cached = transfer.from_cache;
             let batch = transfer.batch_id;

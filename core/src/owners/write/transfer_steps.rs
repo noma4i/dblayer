@@ -124,7 +124,9 @@ impl TransferState {
     /// A permanent error or the last attempt: the failure is written, `abort` goes out when a multipart upload exists.
     pub(super) fn mark_failure(&mut self, id: TransferId, error: String, fx: &mut Fx) {
         self.release_step(id, fx);
+        let now = self.now;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.failed_at = Some(now);
         transfer.stage = TransferStage::PersistingFailure;
         transfer.removal = None;
         transfer.in_flight = false;

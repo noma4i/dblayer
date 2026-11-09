@@ -275,6 +275,7 @@ impl TransferState {
             transfer.cycle_id += 1;
             transfer.stage = TransferStage::Mutating;
             transfer.error = None;
+            transfer.failed_at = None;
             let rep = transfer.retry_reply.take();
             let receipt = self.receipt(id);
             if let Some(rep) = rep {
