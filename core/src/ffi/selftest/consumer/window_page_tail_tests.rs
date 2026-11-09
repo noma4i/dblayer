@@ -42,3 +42,19 @@ async fn win_page_tail_leaves() {
     let found = ids(&stand).await;
     assert_eq!(found, ["u1", "u2", "u3"], "the refetch answered 3 users without a next cursor: the scope reads 3 rows and count {}", found.len());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_page_empty_with_cursor_keeps() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("blockedUsers", blocked(&["u1", "u2", "u3", "u4"]));
+    let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+    std::mem::forget(stand.database.watch(ReadRequest::List { query: blocked_query() }, rows.clone()));
+    bound(stand.database.refresh(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
+    stand.settle().await;
+    let empty_with_cursor = json!({"viewer": {"blockedUsers": {"edges": [], "pageInfo": {"hasNextPage": true, "endCursor": "c-next"}, "totalCount": 4}}});
+    stand.answer("blockedUsers", empty_with_cursor);
+    bound(stand.database.refresh(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
+    stand.settle().await;
+    assert_eq!(ids(&stand).await, ["u1", "u2", "u3", "u4"], "a page 1 with 0 rows and a next cursor covers nothing: the members stay (D-228)");
+}
