@@ -42,6 +42,12 @@ impl ServerContract {
     pub fn adopting() -> Arc<Self> { Arc::new(Self { inner: Mutex::new(Contract::adopting()) }) }
 
     pub fn register(&self, hash: String) { self.contract().register(&hash) }
+    pub fn register_document(&self, document: String) {
+        use sha2::{Digest, Sha256};
+        let hash: String = Sha256::digest(document.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+        self.contract().register_document(&hash, &document);
+    }
+    pub fn document(&self, hash: String) -> Option<String> { self.contract().document(&hash).map(str::to_string) }
     pub fn forget(&self) { self.contract().forget() }
     pub fn cache_everything(&self) { self.contract().cache_everything() }
     pub fn set_last(&self, sequence: i64) { self.contract().set_last(sequence) }
