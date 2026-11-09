@@ -508,6 +508,13 @@ for path in files:
     if re.search(r"\bplan_update\(", contents[path]) and f"z40:{relative}" not in allowed:
         findings.append(f"Z40 values that carry local fields are planned by plan_supplied (the local part goes to the same transaction), plan_update drops them: {path.relative_to(root)}")
 
+wire_readers = {"transport/answer_kind.rs", "transport/encrypted/graphql.rs", "transport/encrypted/bootstrap.rs", "owners/write/answer.rs", "transport/session_code.rs", "transport/error.rs", "store/session_state.rs", "ffi/encrypted.rs"}
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative in wire_readers: continue
+    if re.search(r'SessionCode::(?:from_wire|of|named)\(|get\("error"\)|\["error"\]\.as_str', contents[path]) and f"z41:{relative}" not in allowed:
+        findings.append(f"Z41 the code of a server answer is read by transport/answer_kind.rs (refusal, classify), not by a second parser: {path.relative_to(root)}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

@@ -64,8 +64,8 @@ fn typed(error: core::TransportError) -> DbError {
 }
 
 fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
-    match answer.body.get("error").and_then(Value::as_str) {
-        Some(code) => Err(DbError::Session { code: SessionCode::of(code), detail: code.to_string() }),
+    match crate::transport::refusal_name(&answer.body) {
+        Some(name) => Err(DbError::Session { code: SessionCode::of(&name), detail: name }),
         None => Ok(answer),
     }
 }

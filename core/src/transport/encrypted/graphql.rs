@@ -104,7 +104,7 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
 }
 
 
-pub fn response_of(answer: Answer) -> Result<Response, TransportError> {
+pub fn response_from_answer(answer: Answer) -> Result<Response, TransportError> {
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
         if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
             return Err(session);
@@ -128,15 +128,15 @@ impl Upstream for EncryptedTransport {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
         let wire = request.authored()?;
-        let response = response_of(self.read(path, graphql_body(&request, false), wire).await?)?;
+        let response = response_from_answer(self.read(path, graphql_body(&request, false), wire).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
+        response_from_answer(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        response_of(self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
+        response_from_answer(self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
     }
 
     async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {

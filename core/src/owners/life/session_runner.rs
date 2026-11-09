@@ -188,10 +188,10 @@ fn secret_for(credentials: &dyn CredentialSlot, expected: Option<&str>) -> Resul
     }
 }
 
-pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
+pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
-            if let Some(code) = crate::transport::refusal_name(&answer.body).and_then(|name| SessionCode::from_wire(&name)) {
+            if let Some(code) = crate::transport::refusal_sent(&answer.body) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
             if transient_failure(&answer.body).is_some() {
@@ -313,7 +313,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     };
                     let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
                     back.reply(EpochStamp::Control, match sent {
-                        Ok(result) => input_of(request_id, attempt_id, logout, result),
+                        Ok(result) => session_input(request_id, attempt_id, logout, result),
                         Err(_) => SessionInput::GateClosed { request_id, attempt_id },
                     });
                 }));

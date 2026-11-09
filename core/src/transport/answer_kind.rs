@@ -44,6 +44,11 @@ pub fn refusal(body: &Value) -> Option<SessionCode> {
     refusal_name(body).map(|name| SessionCode::of(&name))
 }
 
+/// The code of a body when the server names one of the codes it sends to a client; an unknown or core-only name is `None`.
+pub fn refusal_sent(body: &Value) -> Option<SessionCode> {
+    refusal_name(body).and_then(|name| SessionCode::from_wire(&name))
+}
+
 const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";
 pub(crate) const RETRYABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 

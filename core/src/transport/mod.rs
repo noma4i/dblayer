@@ -15,10 +15,10 @@ mod response;
 pub(crate) mod retry;
 mod session_code;
 
-pub use answer_kind::{classify as classify_answer, refusal, refusal_name, AnswerKind, WireOutcome};
+pub use answer_kind::{classify as classify_answer, refusal, refusal_name, refusal_sent, AnswerKind, WireOutcome};
 pub use cancel::CancelToken;
 pub use encrypted::cable::{CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, EncryptedLines, Incoming, SocketEvent};
-pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, Exchange, HttpExchange, HttpReply, SecurityCode, ServerConfig};
+pub use encrypted::{missing_from_registry, repeats, response_from_answer, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, Exchange, HttpExchange, HttpReply, SecurityCode, ServerConfig};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 #[cfg(test)]

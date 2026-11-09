@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::exchange_tests::Client;
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::graphql::{graphql_body, response_of};
+use super::graphql::{graphql_body, response_from_answer};
 use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
@@ -41,12 +41,12 @@ fn the_body_carries_the_sha256_hash_and_the_document_only_when_asked_and_omits_e
 
 #[test]
 fn an_answer_maps_to_a_response_and_a_server_code_becomes_a_graphql_error() {
-    let data = response_of(Answer { sequence: None, body: json!({ "data": { "x": 1 } }) }).unwrap();
+    let data = response_from_answer(Answer { sequence: None, body: json!({ "data": { "x": 1 } }) }).unwrap();
     assert_eq!(data.data, Some(json!({ "x": 1 })));
 
-    let refused = response_of(Answer { sequence: None, body: json!({ "error": "INTERNAL_SERVER_ERROR" }) }).unwrap();
+    let refused = response_from_answer(Answer { sequence: None, body: json!({ "error": "INTERNAL_SERVER_ERROR" }) }).unwrap();
     assert_eq!((refused.data, refused.errors[0].code()), (None, Some("INTERNAL_SERVER_ERROR")));
-    let failed = response_of(Answer { sequence: Some(2), body: json!({ "errors": [{ "message": "boom", "extensions": { "code": "PERSISTED_QUERY_NOT_FOUND" } }] }) }).unwrap();
+    let failed = response_from_answer(Answer { sequence: Some(2), body: json!({ "errors": [{ "message": "boom", "extensions": { "code": "PERSISTED_QUERY_NOT_FOUND" } }] }) }).unwrap();
     assert_eq!(failed.errors[0].code(), Some("PERSISTED_QUERY_NOT_FOUND"));
 }
 

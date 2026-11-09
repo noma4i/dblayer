@@ -19,7 +19,7 @@ pub(crate) use exchange::SendOnce;
 pub(crate) use exchange::checked_path;
 pub use exchange::{Answer, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, Exchange};
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
-pub use graphql::{document_missing, graphql_body, hash_only, missing_from_registry, repeats, response_of, EncryptedTransport};
+pub use graphql::{document_missing, graphql_body, hash_only, missing_from_registry, repeats, response_from_answer, EncryptedTransport};
 #[cfg(test)]
 use {jwe::{open_response, seal_request, RequestPlain, ResponsePlain}, key::ServerKey};
 

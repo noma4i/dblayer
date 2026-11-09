@@ -23,7 +23,7 @@ pub(super) struct CallsRunner {
     running: HashMap<u64, AbortHandle>,
 }
 
-fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
+fn calls_input(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
     match result {
         Ok(response) => {
             if response.shape().outcome() != ResponseOutcome::Commit {
@@ -55,8 +55,8 @@ fn call_error(error: crate::ffi::DbError) -> CallError {
 pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
         AuthorOutcome::Response(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(body) => input_of(call_id, root, crate::transport::encrypted::response_of(crate::transport::encrypted::Answer { sequence: None, body })),
-            Err(error) => input_of(call_id, root, Err(TransportError::Decode(error.to_string()))),
+            Ok(body) => calls_input(call_id, root, crate::transport::encrypted::response_from_answer(crate::transport::encrypted::Answer { sequence: None, body })),
+            Err(error) => calls_input(call_id, root, Err(TransportError::Decode(error.to_string()))),
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
         AuthorOutcome::Error { class: ErrorClass::Network, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
@@ -97,7 +97,7 @@ impl CallsRunner {
                 CallKind::Mutate => gate.mutate(Some(epoch), request).await,
                 CallKind::Query => gate.query(Some(epoch), request).await,
             };
-            back.reply(EpochStamp::Control, input_of(call_id, &root, result));
+            back.reply(EpochStamp::Control, calls_input(call_id, &root, result));
         }));
         self.running.insert(request_id, task.abort_handle());
     }
