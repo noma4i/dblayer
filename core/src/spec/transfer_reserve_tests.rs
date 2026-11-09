@@ -92,9 +92,9 @@ fn xfer_reserving_batch_wait() {
 fn xfer_reserving_refused() {
     let mut twin = Twin::new();
     let (id, reply, _) = reserving(&mut twin);
-    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Err(Fault::Interrupted) });
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Err(Fault::Ended(crate::ffi::EndCause::SessionEnded)) });
     assert_eq!(twin.stage(id), TransferStage::Done);
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::Interrupted));
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::Ended(crate::ffi::EndCause::SessionEnded)));
     assert_eq!(out.writes(), 0);
 }
 
@@ -105,7 +105,7 @@ fn xfer_reserving_end() {
         let (id, reply, _) = reserving(&mut twin);
         let out = if epoch_end { twin.end_epoch() } else { twin.close() };
         assert_eq!(twin.stage(id), TransferStage::Done);
-        assert_eq!(Twin::fault(&out, reply), Some(if epoch_end { Fault::SessionEnded } else { Fault::Closed }), "epoch_end {epoch_end}");
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::Ended(if epoch_end { crate::ffi::EndCause::SessionEnded } else { crate::ffi::EndCause::Closed })), "epoch_end {epoch_end}");
         assert_eq!(out.drained(), usize::from(!epoch_end));
         let late = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
         assert!(Twin::quiet(&late), "a late OpReserved is foreign: {late:?}");

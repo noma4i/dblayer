@@ -46,7 +46,7 @@ impl OutboxState {
         if kind == CommitKind::RemoveRow && self.removed.remove(&op_id) {
             self.removing.remove(&op_id);
             if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
-            self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
+            self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Discarded)), fx);
             self.finish(op_id, OutboxOutcome::Discarded, true, fx);
             return;
         }

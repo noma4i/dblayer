@@ -357,14 +357,7 @@ impl TransferState {
     pub(super) fn interrupt(&mut self, id: TransferId, cause: crate::ffi::EndCause, fx: &mut Fx) {
         self.release_step(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let fault = match &cause {
-            crate::ffi::EndCause::Closed => Fault::Closed,
-            crate::ffi::EndCause::SessionEnded => Fault::SessionEnded,
-            crate::ffi::EndCause::Storage { error } => Fault::Rejected(crate::owners::contract::RejectReason::Storage(error.clone())),
-            crate::ffi::EndCause::Invalid { .. } => Fault::Invalid,
-            crate::ffi::EndCause::Internal { .. } => Fault::Internal,
-            crate::ffi::EndCause::Cancelled | crate::ffi::EndCause::Discarded => Fault::Interrupted,
-        };
+        let fault = Fault::Ended(cause.clone());
         let mut replies: Vec<ReplyId> = Vec::new();
         replies.extend(transfer.accept_reply.take());
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));

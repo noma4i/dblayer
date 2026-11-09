@@ -31,7 +31,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::SessionEnded => DbError::Session { code: crate::transport::SessionCode::SessionEnded, detail: "the session ended".into() },
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
-        Fault::Interrupted => super::command::ended(),
+        Fault::Ended(cause) => super::end_error(&cause),
         Fault::Closed => super::command::closed(),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },

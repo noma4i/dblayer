@@ -251,7 +251,7 @@ fn xfer_removing_no_session() {
     let id = twin.accepted(KEY, 2);
     let (reply, _) = twin.cancel(KEY);
     let out = twin.reject(RejectReason::NoSession);
-    assert_eq!((out.replies(reply), twin.stage(id), out.deletes()), (vec![TransferAnswer::Err(Fault::SessionEnded)], TransferStage::Done, 0), "the row stays until the account is cleared or the next open");
+    assert_eq!((out.replies(reply), twin.stage(id), out.deletes()), (vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))], TransferStage::Done, 0), "the row stays until the account is cleared or the next open");
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn xfer_epoch_ended() {
     let (waiting, _) = twin.outcome(uploading, 1);
     let out = twin.end_epoch();
     assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
-    assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::SessionEnded)]);
+    assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
     assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
     assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
 }
@@ -341,7 +341,7 @@ fn xfer_closing_copying() {
     twin.commit();
     let out = twin.close();
     assert_eq!((twin.stage(id), out.copy_cancels(), out.deletes(), out.drained()), (TransferStage::Done, 1, 1, 1));
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Closed)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
     let mut batch = Twin::new();
     batch.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
     let ids = [batch.state().open_id(KEY).expect("first"), batch.state().open_id(OTHER).expect("second")];
@@ -351,7 +351,7 @@ fn xfer_closing_copying() {
     assert_eq!(batch.stage(ids[0]), TransferStage::CopyReady);
     let out = batch.close();
     assert!(ids.iter().all(|id| batch.stage(*id) == TransferStage::Done));
-    assert_eq!((out.replies(5), out.drained()), (vec![TransferAnswer::Err(Fault::Closed)], 1));
+    assert_eq!((out.replies(5), out.drained()), (vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))], 1));
 }
 
 #[test]

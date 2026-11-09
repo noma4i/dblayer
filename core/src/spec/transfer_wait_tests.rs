@@ -19,11 +19,11 @@ fn xfer_wait_accept() {
     assert_eq!(twin.commit().replies(reply).len(), 1, "success: the receipt");
     let mut ended = Twin::new();
     let (_, reply, _) = ended.accepting(KEY, 2);
-    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::SessionEnded), "EpochEnded");
+    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "EpochEnded");
     let mut closing = Twin::new();
     let (_, reply, _) = closing.accepting(KEY, 2);
     closing.commit();
-    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Closed), "Closing");
+    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)), "Closing");
     let mut refused = Twin::new();
     let out = refused.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9, now: Time(0) });
     assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::NoSession)], "refusal");
@@ -47,13 +47,13 @@ fn xfer_wait_accept_batch() {
     assert!(matches!(out.replies(5).as_slice(), [TransferAnswer::Receipts(receipts)] if receipts.len() == 2), "N receipts in one answer");
     let mut ended = Twin::new();
     batch(&mut ended);
-    assert_eq!(ended.end_epoch().replies(5), ended_answers(Fault::SessionEnded), "one answer for the batch");
+    assert_eq!(ended.end_epoch().replies(5), ended_answers(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "one answer for the batch");
     let mut closing = Twin::new();
     batch(&mut closing);
     let ids = [closing.state().open_id(KEY).unwrap(), closing.state().open_id(OTHER).unwrap()];
     closing.reserve_batch(&ids);
     closing.commit();
-    assert_eq!(closing.close().replies(5), ended_answers(Fault::Closed));
+    assert_eq!(closing.close().replies(5), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)));
 }
 
 #[test]
@@ -69,11 +69,11 @@ fn xfer_wait_cancel() {
     let mut ended = Twin::offline();
     ended.accepted(KEY, 2);
     let (reply, _) = ended.cancel(KEY);
-    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::SessionEnded), "EpochEnded while the removal waits");
+    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "EpochEnded while the removal waits");
     let mut closing = Twin::offline();
     closing.accepted(KEY, 2);
     let (reply, _) = closing.cancel(KEY);
-    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Closed), "Closing while the removal waits");
+    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)), "Closing while the removal waits");
 }
 
 #[test]
@@ -87,11 +87,11 @@ fn xfer_wait_retry() {
     let mut ended = Twin::new();
     ended.failed(KEY);
     let (reply, _) = ended.retry(KEY, None);
-    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::SessionEnded), "EpochEnded");
+    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "EpochEnded");
     let mut closing = Twin::new();
     closing.failed(KEY);
     let (reply, _) = closing.retry(KEY, None);
-    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Closed), "Closing");
+    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)), "Closing");
 }
 
 #[test]
@@ -111,11 +111,11 @@ fn xfer_wait_discard() {
     let mut ended = Twin::new();
     ended.mutating(KEY);
     let (reply, _) = ended.discard(KEY);
-    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::SessionEnded), "EpochEnded");
+    assert_eq!(ended.end_epoch().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "EpochEnded");
     let mut closing = Twin::new();
     closing.mutating(KEY);
     let (reply, _) = closing.discard(KEY);
-    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Closed), "Closing");
+    assert_eq!(closing.close().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)), "Closing");
 }
 
 #[test]

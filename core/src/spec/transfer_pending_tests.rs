@@ -320,7 +320,7 @@ fn xfer_supply_end() {
             supply(&mut twin, EPOCH, 9);
             if persist { twin.copy_done(id); }
             let out = if close { twin.close() } else { twin.end_epoch() };
-            assert_eq!(out.replies(9), vec![TransferAnswer::Err(if close { Fault::Closed } else { Fault::SessionEnded })]);
+            assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::Ended(if close { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }))]);
             assert_eq!(twin.stage(id), TransferStage::Done);
             assert_eq!(out.deletes(), 1);
             assert_eq!(out.copy_cancels(), usize::from(!persist));
@@ -457,6 +457,6 @@ fn xfer_wait_fail_source() {
         twin.commit();
         twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "preparation".into(), reply: 9 });
         let out = if close { twin.close() } else { twin.end_epoch() };
-        assert_eq!(out.replies(9), vec![TransferAnswer::Err(if close { Fault::Closed } else { Fault::SessionEnded })]);
+        assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::Ended(if close { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }))]);
     }
 }

@@ -130,7 +130,7 @@ pub enum Fault {
     SessionEnded,
     NotFound,
     InFlight,
-    Interrupted,
+    Ended(crate::ffi::EndCause),
     Closed,
     /// The intent was dropped by the layout move: only `discard` ends it.
     RestoreFailed,

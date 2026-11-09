@@ -243,7 +243,7 @@ impl TransferState {
 
     /// `Accepting x Rejected`: no receipt, nothing is accepted.
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        let fault = if self.closing { Fault::Closed } else { match reason {
+        let fault = if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { match reason {
             RejectReason::NoSession => Fault::SessionEnded,
             RejectReason::Closed => Fault::Closed,
             reason => Fault::Rejected(reason),

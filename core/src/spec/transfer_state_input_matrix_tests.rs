@@ -19,7 +19,7 @@ fn xfer_accepting_closing() {
         let closing = twin.close();
         assert_eq!((twin.stage(id), closing.all_replies(), closing.drained(), closing.writes()), (TransferStage::Accepting, 0, 0, 0));
         let out = if committed { twin.commit() } else { twin.reject(crate::owners::contract::RejectReason::Storage("disk".into())) };
-        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.drained(), out.copies()), (TransferStage::Done, "[Err(Closed)]".into(), 1, 0));
+        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.drained(), out.copies()), (TransferStage::Done, "[Err(Ended(Closed))]".into(), 1, 0));
     }
 }
 

@@ -163,7 +163,7 @@ fn xfer_accepting_other() {
     let out = twin.close();
     assert_eq!((out.drained(), out.all_replies(), twin.stage(id)), (0, 0, TransferStage::Accepting), "Closing waits for the answer of the Store");
     let out = twin.commit();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Closed)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
     assert_eq!((out.drained(), out.copies(), twin.stage(id)), (1, 0, TransferStage::Done));
 }
 
@@ -245,7 +245,7 @@ fn xfer_copy_cancel() {
         assert_eq!((twin.stage(id), out.copy_cancels(), out.removed(), out.all_replies()), (TransferStage::Removing, 1, vec![KEY.to_string()], 0));
         let out = twin.commit();
         assert_eq!(out.replies(reply), vec![if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok }]);
-        assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Interrupted)], "the call that waited for the copy is interrupted");
+        assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(if cancel { crate::ffi::EndCause::Cancelled } else { crate::ffi::EndCause::Discarded }))], "the call that waited for the copy is interrupted");
         assert_eq!(twin.stage(id), TransferStage::Done);
     }
 }

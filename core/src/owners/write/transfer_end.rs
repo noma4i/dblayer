@@ -230,11 +230,12 @@ impl TransferState {
         let group = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
         match removal {
             Removal::Cancel => {
+                let cause = if cancel.as_ref().is_some_and(|(_, cancelled)| *cancelled) { crate::ffi::EndCause::Cancelled } else { crate::ffi::EndCause::Discarded };
                 if let Some((rep, cancel)) = cancel {
                     reply(fx, rep, if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok });
                 }
                 if let Some(rep) = accept {
-                    Self::refuse(fx, rep, Fault::Interrupted);
+                    Self::refuse(fx, rep, Fault::Ended(cause));
                 }
             }
             Removal::Confirmed { .. } => {}
