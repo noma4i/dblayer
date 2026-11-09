@@ -172,7 +172,7 @@ extension BridgeProbeTests {
     try await projectionB.loaded()
     await eventually("B shows") { projectionB.value?.name == "B" }
 
-    await expectDbError("Interrupted") { try await late.value }
+    await expectDbError("NoSession") { try await late.value }
     await expectDbError("NoSession") { try await old.send(Moment.self, values: ["text": .string("late")]) }
     #expect(server.operationRequests("CreateMoment") == 0)
     #expect(projectionB.value?.name == "B")

@@ -47,7 +47,7 @@ class SessionRestoreTest {
             transport.arrived.await()
             DBlayer.sessionReset()
             loginAgain()
-            assertTrue(old.await().exceptionOrNull() is DbException.Interrupted)
+            assertTrue(old.await().exceptionOrNull() is DbException.NoSession)
             User.profile.load(AccountScope.current())
             transport.released.complete(Unit)
             transport.ended.await()

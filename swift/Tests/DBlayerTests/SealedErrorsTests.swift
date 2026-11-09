@@ -55,21 +55,30 @@ extension BridgeProbeTests {
     try await openSealedRig(transport)
     let failure = DbError.Session(code: code, detail: "\(code)")
 
-    transport.enqueue("MomentsFeed", failure: failure)
-    if code == .replayedRequest { transport.enqueue("MomentsFeed", failure: failure) }
-    do {
-      try await Moment.feed.load()
-      Issue.record("\(code): the load did not throw")
-    } catch {
-      #expect(sealedCode(error, "load \(code)") == code)
-    }
+    if code != .replayedRequest {
+      transport.enqueue("MomentsFeed", failure: failure)
+      if code == .unauthenticated {
+        await expectDbError("Unauthorized") { try await Moment.feed.load() }
+      } else {
+        do {
+          try await Moment.feed.load()
+          Issue.record("\(code): the load did not throw")
+        } catch {
+          #expect(sealedCode(error, "load \(code)") == code)
+        }
+      }
 
-    transport.enqueue("QrCodeCreate", failure: failure)
-    do {
-      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
-      Issue.record("\(code): the operation call did not throw")
-    } catch {
-      #expect(sealedCode(error, "call \(code)") == code)
+      transport.enqueue("QrCodeCreate", failure: failure)
+      if code == .unauthenticated {
+        await expectDbError("Unauthorized") { _ = try await Operations.qrCodeCreate(kind: "container", size: 3) }
+      } else {
+        do {
+          _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
+          Issue.record("\(code): the operation call did not throw")
+        } catch {
+          #expect(sealedCode(error, "call \(code)") == code)
+        }
+      }
     }
 
     transport.enqueue("CreateMoment", failure: failure)

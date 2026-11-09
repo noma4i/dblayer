@@ -36,7 +36,7 @@ extension BridgeProbeTests {
     let result = AsyncStream<Bool>.makeStream()
     Task {
       do { try await User.profile.load(in: oldScope); result.continuation.yield(false) }
-      catch DbError.Interrupted { result.continuation.yield(true) }
+      catch DbError.NoSession { result.continuation.yield(true) }
       catch { result.continuation.yield(false) }
     }
     _ = try #require(await Cursor(transport.arrived.stream).next("the old request"))

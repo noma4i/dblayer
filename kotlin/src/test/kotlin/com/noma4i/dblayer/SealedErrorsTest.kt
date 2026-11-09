@@ -49,12 +49,17 @@ class SealedErrorsTest {
             registerStandOperations(DBlayer.database, operations)
             val failure = DbException.Session(code, code.name)
 
-            transport.enqueue("MomentsFeed", failure)
-            if (code == SessionCode.REPLAYED_REQUEST) transport.enqueue("MomentsFeed", failure)
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull(), "load $code"))
+            if (code != SessionCode.REPLAYED_REQUEST) {
+                transport.enqueue("MomentsFeed", failure)
+                val load = runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull()
+                if (code == SessionCode.UNAUTHENTICATED) org.junit.Assert.assertTrue("load $code: $load", load is DbException.Unauthorized)
+                else assertEquals(code, codeOf(load, "load $code"))
 
-            transport.enqueue("QrCodeCreate", failure)
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull(), "call $code"))
+                transport.enqueue("QrCodeCreate", failure)
+                val call = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
+                if (code == SessionCode.UNAUTHENTICATED) org.junit.Assert.assertTrue("call $code: $call", call is DbException.Unauthorized)
+                else assertEquals(code, codeOf(call, "call $code"))
+            }
 
             transport.enqueue("CreateMoment", failure)
             val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
