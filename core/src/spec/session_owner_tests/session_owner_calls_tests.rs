@@ -444,6 +444,30 @@ fn sess_calling_no_sequence() {
 }
 
 #[test]
+fn sess_calling_document_missing() {
+    let document = "mutation Send { send { id } }";
+    let full = crate::transport::encrypted::graphql_body(&crate::transport::GraphQLRequest::new(document, "Send", serde_json::json!({})), true).to_string();
+    let missing = serde_json::json!({ "errors": [{ "message": "PERSISTED_QUERY_NOT_FOUND", "extensions": { "code": "PERSISTED_QUERY_NOT_FOUND" } }] }).to_string();
+    let mut twin = Twin::new();
+    let input = Input::Mutate { author: 7, owner: None, req_id: 11, epoch: EPOCH, path: OTP.into(), body: full.clone(), purpose: 0 };
+    twin.feed_all([input, committed()]);
+    let first = twin.pending();
+    assert!(!first.body.contains("\"query\""), "the first pair is hash-only: {}", first.body);
+    let credential = twin.reference.credential;
+    let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: missing.clone(), sequence: None, refusal: None };
+    let effects = twin.feed(input);
+    let [RefEffect::CommitPending { pending, session: None, .. }] = effects.as_slice() else { panic!("one Commit, no answer to the caller: {effects:?}") };
+    assert_eq!((pending.sequence, pending.body.as_str()), (first.sequence, full.as_str()), "the same number, the full document");
+    assert!(twin.replies.is_empty());
+    let sent = twin.feed(committed());
+    assert!(matches!(&sent[..], [RefEffect::HttpRequest { pending, .. }] if pending.body == full), "{sent:?}");
+    assert_eq!(twin.reference.credential, credential, "the number is not spent");
+    let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: missing, sequence: None, refusal: None };
+    let effects = twin.feed(input);
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, .. }]), "a full pair that still misses its document is final: {effects:?}");
+}
+
+#[test]
 fn sess_calling_server_refusal_code() {
     for (author, code) in [(false, SessionCode::AccountUnavailable), (true, SessionCode::Unauthenticated)] {
         let mut twin = if author { calling_mutate() } else { calling() };

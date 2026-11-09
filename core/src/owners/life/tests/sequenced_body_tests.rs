@@ -49,16 +49,16 @@ fn sequenced(world: &World) -> Vec<(i64, String, Value)> {
     world.server.seen().into_iter().filter_map(|request| Some((request["sequence"].as_i64()?, request["requestId"].as_str()?.to_string(), request["body"].clone()))).collect()
 }
 
-fn assert_full_and_identical(sent: &[(i64, String, Value)], from: i64) {
-    let ours: Vec<_> = sent.iter().filter(|(sequence, ..)| *sequence >= from).collect();
-    assert!(!ours.is_empty(), "the server saw no sequenced request");
-    for (sequence, _, body) in &ours {
-        assert!(body.get("query").is_some_and(|query| query.is_string()), "sequence {sequence} went without its document: {body}");
-    }
-    for sequence in ours.iter().map(|(sequence, ..)| *sequence).collect::<std::collections::BTreeSet<_>>() {
-        let bodies: Vec<String> = ours.iter().filter(|(candidate, ..)| *candidate == sequence).map(|(_, _, body)| body.to_string()).collect();
-        assert!(bodies.windows(2).all(|pair| pair[0] == pair[1]), "the pair with sequence {sequence} went with two bodies: {bodies:?}");
-    }
+fn document_of(name: &str) -> String {
+    format!("mutation {name} {{ {name} {{ id }} }}")
+}
+
+fn has_document(body: &Value) -> bool {
+    body.get("query").is_some_and(Value::is_string)
+}
+
+fn at_number(sent: &[(i64, String, Value)], number: i64) -> Vec<&(i64, String, Value)> {
+    sent.iter().filter(|(sequence, ..)| *sequence == number).collect()
 }
 
 async fn signed_in() -> (World, Arc<Store>, Arc<crate::owners::life::Life>, Arc<Client>) {
@@ -66,26 +66,35 @@ async fn signed_in() -> (World, Arc<Store>, Arc<crate::owners::life::Life>, Arc<
     let db = Store::open_models(None, Vec::new(), None).map(Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    world.server.spend_sequence_on_miss();
     (world, db, life, client)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sess_prop_sequenced_body_full_once() {
+async fn sess_prop_sequenced_body_one_per_pair() {
     let (world, _db, life, _client) = signed_in().await;
     let first = crate::test_wait::within(life.mutate_answered(None, 1 << 42, GRAPHQL.into(), mutation("First"), 0).wait()).await;
     assert!(matches!(first, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(ref text))) if text.contains("done")), "{first:?}");
+    let sent = sequenced(&world);
+    let pairs = at_number(&sent, 2);
+    assert_eq!(pairs.len(), 2, "an empty registry: the hash-only pair, then the full pair with the same number: {sent:?}");
+    assert!(!has_document(&pairs[0].2), "the first pair of a call is hash-only: {}", pairs[0].2);
+    assert!(has_document(&pairs[1].2), "the second pair carries the document: {}", pairs[1].2);
+    assert_ne!(pairs[0].1, pairs[1].1, "the full pair is a new request id");
+    assert_eq!(pairs[1].2["query"], json!(document_of("First")));
+    world.server.register(&document_of("Second"));
     let second = crate::test_wait::within(life.mutate_answered(None, (1 << 42) + 1, GRAPHQL.into(), mutation("Second"), 0).wait()).await;
     assert!(matches!(second, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(_)))), "{second:?}");
     let sent = sequenced(&world);
-    let graphql: Vec<_> = sent.iter().filter(|(sequence, ..)| *sequence >= 2).collect();
-    assert_eq!(graphql.iter().map(|(sequence, ..)| *sequence).collect::<Vec<_>>(), [2, 3], "each pair went once and the numbers grow by 1");
-    assert_full_and_identical(&sent, 2);
+    let pairs = at_number(&sent, 3);
+    assert_eq!(pairs.len(), 1, "a registered document: one hash-only pair: {sent:?}");
+    assert!(!has_document(&pairs[0].2));
+    assert!(world.server.seen().iter().all(|request| request["error"].is_null()), "no SEQUENCE_CONFLICT");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sess_prop_sequenced_body_full_once_retry() {
+async fn sess_prop_sequenced_body_one_per_pair_retry() {
     let (world, _db, life, _client) = signed_in().await;
+    world.server.register(&document_of("Retry"));
     world.server.lose_next_answer();
     let req_id = (1 << 42) + 10;
     let lost = crate::test_wait::within(life.mutate_answered(None, req_id, GRAPHQL.into(), mutation("Retry"), 0).wait()).await;
@@ -93,12 +102,15 @@ async fn sess_prop_sequenced_body_full_once_retry() {
     let again = crate::test_wait::within(life.mutate_answered(None, req_id, GRAPHQL.into(), mutation("Retry"), 0).wait()).await;
     assert!(matches!(again, crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Response(_)))), "{again:?}");
     let sent = sequenced(&world);
-    assert_eq!(sent.iter().filter(|(sequence, ..)| *sequence == 2).count(), 2, "the pair went twice");
-    assert_full_and_identical(&sent, 2);
+    let pairs = at_number(&sent, 2);
+    assert_eq!(pairs.len(), 2, "the pair went twice: {sent:?}");
+    assert_eq!(pairs[0].1, pairs[1].1, "a retry keeps the request id");
+    assert_eq!(pairs[0].2.to_string(), pairs[1].2.to_string(), "a retry sends the same bytes");
+    assert!(!has_document(&pairs[0].2));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sess_prop_sequenced_body_full_once_restart() {
+async fn sess_prop_sequenced_body_one_per_pair_restart() {
     let world = World::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
@@ -106,24 +118,26 @@ async fn sess_prop_sequenced_body_full_once_restart() {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-        world.server.spend_sequence_on_miss();
-        world.server.drop_next_request();
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let server = world.server.clone();
+        world.server.on_request(move || {
+            if requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                server.drop_next_request();
+            }
+        });
         let waiter = life.mutate_for_call(None, GRAPHQL.into(), mutation("Restart"), 0);
-        crate::test_wait::settled(&life, "the pending request was never stored", || pending_of(&db).is_some()).await;
+        crate::test_wait::settled(&life, "the full pair was never stored", || pending_of(&db).is_some_and(|pending| pending.body.contains("\"query\""))).await;
         drop(waiter);
         let _ = crate::test_wait::within(life.close().wait()).await;
     }
+    let before = sequenced(&world);
+    assert_eq!(at_number(&before, 2).len(), 1, "only the hash-only pair reached the server: {before:?}");
+    world.server.on_request(|| {});
     let db = Store::open_models(Some(&path), Vec::new(), None).map(Arc::new).unwrap();
     let (_client, life) = world.open(&db).await;
-    crate::test_wait::settled(&life, "the stored request was not sent again", || pending_of(&db).is_none()).await;
+    crate::test_wait::settled(&life, "the stored full pair was not sent again", || pending_of(&db).is_none()).await;
     let sent = sequenced(&world);
-    assert_eq!(sent.iter().filter(|(sequence, ..)| *sequence == 2).count(), 1, "the dropped request never reached the server, the restart sent the pair once");
-    assert_full_and_identical(&sent, 2);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn sess_prop_sequenced_body_full_once_session_call() {
-    let (world, _db, _life, client) = signed_in().await;
-    client.session_call("social", serde_json::from_str(&mutation("Visit")).unwrap()).await.unwrap();
-    assert_full_and_identical(&sequenced(&world), 2);
+    let pairs = at_number(&sent, 2);
+    assert_eq!(pairs.len(), 2, "the restart sends the recorded full pair with the same number: {sent:?}");
+    assert!(!has_document(&pairs[0].2) && has_document(&pairs[1].2));
 }

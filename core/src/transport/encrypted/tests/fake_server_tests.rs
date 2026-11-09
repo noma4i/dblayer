@@ -195,6 +195,10 @@ impl FakeServer {
 
 
 
+    pub fn on_request(&self, hook: impl Fn() + Send + 'static) {
+        *self.on_request.lock().unwrap() = Some(Box::new(hook));
+    }
+
     pub fn seen(&self) -> Vec<Value> {
         self.state.lock().unwrap().seen.clone()
     }
