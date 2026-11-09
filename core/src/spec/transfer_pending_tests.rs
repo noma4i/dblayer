@@ -179,11 +179,13 @@ fn xfer_supply_copy_done() {
     let mut source = supplied(Source { path: "/source".into(), parts: 1 });
     source.values.rows.push(crate::owners::store::EffectRow { model: "Moment".into(), row_id: "r1".into(), values: r#"{"text":"ready"}"#.into() });
     source.variables.insert("token".into(), serde_json::json!("v"));
+    source.local = r#"{"seen":true}"#.into();
     twin.post(TransferInput::SupplySource { epoch: EPOCH, key: KEY.into(), source, reply: 9 });
     let out = twin.copy_done(id);
     assert_eq!((twin.stage(id), out.writes(), out.rows().len()), (TransferStage::PersistingCopy, 1, 1));
     assert!(out.replies(9).is_empty());
     assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Effects { op_id, effects, .. } if *op_id == id && effects.rows.iter().any(|row| row.values.contains("ready")))));
+    assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::LocalFields { model, row_id, values } if model.as_str() == "Moment" && row_id.as_str() == "r1" && values.contains("seen"))), "the supplied local values are written by the copy transaction: {:?}", out.batches[0].ops);
     assert_eq!(serde_json::from_str::<serde_json::Value>(&out.rows()[0].0.body).unwrap()["variables"]["token"], "v");
 }
 
