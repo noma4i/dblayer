@@ -47,6 +47,13 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
 
 pub(super) fn failure_of(error: &str) -> super::wire::WireFailure { super::wire::failure(&crate::owners::write::failure::parse(error)) }
 
+pub(super) fn fault_outcome(fault: Fault, what: &str) -> Result<WireOperationOutcome, DbError> {
+    match fault {
+        Fault::Ended(cause) => Ok(WireOperationOutcome::Ended { cause }),
+        fault => outcome_error(refused(fault, what)),
+    }
+}
+
 pub(super) fn outcome_error(error: DbError) -> Result<WireOperationOutcome, DbError> {
     let cause = match error {
         DbError::Closed { .. } => super::EndCause::Closed,
@@ -307,14 +314,16 @@ impl Database {
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
         let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
-            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return outcome_error(refused(fault, "operation outcome")),
+            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome"),
             Ok(_) => return Err(super::database::foreign_reply()),
             Err(error) => return outcome_error(error),
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let value = match self.landed_value(receipt.epoch, &receipt.model, ticket.op_id).await {
-                    Ok(value) => value,
+                let value = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
+                    Ok(LifeReply::Outbox(OutboxAnswer::Written { shown, .. })) => shown.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?,
+                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome"),
+                    Ok(_) => return Err(super::database::foreign_reply()),
                     Err(error) => return outcome_error(error),
                 };
                 WireOperationOutcome::Confirmed { value, answer_json: result }
@@ -323,14 +332,6 @@ impl Database {
             OutboxOutcome::Discarded => WireOperationOutcome::Ended { cause: super::EndCause::Discarded },
             OutboxOutcome::Ended(cause) => WireOperationOutcome::Ended { cause },
         })
-    }
-
-    /// The row the landing batch of an operation showed, from the owner Outbox.
-    pub(super) async fn landed_value(&self, epoch: u64, model: &str, landing: u64) -> Result<Option<super::wire::WireRow>, DbError> {
-        match self.outbox_answer(self.life.landed_row(epoch, landing), "operation outcome").await? {
-            OutboxAnswer::Written { shown, .. } => shown.map(|row| self.wire_of_row(model, &row)).transpose(),
-            _ => Err(super::database::foreign_reply()),
-        }
     }
 
     /// `retry` of a failed mutation: the owner gives the receipt of the new cycle.

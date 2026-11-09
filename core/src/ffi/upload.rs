@@ -298,7 +298,7 @@ impl Database {
     pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<WireOperationOutcome, DbError> {
         let (answer, landed) = match self.await_life(self.life.upload_outcome(receipt.epoch, held.clone())).await {
             Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
-            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return super::write::outcome_error(refused(fault, "upload outcome")),
+            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return super::write::fault_outcome(fault, "upload outcome"),
             Ok(_) => return Err(super::database::foreign_reply()),
             Err(error) => return super::write::outcome_error(error),
         };
