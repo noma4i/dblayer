@@ -247,7 +247,7 @@ fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() { crate::t
     let call = async {
         super::database::executor().unwrap().spawn_blocking(move || crate::test_wait::recv_within(&late)).await.unwrap();
         executor_turn.await.unwrap();
-        let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
+        let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap).failed(TransportError::Network("down".into())).await;
     };
     cancel_on_retry(&retries, call).await;
 }) }

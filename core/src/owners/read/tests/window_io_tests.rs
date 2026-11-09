@@ -127,7 +127,7 @@ fn win_io_request_lands() {
 fn win_io_error_classes() {
     type Holds = fn(&[WindowsEffect], &DetScheduler) -> bool;
     let cases: [(TransportError, Holds); 2] = [
-        (TransportError::Network("down".into()), |_, det| det.trace().iter().any(|entry| entry.effects.contains("Schedule {") && entry.effects.contains("RetryDue { request: 1 }"))),
+        (TransportError::Network("down".into()), |_, det| det.trace().iter().any(|entry| entry.effects.contains("Backoff") && entry.effects.contains("RetryDue { request: 1 }"))),
         (TransportError::Decode("broken".into()), |seen, _| seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. }))),
     ];
     for (error, holds) in cases {

@@ -50,7 +50,7 @@ async fn retry_progress_reports_unlimited_attempts_and_capped_jittered_sleeps() 
     let clock = Time::default();
     let progress = RetryCalls::default();
     let online = Connectivity::new(true);
-    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http);
+    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     assert!(clock.0.lock().unwrap().is_empty());
     for index in 0..40 {
         retry.failed(TransportError::Network("timeout".into())).await.unwrap();
@@ -87,7 +87,7 @@ async fn dropping_backoff_drops_the_clock_sleep() {
     let clock = Time(dropped.clone());
     let progress = RetryCalls::default();
     let online = Connectivity::new(true);
-    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http);
+    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     let mut wait = Box::pin(retry.failed(TransportError::Network("offline".into())));
     assert!(wait.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     assert!(!dropped.load(Ordering::SeqCst));
@@ -116,8 +116,8 @@ async fn retry_progress_releases_a_call_on_success_terminal_failure_and_cancel_a
     let waiting = || TransportError::Network("offline".into());
     let poll = |wait: &mut std::pin::Pin<Box<dyn Future<Output = Result<(), TransportError>> + '_>>| wait.as_mut().poll(&mut Context::from_waker(Waker::noop()));
 
-    let mut first = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http);
-    let mut second = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http);
+    let mut first = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
+    let mut second = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     let mut first_wait: std::pin::Pin<Box<dyn Future<Output = _> + '_>> = Box::pin(first.failed(waiting()));
     let mut second_wait: std::pin::Pin<Box<dyn Future<Output = _> + '_>> = Box::pin(second.failed(waiting()));
     assert!(poll(&mut first_wait).is_pending() && poll(&mut second_wait).is_pending());
@@ -138,7 +138,7 @@ async fn retry_progress_releases_a_call_on_success_terminal_failure_and_cancel_a
     assert_eq!(progress.current(), RetrySnapshot::default(), "a terminal failure of the last call is idle with no attempt");
 
     let instant = Instant;
-    let mut finished = Retrying::new(&instant, &progress, &online, crate::runtime::RetryPolicy::Http);
+    let mut finished = Retrying::new(&instant, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     within(finished.failed(waiting())).await.unwrap();
     assert_eq!(progress.current().active_calls, 1);
     drop(finished);
@@ -151,7 +151,7 @@ async fn a_late_watcher_reads_the_current_snapshot_and_a_dropped_watcher_leaves_
     let clock = Instant;
     let online = Connectivity::new(true);
     let progress = RetryCalls::default();
-    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http);
+    let mut retry = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Bootstrap);
     let early = progress.watch();
     within(retry.failed(TransportError::Network("offline".into()))).await.unwrap();
 
