@@ -72,3 +72,16 @@ fn xfer_staged_promote_failure() {
     assert!(matches!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage(ref detail))) if detail == "rename"), "the retry call learns the swap failed: {:?}", Twin::fault(&out, reply));
     assert_eq!((twin.stage(id), twin.state().transfers[&id].source.clone(), out.deleted()), (TransferStage::Failed, old, vec![staged_file_id(id)]), "a failed rename keeps the old copy and metadata, only the temporary file goes");
 }
+
+#[test]
+fn xfer_staged_clear_rejected() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    twin.retry(KEY, Some(fresh()));
+    twin.copy_done(id);
+    twin.commit();
+    twin.post(TransferInput::StagedPromoted { transfer_id: id });
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt, "after the swap the transfer uploads the new copy");
+    let out = twin.reject(RejectReason::Storage("disk".into()));
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::PersistingAttempt, Vec::<String>::new()), "a rejected clear of the staged marker keeps the transfer, the marker stays for the next restart to clear");
+}
