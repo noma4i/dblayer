@@ -50,6 +50,38 @@ async fn stored(index: usize) {
     rig.database.close_now();
 }
 
+fn without_unknown_keys(value: Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(fields.into_iter().filter(|(key, _)| key != "unknown").map(|(key, inner)| (key, without_unknown_keys(inner))).collect()),
+        Value::Array(items) => Value::Array(items.into_iter().map(without_unknown_keys).collect()),
+        other => other,
+    }
+}
+
+async fn stored_value(rig: &Rig, epoch: u64, value: Value) -> Cell {
+    let values = json!({ "value": value }).to_string();
+    let row = rig.database.create(epoch, "NestedSample".into(), values, "{}".into()).await.unwrap().optimistic_value.unwrap();
+    cell(rig, "NestedSample", &row, "value")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_shared_cases_round_trip() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
+    let epoch = rig.database.session_epoch();
+    let path = crate::test_matrix::crate_dir().join("../fixtures/nested.json");
+    let cases: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for case in &cases {
+        let fields = case.as_object().unwrap();
+        if fields.get("error") == Some(&Value::Bool(true)) { continue; }
+        let (Some(input), Some(output)) = (fields.get("input"), fields.get("output")) else { continue };
+        let label = fields["name"].as_str().unwrap();
+        let stored = stored_value(&rig, epoch, without_unknown_keys(input.clone())).await;
+        let expected = stored_value(&rig, epoch, output.clone()).await;
+        assert_eq!(stored, expected, "{label}");
+    }
+    rig.database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unknown_element_type_keeps_arbitrary_props_in_storage() { stored(0).await }
 
