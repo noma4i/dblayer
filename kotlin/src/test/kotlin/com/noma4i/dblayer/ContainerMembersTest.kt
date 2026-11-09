@@ -81,7 +81,7 @@ class ContainerMembersTest {
             assertEquals(null, members.snapshot.value.error)
             assertEquals(members.rows.value.map { it.id }, members.snapshot.value.rows.map { it.id })
             transport.enqueue("ContainerMembers", """{"errors":[{"message":"refused"}]}""")
-            try { query.refresh(); org.junit.Assert.fail("a refused refresh must throw") } catch (_: DbException) {}
+            try { query.refresh(); org.junit.Assert.fail("a refused refresh must throw") } catch (_: DbException.Graphql) {}
             eventually("members error") { members.snapshot.value.error != null }
             assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
             assertEquals(false, members.snapshot.value.complete)

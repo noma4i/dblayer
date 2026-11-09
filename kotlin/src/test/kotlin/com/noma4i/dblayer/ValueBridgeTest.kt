@@ -376,7 +376,7 @@ class ValueBridgeTest {
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.spec()).first()
             val bad = whole.copy(layout = "another layout")
             val empty = ListProjection<User>()
-            assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), emptyList(), state), User) }.isFailure)
+            assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), emptyList(), state), User) }.exceptionOrNull() is DbException.Invalid)
             val applied = empty.apply(ReadValue.Snapshot(2L, listOf(whole), emptyList(), state), User)!!
             assertTrue(applied.rows.size == 1 && applied.error == null)
 
@@ -417,8 +417,8 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
 
-            assertTrue("a command of the old scope reached the new database", runCatching { row.update(name = "hijacked", account = oldScope) }.isFailure)
-            assertTrue("a read of the old scope reached the new database", runCatching { User.profile.read(oldScope) }.isFailure)
+            assertTrue("a command of the old scope reached the new database", runCatching { row.update(name = "hijacked", account = oldScope) }.exceptionOrNull() is DbException.Closed)
+            assertTrue("a read of the old scope reached the new database", runCatching { User.profile.read(oldScope) }.exceptionOrNull() is DbException.Closed)
             assertEquals("a command of the old scope changed the new database", "A", User.profile.read().first().name)
         } finally {
             closeForCleanup()

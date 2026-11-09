@@ -88,6 +88,6 @@ class CellDecoderTest {
     @Test
     fun aRowWithAnotherLayoutIsRefused(): Unit = bounded {
         val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", "{}", "{}").optimisticValue!! }
-        assertThrows(DbException::class.java) { NestedSample.read(wire.copy(layout = "other")) }
+        assertThrows(DbException.Invalid::class.java) { NestedSample.read(wire.copy(layout = "other")) }
     }
 }
