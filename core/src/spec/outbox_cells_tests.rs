@@ -864,6 +864,22 @@ fn out_rollback_invalid() {
 
 fn discarded(effects: &[OutboxEffect]) -> usize { answers(effects, WAITER).iter().filter(|answer| **answer == OutboxAnswer::Outcome(OutboxOutcome::Discarded)).count() }
 
+/// The `RollBack` and `RemoveIntent` ops of one Store batch, sorted: `("RollBack", op_id)`.
+fn take_back_ops(batch: &str) -> Vec<(&'static str, u64)> {
+    let mut ops: Vec<(&'static str, u64)> = ["RollBack", "RemoveIntent"].into_iter().flat_map(|name| {
+        let marker = format!("{name} {{ op_id: ");
+        batch.match_indices(&marker).filter_map(|(at, _)| crate::spec::support::number_after(&batch[at..], "op_id: ")).map(move |id| (name, id)).collect::<Vec<_>>()
+    }).collect();
+    ops.sort();
+    ops
+}
+
+fn chain(ids: &[OpId]) -> Vec<(&'static str, u64)> {
+    let mut ops: Vec<(&'static str, u64)> = ids.iter().flat_map(|id| [("RollBack", *id), ("RemoveIntent", *id)]).collect();
+    ops.sort();
+    ops
+}
+
 #[test]
 fn out_destroy_discards_chain() {
     let mut twin = Twin::new();
@@ -872,16 +888,23 @@ fn out_destroy_discards_chain() {
     twin.committed(later);
     let after = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 23);
     twin.committed(after);
+    twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: crate::owners::write::outbox::ReserveTarget::Transfer(1) });
+    let moved = after + 1;
+    twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: moved, op: model_op("r", Policy::Rollback, true) });
+    assert_eq!(twin.stage(moved), Some(St::Queued), "the intent of Transfer waits behind the create");
     twin.waiter(created);
     twin.waiter(later);
     twin.waiter(after);
     let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
     assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "one batch takes back the create and every later operation of the row");
+    let [(rollback, batch)] = twin.stores.clone().try_into().expect("one Store batch");
+    assert_eq!(take_back_ops(&batch), chain(&[created, later, after, moved]), "{batch}");
     let destroy = *twin.state().ops.keys().max().expect("the destroy");
-    let done = twin.committed(created);
-    assert_eq!((discarded(&done), twin.stage(later), twin.stage(after), sends(&done)), (3, None, None, 0), "{done:?}");
+    let done = twin.commit_batch(rollback);
+    assert_eq!((discarded(&done), transfer_outcomes(&done), twin.stage(later), twin.stage(after), twin.stage(moved), sends(&done)), (3, vec![OutboxOutcome::Discarded], None, None, None, 0), "{done:?}");
     assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None, row_id: None }));
-    assert_eq!(discarded(&twin.post(OutboxInput::Online(Online(true)))), 0, "each operation is discarded once");
+    let online = twin.post(OutboxInput::Online(Online(true)));
+    assert_eq!((discarded(&online), transfer_outcomes(&online)), (0, Vec::new()), "each operation is discarded once");
 }
 
 #[test]
@@ -890,14 +913,17 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
         let mut twin = Twin::new();
         let created = queued_behind_blocker(&mut twin, NewOp { action: "create".into(), ..model_op("r", Policy::Rollback, false) });
         let later = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 21);
+        let [(later_batch, _)] = twin.stores.clone().try_into().expect("the Submit batch of the later operation");
         twin.waiter(created);
         let rollback = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
         assert_eq!(kinds(&rollback), vec![CommitKind::Rollback], "committed={committed}");
-        let reply = if committed { twin.committed(later) } else { twin.rejected(later, RReason::Storage) };
+        let [(rollback_batch, batch)] = twin.stores.clone().try_into().expect("one Store batch");
+        assert_eq!(take_back_ops(&batch), chain(&[created, later]), "committed={committed}: {batch}");
+        let reply = if committed { twin.commit_batch(later_batch) } else { twin.reject_batch(later_batch, RReason::Storage) };
         let submit = answers(&reply, 21);
         assert!(if committed { matches!(submit.as_slice(), [OutboxAnswer::Receipt(_)]) } else { matches!(submit.as_slice(), [OutboxAnswer::Err(_)]) }, "committed={committed}: {reply:?}");
         if committed { twin.waiter(later); }
-        let done = twin.committed(created);
+        let done = twin.commit_batch(rollback_batch);
         assert_eq!((discarded(&done), twin.stage(later), sends(&done)), (if committed { 2 } else { 1 }, None, 0), "committed={committed}: {done:?}");
         let rollbacks = done.iter().chain(reply.iter()).filter(|effect| kinds(std::slice::from_ref(effect)) == vec![CommitKind::Rollback]).count();
         assert_eq!(rollbacks, 0, "committed={committed}: the chain is taken back once");
