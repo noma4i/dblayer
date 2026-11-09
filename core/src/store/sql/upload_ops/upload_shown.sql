@@ -1,1 +1,1 @@
-UPDATE sync_upload SET status = COALESCE(?4, status), stage = COALESCE(?5, stage), wait = ?6 WHERE model = ?1 AND row_id = ?2 AND action = ?3 AND ?4 IS NOT NULL
+UPDATE sync_upload SET status = COALESCE(?4, status), stage = COALESCE(?5, stage), wait = ?6, sent = ?7, total = ?8, attempts = ?9, error_kind = ?10, error_message = ?11 WHERE model = ?1 AND row_id = ?2 AND action = ?3 AND ?4 IS NOT NULL

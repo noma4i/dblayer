@@ -29,6 +29,11 @@ pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &In
     Ok(())
 }
 
+fn error_columns(error: Option<&str>) -> (Option<&'static str>, Option<&str>) {
+    let kind = error.map(|error| if error == "missing_file" { "missing_file" } else if error.starts_with("source_failed:") { "source_failed" } else { "unrecognized" });
+    (kind, error.map(|error| error.strip_prefix("source_failed:").unwrap_or(error)))
+}
+
 pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadKind) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(&row.key)?;
     let (status, stage) = match kind {
@@ -40,8 +45,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
     };
     let on_failure = match row.on_failure { OnFailure::Rollback => "rollback", OnFailure::Keep => "keep" };
     let wait_reason = if kind == UploadKind::AwaitingSource { crate::owners::write::transfer::Shown::WaitingSource.wait_reason().and_then(|reason| super::operation::enum_text(&reason)) } else { None };
-    let error_kind = row.failed.as_deref().map(|error| if error == "missing_file" { "missing_file" } else if error.starts_with("source_failed:") { "source_failed" } else { "unrecognized" });
-    let error_message = row.failed.as_deref().map(|error| error.strip_prefix("source_failed:").unwrap_or(error));
+    let (error_kind, error_message) = error_columns(row.failed.as_deref());
     connection.execute(
         include_str!("sql/upload_ops/put_upload_insert_sync_upload.sql"),
         params![model, id, action, status, stage, row.confirmed_parts, row.parts, error_kind, error_message,
@@ -103,10 +107,12 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
         }
-        StoreOp::UploadShown { key, shown, .. } => {
+        StoreOp::UploadShown { key, shown, sent, total, attempts } => {
             let [model, id, action] = key_parts(key)?;
             let (status, stage, wait) = shown_columns(shown);
-            connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait])?;
+            let failed = if let crate::owners::write::transfer::Shown::Failed { error } = shown { Some(error.as_str()) } else { None };
+            let (error_kind, error_message) = error_columns(failed);
+            connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait, sent, total, attempts, error_kind, error_message])?;
         }
         StoreOp::UploadStaged { key } => {
             let [model, id, action] = key_parts(key)?;
