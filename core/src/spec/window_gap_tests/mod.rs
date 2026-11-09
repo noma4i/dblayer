@@ -511,3 +511,4 @@ mod window_pages_tests;
 mod window_media_tests;
 mod window_orders_tests;
 mod window_orders_more_tests;
+mod window_state_input_matrix_tests;
