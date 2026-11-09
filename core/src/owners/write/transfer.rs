@@ -657,6 +657,13 @@ impl TransferState {
 
     fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } if *found == epoch) }
 
+    /// `Restored`: the accepts replay, the other calls on the keys of the base wait for `RestoreReady`.
+    pub(super) fn replay_held_accepts(&mut self, fx: &mut Fx) {
+        let (accepts, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held).into_iter().partition(|input| matches!(input, TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }));
+        self.held = rest;
+        for input in accepts { self.handle(input, fx); }
+    }
+
     pub(super) fn replay_held(&mut self, fx: &mut Fx) {
         for input in std::mem::take(&mut self.held) {
             self.handle(input, fx);

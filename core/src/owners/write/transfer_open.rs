@@ -162,7 +162,11 @@ impl TransferState {
                 self.set(id, TransferStage::PersistingFailure);
                 self.begin_failure(id, error.clone(), false, fx);
             }
-            Some(OutboxOutcome::Ended(_)) | None => {
+            Some(OutboxOutcome::Ended(cause)) => {
+                self.completed.entry(id).or_default().insert(row.cycle_id.max(1), OutboxOutcome::Ended(cause.clone()));
+                self.set(id, TransferStage::Done);
+            }
+            None => {
                 if row.has_intent {
                     if let Some(group) = row.batch.and_then(|group| self.groups.get_mut(&group)) {
                         if group.phase == BatchPhase::Collecting { group.phase = BatchPhase::Singles; }
@@ -200,7 +204,7 @@ impl TransferState {
         }
         self.phase = Phase::Classified;
         run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
-        self.replay_held(fx);
+        self.replay_held_accepts(fx);
     }
 
     /// A declaration arrives: a transfer that waits for it is classified again.
@@ -241,5 +245,6 @@ impl TransferState {
         let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
         self.start_in_order(fx);
+        self.replay_held(fx);
     }
 }
