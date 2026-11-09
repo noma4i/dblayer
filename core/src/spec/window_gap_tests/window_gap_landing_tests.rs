@@ -239,8 +239,10 @@ fn win_wait_refresh_result() {
 
     let mut offline = fresh();
     offline.step(Input::Online(false));
-    offline.step(Input::Load { id: 9, goal: Goal::First, force: true });
-    assert!(offline.outcomes.contains(&(9, Result3::Failed)));
+    take(&offline.log);
+    offline.post(w::WindowsInput::LoadNoWait { key: key(), id: 9, goal: goal_of(Goal::First), force: true, store_revision: 0, now: offline.now, verb: "refresh" });
+    let (_, answered) = offline.split(take(&offline.log));
+    assert!(answered.contains(&(9, Result3::Failed)), "refresh goes as LoadNoWait and the owner answers Offline at once (D-252)");
 
     for closing in [false, true] {
         let mut twin = fresh();
