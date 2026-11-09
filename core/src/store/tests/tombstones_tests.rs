@@ -80,3 +80,34 @@ fn cap_equal_to_count_evicts_nothing() {
     }
     assert_eq!(store.evict_tombstones(&small).unwrap(), 0);
 }
+
+#[test]
+fn store_landing_keeps_tombstone() {
+    use crate::owners::store::{RowValue, StoreOp};
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let answer = || vec![StoreOp::Rows { model: "messages".into(), rows: vec![RowValue { row_id: "m1".into(), values: json!({"id": "m1", "chatId": "c1", "body": "back"}).to_string() }] }];
+    let point = |store: &Store| store.read(&[], |reader| reader.point("messages", "m1")).unwrap();
+
+    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], None).unwrap();
+    put(&store, "messages", json!({"id": "m1", "chatId": "c1", "body": "hi"}));
+    assert!(point(&store).is_some(), "the server row is stored");
+
+    store.land_events_with_pin(&[("messages".into(), json!({"op": "delete", "id": "m1"}).to_string())], None).unwrap();
+    assert!(store.is_tombstoned("messages", "m1").unwrap(), "the server removal writes a tombstone");
+    assert!(point(&store).is_none(), "the removal clears the row");
+    let tombstone = store.read(&[], |reader| reader.tombstone_seq("messages", "m1")).unwrap().unwrap();
+
+    store.write_queue_ops(&answer()).unwrap();
+    assert!(point(&store).is_none(), "an operation-answer landing without a base revision keeps the tombstone");
+
+    drop(store);
+    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], None).unwrap();
+    assert!(point(&store).is_none(), "the row stays absent after close and open");
+
+    let patch = row(json!({"id": "m1", "chatId": "c1", "body": "back"}));
+    assert_eq!(admit_upsert(Some(tombstone - 1), None, Some(tombstone), patch.clone()), UpsertAdmission::DropExistence);
+    assert_eq!(admit_upsert(Some(tombstone), None, Some(tombstone), patch.clone()), UpsertAdmission::Row { row: patch, dropped_fields: vec![] });
+}
