@@ -174,6 +174,17 @@ fn sess_prop_durable_answer() {
 }
 
 #[test]
+fn sess_prop_server_end_atomic() {
+    for body in [serde_json::json!({"revoked": true}), serde_json::json!({"errors": [{"extensions": {"code": "SESSION_ENDED"}}]})] {
+        assert_eq!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: body.clone() }, true, true), crate::transport::AnswerKind::Revoked, "both server-end forms are a Revoked answer");
+        let mut twin = calling_mutate();
+        let (rid, aid) = (twin.rid(), twin.aid());
+        let landing = twin.feed(Input::Revoked { request_id: rid, attempt_id: aid, body: body.to_string() });
+        assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, answer: Some((11, Err(Fail::Revoked))), .. }]), "{body}: the credential removal lands in the same batch as the answer: {landing:?}");
+    }
+}
+
+#[test]
 fn sess_prop_blocked_pending() {
     for seed in 1..=60 {
         trace(seed, 80, |twin, input, effects| {
