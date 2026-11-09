@@ -1,135 +1,262 @@
-//! Matrix S for the owner Outbox against `ref_outbox` (whole-owner reference written from the table only): scripts of one operation are played on the reference (`ref_outbox::step` on a full State) and on the owner; after every step the stage of the operation on both sides must be the same, and the second input of each cell is tried after every script. A mismatch is a red cell, not a change of the reference. The adapter between the inputs is the code of this file.
+//! Matrix S for the owner Outbox against `ref_outbox` (the whole-owner reference written from outbox.md only). A cell is a context (what the table reads: online, row busy, slot taken, attempts, policy, origin), a script that brings the target operation to one stage through public inputs, and one more input. Both sides play every step; after each step the ordered list of effects and replies (normalized to the names both sides share), the stage and the cycle of every operation, and the stray rule (an input of an unknown operation changes nothing and emits nothing) must be equal. A mismatch is a red cell; the reference is never changed. A script whose stage the owner or the reference does not reach is a dead cell, not a red one.
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use super::outbox_harness::Twin;
-use super::ref_outbox::{step, Batch, Input as RIn, Kind, LandFacts, OpSpec, OpOrigin, Phase, Resp, SendKind, State, SubmitFlags};
-use super::outbox_harness::Policy;
-use crate::owners::write::outbox::OutboxInput;
+use super::outbox_harness::{OutboxEffect, Policy, Twin};
+use super::ref_outbox::{step, Addr, Batch, Effect, Input as RIn, Kind, LandFacts, OpOrigin, OpSpec, Phase, Resp, SendKind, Sel, Stage as RStage, State, SubmitFlags};
+use crate::owners::write::outbox::{OutboxAnswer, OutboxInput};
 use crate::test_matrix::Matrix;
 
 #[derive(Clone, Copy, Debug)]
-enum Step { Submit, Commit, Response, TemporaryError, PermanentError, RetryDue, Online(bool), EpochEnd, Close }
-
-fn spec() -> OpSpec {
-    OpSpec { op_id: None, model: "Moment".into(), row_id: "r".into(), action: "update".into(), expires_after: None, created_at: 0, keep: false, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: OpOrigin::Api, attempts: 0 }
+enum Step {
+    Submit { row: u8, keep: bool, transfer: bool },
+    Commit(u64),
+    Response(u64),
+    Error { op: u64, temporary: bool },
+    Dropped(u64),
+    Tick(u64),
+    Online(bool),
+    Retry,
+    Discard,
+    Outcome(u64),
+    EpochEnd,
+    Close,
+    Stray,
 }
 
-struct Reference { state: State }
+fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
+    OpSpec { op_id: None, model: "Moment".into(), row_id: format!("r{row}"), action: "update".into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
+}
+
+fn kind_name(what: &str) -> &'static str {
+    if what.contains("ClearMark") { "ClearMark" }
+    else if what.contains("MarkFailed") { "ErrorMark" }
+    else if what.contains("rows,") || what.contains("items,") || what.contains("Land") || what.contains("Swap") { "Land" }
+    else if what.contains("Rollback") || what.contains("RemoveIntent") { "Rollback" }
+    else if what.contains("status=pending") { "Requeue" }
+    else if what.contains("attempts+1") { "Attempt" }
+    else { "Intent" }
+}
+
+fn ref_tokens(effects: &[Effect]) -> Vec<String> {
+    effects.iter().filter_map(|effect| match effect {
+        Effect::Row(_) => None,
+        Effect::Undefined { row, .. } => Some(format!("undefined {row}")),
+        Effect::Store { op, what } => Some(format!("store {op} {}", kind_name(what))),
+        Effect::Session { op, what } if what.starts_with("Mutate") => Some(format!("send {op}")),
+        Effect::Session { what, .. } if what.starts_with("Cancel") => Some("cancel".to_string()),
+        Effect::Session { .. } => None,
+        Effect::Schedule { .. } => Some("schedule".to_string()),
+        Effect::Transfer { what, .. } => Some(format!("transfer {}", what.trim_start_matches("MutationOutcome(").trim_end_matches(')'))),
+        Effect::Reply { what, .. } => Some(format!("reply {what}")),
+        Effect::Drained(which) if *which == "LocalWrites" => None,
+        Effect::Drained(_) => Some("drained".to_string()),
+        Effect::Lifecycle(_) | Effect::Network(_) => None,
+    }).collect()
+}
+
+fn own_answer(answer: &OutboxAnswer) -> String {
+    match answer {
+        OutboxAnswer::Receipt(_) => "Receipt".into(),
+        OutboxAnswer::Outcome(outcome) => format!("Outcome:{}", format!("{outcome:?}").split([' ', '{']).next().unwrap_or("")),
+        OutboxAnswer::Ok => "Ok".into(),
+        OutboxAnswer::Err(fault) => format!("Err({})", format!("{fault:?}").split(['(', ' ', '{']).next().unwrap_or("")),
+        other => format!("{other:?}").chars().take(24).collect(),
+    }
+}
+
+fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
+    effects.iter().filter_map(|effect| match effect {
+        OutboxEffect::Store { op_id: Some(op), kind, .. } => Some(format!("store {op} {kind:?}")),
+        OutboxEffect::Send { op_id, .. } => Some(format!("send {op_id}")),
+        OutboxEffect::CancelRequest => Some("cancel".to_string()),
+        OutboxEffect::Reply { answer, .. } => Some(format!("reply {}", own_answer(answer))),
+        OutboxEffect::TransferOutcome { outcome } => Some(format!("transfer {}", format!("{outcome:?}").split([' ', '{']).next().unwrap_or(""))),
+        OutboxEffect::Schedule => Some("schedule".to_string()),
+        OutboxEffect::Drained => Some("drained".to_string()),
+        _ => None,
+    }).collect()
+}
+
+struct Reference { state: State, pairs: std::collections::BTreeMap<u64, u64> }
 
 impl Reference {
     fn new() -> Self {
-        let mut reference = Self { state: State::new() };
-        reference.feed(RIn::EpochStarted { epoch: 1, identity: true, generations: Default::default() });
-        reference.feed(RIn::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
-        reference.feed(RIn::Restored { epoch: 1, next_seq: 1, queue: Ok(Vec::new()), pending: Vec::new(), pending_lost: false });
-        reference.feed(RIn::RestoreReady { epoch: 1 });
-        reference.feed(RIn::Online(true));
+        let mut reference = Self { state: State::new(), pairs: Default::default() };
+        for input in [
+            RIn::EpochStarted { epoch: 1, identity: true, generations: Default::default() },
+            RIn::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] },
+            RIn::Restored { epoch: 1, next_seq: 1, queue: Ok(Vec::new()), pending: Vec::new(), pending_lost: false },
+            RIn::RestoreReady { epoch: 1 },
+            RIn::Online(true),
+        ] { reference.feed(input); }
         assert!(matches!(reference.state.phase, Phase::Ready | Phase::Classified), "the reference is ready");
         reference
     }
 
-    fn feed(&mut self, input: RIn) { self.state = step(&self.state, &input).0; }
+    fn feed(&mut self, input: RIn) -> Vec<Effect> {
+        let (state, effects) = step(&self.state, &input);
+        self.state = state;
+        effects
+    }
 
-    fn stage(&self) -> String { self.state.ops.get(&1).map_or("Done".to_string(), |op| format!("{:?}", op.stage)) }
+    fn stages(&self) -> String { self.state.ops.values().map(|op| format!("{}:{:?}", op.id, op.stage)).collect::<Vec<_>>().join(",") }
 
-    fn apply(&mut self, what: Step) {
-        let cycle = self.state.ops.get(&1).map_or(1, |op| op.cycle_id);
-        let kind = self.state.ops.get(&1).map(|op| match op.stage {
-            super::ref_outbox::Stage::Submitting => Kind::Submit,
-            super::ref_outbox::Stage::PersistingAttempt => Kind::Attempt,
-            super::ref_outbox::Stage::Landing => Kind::Land,
-            super::ref_outbox::Stage::RollingBack => Kind::Rollback,
-            super::ref_outbox::Stage::MarkingFailed => Kind::MarkFailed,
-            super::ref_outbox::Stage::MarkingRetry => Kind::Retry,
+    fn apply(&mut self, what: Step) -> Vec<String> {
+        let op_cycle = |reference: &Reference, op: u64| reference.state.ops.get(&op).map_or(1, |found| found.cycle_id);
+        let kind_of = |reference: &Reference, op: u64| match reference.state.ops.get(&op).map(|found| found.stage) {
+            Some(RStage::PersistingAttempt) => Kind::Attempt,
+            Some(RStage::Landing) => Kind::Land,
+            Some(RStage::RollingBack) => Kind::Rollback,
+            Some(RStage::MarkingFailed) => Kind::MarkFailed,
+            Some(RStage::MarkingRetry) => Kind::Retry,
             _ => Kind::Submit,
-        });
-        match what {
-            Step::Submit => self.feed(RIn::Submit { epoch: 1, op: spec(), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
-            Step::Commit => self.feed(RIn::Committed { epoch: 1, batch: Batch::Op(1), kind: kind.unwrap_or(Kind::Submit), revision: 11 }),
-            Step::Response => self.feed(RIn::Response { op_id: 1, cycle_id: cycle, resp: Resp::Data(LandFacts::default()), swap: None, pending_retained: None }),
-            Step::TemporaryError => self.feed(RIn::TransportError { op_id: 1, cycle_id: cycle, temporary: true, pending_retained: None }),
-            Step::PermanentError => self.feed(RIn::TransportError { op_id: 1, cycle_id: cycle, temporary: false, pending_retained: None }),
-            Step::RetryDue => self.feed(RIn::Tick { op_id: 1, cycle_id: cycle }),
+        };
+        let effects = match what {
+            Step::Submit { row, keep, transfer } => self.feed(RIn::Submit { epoch: 1, op: spec(row, keep, transfer), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
+            Step::Commit(op) => { let kind = kind_of(self, op); self.feed(RIn::Committed { epoch: 1, batch: Batch::Op(op), kind, revision: 11 }) }
+            Step::Response(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::Data(LandFacts { root_present: true, ..LandFacts::default() }), swap: None, pending_retained: None }) }
+            Step::Error { op, temporary } => { let cycle = op_cycle(self, op); self.feed(RIn::TransportError { op_id: op, cycle_id: cycle, temporary, pending_retained: None }) }
+            Step::Dropped(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Dropped { op_id: op, cycle_id: cycle, pending_retained: None }) }
+            Step::Tick(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Tick { op_id: op, cycle_id: cycle }) }
             Step::Online(on) => self.feed(RIn::Online(on)),
+            Step::Retry => self.feed(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
+            Step::Discard => self.feed(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
+            Step::Outcome(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Outcome { receipt: super::ref_outbox::Receipt { epoch: 1, op_id: op, cycle_id: cycle } }) }
             Step::EpochEnd => self.feed(RIn::EpochEnded(1)),
             Step::Close => self.feed(RIn::Closing),
+            Step::Stray => self.feed(RIn::TransportError { op_id: 999, cycle_id: 1, temporary: true, pending_retained: None }),
+        };
+        let mut tokens = ref_tokens(&effects);
+        for token in tokens.iter_mut().filter(|token| token.starts_with("send ")) {
+            let op: u64 = token[5..].parse().unwrap_or(0);
+            let request = self.state.ops.get(&op).map_or(0, |found| found.request_id);
+            let same = self.pairs.insert(op, request) == Some(request);
+            token.push_str(if same { " same pair" } else { " new pair" });
         }
+        tokens
     }
 }
 
-struct Owner { twin: Twin }
+struct Owner { twin: Twin, pairs: std::collections::BTreeMap<u64, (u64, u64)> }
 
 impl Owner {
-    fn new() -> Self { Self { twin: Twin::new() } }
+    fn new() -> Self { Self { twin: Twin::new(), pairs: Default::default() } }
 
-    fn stage(&self) -> String {
-        match self.twin.stage(1) {
-            Some(stage) => format!("{stage:?}").split('(').next().unwrap_or("").to_string(),
-            None => "Done".into(),
-        }
+    fn stages(&self) -> String {
+        let mut ids: Vec<u64> = self.twin.state().ops.keys().copied().collect();
+        ids.sort_unstable();
+        ids.iter().map(|id| format!("{id}:{}", self.twin.stage(*id).map_or("Done".to_string(), |stage| format!("{stage:?}").split('(').next().unwrap_or("").to_string()))).collect::<Vec<_>>().join(",")
     }
 
-    fn apply(&mut self, what: Step) {
+    fn apply(&mut self, what: Step) -> Vec<String> {
         use crate::owners::write::outbox::OutboxInput as I;
-        match what {
-            Step::Submit => { self.twin.submit("r", Policy::Rollback, false); }
-            Step::Commit => { if self.twin.batches.contains_key(&1) { self.twin.committed(1); } }
-            Step::Response => { self.twin.post(I::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }); }
-            Step::TemporaryError => { self.twin.post(I::TransportError { op_id: 1, temporary: true }); }
-            Step::PermanentError => { self.twin.post(I::TransportError { op_id: 1, temporary: false }); }
-            Step::RetryDue => { self.twin.post(I::RetryDue { op_id: 1, cycle_id: 1 }); }
-            Step::Online(on) => { self.twin.post(I::Online(crate::owners::contract::Online(on))); }
-            Step::EpochEnd => { self.twin.det.end_epoch(super::outbox_harness::EPOCH, crate::runtime::Cause::SessionReset); self.twin.run(); }
-            Step::Close => { self.twin.det.close(); self.twin.run(); }
+        let effects = match what {
+            Step::Submit { row, keep, transfer } => { self.twin.submit(&format!("r{row}"), if keep { Policy::Keep } else { Policy::Rollback }, transfer); self.twin.last.clone() }
+            Step::Commit(op) => { if self.twin.batches.contains_key(&op) { self.twin.committed(op) } else { Vec::new() } }
+            Step::Response(op) => self.twin.post(I::Response { op_id: op, rows: super::outbox_harness::server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
+            Step::Error { op, temporary } => self.twin.post(I::TransportError { op_id: op, temporary }),
+            Step::Dropped(op) => self.twin.post(I::Dropped { op_id: op }),
+            Step::Tick(op) => self.twin.post(I::RetryDue { op_id: op, cycle_id: 1 }),
+            Step::Online(on) => self.twin.post(I::Online(crate::owners::contract::Online(on))),
+            Step::Retry => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()), reply: 900 }),
+            Step::Discard => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r1".into(), action: Some("update".into()), reply: 901 }),
+            Step::Outcome(op) => { let mut receipt = self.twin.receipt(op, super::outbox_harness::EPOCH); if let Some(found) = self.twin.state().ops.get(&op) { receipt.cycle_id = found.cycle_id; } self.twin.post(I::Outcome { receipt, reply: 902 }) }
+            Step::EpochEnd => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.end_epoch(super::outbox_harness::EPOCH, crate::runtime::Cause::SessionReset); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
+            Step::Close => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.close(); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
+            Step::Stray => self.twin.post(I::TransportError { op_id: 999, temporary: true }),
+        };
+        let mut tokens = own_tokens(&effects);
+        let sends: Vec<(u64, (u64, u64))> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Send { op_id, request_id, sequence } => Some((*op_id, (*request_id, *sequence))), _ => None }).collect();
+        let mut sends = sends.into_iter();
+        for token in tokens.iter_mut().filter(|token| token.starts_with("send ")) {
+            if let Some((op, pair)) = sends.next() {
+                let same = self.pairs.insert(op, pair) == Some(pair);
+                token.push_str(if same { " same pair" } else { " new pair" });
+            }
         }
+        tokens
     }
 }
 
-fn scripts() -> Vec<(&'static str, Vec<Step>)> {
-    use Step::*;
+const R1: Step = Step::Submit { row: 1, keep: false, transfer: false };
+
+fn contexts() -> Vec<(&'static str, Vec<Step>)> {
     vec![
-        ("empty", vec![]),
-        ("submitted", vec![Submit]),
-        ("sending", vec![Submit, Commit]),
-        ("landing", vec![Submit, Commit, Response]),
-        ("waiting retry", vec![Submit, Commit, TemporaryError]),
-        ("persisting attempt", vec![Submit, Commit, TemporaryError, RetryDue]),
-        ("marking failed", vec![Submit, Commit, PermanentError]),
-        ("offline queued", vec![Online(false), Submit, Commit]),
+        ("online", vec![]),
+        ("offline", vec![Step::Online(false)]),
+        ("row busy", vec![Step::Submit { row: 1, keep: false, transfer: false }, Step::Commit(1)]),
     ]
 }
 
-fn seconds() -> Vec<(&'static str, Option<Step>)> {
+fn scripts(context: &str) -> Vec<(&'static str, Vec<Step>)> {
     use Step::*;
-    vec![("-", None), ("Commit", Some(Commit)), ("Response", Some(Response)), ("TransportError temporary", Some(TemporaryError)), ("TransportError permanent", Some(PermanentError)), ("RetryDue", Some(RetryDue)), ("Offline", Some(Online(false))), ("Online", Some(Online(true))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close))]
+    let target = if context == "row busy" { 2 } else { 1 };
+    let t = target;
+    vec![
+        ("none", vec![]),
+        ("submitting", vec![R1]),
+        ("queued or sending", vec![R1, Commit(t)]),
+        ("landing", vec![R1, Commit(t), Response(t)]),
+        ("waiting retry", vec![R1, Commit(t), Error { op: t, temporary: true }]),
+        ("persisting attempt", vec![R1, Commit(t), Error { op: t, temporary: true }, Tick(t)]),
+        ("marking failed", vec![Submit { row: 1, keep: true, transfer: false }, Commit(t), Error { op: t, temporary: false }]),
+        ("failed", vec![Submit { row: 1, keep: true, transfer: false }, Commit(t), Error { op: t, temporary: false }, Commit(t)]),
+        ("marking retry", vec![Submit { row: 1, keep: true, transfer: false }, Commit(t), Error { op: t, temporary: false }, Commit(t), Retry]),
+        ("rolling back", vec![R1, Commit(t), Error { op: t, temporary: false }]),
+        ("discarding", vec![R1, Commit(t), Discard]),
+        ("transfer origin sending", vec![Submit { row: 1, keep: false, transfer: true }, Commit(t)]),
+    ]
+}
+
+fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
+    use Step::*;
+    vec![
+        ("-", None), ("Commit", Some(Commit(target))), ("Response", Some(Response(target))),
+        ("TransportError temporary", Some(Error { op: target, temporary: true })), ("TransportError permanent", Some(Error { op: target, temporary: false })),
+        ("Dropped", Some(Dropped(target))), ("Tick", Some(Tick(target))), ("Offline", Some(Online(false))), ("Online", Some(Online(true))),
+        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)),
+    ]
+}
+
+fn split_line(stages: &str, tokens: &[String]) -> String {
+    let replies: Vec<&str> = tokens.iter().filter(|token| token.starts_with("reply ")).map(String::as_str).collect();
+    let effects: Vec<&str> = tokens.iter().filter(|token| !token.starts_with("reply ")).map(String::as_str).collect();
+    format!("{stages} effects [{}] replies [{}]", effects.join("; "), replies.join("; "))
+}
+
+fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
+    payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default().lines().next().unwrap_or("").chars().take(110).collect()
 }
 
 #[test]
-fn matrix_owner_state_input_outbox_v2() {
+fn matrix_owner_state_input_outbox() {
     let _ = OutboxInput::Online;
     let mut matrix = Matrix::new("S-outbox-v2");
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    for (name, script) in scripts() {
-        for (second_name, second) in seconds() {
-            let outcome = catch_unwind(AssertUnwindSafe(|| {
-                let (mut reference, mut owner) = (Reference::new(), Owner::new());
-                let mut seen = Vec::new();
-                for what in script.iter().copied().chain(second) {
-                    reference.apply(what);
-                    owner.apply(what);
-                    seen.push((format!("{what:?}"), reference.stage(), owner.stage()));
-                }
-                seen
-            }));
-            let (expected, observed) = match outcome {
-                Ok(seen) => match seen.iter().find(|(_, left, right)| left != right) {
-                    Some((what, left, right)) => (format!("{what} -> {left}"), format!("{what} -> {right}")),
-                    None => ("stages agree".to_string(), "stages agree".to_string()),
-                },
-                Err(payload) => ("the script runs".to_string(), format!("panic: {}", payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default().lines().next().unwrap_or("").chars().take(110).collect::<String>())),
-            };
-            matrix.check(name, "ref_outbox v2", second_name, &expected, &observed);
+    for (context, prefix) in contexts() {
+        let target = if context == "row busy" { 2 } else { 1 };
+        for (name, script) in scripts(context) {
+            for (second_name, second) in seconds(target) {
+                let path = format!("{context} / {name}");
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    let (mut reference, mut owner) = (Reference::new(), Owner::new());
+                    let mut seen: Vec<(String, String, String, String, String)> = Vec::new();
+                    for what in prefix.iter().copied().chain(script.iter().copied()).chain(second).chain(second.map(|_| Step::Commit(target))) {
+                        let (left, right) = (reference.apply(what), owner.apply(what));
+                        seen.push((format!("{what:?}"), split_line(&reference.stages(), &left), split_line(&owner.stages(), &right), reference.stages(), owner.stages()));
+                    }
+                    seen
+                }));
+                let (expected, observed) = match outcome {
+                    Ok(seen) => match seen.iter().find(|row| row.1 != row.2) {
+                        Some(row) => (format!("{} -> {}", row.0, row.1), format!("{} -> {}", row.0, row.2)),
+                        None => ("agree".to_string(), "agree".to_string()),
+                    },
+                    Err(payload) => ("the script runs".to_string(), format!("panic: {}", first_line(payload.as_ref()))),
+                };
+                matrix.check(&path, "ref_outbox", second_name, &expected, &observed);
+            }
         }
     }
     std::panic::set_hook(hook);

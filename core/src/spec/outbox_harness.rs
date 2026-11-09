@@ -211,6 +211,7 @@ pub(super) struct Twin {
     pub(super) reply: ReplyId,
     pub(super) follower: Option<OpId>,
     /// The typed text of the last inputs the Store received (`StoreOp` names).
+    pub(super) last: Vec<OutboxEffect>,
     pub(super) store_text: String,
     pub(super) session_text: String,
 }
@@ -222,7 +223,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
+        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_text: String::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -250,7 +251,7 @@ impl Twin {
     pub(super) fn post(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         let mut effects = self.post_input(input);
         loop {
-            let Some(asked) = self.asked.pop() else { return effects };
+            let Some(asked) = self.asked.pop() else { self.last = effects.clone(); return effects };
             let asked = &asked;
             let reply = number_after(asked, "reply: ").expect("the reply of the question");
             let kind = if asked.contains("kind: Retry") { o::SelectKind::Retry } else { o::SelectKind::Discard };
