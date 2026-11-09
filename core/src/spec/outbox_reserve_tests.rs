@@ -1,7 +1,7 @@
 //! Owner-level tests of the owner `Outbox`: `ReserveOp` for a transfer, `Submit` of a reserved operation and the check of the declaration.
 
 use super::outbox_harness::*;
-use super::ref_outbox::Policy;
+use super::ref_outbox_cells::Policy;
 use crate::spec::support::{snapshot, Emitted};
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput, ReserveTarget};
 use crate::owners::write::outbox_types::{OpId, Stage};

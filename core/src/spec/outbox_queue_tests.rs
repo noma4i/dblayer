@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::outbox_cells_tests::{answers, kinds, sends, submit_op, tick};
 use super::outbox_harness::*;
 use super::outbox_tests::want;
-use super::ref_outbox::{Ctx, Eff, In, Policy, St, Why as RWhy};
+use super::ref_outbox_cells::{Ctx, Eff, In, Policy, St, Why as RWhy};
 use crate::owners::contract::Online;
 use crate::owners::write::failure;
 use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Stage, StoredOp, DRAIN_LIMIT};

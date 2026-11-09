@@ -1,4 +1,4 @@
-use super::ref_outbox::{step_of, Ctx, Eff, In, Obs, Out, Policy, St, Step};
+use super::ref_outbox_cells::{step_of, Ctx, Eff, In, Obs, Out, Policy, St, Step};
 use super::rig::{bounded, within, Kind, Reply, Rig, Server};
 use crate::ffi::{CommandRequest, WireOperationOutcome, WireOperationReceipt, WireSyncState};
 use crate::schema::OnFailure;
@@ -82,7 +82,7 @@ async fn out_submit_stale_run() {
 
     let result = within(rig.db.send(request)).await;
 
-    assert_eq!(cell.obs, [Obs::Fails(super::ref_outbox::Fault::NoSession)]);
+    assert_eq!(cell.obs, [Obs::Fails(super::ref_outbox_cells::Fault::NoSession)]);
     assert!(matches!(result, Err(crate::ffi::DbError::NoSession { .. })), "{result:?}");
     assert_eq!(rig.server.mutations(), 0);
 }
@@ -224,7 +224,7 @@ async fn out_sending_reject_rollback_run() {
     let receipt = rig.create("hello").await;
     let outcome = rig.outcome(&receipt).await;
 
-    assert_eq!(cell.next, St::RollingBack(super::ref_outbox::Why::Rejected));
+    assert_eq!(cell.next, St::RollingBack(super::ref_outbox_cells::Why::Rejected));
     assert_eq!(kind_of(&outcome), wire_of(Out::Rejected));
     assert!(rig.row(&temp_id(&receipt)).await.is_none());
 }
@@ -275,7 +275,7 @@ async fn out_landing_committed_run() {
 fn out_rollback_committed() { bounded("out_rollback_committed", out_rollback_committed_run) }
 
 async fn out_rollback_committed_run() {
-    let cell = want(St::RollingBack(super::ref_outbox::Why::Rejected), &Ctx::ready(), In::Committed);
+    let cell = want(St::RollingBack(super::ref_outbox_cells::Why::Rejected), &Ctx::ready(), In::Committed);
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
     let first = rig.create("a").await;

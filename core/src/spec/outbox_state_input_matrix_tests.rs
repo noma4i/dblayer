@@ -2,7 +2,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use super::outbox_harness::row_check;
-use super::ref_outbox::{Ctx, In, Policy, Reason, St, Why};
+use super::ref_outbox_cells::{Ctx, In, Policy, Reason, St, Why};
 use crate::test_matrix::Matrix;
 
 fn states() -> Vec<St> {

@@ -1,6 +1,6 @@
 //! Reference-level tests of the `outbox` machine: the traces against the model and the properties through the real database.
 
-use super::ref_outbox::{step_of, Ctx, In, Out, Policy, St, Step};
+use super::ref_outbox_cells::{step_of, Ctx, In, Out, Policy, St, Step};
 use super::rig::{bounded, step, within, Kind, Reply, Rig, Server};
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
 use crate::schema::OnFailure;

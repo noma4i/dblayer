@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the discard of an operation that ended `Failed{RestoreFailed}` and the answers no operation owns. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox::{Policy, St};
+use super::ref_outbox_cells::{Policy, St};
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput, OutboxOutcome, StoredOp};
 
 const DISCARD: u64 = 60;
@@ -24,7 +24,7 @@ fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
 fn out_failed_discard_restore_failed() {
     let mut twin = dropped();
     let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
-    assert_eq!(twin.stage(7), Some(St::RollingBack(super::ref_outbox::Why::Discarded)));
+    assert_eq!(twin.stage(7), Some(St::RollingBack(super::ref_outbox_cells::Why::Discarded)));
     assert!(answers(&effects, DISCARD).is_empty(), "nothing is answered before the commit");
     assert!(twin.store_text.contains("DiscardRestoreFailed { table: \"op\", key: \"k1\" }") && twin.store_text.contains("RemoveIntent"), "{}", twin.store_text);
     assert!(!twin.store_text.contains("RollBack"), "the dropped intent has no optimistic effects to take back: {}", twin.store_text);

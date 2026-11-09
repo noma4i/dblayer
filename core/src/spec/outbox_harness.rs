@@ -2,7 +2,7 @@
 
 use crate::schema::OnFailure;
 use std::collections::BTreeMap;
-use super::ref_outbox::{step_of, Ctx, Eff, Fault as RFault, In, Obs, Out, Policy, Reason as RReason, St, Step, Why as RWhy};
+use super::ref_outbox_cells::{step_of, Ctx, Eff, Fault as RFault, In, Obs, Out, Policy, Reason as RReason, St, Step, Why as RWhy};
 use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
@@ -401,16 +401,16 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
     for effect in effects {
         match effect {
             OutboxEffect::Store { op_id: Some(op), kind, generation, .. } if op == id => eff.push(Eff::Store(match (kind, generation > 0) {
-                (CommitKind::Attempt, _) => super::ref_outbox::Commit::Attempt,
-                (CommitKind::Intent, false) => super::ref_outbox::Commit::Intent,
-                (CommitKind::Intent, true) => super::ref_outbox::Commit::IntentNewBasis,
-                (CommitKind::Land, false) => super::ref_outbox::Commit::Land,
-                (CommitKind::Land, true) => super::ref_outbox::Commit::LandNewBasis,
-                (CommitKind::Rollback, false) => super::ref_outbox::Commit::Rollback,
-                (CommitKind::Rollback, true) => super::ref_outbox::Commit::RollbackNewBasis,
-                (CommitKind::ErrorMark, _) => super::ref_outbox::Commit::ErrorMark,
-                (CommitKind::ClearMark, _) => super::ref_outbox::Commit::ClearMark,
-                (CommitKind::Requeue, _) => super::ref_outbox::Commit::Requeue,
+                (CommitKind::Attempt, _) => super::ref_outbox_cells::Commit::Attempt,
+                (CommitKind::Intent, false) => super::ref_outbox_cells::Commit::Intent,
+                (CommitKind::Intent, true) => super::ref_outbox_cells::Commit::IntentNewBasis,
+                (CommitKind::Land, false) => super::ref_outbox_cells::Commit::Land,
+                (CommitKind::Land, true) => super::ref_outbox_cells::Commit::LandNewBasis,
+                (CommitKind::Rollback, false) => super::ref_outbox_cells::Commit::Rollback,
+                (CommitKind::Rollback, true) => super::ref_outbox_cells::Commit::RollbackNewBasis,
+                (CommitKind::ErrorMark, _) => super::ref_outbox_cells::Commit::ErrorMark,
+                (CommitKind::ClearMark, _) => super::ref_outbox_cells::Commit::ClearMark,
+                (CommitKind::Requeue, _) => super::ref_outbox_cells::Commit::Requeue,
                 (CommitKind::LocalWrite | CommitKind::RemoveRow, _) => panic!("a local write in an operation row"),
             })),
             OutboxEffect::Store { .. } => {}

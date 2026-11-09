@@ -2,7 +2,7 @@
 
 use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
-use super::ref_outbox::{Policy, Reason as RReason, St};
+use super::ref_outbox_cells::{Policy, Reason as RReason, St};
 use crate::owners::contract::{ModelsReset, Online, RejectReason};
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 

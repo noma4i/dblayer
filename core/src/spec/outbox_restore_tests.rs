@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the phase `Restoring` with its held calls, the classes of the opening and the declarations. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox::{epoch_started_effects, restored_effects, Policy, St};
+use super::ref_outbox_cells::{epoch_started_effects, restored_effects, Policy, St};
 use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
@@ -308,7 +308,7 @@ fn out_open_restores_answered() {
 
 #[test]
 fn out_open_restores_answered_error() {
-    for (policy, stage, kind) in [(Policy::Rollback, St::RollingBack(super::ref_outbox::Why::Rejected), CommitKind::Rollback), (Policy::Keep, St::MarkingFailed, CommitKind::ErrorMark)] {
+    for (policy, stage, kind) in [(Policy::Rollback, St::RollingBack(super::ref_outbox_cells::Why::Rejected), CommitKind::Rollback), (Policy::Keep, St::MarkingFailed, CommitKind::ErrorMark)] {
         let mut twin = Twin::bare();
         declare(&mut twin);
         let item = StoredOp { answered: Some((41, StoredAnswer::Http { status: 422 })), op: model_op("r", policy, false), ..stored(7, "r") };

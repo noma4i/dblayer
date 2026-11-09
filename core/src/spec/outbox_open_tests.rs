@@ -2,7 +2,7 @@
 
 
 
-use super::ref_outbox::{open_step_of, write_step_of, Ctx, Eff, OCtx, Policy, Reason as RReason, Restored, St, WCtx, WEff, WIn, WObs, WSt};
+use super::ref_outbox_cells::{open_step_of, write_step_of, Ctx, Eff, OCtx, Policy, Reason as RReason, Restored, St, WCtx, WEff, WIn, WObs, WSt};
 use crate::owners::contract::{Committed, Online, Rejected, ReplyId};
 
 
@@ -88,7 +88,7 @@ fn open_check(kind: Restored, ctx: Ctx, pair: bool) {
     let effects = twin.kept.clone();
     let attempts = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(op), kind: CommitKind::Attempt, .. } if *op == id)).count();
     assert_eq!(twin.stage(id), Some(want.next), "the state after Restored");
-    assert_eq!(attempts, usize::from(want.eff.contains(&Eff::Store(super::ref_outbox::Commit::Attempt))), "{effects:?}");
+    assert_eq!(attempts, usize::from(want.eff.contains(&Eff::Store(super::ref_outbox_cells::Commit::Attempt))), "{effects:?}");
     assert!(!effects.iter().any(|effect| matches!(effect, OutboxEffect::Send { .. })), "no Mutate before the attempt is written: {effects:?}");
     if want.next == St::PersistingAttempt {
         let sent = twin.committed(id);
@@ -208,7 +208,7 @@ fn out_prop_server_removed_row_discards() {
     let effects = twin.post(OutboxInput::RowsGone { ops: vec![id] });
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Reply { reply: WAITER, answer: OutboxAnswer::Outcome(o::OutboxOutcome::Discarded) })), "{effects:?}");
     assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Store { .. })), "no rollback batch: {effects:?}");
-    assert_eq!(twin.stage(id), Some(super::ref_outbox::St::Done));
+    assert_eq!(twin.stage(id), Some(super::ref_outbox_cells::St::Done));
 }
 
 #[test]
