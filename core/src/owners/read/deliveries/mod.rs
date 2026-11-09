@@ -209,9 +209,11 @@ impl Value {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PullAnswer {
     Value(Box<Value>),
-    Done,
-    Invalid,
     Interrupted,
+}
+
+impl PullAnswer {
+    pub fn ended(cause: EndCause) -> Self { Self::Value(Box::new(Value::Ended(cause))) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -451,7 +453,7 @@ impl DeliveriesState {
 
     fn affected(&self, committed: &Committed) -> BTreeSet<StreamId> {
         match &committed.models {
-            Models::All => self.by_table.values().flatten().chain(self.by_row.values().flat_map(BTreeMap::values).flatten()).copied().collect(),
+            Models::All => BTreeSet::new(),
             Models::Set(_) => {
                 let tabled = committed.tables.iter().filter_map(|table| self.by_table.get(table)).flatten();
                 let rowed: Vec<&BTreeSet<StreamId>> = match &committed.rows {

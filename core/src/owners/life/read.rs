@@ -226,7 +226,7 @@ impl super::Life {
     pub fn pull(&self, stream: StreamId, reader: u64) -> Waiter<PullAnswer> {
         let waiter = self.wiring.pulls.register(Epoch::MAX);
         if self.is_shut() || self.published().closed {
-            self.wiring.pulls.settle(waiter.id(), PullAnswer::Done);
+            self.wiring.pulls.settle(waiter.id(), PullAnswer::ended(crate::owners::read::deliveries::EndCause::Closed));
         } else {
             self.wiring.to_deliveries(DeliveryInput::Pull { stream, outcome: waiter.id(), reader });
         }

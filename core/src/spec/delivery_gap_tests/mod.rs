@@ -114,8 +114,6 @@ fn val_of(value: &d::Value) -> Val {
 fn pulled_of(answer: &PullAnswer) -> Pulled {
     match answer {
         PullAnswer::Value(value) => Pulled::Value(val_of(value)),
-        PullAnswer::Done => Pulled::Done,
-        PullAnswer::Invalid => Pulled::Invalid,
         PullAnswer::Interrupted => Pulled::Interrupted,
     }
 }

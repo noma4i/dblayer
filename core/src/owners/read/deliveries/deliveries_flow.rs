@@ -273,12 +273,12 @@ impl Delivery {
 
     pub(super) fn pull(&mut self, outcome: OutcomeId, reader: u64, fx: &mut Vec<Emit>) {
         if !self.claim(reader) || self.waiting.is_some() {
-            fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Invalid }));
+            fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::ended(EndCause::Invalid { detail: "a Pull is already waiting or the reader is not the stream reader".into() }) }));
             return;
         }
         match self.take_first() {
             Some(answer) => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer })),
-            None if self.stage == DeliveryStage::Ended => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Done })),
+            None if self.stage == DeliveryStage::Ended => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::ended(self.cause.clone()) })),
             None => self.waiting = Some(outcome),
         }
     }
@@ -341,7 +341,7 @@ impl Delivery {
         self.journal.push_back(Value::Ended(cause));
         match self.waiting.take() {
             Some(outcome) => {
-                let answer = self.take_first().unwrap_or(PullAnswer::Done);
+                let answer = self.take_first().unwrap_or_else(|| PullAnswer::ended(self.cause.clone()));
                 fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
             }
             None => fx.push(Emit::Run(StreamEffect::Available)),
@@ -381,13 +381,13 @@ impl Delivery {
                 self.stage = DeliveryStage::Ended;
                 self.sink_closed = true;
                 if self.released {
-                    if let Some(outcome) = self.waiting.take() { fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Done })); }
+                    if let Some(outcome) = self.waiting.take() { fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::ended(self.cause.clone()) })); }
                     return;
                 }
                 self.journal.clear();
                 self.journal.push_back(Value::Ended(self.cause.clone()));
                 if let Some(outcome) = self.waiting.take() {
-                    let answer = self.take_first().unwrap_or(PullAnswer::Done);
+                    let answer = self.take_first().unwrap_or_else(|| PullAnswer::ended(self.cause.clone()));
                     fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
                 }
             }

@@ -255,10 +255,9 @@ impl ReadStream {
                     Err(error) => self.finished(EndCause::Internal { detail: error.to_string() }),
                 }
             }
-            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(EndCause::Closed),
+            Outcome::Closing => self.finished(EndCause::Closed),
             Outcome::EpochEnded(_) => self.finished(EndCause::SessionEnded),
             Outcome::Internal => self.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone().unwrap_or_else(|| EndCause::Invalid { detail: "the stream could not open".into() }) }),
             Outcome::Value(PullAnswer::Interrupted) => self.finished(EndCause::Cancelled),
         }
     }
