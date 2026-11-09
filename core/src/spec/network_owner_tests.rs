@@ -253,3 +253,20 @@ fn net_prop_snapshot_after_create() {
         assert_eq!(got, answered, "the snapshot carries the value at the request, in any delivery order");
     }
 }
+
+#[test]
+fn matrix_owner_state_input_network() {
+    use crate::test_matrix::{state_input_pairs, Matrix};
+    let mut matrix = Matrix::new("S-network");
+    fn online() -> Twin { let mut twin = Twin::new(); twin.feed(Input::SetOnline(true)); twin }
+    fn offline() -> Twin { let mut twin = Twin::new(); twin.feed(Input::SetOnline(false)); twin }
+    fn saving() -> Twin { let mut twin = Twin::new(); twin.feed(Input::PowerSaving(true)); twin }
+    fn foreground() -> Twin { let mut twin = Twin::new(); twin.feed(Input::Foreground); twin }
+    fn closed() -> Twin { let mut twin = Twin::new(); twin.feed(Input::Closing); twin }
+    let mut alphabet: Vec<(&str, Input)> = vec![("SetOnline true", Input::SetOnline(true)), ("SetOnline false", Input::SetOnline(false)), ("Foreground", Input::Foreground), ("PowerSaving on", Input::PowerSaving(true)), ("PowerSaving off", Input::PowerSaving(false)), ("Closing", Input::Closing)];
+    for (name, owner) in [("Transfer", Owner::Transfer), ("Outbox", Owner::Outbox), ("Calls", Owner::Calls)] {
+        alphabet.push((Box::leak(format!("SnapshotRequest {name} epoch 1").into_boxed_str()), Input::SnapshotRequest(owner, 1)));
+    }
+    state_input_pairs(&mut matrix, "reference ref_network", vec![("fresh", Twin::new), ("online", online), ("offline", offline), ("power saving", saving), ("foreground", foreground), ("closed", closed)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
+    matrix.finish();
+}
