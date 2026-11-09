@@ -407,7 +407,7 @@ fn out_group_outcome_each_member() {
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
     let (sends, _) = settle(&mut twin);
-    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("11: Ended(SessionEnded)") && text.contains("12: Ended(SessionEnded)")), "EpochEnded reaches every member: {sends:?}");
+    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("(11, 2, Ended(SessionEnded))") && text.contains("(12, 4, Ended(SessionEnded))")), "EpochEnded reaches every member: {sends:?}");
 
     let mut twin = Twin::new();
     group(&mut twin, Policy::Rollback);
@@ -415,7 +415,7 @@ fn out_group_outcome_each_member() {
     twin.det.close();
     twin.run();
     let (sends, _) = settle(&mut twin);
-    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("11: Ended(Closed)") && text.contains("12: Ended(Closed)")), "Closing reaches every member: {sends:?}");
+    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("(11, 2, Ended(Closed))") && text.contains("(12, 4, Ended(Closed))")), "Closing reaches every member: {sends:?}");
 }
 
 #[test]
