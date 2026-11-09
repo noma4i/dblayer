@@ -107,6 +107,24 @@ fn xfer_awaiting_source_expires() {
     }
 }
 
+#[test]
+fn xfer_accept_after_closing() {
+    use super::transfer_harness::{item, joint, EPOCH};
+    use crate::owners::write::outbox::Fault;
+    use crate::owners::write::transfer::{TransferAnswer, TransferInput};
+    use crate::runtime::Time;
+    let mut twin = Twin::new();
+    twin.close();
+    for input in [
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 1)), reply: 30, now: Time(0) },
+        TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), item("Moment:r2:upload", 1)], joint: Box::new(joint()), reply: 30, now: Time(0) },
+    ] {
+        let out = twin.post(input);
+        assert_eq!((out.replies(30), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::Closed)], 1, 0));
+        assert!(out.outbox.is_empty() && twin.state().transfers.is_empty());
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Step {
     Accept,
