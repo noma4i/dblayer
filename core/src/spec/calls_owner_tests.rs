@@ -169,6 +169,24 @@ fn call_waiting_network_offline() {
 }
 
 #[test]
+fn call_retry_tick() {
+    for operation in ["Op", "Change"] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let original = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, variables, .. } = effect { Some((*request_id, variables.clone())) } else { None }).unwrap();
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id: 1, error: CallError::Network });
+        twin.det.run_until_quiet(100).unwrap();
+        assert!(take(&twin.log).is_empty());
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::RetryDue { call_id: 1, attempt: 1 });
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        let retried = effects.iter().find_map(|effect| if let CallsEffect::Request { request_id, variables, .. } = effect { Some((*request_id, variables.clone())) } else { None }).unwrap();
+        assert_eq!(retried.1, original.1);
+        assert_eq!(retried.0 == original.0, operation == "Change");
+    }
+}
+
+#[test]
 fn call_cancel_before_snapshot() {
     let mut twin = Twin::with(None);
     twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
