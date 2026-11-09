@@ -16,6 +16,25 @@ fn feed_prop_gap_visible() {
     assert_eq!((gaps(CHAT), gaps(POST)), (1, 1), "each model sees one gap at the break");
 }
 
+/// P-FEED-31 (feed_prop_no_tight_reconnect): a server that drops right after Ready reconnects only by Backoff. Each drop in Opening schedules a Resubscribe and bumps the attempts; a Connect goes only when the scheduled Resubscribe fires, so there is no tight Connect loop. A ProtocolError drains before it reopens. Data resets the attempts.
+#[test]
+fn feed_prop_no_tight_reconnect() {
+    let mut twin = opening();
+    for attempt in 1..=3u32 {
+        assert_eq!(twin.step(Input::Dropped { to: To::Opening }), [Effect::ScheduleResubscribe], "a drop schedules a resubscribe by Backoff, it does not Connect at once");
+        assert_eq!((twin.state().attempts(), twin.reference.attempts), (attempt, attempt), "each drop bumps the attempts");
+        assert_eq!(twin.step(Input::Resubscribe { to: To::Opening }), [Effect::Connect], "a Connect goes only when the scheduled resubscribe fires");
+    }
+    twin.step(Input::HandshakeDone);
+    assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick], "the live feed takes data again");
+    assert_eq!((twin.state().attempts(), twin.reference.attempts), (0, 0), "data resets the attempts, not a reconnect");
+
+    let mut proto = live();
+    let drained = proto.step(Input::ProtocolError { to: To::Active });
+    assert!(!drained.contains(&Effect::Connect), "a protocol error drains, it does not reconnect at once: {drained:?}");
+    assert!(matches!(proto.state().mode(), f::Mode::Draining { .. }), "a protocol error drains before it reopens");
+}
+
 /// P-FEED-06: no reader or no frames: no request and no tick.
 #[test]
 fn feed_prop_idle() {
