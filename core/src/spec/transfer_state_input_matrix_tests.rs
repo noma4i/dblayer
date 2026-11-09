@@ -6,6 +6,8 @@ use super::transfer_harness::Twin;
 use crate::owners::write::outbox::OutboxOutcome;
 use crate::test_matrix::Matrix;
 
+static LOCATION: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 const KEY: &str = "Moment:r1:upload";
 
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +56,7 @@ impl RefRun {
         let (state, effects) = step(&self.state, &input);
         for effect in &effects { if let Effect::Store { batch, .. } = effect { self.pending.push(*batch); } }
         self.state = state;
+        if effects.iter().any(|effect| matches!(effect, Effect::SelfSlotFreed)) { self.feed(RefInput::SlotFreed); }
     }
 
     fn next_reply(&mut self) -> u64 { self.reply += 1; self.reply }
@@ -116,7 +119,27 @@ impl OwnerRun {
         }
     }
 
+    /// The inputs that name a transfer no one accepted: the owner must treat them as strangers.
+    fn stray(&mut self, step_kind: Step) -> bool {
+        use crate::owners::write::transfer::TransferInput;
+        use crate::store::files::Location;
+        let (transfer_id, attempt_id) = (999, 1);
+        let input = match step_kind {
+            Step::CopyDone => TransferInput::CopyDone { transfer_id, attempt_id, size: 10, sha256: "h".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+            Step::CopyFailed => TransferInput::CopyFailed { transfer_id, attempt_id, error: "unreadable".into() },
+            Step::PartOk => TransferInput::StepOk { transfer_id, attempt_id, part: Some(1), upload_id: None, etag: Some("e1".into()) },
+            Step::ErrorTemporary | Step::ErrorPermanent => TransferInput::StepError { transfer_id, attempt_id, temporary: matches!(step_kind, Step::ErrorTemporary), error: super::transfer_harness::refusal() },
+            Step::Completed => TransferInput::Completed { transfer_id, attempt_id, signed_id: Some("signed".into()) },
+            Step::CompleteErrorTemporary => TransferInput::CompleteError { transfer_id, attempt_id, temporary: true, error: super::transfer_harness::refusal() },
+            Step::MutationConfirmed => return true,
+            _ => return false,
+        };
+        self.twin.post(input);
+        true
+    }
+
     fn apply(&mut self, step_kind: Step) {
+        if self.id.is_none() && self.stray(step_kind) { return; }
         let id = self.id.unwrap_or(1);
         match step_kind {
             Step::Accept => { let (id, _, _) = self.twin.accepting(KEY, 1); self.id = Some(id); }
@@ -172,7 +195,7 @@ fn message(payload: &(dyn std::any::Any + Send)) -> String {
 fn matrix_owner_state_input_transfer() {
     let mut matrix = Matrix::new("S-transfer");
     let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
+    std::panic::set_hook(Box::new(|info| { *LOCATION.lock().unwrap_or_else(|error| error.into_inner()) = info.location().map(|place| format!("{}:{}", place.file(), place.line())).unwrap_or_default(); }));
     for (name, script) in scripts() {
         for (second_name, second) in second_inputs() {
             let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -190,7 +213,7 @@ fn matrix_owner_state_input_transfer() {
                     let wrong = seen.iter().find(|(_, left, right)| left != right);
                     match wrong { Some((step_kind, left, right)) => (format!("{step_kind} -> {left}"), format!("{step_kind} -> {right}")), None => ("stages agree".to_string(), "stages agree".to_string()) }
                 }
-                Err(payload) => ("the script runs".to_string(), format!("panic: {}", message(payload.as_ref()))),
+                Err(payload) => ("the script runs".to_string(), format!("panic: {} at {}", message(payload.as_ref()), LOCATION.lock().unwrap_or_else(|error| error.into_inner()))),
             };
             matrix.check(name, "ref_transfer", second_name, &expected, &observed);
         }
