@@ -108,7 +108,7 @@ fn store_prop_atomic() {
         StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: vec![7; 300_000], name: "photo".into(), mime: "image/jpeg".into() },
         StoreOp::Rows { model: "missing".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"a"}"#.into() }] },
     ];
-    assert!(write(&database, ops).is_err());
+    assert!(matches!(write(&database, ops), Err(crate::store::StoreError::UnknownModel(model)) if model == "missing"));
     assert!(database.file("moments", &id("m1"), "media").unwrap().is_none());
     let files = directory.path().join("data.sqlite.files");
     assert!(!files.exists() || std::fs::read_dir(files).unwrap().all(|entry| entry.unwrap().file_name() == "cache"));

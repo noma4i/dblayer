@@ -81,7 +81,7 @@ fn data_nested_decode_table() {
     ];
     for (case, row) in bad {
         let db = readings();
-        assert!(land(&db, row.clone()).is_err(), "{case}: the row landed");
+        assert!(matches!(land(&db, row.clone()), Err(StoreError::Invalid(_))), "{case}: the row landed");
     }
 }
 
@@ -90,7 +90,7 @@ fn data_nested_decode_table() {
 fn data_nested_decode_error_lands_nothing() {
     let db = readings();
     let before = db.revision_seq().unwrap();
-    assert!(land(&db, boxed(json!({"tier": "one"}))).is_err());
+    assert!(matches!(land(&db, boxed(json!({"tier": "one"}))), Err(StoreError::Invalid(_))));
     assert!(stored(&db).is_none(), "the row is not stored");
     assert_eq!(db.revision_seq().unwrap(), before, "the revision did not move");
     land(&db, boxed(json!({"tier": 5}))).unwrap();

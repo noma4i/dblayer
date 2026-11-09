@@ -184,6 +184,13 @@ fn integer_lands_in_an_indexed_column() {
     assert_eq!((value, storage.as_str()), (7, "integer"));
 }
 
+fn refused(result: rusqlite::Result<usize>) -> i32 {
+    match result {
+        Err(rusqlite::Error::SqliteFailure(error, _)) => error.extended_code,
+        other => panic!("not a refusal of SQLite: {other:?}"),
+    }
+}
+
 #[test]
 fn strict_row_table_rejects_wrong_column_type() {
     let connection = Connection::open_in_memory().unwrap();
@@ -194,7 +201,7 @@ fn strict_row_table_rejects_wrong_column_type() {
         [],
     );
 
-    assert!(result.is_err());
+    assert_eq!(refused(result), rusqlite::ffi::SQLITE_CONSTRAINT_DATATYPE);
 }
 
 #[test]
@@ -233,8 +240,8 @@ fn core_constraints_reject_duplicate_scope_order_and_unknown_op_status() {
         )
     };
 
-    assert!(duplicate.is_err());
-    assert!(op("unknown").is_err());
+    assert_eq!(refused(duplicate), rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE);
+    assert_eq!(refused(op("unknown")), rusqlite::ffi::SQLITE_CONSTRAINT_CHECK);
     assert!(op("pending").is_ok());
 }
 
@@ -249,7 +256,7 @@ fn inv_op_10_open_dedupe_key_is_unique_only_while_open() {
     };
 
     assert!(insert("pending", Some("k")).is_ok());
-    assert!(insert("pending", Some("k")).is_err());
+    assert_eq!(refused(insert("pending", Some("k"))), rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE);
     assert!(insert("failed", Some("k")).is_ok());
     assert!(insert("pending", None).is_ok());
     assert!(insert("pending", None).is_ok());
@@ -289,7 +296,7 @@ fn core_table_columns_match_spec() {
         "insert into query_window (key, has_next, pages, issued, applied, generation, landed_at, stale_since) values ('k', 0, 1, 0, 0, 0, 0, 0)",
         [],
     );
-    assert!(bad_flag.is_err());
+    assert_eq!(refused(bad_flag), rusqlite::ffi::SQLITE_CONSTRAINT_CHECK);
 }
 
 #[test]
@@ -539,6 +546,6 @@ fn core_migration_creates_the_file_table_with_a_unique_pair_index() {
     assert!(names(&connection, "index").contains("file_pair"));
     let insert = "insert into file (id, model, row_id, field, name, mime, size, sha256, location, data, created_at) values (?1, 'moments', 'm1', 'media', 'a.png', 'image/png', 3, 'x', ?2, x'010203', 1)";
     connection.execute(insert, ["f1", "inline"]).unwrap();
-    assert!(connection.execute(insert, ["f2", "inline"]).is_err());
-    assert!(connection.execute(insert, ["f3", "elsewhere"]).is_err());
+    assert_eq!(refused(connection.execute(insert, ["f2", "inline"])), rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE);
+    assert_eq!(refused(connection.execute(insert, ["f3", "elsewhere"])), rusqlite::ffi::SQLITE_CONSTRAINT_CHECK);
 }

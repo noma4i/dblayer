@@ -125,7 +125,8 @@ fn a_field_that_is_not_json_fails_the_commit_and_stores_nothing() {
     let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: Some(extensions) };
     let mut commit = envelope(&store, vec![], vec![]);
     commit.operation_transitions = vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }];
-    assert!(store.commit(commit).is_err());
+    let outcome = store.commit(commit);
+    assert!(matches!(outcome, Err(StoreError::Sqlite(rusqlite::Error::ToSqlConversionFailure(_)))), "{:?}", outcome.as_ref().err());
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NOT NULL"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error"), 0);
     let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: None };

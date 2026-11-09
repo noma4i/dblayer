@@ -16,7 +16,7 @@ fn unknown_stored_sync_state_is_a_read_error() {
     let connection = database();
     connection.execute_batch("PRAGMA ignore_check_constraints = ON; INSERT INTO row_sync (model, row_id, state, attempts, since) VALUES ('moments', 'm1', 'broken', 0, 1)").unwrap();
     let error = read_sync(&connection, "moments", &["m1".into()]).unwrap_err();
-    assert!(error.to_string().contains("unknown stored sync state broken"), "{error}");
+    assert_eq!(error.to_string(), "Conversion error from type Text at index: 0, unknown stored sync state broken");
 }
 
 #[test]

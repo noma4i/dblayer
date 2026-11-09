@@ -79,7 +79,7 @@ fn state_names_round_trip_through_sql() {
     for state in SyncState::ALL {
         assert_eq!(SyncState::from_sql(state.as_sql()).unwrap(), state);
     }
-    assert!(SyncState::from_sql("bogus").is_err());
+    assert!(matches!(SyncState::from_sql("bogus"), Err(rusqlite::Error::FromSqlConversionFailure(..))));
 }
 
 #[test]

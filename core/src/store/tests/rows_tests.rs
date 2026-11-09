@@ -26,12 +26,15 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
                 assert_eq!(store.revision_seq().unwrap(), expected + 1);
             }
             _ => {
-                assert!(store.revision_seq().is_err());
-                assert!(store.erase_models(store.generation().next(), &["messages"].map(String::from)).is_err());
+                let read = store.revision_seq();
+                assert!(matches!(read, Err(StoreError::Constraint(_))), "{value:?} {read:?}");
+                let erased = store.erase_models(store.generation().next(), &["messages"].map(String::from));
+                assert!(matches!(erased, Err(StoreError::Constraint(_))), "{value:?} {erased:?}");
             }
         }
         store.lock().connection.execute_batch("DROP TABLE manifest").unwrap();
-        assert!(store.revision_seq().is_err());
+        let dropped = store.revision_seq();
+        assert!(matches!(dropped, Err(StoreError::Ddl(_))), "{dropped:?}");
     }
 }
 

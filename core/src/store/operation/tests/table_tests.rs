@@ -195,8 +195,8 @@ fn reading_a_row_id_that_is_not_valid_fails_instead_of_dropping_it() {
     let connection = database();
     let seq = append_operation(&connection, &mut operation("m1", OperationStatus::Pending), &json!({})).unwrap();
     connection.execute("UPDATE op_row SET row_id = ''", []).unwrap();
-    assert!(read_operation(&connection, seq).is_err());
-    assert!(open_operations(&connection).is_err());
+    assert!(matches!(read_operation(&connection, seq), Err(rusqlite::Error::FromSqlConversionFailure(..))));
+    assert!(matches!(open_operations(&connection), Err(rusqlite::Error::FromSqlConversionFailure(..))));
 }
 
 #[test]
@@ -204,6 +204,6 @@ fn reading_a_temp_id_that_is_not_valid_fails_instead_of_dropping_it() {
     let connection = database();
     let seq = append_operation(&connection, &mut operation("m1", OperationStatus::Pending), &json!({})).unwrap();
     connection.execute("UPDATE op SET temp_id = ''", []).unwrap();
-    assert!(read_operation(&connection, seq).is_err());
-    assert!(open_operations(&connection).is_err());
+    assert!(matches!(read_operation(&connection, seq), Err(rusqlite::Error::FromSqlConversionFailure(..))));
+    assert!(matches!(open_operations(&connection), Err(rusqlite::Error::FromSqlConversionFailure(..))));
 }

@@ -447,7 +447,7 @@ fn store_prop_boot_atomic() {
                       CREATE VIEW row_messages AS SELECT 1 AS id");
     }
     let store = Store::open(&path).unwrap();
-    assert!(store.boot(&[messages_spec()], None).is_err(), "the model table cannot be created over the view");
+    assert!(matches!(store.boot(&[messages_spec()], None), Err(StoreError::Sqlite(_))), "the model table cannot be created over the view");
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"), "the format is not stamped: the old base is whole");
     assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"), "the kept intent stays where it was");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "nothing of the transfer is half done");

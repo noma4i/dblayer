@@ -48,7 +48,7 @@ fn failed_file_write_rolls_the_row_back() {
     let (store, _) = booted_store();
     exec(&store, "CREATE TRIGGER refuse BEFORE INSERT ON file BEGIN SELECT RAISE(ABORT, 'refused'); END");
     let outcome = store.commit(with_files(&store, vec![upsert("messages", message("m1", "c1"))], vec![FileOp::Put(file("f1", "m1", "media", b"abc"))]));
-    assert!(outcome.is_err());
+    assert!(matches!(outcome, Err(StoreError::Constraint(message)) if message == "refused"));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM file"), 0);
 }
