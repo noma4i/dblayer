@@ -582,7 +582,7 @@ impl Delivery {
                 }
             }
             (Stage::Ended, Input::Pull) => {
-                if self.journal.is_empty() { fx.push(Effect::Answer(Pulled::Value(Val::Ended(self.cause)))); } else { let answer = self.take(); fx.push(Effect::Answer(answer)); }
+                if self.journal.is_empty() { fx.push(Effect::Answer(Pulled::Done)); } else { let answer = self.take(); fx.push(Effect::Answer(answer)); }
             }
             (Stage::Ended, Input::Release) => self.released = true,
             (Stage::Ended, Input::SinkClosed) => {

@@ -13,16 +13,6 @@ fn dlv_cancelling_pull_twice() {
 }
 
 #[test]
-fn dlv_ended_pull_again() {
-    let mut twin = ended_by_epoch();
-    twin.step(Input::Pull);
-    let outcome = twin.answers.register(EPOCH).id();
-    take(&twin.log);
-    twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
-    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::SessionEnded)))]);
-}
-
-#[test]
 fn dlv_live_committed_seen() {
     let mut twin = live_rows();
     take(&twin.log);
@@ -156,7 +146,7 @@ fn dlv_cancel_sink_closed() {
     twin.step(Input::Cancel { reply: 7 });
     twin.step(Input::Pull);
     assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "the waiting Pull gets Ended");
-    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "a Pull after the read end gets the same cause again");
+    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Done)], "a Pull after the read end ends the stream");
     let mut first = live_rows();
     first.step(Input::Cancel { reply: 7 });
     assert_eq!(first.step(Input::SinkClosed), [Effect::Cancelled(7)]);
@@ -540,7 +530,7 @@ fn dlv_ended_pull() {
 fn dlv_ended_pull_none() {
     let mut twin = ended_by_epoch();
     twin.step(Input::Pull);
-    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::SessionEnded)))], "a Pull after the read end gets the same cause again");
+    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Done)], "a Pull after the read end ends the stream");
 }
 
 #[test]
