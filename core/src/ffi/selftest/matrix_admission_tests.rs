@@ -2,10 +2,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::json;
+
 use super::bridge_support_tests::message;
-use super::rig_tests::{bound, Rig};
+use super::rig_tests::{bound, Fault, Rig};
 use super::upload_stand::{plain, Stand, CREATE_MOMENT};
-use crate::ffi::upload_wire::{WireUploadRequest, WireUploadSource};
+use crate::ffi::upload_wire::{WireSource, WireUploadRequest, WireUploadSource};
 use crate::ffi::{Database, DbError, FileBytes};
 use crate::test_matrix::{crate_dir, Matrix};
 
@@ -114,7 +116,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "create" => database.create(epoch, model, args.values.clone(), "{}".into()).await.map(|_| ()),
         "cancel_upload" => database.cancel_upload(epoch, model, row, "upload".into()).await.map(|_| ()),
         "node" => database.node(epoch, model, "node".into(), row, false).await.map(|_| ()),
-        "nodes" => database.nodes(epoch, model, "node".into(), vec![row]).await.map(|_| ()),
+        "nodes" => database.nodes(epoch, model, "nodes".into(), vec![row]).await.map(|_| ()),
         "refresh" => database.refresh(epoch, model, Some("profile".into()), "{}".into()).await,
         "edge_values" => database.edge_values(epoch, model, Some("profile".into()), "{}".into(), vec![row]).await.map(|_| ()),
         "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: args.source_path.clone(), name: None, mime: None }, variables_json: "{}".into() }).await.map(|_| ()),
@@ -155,8 +157,9 @@ async fn admission_group(group: usize) {
     let all = exported_calls();
     let calls: Vec<String> = all.iter().enumerate().filter(|(index, _)| index % 4 == group).map(|(_, call)| call.clone()).collect();
     if group == 0 && all.len() < 30 { matrix.unclassified("Database", "-", "-", &format!("the source scan found {} exported calls", all.len())); }
-    let rig = Rig::encrypted().await;
+    let rig = Rig::encrypted_with_options(false, true).await;
     rig.login_ios("A").await;
+    rig.world.answer_with("UsersByIds", json!({"data":{"nodes":[]}}));
     let epoch = rig.database.session_epoch();
     let receipt = bound(rig.database.send(message(epoch, "present", 1))).await.unwrap();
     let present = receipt.optimistic_value.as_ref().map(|row| row.id.clone()).unwrap_or_default();
@@ -169,6 +172,22 @@ async fn admission_group(group: usize) {
     let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
     let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
     let _ = closed_files.close_database().await;
+    let _ = bound(rig.database.outcome(receipt)).await;
+    rig.world.fail_next("SendMessage", Fault::Http(422));
+    let retry_receipt = bound(rig.database.send(message(epoch, "retryrow", 2))).await.unwrap();
+    let retry_row = retry_receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let _ = bound(rig.database.outcome(retry_receipt)).await;
+    rig.world.fail_next("SendMessage", Fault::Http(422));
+    let discard_receipt = bound(rig.database.send(message(epoch, "discardrow", 3))).await.unwrap();
+    let discard_row = discard_receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let _ = bound(rig.database.outcome(discard_receipt)).await;
+    let cancel_receipt = bound(rig.database.send(message(epoch, "cancelrow", 4))).await.unwrap();
+    let cancel_row = cancel_receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let _ = bound(rig.database.outcome(cancel_receipt)).await;
+    let cancel_source = directory.path().join("cancel.bin");
+    std::fs::write(&cancel_source, b"clip").unwrap();
+    let _blob_gate = rig.world.hold_next("CreateBlob");
+    let _ = bound(rig.database.upload(epoch, "Message".into(), cancel_row.clone(), "upload".into(), WireUploadRequest { source: WireSource::File { path: cancel_source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() })).await;
     let target = |name: &str, closed: bool| -> (Arc<Database>, Args) {
         let (database, epoch, row) = match (FILE_CALLS.contains(&name), closed) {
             (true, false) => (files.clone(), files_epoch, files_row.clone()),
@@ -179,6 +198,14 @@ async fn admission_group(group: usize) {
         let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into(), action: "upload".into(), source_path: String::new() };
         if RELATION_CALLS.contains(&name) { args.model = "User".into(); args.row = "user".into(); }
         if name == "set_ephemeral" { args.model = "User".into(); args.row = "user".into(); args.values = "{\"typing\":true}".into(); }
+        if !closed {
+            match name {
+                "retry" => args.row = retry_row.clone(),
+                "discard" => args.row = discard_row.clone(),
+                "cancel_upload" => args.row = cancel_row.clone(),
+                _ => {}
+            }
+        }
         (database, args)
     };
     for name in &calls {
@@ -224,16 +251,23 @@ async fn matrix_call_admission_uploads() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
-    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     database.set_online(false).unwrap();
+    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let supply_row = bound(database.send(plain("Moment", r#"{"text":"supply"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let fail_row = bound(database.send(plain("Moment", r#"{"text":"fail"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
+    let pending = || WireUploadRequest { source: WireSource::Pending, variables_json: "{}".into() };
+    let _ = bound(database.upload(epoch, "Moment".into(), supply_row.clone(), "upload_clip".into(), pending())).await;
+    let _ = bound(database.upload(epoch, "Moment".into(), fail_row.clone(), "upload_clip".into(), pending())).await;
+    let deferred = |name: &str| match name { "supply_source" => supply_row.clone(), "fail_source" => fail_row.clone(), _ => row.clone() };
     let args = |epoch: u64| Args { epoch, model: "Moment".into(), row: row.clone(), field: String::new(), local_path: String::new(), local_value: String::new(), values: String::new(), action: "upload_clip".into(), source_path: source.to_string_lossy().into_owned() };
     for name in UPLOAD_CALLS {
         for mask in 0u8..8 {
             let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
             let mut call = args(epoch);
+            call.row = deferred(name);
             if stale { call.epoch += 1000; }
             if invalid { call.model = "NoSuchModel".into(); }
             if missing { call.row = "absent-row".into(); }

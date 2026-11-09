@@ -50,6 +50,7 @@ const OPERATIONS: &str = r#"[
 /// The plain harness also holds a memory model that a server subscription feeds.
 pub(super) fn plain_models() -> String {
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&models()).unwrap();
+    add_user_ephemeral_and_nodes(&mut models[0]);
     let mut notice = crate::schema::ModelSpec::new("Notice", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;
     let mut relation = crate::schema::RelationSpec::global("recent");
@@ -60,6 +61,18 @@ pub(super) fn plain_models() -> String {
     models.push(group_spec());
     models.push(member_spec());
     serde_json::to_string(&models).unwrap()
+}
+
+/// The admission matrix reads `typing` through `set_ephemeral` and the many-node relation `nodes` through `nodes`.
+fn add_user_ephemeral_and_nodes(user: &mut crate::schema::ModelSpec) {
+    use crate::schema::{Coverage, EphemeralSpec, FieldSpec, NodeRead, RelationSpec, RemoteShape};
+    let mut typing = FieldSpec::scalar("typing", crate::value::ScalarKind::Bool);
+    typing.default = Some(json!(false));
+    user.ephemeral.push(EphemeralSpec::new(typing));
+    let mut nodes = RelationSpec::global("nodes");
+    nodes.remote = Some(crate::schema_fixtures::remote("UsersByIds", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    nodes.node = Some(NodeRead::Many);
+    user.relations.push(nodes);
 }
 
 /// The chat message of the bridge sequences: a thread read from the server and a create that works offline.
@@ -89,6 +102,17 @@ fn message_spec() -> crate::schema::ModelSpec {
     forward.root = Some("messageForward.message".into());
     forward.copies_receiver_to = Some(crate::schema::ReceiverCopy { arg: "targetChatId".into(), field: "chatId".into(), set: Default::default() });
     message.actions.push(forward);
+    let mut edit = ActionDeclaration::new("edit", RootShape::Upsert);
+    edit.mutation = Some("MessageEdit".into());
+    edit.variables.insert("id".into(), "id".into());
+    edit.variables.insert("text".into(), "text".into());
+    message.actions.push(edit);
+    let mut upload = ActionDeclaration::new("upload", RootShape::Upsert);
+    upload.mutation = Some("SendMessageFile".into());
+    upload.upload = true;
+    upload.root = Some("sendMessageFile".into());
+    message.actions.push(upload);
+    message.upload_steps = Some(crate::owners::write::upload::UploadOperations::test_steps());
     message
 }
 
@@ -150,6 +174,7 @@ pub(super) fn plain_operations() -> String {
     let mut operations: Vec<Value> = serde_json::from_str(OPERATIONS).unwrap();
     operations.push(json!({"name":"RigEvents","document":"subscription RigEvents { rigEvents { id } }","rootPath":"rigEvents"}));
     operations.push(json!({"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}));
+    operations.push(json!({"name":"UsersByIds","document":"query UsersByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on User { id name } } }"}));
     json!(operations).to_string()
 }
 
