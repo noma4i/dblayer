@@ -5,7 +5,7 @@ use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 
-fn supplied(source: Source) -> SuppliedSource { SuppliedSource { source, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), variables: Default::default(), wrap: None } }
+fn supplied(source: Source) -> SuppliedSource { SuppliedSource { source, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None } }
 
 fn pending(twin: &mut Twin) -> (u64, u64) {
     let mut request = item(KEY, 1);

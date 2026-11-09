@@ -146,6 +146,8 @@ pub enum StoreOp {
     DetachFile { model: String, row_id: String, field: String },
     /// Rows of a `memory` model, written to the TEMP tables.
     EphemeralRows { model: String, rows: Vec<RowValue> },
+    /// Local fields joined to the stored row in the transaction that holds them: `values` is a JSON object of the local fields only.
+    LocalFields { model: String, row_id: String, values: String },
     /// A local field of a row that is not in the base yet: it sits on the row when the row lands.
     LocalPending { model: String, rows: Vec<RowValue> },
     /// Take back the `effects` of the operation.

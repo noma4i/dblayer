@@ -29,6 +29,7 @@ impl TransferState {
         transfer.source = Some(file.clone());
         transfer.steps = Some(source.steps.clone());
         transfer.supply_values = source.values.clone();
+        transfer.supply_local = source.local.clone();
         transfer.new_source = Some(ActiveSource { request: source, body });
         transfer.supply_back = Some(back);
         transfer.supply_reply = Some(rep);
@@ -106,6 +107,7 @@ impl TransferState {
             supply_reply: None,
             supply_back: None,
             supply_values: Default::default(),
+            supply_local: String::new(),
             discard_waiters: Vec::new(),
             discard_sent: false,
             new_source: None,
@@ -338,6 +340,7 @@ impl TransferState {
                 transfer.mutation.body = source.body;
             }
             transfer.supply_values = Default::default();
+            transfer.supply_local = String::new();
             transfer.next_step = NextStep::Part(1);
             transfer.confirmed_parts = 0;
             transfer.upload_id = None;
@@ -399,6 +402,7 @@ impl TransferState {
         transfer.steps = None;
         transfer.new_source = None;
         transfer.supply_values = Default::default();
+        transfer.supply_local = String::new();
         let rep = transfer.supply_reply.take();
         self.delete_copy(id, fx);
         self.rounds_idle(id, fx);

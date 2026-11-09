@@ -65,7 +65,8 @@ impl Database {
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
         let values = super::upload_wire::object(&source.values_json)?;
         let variables = super::upload_wire::object(&source.variables_json)?;
-        let effects = self.db.plan_update(model, row, values, Map::new())?.effects;
+        let (planned, local) = self.db.plan_supplied(model, row, values)?;
+        let effects = planned.effects;
         let (file, multipart) = self.source_of(&source.path)?;
         let name = source.name.unwrap_or_else(|| std::path::Path::new(&source.path).file_name().map_or_else(|| source.path.clone(), |name| name.to_string_lossy().into_owned()));
         let spec = self.db.spec(model)?;
@@ -77,7 +78,7 @@ impl Database {
             Some(batch) => spec.actions.iter().find(|action| action.name == batch.single).and_then(|action| action.wrap.clone()),
             None => declaration.wrap.clone(),
         };
-        Ok(SuppliedSource { source: file, steps, values: effects, variables, wrap })
+        Ok(SuppliedSource { source: file, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
     }
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.

@@ -72,6 +72,8 @@ pub struct SuppliedSource {
     pub source: Source,
     pub steps: Steps,
     pub values: crate::owners::store::IntentEffects,
+    /// The local fields of the values as a JSON object, written by the transaction of the copy.
+    pub local: String,
     pub variables: serde_json::Map<String, serde_json::Value>,
     pub wrap: Option<String>,
 }
@@ -421,6 +423,7 @@ pub struct Transfer {
     pub supply_reply: Option<ReplyId>,
     pub supply_back: Option<TransferStage>,
     pub supply_values: crate::owners::store::IntentEffects,
+    pub supply_local: String,
     pub discard_waiters: Vec<ReplyId>,
     pub discard_sent: bool,
     pub new_source: Option<ActiveSource>,

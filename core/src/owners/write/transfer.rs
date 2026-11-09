@@ -133,6 +133,9 @@ impl TransferState {
                     if let (Some(op_id), true, TransferStage::PersistingCopy, Some(_)) = (own, matches!(kind, StoreKind::SyncUpload | StoreKind::Completed), transfer.stage, transfer.supply_back) {
                         let payload = transfer.new_source.as_ref().map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
                         ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload, effects: transfer.supply_values.clone() });
+                        if transfer.supply_local != "{}" && !transfer.supply_local.is_empty() {
+                            ops.push(StoreOp::LocalFields { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), values: transfer.supply_local.clone() });
+                        }
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
                     }
                     if kind == StoreKind::SyncUpload && transfer.stage == TransferStage::Accepting {

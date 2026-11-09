@@ -22,6 +22,15 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             if reader.stored_row(model, row_id)?.is_some_and(|row| Some(row.revision) == expected) { results.push(writer.expire(model, row_id)?); }
         }
         StoreOp::LocalPending { model, rows } => results.push(writer.local_pending(model, rows)?),
+        StoreOp::LocalFields { model, row_id, values } => {
+            let stored = super::Reader::new(writer.connection, writer.models).stored_row(model, row_id)?;
+            let Some(stored) = stored else { return Err(StoreError::Constraint(format!("local fields of a row that is not stored: {model}:{row_id}"))) };
+            let mut row = stored.row;
+            let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_str(values)?;
+            for (name, value) in fields { join_local(&mut row, name, value); }
+            let joined = crate::owners::store::RowValue { row_id: row_id.clone(), values: serde_json::Value::Object(row).to_string() };
+            if let Some(result) = writer.upsert(model, &joined, true, false)? { results.push(result); }
+        }
         StoreOp::StaleFamilies { families } => results.push(writer.stale_families(families)?),
         StoreOp::Numbers { model, row_id, writes } => {
             if let Some(result) = writer.numbers(model, row_id, writes)? { results.push(result); }
@@ -100,4 +109,11 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
     }
     Ok(true)
+}
+
+fn join_local(row: &mut serde_json::Map<String, serde_json::Value>, name: String, value: serde_json::Value) {
+    match (row.get_mut(&name), value) {
+        (Some(serde_json::Value::Object(stored)), serde_json::Value::Object(fields)) => for (key, field) in fields { join_local(stored, key, field); },
+        (_, value) => { row.insert(name, value); }
+    }
 }

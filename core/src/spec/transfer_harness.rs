@@ -421,7 +421,7 @@ impl Twin {
 
     pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
         let reply = self.reply();
-        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), variables: Default::default(), wrap: None });
+        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None });
         (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
     }
 

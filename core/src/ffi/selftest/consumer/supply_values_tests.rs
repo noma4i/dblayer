@@ -29,7 +29,7 @@ async fn consumer_supplied_values_reach_the_row_before_the_blob_transfer() {
             let command = CommandRequest { epoch, model: "Message".into(), values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":"k1","media":{"kind":"VIDEO"}}).to_string(), args_json: "{}".into(), upload: Some(CommandUpload { action: "send_file".into(), request }) };
             bound(database.send(command)).await.unwrap().optimistic_value.expect("the optimistic row").id
         } else {
-            let items = vec![WireUploadItem { values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":"k1","mediaGroup":{"id":"album","position":0,"size":1},"media":{"kind":"VIDEO"}}).to_string(), path: None, name: None, mime: None, variables_json: "{}".into() }];
+            let items = (0..2).map(|index| WireUploadItem { values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":format!("k{index}"),"mediaGroup":{"id":"album","position":index,"size":2},"media":{"kind":"VIDEO"}}).to_string(), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
             bound(database.upload_create_batch(epoch, "Message".into(), items, WireUploadBatch { operation: "send_files".into(), variables_json: r#"{"chatId":"c1"}"#.into() })).await.unwrap().items[0].optimistic_value.id.clone()
         };
         let action = if mode == "single" { "send_file" } else { "send_files" };
@@ -43,7 +43,7 @@ async fn consumer_supplied_values_reach_the_row_before_the_blob_transfer() {
 
         assert!(supplied.is_ok(), "{mode}: supply_source answered while the blob request was held: {supplied:?}");
         let row = row_of(&stand, &id);
-        assert_eq!(row["localPreviewUrl"], json!(format!("file://{path}")), "{mode}: the local value is in the row at the answer");
+        assert_eq!(row["localPreviewUrl"], json!(format!("file://{path}")), "{mode}: the local value is in the row at the answer: {row}");
         assert_eq!(row["media"]["fileUrl"], json!(format!("file://{path}")), "{mode}: the media values are in the row at the answer");
         stand.release(&["CreateBlob"]);
         database.close_now();

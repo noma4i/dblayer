@@ -256,10 +256,9 @@ impl Store {
         Ok(Some(MutationCall { mutation, variables, on_failure: declaration.on_failure, expires_after: declaration.expires_after }))
     }
 
-    /// The write of a local field: the value goes on the row, or waits for the row when it is not in the base.
-    pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, CoreError> {
-        let spec = self.spec(model)?;
-        let slot = spec.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
+    /// The value of a local field as the row stores it: checked against the declaration of the slot.
+    fn local_value(&self, model: &str, path: &str, value: Value) -> Result<Value, CoreError> {
+        let slot = self.spec(model)?.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {
             None if !value.is_null() => match slot.field.fault(&value, path, true, &mut Vec::new()) {
                 Some(crate::schema::ValueFault::Unknown(field)) => return Err(CoreError::UnknownField { model: model.to_string(), field }),
@@ -268,6 +267,26 @@ impl Store {
             },
             _ => value,
         };
+        Ok(value)
+    }
+
+    /// The values a supplied source carries: the server fields are an update of the row, the local fields come back apart, written by the same transaction.
+    pub(crate) fn plan_supplied(&self, model: &str, id: &RowId, values: Row) -> Result<(Planned, Row), CoreError> {
+        let spec = self.spec(model)?;
+        let (local, server): (Vec<_>, Vec<_>) = values.into_iter().partition(|(name, _)| spec.local_slot(name).is_some());
+        let planned = self.plan_update(model, id, server.into_iter().collect(), Row::new())?;
+        let mut written = Row::new();
+        for (path, value) in local {
+            let value = self.local_value(model, &path, value)?;
+            if let Some(slot) = spec.local_slot(&path) { slot.write(&mut written, value); }
+        }
+        Ok((planned, written))
+    }
+
+    /// The write of a local field: the value goes on the row, or waits for the row when it is not in the base.
+    pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, CoreError> {
+        let value = self.local_value(model, path, value)?;
+        let slot = self.spec(model)?.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let row = self.read_models(&[model], |reader| Ok(reader.point(model, id.as_str())?))?;
         Ok(match row {
             Some(mut row) => {
