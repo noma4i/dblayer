@@ -7,7 +7,7 @@ use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectRea
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
-use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, Why};
+use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 /// The slots of the peers and of the owner in every test: the peers first.
@@ -304,7 +304,16 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
     if state == St::None {
         return (twin, 0);
     }
-    let policy = if state == St::Failed { Policy::Keep } else { ctx.policy };
+    if state == St::WaitingDeclaration {
+        let mut twin = Twin::bare();
+        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
+        twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
+        twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
+        assert_eq!(twin.stage(7), Some(St::WaitingDeclaration), "the owner reached WaitingDeclaration");
+        twin.waiter(7);
+        return (twin, 7);
+    }
+    let policy = if matches!(state, St::Failed | St::MarkingFailed | St::MarkingRetry) { Policy::Keep } else { ctx.policy };
     let id = match state {
         St::Submitting | St::Queued => {
             if !ctx.row_free {
@@ -341,6 +350,16 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
             match state {
                 St::Landing => { twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }); }
                 St::RollingBack(RWhy::Rejected) => { twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); }
+                St::PersistingAttempt => {
+                    twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
+                    twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
+                }
+                St::MarkingFailed => { twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); }
+                St::MarkingRetry => {
+                    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+                    twin.committed(id);
+                    twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 77 });
+                }
                 St::Failed => {
                     twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
                     twin.committed(id);
