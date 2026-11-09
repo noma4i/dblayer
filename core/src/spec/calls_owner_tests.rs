@@ -125,6 +125,50 @@ fn call_awaiting_snapshot_run() {
 }
 
 #[test]
+fn call_response_transient() {
+    let mut twin = Twin::new();
+    twin.feed(run(1));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: None, data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Transient { reason: "retry".into() } });
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.tick(crate::runtime::Time(1_000));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
+#[test]
+fn call_transport_offline() {
+    let mut twin = Twin::new();
+    twin.feed(run(1));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id: 1, error: CallError::Network });
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.tick(crate::runtime::Time(1_000));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
+#[test]
+fn call_waiting_network_offline() {
+    let mut twin = Twin::new();
+    twin.feed(run(1));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id: 1 });
+    twin.det.run_until_quiet(100).unwrap();
+    take(&twin.log);
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
+#[test]
 fn call_cancel_before_snapshot() {
     let mut twin = Twin::with(None);
     twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
