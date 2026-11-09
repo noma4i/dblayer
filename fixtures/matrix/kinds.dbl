@@ -1,0 +1,46 @@
+model Kind, storage: :local do
+  attribute :title, :string
+  attribute :count, :int, null: true
+  attribute :ratio, :num, null: true
+  attribute :flag, :bool, null: true
+  attribute :when, :date, null: true
+  attribute :ref, :id, null: true
+  attribute :payload, :json, null: true
+  attribute :mood, :enum, values: ["calm", "loud"], null: true
+  attribute :fallback, :string, default: "base"
+  attribute :tags, [:string], default: []
+  attribute :note, :string, optional: true, local: true
+  attribute :photo, :file, null: true
+  attribute :box, KindBox, null: true, merge: { stamp: :local } do
+    attribute :label, :string
+    attribute :stamp, :string, optional: true
+    attribute :inner, KindBoxInner, null: true do
+      attribute :depth, :int, default: 1
+      attribute :leaf, KindLeaf, null: true do
+        attribute :value, :string, null: true
+      end
+    end
+  end
+  attribute :boxes, [KindItem], default: [] do
+    attribute :name, :string
+  end
+  attribute :attachment, KindAttachment, null: true do
+    on KindWord do
+      attribute :text, :string
+    end
+    on KindNumber do
+      attribute :amount, :int
+    end
+  end
+  attribute :attachments, [KindAttachments] do
+    on KindChip do
+      attribute :text, :string
+    end
+    on KindCount do
+      attribute :amount, :int
+    end
+  end
+  ephemeral do
+    attribute :typing, :bool, default: false
+  end
+end
