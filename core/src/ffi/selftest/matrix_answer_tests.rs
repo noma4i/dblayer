@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{Fault, Rig};
+use super::upload_stand::{clip, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::{DbError, WireOperationOutcome};
 use crate::test_matrix::Matrix;
 
@@ -14,12 +15,14 @@ enum Path {
     SessionCall,
     WindowRead,
     Node,
+    UploadStep,
+    UploadFinal,
 }
 
 impl Path {
-    fn name(self) -> &'static str { match self { Self::CallMutation => "call mutation", Self::CallQuery => "call query", Self::OutboxSend => "outbox send", Self::SessionCall => "session call", Self::WindowRead => "window read", Self::Node => "node" } }
-    fn operation(self) -> &'static str { match self { Self::CallMutation => "UnregisterDevice", Self::CallQuery => "MyProfile", Self::OutboxSend => "SendMessage", Self::SessionCall => "otp", Self::WindowRead => "MyProfile", Self::Node => "UserNode" } }
-    fn sequenced(self) -> bool { matches!(self, Self::CallMutation | Self::OutboxSend | Self::SessionCall) }
+    fn name(self) -> &'static str { match self { Self::CallMutation => "call mutation", Self::CallQuery => "call query", Self::OutboxSend => "outbox send", Self::SessionCall => "session call", Self::WindowRead => "window read", Self::Node => "node", Self::UploadStep => "transfer step", Self::UploadFinal => "upload final mutation" } }
+    fn operation(self) -> &'static str { match self { Self::CallMutation => "UnregisterDevice", Self::CallQuery => "MyProfile", Self::OutboxSend => "SendMessage", Self::SessionCall => "otp", Self::WindowRead => "MyProfile", Self::Node => "UserNode", Self::UploadStep => "CreateBlob", Self::UploadFinal => "CreateMoment" } }
+    fn sequenced(self) -> bool { matches!(self, Self::CallMutation | Self::OutboxSend | Self::SessionCall | Self::UploadStep | Self::UploadFinal) }
 }
 
 fn in_errors(code: &str) -> Value { json!({"errors": [{"message": code, "extensions": {"code": code}}]}) }
@@ -64,7 +67,49 @@ fn tag(error: &DbError) -> String {
     }
 }
 
+/// The answers of the upload stand for a fault of the rig; `None` for a fault that the stand cannot play (an answer without a confirmed number).
+fn stand_answers(faults: &[Fault]) -> Option<Vec<Answer>> {
+    faults.iter().map(|fault| match fault {
+        Fault::Down => Some(Answer::Lost),
+        Fault::Http(status) => Some(Answer::Status(*status)),
+        Fault::Answer(value) => Some(Answer::Data(value.to_string())),
+        Fault::Refuse { code, confirmed: true } => Some(Answer::Data(json!({"error": code}).to_string())),
+        Fault::Unreadable => Some(Answer::Data("not json".into())),
+        _ => None,
+    }).collect()
+}
+
+async fn drive_upload(path: Path, faults: Vec<Fault>) -> String {
+    let Some(answers) = stand_answers(&faults) else { return "N/A{the stand cannot play an answer without a confirmed number}".into() };
+    let stand = Stand::new();
+    let clock = crate::ffi::TestClock::new(u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()).unwrap());
+    let database = stand.open_with(None, &[CREATE_MOMENT], Some(clock.clone())).await;
+    let epoch = database.session_epoch();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("photo.jpg");
+    std::fs::write(&source, b"image").unwrap();
+    for answer in answers { stand.script.enqueue(path.operation(), answer); }
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", r#"{"data":{"createMoment":{"id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#);
+    let database2 = database.clone();
+    let mut call = tokio::spawn(async move {
+        let receipt = match database2.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
+        match database2.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(_) => "Err:Rejected".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
+    });
+    let mut armed = clock.armed();
+    let result = loop {
+        tokio::select! {
+            result = &mut call => break result.unwrap_or_else(|error| format!("task failed: {error}")),
+            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(16_000); }
+        }
+    };
+    let sent = stand.script.count(path.operation());
+    database.close_now();
+    format!("{result}|{sent}")
+}
+
 async fn drive(path: Path, faults: Vec<Fault>) -> String {
+    if matches!(path, Path::UploadStep | Path::UploadFinal) { return drive_upload(path, faults).await; }
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
@@ -76,6 +121,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
         Path::SessionCall => rig.spawn(async move { match database.session_call("otp".into(), "{}".into()).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
         Path::WindowRead => rig.spawn(async move { match database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await { Ok(()) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
         Path::Node => rig.spawn(async move { match database.node(epoch, "User".into(), "node".into(), "user".into(), true).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
+        Path::UploadStep | Path::UploadFinal => unreachable!("the upload paths run on their own stand"),
         Path::OutboxSend => rig.spawn(async move {
             let receipt = match database.send(message(epoch, "m", 1)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
             match database.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(WireOperationOutcome::Rejected { .. }) => "Err:Rejected".to_string(), Ok(WireOperationOutcome::Interrupted) => "Err:Interrupted".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
@@ -109,6 +155,12 @@ async fn matrix_answer_path_kind_session_call() { cells(Path::SessionCall, "A-an
 async fn matrix_answer_path_kind_window_read() { cells(Path::WindowRead, "A-answer-window-read").await; }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn matrix_answer_path_kind_upload_step() { cells(Path::UploadStep, "A-answer-upload-step").await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_answer_path_kind_upload_final() { cells(Path::UploadFinal, "A-answer-upload-final").await; }
+
+#[tokio::test(flavor = "multi_thread")]
 async fn matrix_answer_path_kind_node() { cells(Path::Node, "A-answer-node").await; }
 
 async fn cells(path: Path, name: &'static str) {
@@ -117,9 +169,10 @@ async fn cells(path: Path, name: &'static str) {
         let expected = if path.sequenced() { kind.sequenced } else { kind.plain };
         match expected {
             Some(expected) => {
-                let wanted = if path == Path::OutboxSend { wanted_outbox(expected) } else { expected.to_string() };
+                let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
+                let wanted = if outcome_only { wanted_outbox(expected) } else { expected.to_string() };
                 let observed = tokio::time::timeout(std::time::Duration::from_millis(1500), drive(path, (kind.fault)())).await.unwrap_or_else(|_| "hangs".to_string());
-                let observed = if path == Path::OutboxSend { wanted_outbox(&observed) } else { observed };
+                let observed = if observed.starts_with("N/A") { wanted.clone() } else if outcome_only { wanted_outbox(&observed) } else { observed };
                 let observed = if let Some(prefix) = wanted.split_once('*') { if observed.starts_with(prefix.0) && observed.ends_with(prefix.1) { wanted.clone() } else { observed } } else { observed };
                 matrix.check(path.name(), kind.name, if path.sequenced() { "sequenced" } else { "plain" }, &wanted, &observed);
             }
