@@ -583,12 +583,12 @@ impl TransferState {
                 run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
             }
             TransferInput::Closing => {
-                self.answer_held(fx);
+                self.answer_held(Fault::Closed, fx);
                 self.close(fx);
             }
             TransferInput::EpochEnded(_) => {
                 self.ended = true;
-                self.answer_held(fx);
+                self.answer_held(Fault::SessionEnded, fx);
                 self.epoch_ended(fx);
             }
             other => self.handle(other, fx),
@@ -611,10 +611,10 @@ impl TransferState {
     }
 
     /// Every held call gets exactly one answer.
-    pub(super) fn answer_held(&mut self, fx: &mut Fx) {
+    pub(super) fn answer_held(&mut self, fault: Fault, fx: &mut Fx) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted, None)),
                 _ => {}
             }

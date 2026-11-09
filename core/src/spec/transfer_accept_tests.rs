@@ -45,6 +45,18 @@ fn xfer_accept_while_restoring() {
 }
 
 #[test]
+fn xfer_held_accept_end_cause() {
+    for (closing, expected) in [(false, Fault::SessionEnded), (true, Fault::Closed)] {
+        let mut twin = Twin::bare(1);
+        let reply = twin.reply();
+        let pending = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
+        assert!(pending.replies(reply).is_empty());
+        let ended = if closing { twin.close() } else { twin.end_epoch() };
+        assert_eq!(Twin::fault(&ended, reply), Some(expected));
+    }
+}
+
+#[test]
 fn xfer_accept() {
     let mut twin = Twin::new();
     let reply = twin.reply();

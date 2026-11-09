@@ -415,7 +415,7 @@ impl TransferState {
         for id in self.open_ids() {
             self.interrupt(id, fx);
         }
-        self.answer_held(fx);
+        self.answer_held(Fault::SessionEnded, fx);
     }
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
@@ -435,7 +435,7 @@ impl TransferState {
                 _ => self.interrupt(id, fx),
             }
         }
-        self.answer_held(fx);
+        self.answer_held(Fault::Closed, fx);
         self.maybe_drained(fx);
     }
 }
