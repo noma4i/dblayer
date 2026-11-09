@@ -13,7 +13,7 @@ fn feed_proto_error_established() {
     let emitted = take(&twin.log);
     assert!(matches!(twin.state().mode(), f::Mode::Draining { connection: found, then: f::Resume::Reopen } if found == connection));
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Close { connection: found, .. }) if *found == connection)));
-    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == f::CLOSE_DRAIN && input.starts_with("Drain"))));
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == crate::owners::read::CLOSE_DRAIN && input.starts_with("Drain"))));
 }
 
 fn alphabet() -> Vec<(&'static str, Input)> {
