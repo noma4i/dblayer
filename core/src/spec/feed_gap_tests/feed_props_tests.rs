@@ -339,3 +339,16 @@ fn feed_drain_vs_cancel_orders() {
         assert_eq!((cancels, drained, schedules, timer_cancels), (1, usize::from(*close == Input::Closing), 1, usize::from(!first_is_tick)), "close {close:?} order {order:?}");
     }
 }
+
+/// P-FEED-32 (feed_prop_stray_input_ignored): the pairs with this basis in the feed.md "Pair, Basis" table (Off x HandshakeDone, FrameOpened, ProtocolError, ChannelConfirmed) leave the owner unchanged: state, effects and observable. ChannelConfirmed arrives inside HandshakeDone.
+#[test]
+fn feed_prop_stray_input_ignored() {
+    let strays = [Input::HandshakeDone, Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: Vec::new() }, Input::ProtocolError { to: To::Opening }];
+    for (index, input) in strays.into_iter().enumerate() {
+        let mut twin = Twin::new();
+        let before = twin.state().mode();
+        let effects = twin.step(input);
+        assert!(effects.is_empty(), "stray input {index} in Off changes nothing: {effects:?}");
+        assert_eq!(twin.state().mode(), before, "stray input {index}: the mode is unchanged");
+    }
+}
