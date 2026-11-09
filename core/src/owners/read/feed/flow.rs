@@ -19,6 +19,8 @@ impl FeedState {
             }
             Mode::Live if self.active_connection() == Some(connection) && self.subscribed.contains(channel) => {
                 let ready = self.model_is_ready(&event.model);
+                self.channel_attempts.remove(channel);
+                self.attempts = 0;
                 let accepted = self.accept(event);
                 if ready {
                     self.seat(vec![accepted], fx);
@@ -44,13 +46,13 @@ impl FeedState {
     }
 
     /// The server closed one channel: without an error the channel subscribes again by the backoff, with an error its models leave `want`.
-    pub(super) fn channel_ended(&mut self, connection: ConnectionId, channel: Channel, failed: bool, fx: &mut Vec<Fx>) {
+    pub(super) fn channel_ended(&mut self, connection: ConnectionId, channel: Channel, error: Option<ChannelError>, fx: &mut Vec<Fx>) {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) {
             return;
         }
         let models = self.models_of(&channel);
         self.confirmed.remove(&channel);
-        if !failed {
+        if error.is_none_or(|error| error.retryable) {
             for model in models.into_iter().filter(|model| self.announced.contains(model)) {
                 self.gapped.insert(model);
             }
@@ -225,8 +227,8 @@ impl FeedState {
                 }
             }
             Frame::Confirmed { id } => self.channel_confirmed(connection, id, fx),
-            Frame::Complete { id } => self.channel_ended(connection, id, false, fx),
-            Frame::Error { id: Some(id) } => self.channel_ended(connection, id, true, fx),
+            Frame::Complete { id } => self.channel_ended(connection, id, None, fx),
+            Frame::Error { id: Some(id) } => self.channel_ended(connection, id, Some(ChannelError { retryable: false }), fx),
             Frame::Ended | Frame::Error { id: None } => self.dropped(connection, fx),
             Frame::Quiet => {}
         }

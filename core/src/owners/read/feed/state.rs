@@ -50,6 +50,9 @@ impl FeedState {
 
     pub fn mode(&self) -> Mode { self.mode }
 
+    /// The connection attempts since the last data: the first `Event` after `Ready` resets them.
+    pub fn attempts(&self) -> u32 { self.attempts }
+
     /// The channels that the models of `want` read, counted while a connection is active.
     pub(super) fn census(&self) -> usize {
         if self.mode == Mode::Ended || self.active.is_none() {
@@ -437,7 +440,6 @@ impl FeedState {
             Mode::Opening { gap } if self.opening_connection() == Some(connection) => {
                 self.active = self.opening.take();
                 self.mode = Mode::Live;
-                self.attempts = 0;
                 self.begin_connection(gap, fx);
             }
             _ => {}

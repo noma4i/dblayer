@@ -83,7 +83,7 @@ impl Rig {
             FeedInput::HandshakeDone { .. } => Some(In::Ready),
             FeedInput::ChannelConfirmed { channel, .. } => Some(In::ChannelConfirmed(channel.clone())),
             FeedInput::Event { channel, event, .. } => Some(In::Event { channel: channel.clone(), model: event.model.clone() }),
-            FeedInput::ChannelEnded { channel, failed, .. } => Some(In::Ended { channel: channel.clone(), failed: *failed }),
+            FeedInput::ChannelEnded { channel, error, .. } => Some(In::Ended { channel: channel.clone(), failed: error.is_some_and(|error| !error.retryable) }),
             FeedInput::ChannelResubscribe { channel, .. } => Some(In::Resubscribe(channel.clone())),
             FeedInput::Online { online_seq, .. } => Some(In::Online(*online_seq)),
             _ => None,
@@ -152,7 +152,7 @@ impl Rig {
 
     fn confirm(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: channel.into() }) }
 
-    fn end(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: channel.into(), failed: false, now: crate::runtime::Time(0) }) }
+    fn end(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: channel.into(), error: None, now: crate::runtime::Time(0) }) }
 
     fn event(&mut self, channel: &str, model: &str, payload: &str) -> Vec<String> {
         self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false } })
@@ -372,7 +372,7 @@ fn feed_chan_unwant_last_user() {
 #[test]
 fn feed_chan_ended_resubscribes() {
     let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: false, now: crate::runtime::Time(0) }), ["schedule:channel"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) }), ["schedule:channel"]);
     assert_eq!(rig.state().confirmed(), ["A"], "the channel left the confirmed channels");
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
@@ -384,7 +384,7 @@ fn feed_chan_ended_resubscribes() {
 fn feed_chan_gap_cause_names_last_online() {
     let mut rig = Rig::live();
     rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
-    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: false, now: crate::runtime::Time(0) });
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) });
     rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
     let mut shown = rig.confirm("B");
     shown.sort();
@@ -396,7 +396,7 @@ fn feed_chan_ended_error() {
     let mut rig = Rig::live();
     rig.want("Third", THIRD);
     rig.confirm("C");
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "C".into(), failed: true, now: crate::runtime::Time(0) }), ["modelinvalid:3"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "C".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }), now: crate::runtime::Time(0) }), ["modelinvalid:3"]);
     assert_eq!(rig.state().wants(), ["Chat", "Post"], "the model of the refused channel left want");
     assert_eq!(rig.state().subscribed(), ["A", "B"]);
     assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into(), now: crate::runtime::Time(0) }).is_empty(), "no resubscribe after an error of the request");
@@ -405,7 +405,7 @@ fn feed_chan_ended_error() {
 #[test]
 fn feed_chan_resubscribe() {
     let mut rig = Rig::live();
-    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: false, now: crate::runtime::Time(0) });
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) });
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
 }
 
@@ -424,7 +424,7 @@ fn feed_chan_resubscribe_unwanted() {
 #[test]
 fn feed_live_graphql_error() {
     let mut rig = Rig::live();
-    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: true, now: crate::runtime::Time(0) });
+    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }), now: crate::runtime::Time(0) });
     ended.sort();
     assert_eq!(ended.iter().filter(|event| event.starts_with("modelinvalid:")).cloned().collect::<Vec<_>>(), ["modelinvalid:1", "modelinvalid:2"]);
     assert!(rig.state().wants().is_empty());

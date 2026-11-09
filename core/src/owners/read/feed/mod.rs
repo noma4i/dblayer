@@ -154,6 +154,12 @@ impl Connection {
     fn goodbye(&self) -> bool { matches!(self.protocol, Protocol::Established { .. }) }
 }
 
+/// The error of the server that ended a channel: a retryable one subscribes the channel again by the backoff, any other removes the models of the channel from `want`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelError {
+    pub retryable: bool,
+}
+
 /// The frames Feed sends over an `Established` connection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outgoing {
@@ -223,7 +229,7 @@ pub enum FeedInput {
     Event { connection_id: ConnectionId, channel: Channel, event: FramedEvent },
     ChannelConfirmed { connection_id: ConnectionId, channel: Channel },
     /// The server closed the subscription of one channel: `failed` = with an error of the request.
-    ChannelEnded { connection_id: ConnectionId, channel: Channel, failed: bool, now: Time },
+    ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError>, now: Time },
     ChannelResubscribe { connection_id: ConnectionId, channel: Channel, now: Time },
     /// `dropped` = the number of lost events per model, `None` = the number is unknown.
     ChannelLost { connection_id: ConnectionId, dropped: Option<BTreeMap<String, u64>> },
@@ -479,7 +485,7 @@ impl StateOwner for Feed {
             }
             FeedInput::Event { connection_id, channel, event } => state.event(connection_id, &channel, event, &mut fx),
             FeedInput::ChannelConfirmed { connection_id, channel } => state.channel_confirmed(connection_id, channel, &mut fx),
-            FeedInput::ChannelEnded { connection_id, channel, failed, .. } => state.channel_ended(connection_id, channel, failed, &mut fx),
+            FeedInput::ChannelEnded { connection_id, channel, error, .. } => state.channel_ended(connection_id, channel, error, &mut fx),
             FeedInput::ChannelResubscribe { connection_id, channel, .. } => state.channel_resubscribe(connection_id, channel, &mut fx),
             FeedInput::ChannelLost { connection_id, dropped } => state.channel_lost(connection_id, dropped, &mut fx),
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
