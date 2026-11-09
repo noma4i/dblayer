@@ -167,7 +167,7 @@ fn xfer_orphan_remove_committed() {
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
-    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: true });
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Ok(()) });
     assert_eq!(out.orphans_removed(), vec!["u9".to_string()]);
     let out = twin.commit();
     assert!(Twin::quiet(&out), "{out:?}");
@@ -185,7 +185,7 @@ fn xfer_orphan_abort_refused_keeps_debt() {
         twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
-        let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(AbortFault { temporary, status }) });
+        let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(AbortFault { temporary, status }).map_err(Into::into) });
         assert!(Twin::quiet(&out), "{status:?}: {out:?}");
         twin.online(false);
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "{status:?}: the debt is kept and resent");

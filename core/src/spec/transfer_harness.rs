@@ -610,3 +610,7 @@ impl Twin {
 }
 
 pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused".into(), None) }
+
+impl From<super::ref_transfer::AbortFault> for crate::owners::write::transfer::AbortFault {
+    fn from(fault: super::ref_transfer::AbortFault) -> Self { Self { temporary: fault.temporary, status: fault.status } }
+}
