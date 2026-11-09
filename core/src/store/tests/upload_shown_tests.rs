@@ -20,22 +20,24 @@ fn row() -> UploadRow {
     }
 }
 
-fn columns(db: &Store) -> (String, String, Option<String>, i64, i64) {
-    db.lock().connection.query_row("SELECT status, stage, wait, sent, attempts FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?, found.get(3)?, found.get(4)?))).unwrap()
+fn columns(db: &Store) -> (String, String, Option<String>, i64, i64, i64, Option<String>) {
+    db.lock().connection.query_row("SELECT status, stage, wait, sent, total, attempts, error_kind FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?, found.get(3)?, found.get(4)?, found.get(5)?, found.get(6)?))).unwrap()
 }
 
+fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreOp::UploadShown { key: KEY.into(), shown, sent, total, attempts } }
+
 #[test]
-fn a_shown_value_writes_status_stage_and_wait_and_keeps_the_durable_columns() {
+fn a_shown_value_writes_the_whole_shown_columns_and_keeps_the_durable_ones() {
     let db = Store::open_models(None, all_specs(), None).unwrap();
     write(&db, vec![StoreOp::Upload { row: row(), kind: UploadKind::SyncUpload }]);
-    assert_eq!(columns(&db), ("queued".into(), "prepare".into(), None, 1, 2));
-    write(&db, vec![StoreOp::UploadShown { key: KEY.into(), shown: Shown::Uploading { progress: 33 } }]);
-    assert_eq!(columns(&db), ("uploading".into(), "part".into(), None, 1, 2));
-    write(&db, vec![StoreOp::UploadShown { key: KEY.into(), shown: Shown::WaitingSource }]);
-    assert_eq!(columns(&db), ("waiting".into(), "prepare".into(), Some("source_pending".into()), 1, 2));
-    write(&db, vec![StoreOp::UploadShown { key: KEY.into(), shown: Shown::Failed { error: "refused".into() } }]);
-    assert_eq!(columns(&db), ("failed".into(), "prepare".into(), None, 1, 2), "the wait goes with the next value and the stage stays");
-    write(&db, vec![StoreOp::UploadShown { key: KEY.into(), shown: Shown::Gone }]);
+    assert_eq!(columns(&db), ("queued".into(), "prepare".into(), None, 1, 3, 2, None));
+    write(&db, vec![shown(Shown::Uploading { progress: 66 }, 2, 3, 3)]);
+    assert_eq!(columns(&db), ("uploading".into(), "part".into(), None, 2, 3, 3, None), "the counters of the shown value are written with it");
+    write(&db, vec![shown(Shown::WaitingSource, 2, 3, 3)]);
+    assert_eq!(columns(&db), ("waiting".into(), "prepare".into(), Some("source_pending".into()), 2, 3, 3, None));
+    write(&db, vec![shown(Shown::Failed { error: "missing_file".into() }, 2, 3, 4)]);
+    assert_eq!(columns(&db), ("failed".into(), "prepare".into(), None, 2, 3, 4, Some("missing_file".into())), "the error and the attempts of a failed value are written with it");
+    write(&db, vec![shown(Shown::Gone, 0, 0, 0)]);
     assert_eq!(columns(&db).0, "failed", "a gone transfer writes nothing");
 }
 

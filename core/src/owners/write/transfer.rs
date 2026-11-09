@@ -41,6 +41,11 @@ impl TransferState {
         self.transfers.values().find(|transfer| transfer.key == key).map_or(Shown::Gone, |transfer| self.shown_now(transfer.transfer_id))
     }
 
+    /// The Store op that writes the shown value with the counters it shows.
+    pub(super) fn shown_op(transfer: &super::transfer_types::Transfer, shown: Shown) -> StoreOp {
+        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts }
+    }
+
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
     pub(super) fn show(&mut self, id: TransferId, shown: Shown, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -49,7 +54,8 @@ impl TransferState {
         transfer.last_shown = Some(shown.clone());
         if shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != columns) {
             transfer.stored_shown = Some(columns);
-            self.send_batch(vec![StoreOp::UploadShown { key: key.clone(), shown: shown.clone() }], fx);
+            let op = Self::shown_op(transfer, shown.clone());
+            self.send_batch(vec![op], fx);
         }
         for stream_id in self.subscribers.get(&key).into_iter().flatten() {
             run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.clone(), shown: shown.clone() });
@@ -119,7 +125,7 @@ impl TransferState {
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
                     let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
                     if shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
-                        ops.push(StoreOp::UploadShown { key: transfer.key.clone(), shown });
+                        ops.push(Self::shown_op(transfer, shown));
                     }
                     if kind == StoreKind::Failed && transfer.failure_abort {
                         if let Some(upload_id) = transfer.upload_id.clone() {
@@ -166,7 +172,7 @@ impl TransferState {
             .collect();
         let written: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
             StoreOp::Upload { row, kind } => Some((row.key.clone(), kind.shown().columns())),
-            StoreOp::UploadShown { key, shown } => Some((key.clone(), shown.columns())),
+            StoreOp::UploadShown { key, shown, .. } => Some((key.clone(), shown.columns())),
             _ => None,
         }).collect();
         for transfer in self.transfers.values_mut() {

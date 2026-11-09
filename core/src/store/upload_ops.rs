@@ -103,7 +103,7 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
         }
-        StoreOp::UploadShown { key, shown } => {
+        StoreOp::UploadShown { key, shown, .. } => {
             let [model, id, action] = key_parts(key)?;
             let (status, stage, wait) = shown_columns(shown);
             connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait])?;

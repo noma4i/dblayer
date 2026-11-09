@@ -190,7 +190,7 @@ pub enum StoreOp {
     RemoveUpload { key: String },
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
-    UploadShown { key: String, shown: crate::owners::write::transfer::Shown },
+    UploadShown { key: String, shown: crate::owners::write::transfer::Shown, sent: u32, total: u32, attempts: u32 },
     /// The swap of the copy of a transfer is done: `staged` of its row is cleared.
     UploadStaged { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
