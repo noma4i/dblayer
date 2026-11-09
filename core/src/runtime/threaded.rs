@@ -445,6 +445,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         let cell = &owner.cell;
         let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(timeline.now().0))));
         let handled = commands.len();
+        let mut failure_owed = false;
         for command in commands {
             match command {
                 Command::Deliver(stamp, payload) => owner.cell.push_message(stamp, payload),
@@ -452,7 +453,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                 Command::Failed(pending) => {
                     let deferred = O::defer_executor_failure(&pending);
                     owner.cell.apply_failure(owner.name, pending);
-                    if !deferred { router.report_failure(owner.name); }
+                    failure_owed |= !deferred;
                 }
                 Command::Wake => {}
                 Command::Stop => return,
@@ -478,6 +479,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                 if failed || finished_failed { router.report_failure(owner.name); }
             }
         }
+        if failure_owed { router.report_failure(owner.name); }
         let scheduled = owner.cell.scheduled();
         if scheduled != armed {
             timeline.clock.armed(scheduled - armed);
