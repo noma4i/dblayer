@@ -491,7 +491,7 @@ impl Session {
     fn land(&mut self, pending: Pending, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, out: &mut Out) {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
-        let erase_session = pending.class == Class::Login && pending.credential.is_some() && answer.is_err() && !server_ended;
+        let erase_session = server_ended || pending.class == Class::Login && pending.credential.is_some() && answer.is_err();
         out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
         self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
