@@ -106,8 +106,6 @@ pub(crate) struct Wiring {
     pub(crate) mutations: Outcomes<LifeReply>,
     /// The request id of the unanswered `Mutate` of a transfer step: the repeat of the step is the same `Mutate` under the same id until an answer settles it.
     held_requests: crate::runtime::HeldIds<crate::transport::RequestOwner>,
-    /// The answer of a restored pair that Session re-sent: the first `Mutate` of the step under that request id gets it instead of a new pair.
-    seeded_answers: AppendLog<(RequestId, Option<AuthorOutcome>)>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here, the last registration of an author answers.
     store_sinks: AppendLog<(BatchAuthor, StoreSink)>,
     network_sinks: AppendLog<(Peer, NetworkSink)>,
@@ -139,7 +137,6 @@ impl Wiring {
             calls_answers: Outcomes::new(),
             mutations: Outcomes::new(),
             held_requests: Default::default(),
-            seeded_answers: AppendLog::default(),
             store_sinks: AppendLog::default(),
             network_sinks: AppendLog::default(),
             committed_sinks: AppendLog::default(),
@@ -153,15 +150,6 @@ impl Wiring {
     pub(crate) fn hold_request(&self, owner: crate::transport::RequestOwner, id: RequestId) { self.held_requests.hold(owner, id); }
 
     pub(crate) fn settle_request(&self, id: RequestId) { self.held_requests.settle(id); }
-
-    pub(crate) fn seed_answer(&self, id: RequestId, outcome: AuthorOutcome) { self.seeded_answers.push((id, Some(outcome))); }
-
-    /// The newest entry of the log for `id` is the live one: taking it appends an empty entry.
-    pub(crate) fn take_seed(&self, id: RequestId) -> Option<AuthorOutcome> {
-        let seed = self.seeded_answers.iter().filter(|(seeded, _)| *seeded == id).last().and_then(|(_, outcome)| outcome.clone())?;
-        self.seeded_answers.push((id, None));
-        Some(seed)
-    }
 
     /// `None` only before `install` finished: no effect runs by then.
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
@@ -293,7 +281,6 @@ impl Wiring {
             super::session::OUTBOX_AUTHOR => self.to_outbox(OutboxInput::Answered { req_id, outcome }),
             super::session::CALLS_AUTHOR => { self.calls_answers.settle(OutcomeId::from_raw(req_id), outcome); }
             super::session::TRANSFER_AUTHOR => {
-                if matches!(outcome, AuthorOutcome::Response { .. }) { self.seed_answer(req_id, outcome.clone()); }
                 self.to_transfer(TransferInput::StepAnswer { request_id: req_id, outcome });
             }
             WAITER_AUTHOR.. => {

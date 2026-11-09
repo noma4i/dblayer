@@ -338,8 +338,8 @@ pub enum TransferEffect {
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
-    Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<(u64, String)> },
+    Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<(u64, String)> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },
@@ -469,6 +469,8 @@ pub struct Transfer {
     pub failed_at: Option<Time>,
     /// `Clock.now()` of the answer of the creation of the blob on the server: the term of its cache entry counts from it.
     pub blob_created_at: Option<Time>,
+    /// The answer of the pair Session re-sent for a restored step: `(request id, body)`, served to the first request of the step.
+    pub seeded: Option<(u64, String)>,
     pub closing: bool,
 }
 

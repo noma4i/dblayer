@@ -117,6 +117,7 @@ impl TransferState {
             previous: None,
             failed_at: None,
             blob_created_at: None,
+            seeded: None,
             closing: false,
         };
         self.transfers.insert(transfer_id, transfer);

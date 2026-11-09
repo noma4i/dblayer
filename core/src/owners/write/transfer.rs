@@ -92,8 +92,12 @@ impl TransferState {
     }
 
     /// The pair of a restored step was answered by Session: the transfer may start its attempt.
-    pub(super) fn held_step_answered(&mut self, request_id: u64, fx: &mut Fx) {
-        for transfer in self.transfers.values_mut().filter(|transfer| transfer.pending_step == Some(request_id)) { transfer.pending_step = None; }
+    pub(super) fn held_step_answered(&mut self, request_id: u64, outcome: crate::owners::session::AuthorOutcome, fx: &mut Fx) {
+        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, .. } => Some((request_id, body)), _ => None };
+        for transfer in self.transfers.values_mut().filter(|transfer| transfer.pending_step == Some(request_id)) {
+            transfer.pending_step = None;
+            transfer.seeded.clone_from(&seeded);
+        }
         self.start_in_order(fx);
     }
 
@@ -561,7 +565,7 @@ impl TransferState {
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::StagedPromoted { transfer_id } => self.staged_promoted(transfer_id, fx),
-            TransferInput::StepAnswer { request_id, .. } => self.held_step_answered(request_id, fx),
+            TransferInput::StepAnswer { request_id, outcome } => self.held_step_answered(request_id, outcome, fx),
             TransferInput::StagedPromoteFailed { transfer_id, detail } => self.staged_promote_failed(transfer_id, detail, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
