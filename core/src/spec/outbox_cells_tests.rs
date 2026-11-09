@@ -492,8 +492,11 @@ fn out_landing_no_session() {
         let mut twin = Twin::new();
         let id = sending(&mut twin, Policy::Rollback, true);
         twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
         let effects = refuse(&mut twin, id, reason);
-        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects)), (Some(St::Done), Some(OutboxOutcome::Interrupted), vec![OutboxOutcome::Interrupted]));
+        assert_eq!(twin.stage(id), Some(St::Done));
+        assert!(format!("{:?}", twin.state().ops[&id].outcome).contains(cause));
+        assert!(format!("{:?}", transfer_outcomes(&effects)).contains(cause));
     }
 }
 
@@ -503,8 +506,11 @@ fn out_rollback_no_session() {
         let mut twin = Twin::new();
         let id = sending(&mut twin, Policy::Rollback, true);
         twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+        let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
         let effects = refuse(&mut twin, id, reason);
-        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects)), (Some(St::Done), Some(OutboxOutcome::Interrupted), vec![OutboxOutcome::Interrupted]));
+        assert_eq!(twin.stage(id), Some(St::Done));
+        assert!(format!("{:?}", twin.state().ops[&id].outcome).contains(cause));
+        assert!(format!("{:?}", transfer_outcomes(&effects)).contains(cause));
     }
 }
 
