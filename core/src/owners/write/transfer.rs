@@ -584,7 +584,15 @@ impl TransferState {
             TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),
             TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version } => self.select_row((model, rows), outbox_min, kind, reply, version, fx),
-            TransferInput::SelectConfirmed { reply } => { self.selecting.remove(&reply); }
+            TransferInput::SelectConfirmed { reply: reply_id } => {
+                if let Some((id, kind)) = self.selecting.remove(&reply_id) {
+                    if let Some(key) = self.transfers.get(&id).map(|transfer| transfer.key.clone()) {
+                        match kind { super::outbox_types::SelectKind::Retry => self.retry(&key, None, reply_id, fx), super::outbox_types::SelectKind::Discard => self.cancel(&key, reply_id, false, fx) }
+                    } else {
+                        reply(fx, reply_id, TransferAnswer::Err(Fault::NotFound));
+                    }
+                }
+            }
             TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
             TransferInput::SlotFreed => self.start_in_order(fx),
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),

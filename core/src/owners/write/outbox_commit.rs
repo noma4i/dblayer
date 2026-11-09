@@ -168,6 +168,8 @@ impl OutboxState {
     /// The row `temp` became `real`: the open operations of the row address `real`.
     pub(super) fn swap_row(&mut self, landed: OpId, temp: &str, real: &str) {
         let model = self.ops[&landed].op.model.clone();
+        self.bump_selection_row(&model, temp);
+        self.bump_selection_row(&model, real);
         self.aliases.insert((model.clone(), temp.to_string()), real.to_string());
         for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, &model, temp)) {
             Self::resolve_operation(&self.aliases, &mut operation.op);

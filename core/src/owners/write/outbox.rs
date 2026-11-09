@@ -55,6 +55,9 @@ pub struct OutboxState {
     pub(super) next_sequence: u64,
     pub(super) next_schedule: u64,
     pub(super) batches: BTreeMap<BatchId, Batch>,
+    pub(super) selection_versions: BTreeMap<(String, String), u64>,
+    pub(super) selection_clock: u64,
+    pub(super) selections: BTreeMap<ReplyId, (String, String, SelectKind)>,
     pub(super) member_removals: BTreeMap<OpId, MemberRemoval>,
     pub(super) cancelled_commits: BTreeMap<OpId, i64>,
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
@@ -106,6 +109,9 @@ impl OutboxState {
             next_sequence: 1,
             next_schedule: 1,
             batches: BTreeMap::new(),
+            selection_versions: BTreeMap::new(),
+            selection_clock: 0,
+            selections: BTreeMap::new(),
             member_removals: BTreeMap::new(),
             cancelled_commits: BTreeMap::new(),
             submit_replies: BTreeMap::new(),
@@ -189,6 +195,7 @@ impl OutboxState {
     }
 
     pub(super) fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage) {
+        self.bump_selection(&op);
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         self.ops.insert(
@@ -404,6 +411,8 @@ impl OutboxState {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.stage = Stage::Done;
         operation.outcome = Some(outcome.clone());
+        let op = operation.op.clone();
+        self.bump_selection(&op);
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
         if !matches!(outcome, OutboxOutcome::Ended(_)) {
@@ -515,8 +524,35 @@ impl OutboxState {
                 None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
             };
         };
+        let version = self.selection_version(&model, &row_id);
+        self.selections.insert(reply, (model.clone(), row_id.clone(), kind));
         let rows = std::iter::once(row_id).chain(resolved).collect();
-        fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version: 0 })));
+        fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version })));
+    }
+
+    pub(super) fn bump_selection(&mut self, op: &NewOp) {
+        let rows: BTreeSet<String> = match &op.origin { OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.row_id.clone()).collect(), _ => [op.row_id.clone()].into_iter().collect() };
+        for row in rows { self.bump_selection_row(&op.model, &row); }
+    }
+
+    pub(super) fn bump_selection_row(&mut self, model: &str, row: &str) {
+        self.selection_clock += 1;
+        self.selection_versions.insert((model.into(), row.into()), self.selection_clock);
+    }
+
+    fn selection_version(&self, model: &str, row: &str) -> u64 {
+        let row = self.aliases.get(&(model.into(), row.into())).map_or(row, String::as_str);
+        self.selection_versions.get(&(model.into(), row.into())).copied().unwrap_or(0)
+    }
+
+    fn selection_current(&mut self, reply: ReplyId, version: u64, fx: &mut Effects<Outbox>) -> bool {
+        let Some((model, row, kind)) = self.selections.get(&reply).cloned() else { return false };
+        if self.selection_version(&model, &row) != version {
+            self.select_row((model, row), kind, reply, fx);
+            return false;
+        }
+        self.selections.remove(&reply);
+        true
     }
 
     /// Transfer named the smallest open operation of the row here: an operation of a transfer goes on through its Transfer, any other by its own cell.
@@ -618,9 +654,9 @@ impl OutboxState {
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
             OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
-            OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, .. } => self.selected((model, row_id), action, kind, reply, fx),
-            OutboxInput::SelectedNone { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
-            OutboxInput::SelectedTransfer { .. } => {}
+            OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, version } => { if self.selection_current(reply, version, fx) { self.selected((model, row_id), action, kind, reply, fx); } }
+            OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
+            OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),

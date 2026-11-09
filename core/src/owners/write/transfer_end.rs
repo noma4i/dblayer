@@ -83,16 +83,17 @@ impl TransferState {
 
     /// The smallest `op_id` among the open transfers of the row decides: a transfer that does not follow the operation of Outbox answers the call itself.
     pub(super) fn select_row(&mut self, (model, rows): (String, Vec<String>), outbox_min: Option<(super::outbox::OpId, String)>, kind: super::outbox_types::SelectKind, rep: ReplyId, version: u64, fx: &mut Fx) {
+        self.selecting.remove(&rep);
         let named = |key: &str| rows.iter().any(|row| key.strip_prefix(&format!("{model}:{row}:")).is_some());
         let first = self.scan().filter(|transfer| transfer.stage != TransferStage::Done && named(&transfer.key)).filter_map(|transfer| {
             let op_id = transfer.op_id.or_else(|| self.group_entry(transfer.transfer_id).and_then(|group| self.groups.get(&group)?.op_id))?;
-            Some((op_id, transfer.key.clone()))
+            Some((op_id, transfer.transfer_id))
         }).min();
         match (first, outbox_min) {
-            (Some((op_id, key)), min) if min.as_ref().is_none_or(|(smallest, _)| op_id <= *smallest) => match kind {
-                super::outbox_types::SelectKind::Discard => self.cancel(&key, rep, false, fx),
-                super::outbox_types::SelectKind::Retry => self.retry(&key, None, rep, fx),
-            },
+            (Some((op_id, id)), min) if min.as_ref().is_none_or(|(smallest, _)| op_id <= *smallest) => {
+                self.selecting.insert(rep, (id, kind));
+                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedTransfer { reply: rep, transfer_id: id, version })));
+            }
             (_, Some((_, action))) => {
                 let row_id = rows.into_iter().next().unwrap_or_default();
                 fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SelectedOutbox { model, row_id, action, kind, reply: rep, version })));
@@ -411,6 +412,7 @@ impl TransferState {
 
     pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
         self.ended = true;
+        for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))); }
         self.pending.clear();
         self.minted.clear();
         for id in self.open_ids() {
@@ -421,6 +423,7 @@ impl TransferState {
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
         self.closing = true;
+        for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))); }
         for id in self.open_ids() {
             match self.stage_of(id) {
                 Some(TransferStage::Accepting) => {

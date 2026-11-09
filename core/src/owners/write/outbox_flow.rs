@@ -214,6 +214,7 @@ impl OutboxState {
 
     pub(super) fn row_removed(&mut self, model: &str, row: &str, revision: u64, fx: &mut Effects<Outbox>) {
         let ids: Vec<_> = self.ops.values().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, model, row)).map(|operation| operation.op_id).collect();
+        if !ids.is_empty() { self.bump_selection_row(model, row); }
         for op_id in ids {
             if let OpSource::TransferGroup { members, .. } = &self.ops[&op_id].op.origin {
                 if let Some(member) = members.iter().find(|member| member.row_id == row).cloned() {
