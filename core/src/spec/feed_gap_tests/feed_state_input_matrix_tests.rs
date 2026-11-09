@@ -34,6 +34,51 @@ fn feed_keepalive_stale() {
     }
 }
 
+fn ping_due() -> (Twin, ConnectionId, u64) {
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    let counter = match twin.state().protocol(connection).unwrap() { Protocol::Established { send_counter, .. } => send_counter, _ => panic!("established") };
+    twin.post(FeedInput::Tick(Time(25_000)));
+    take(&twin.log);
+    (twin, connection, counter)
+}
+
+#[test]
+fn feed_keepalive_ping() {
+    let (mut twin, connection, counter) = ping_due();
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    let emitted = take(&twin.log);
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { connection: found, frame: Outgoing::Ping { ts: 25_000 }, .. }) if *found == connection)));
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == std::time::Duration::from_secs(10) && input.starts_with("PongDeadline"))));
+}
+
+#[test]
+fn feed_keepalive_pong() {
+    let (mut twin, connection, counter) = ping_due();
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    take(&twin.log);
+    let recv_counter = twin.counter(connection, Counter::Expected);
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Pong });
+    take(&twin.log);
+    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    assert!(take(&twin.log).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+}
+
+#[test]
+fn feed_keepalive_half_open() {
+    let (mut twin, connection, counter) = ping_due();
+    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
+    take(&twin.log);
+    twin.post(FeedInput::Tick(Time(35_000)));
+    take(&twin.log);
+    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    let emitted = take(&twin.log);
+    assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Cancel { connection: found }) if *found == connection)));
+    assert_ne!(twin.state().mode(), f::Mode::Live);
+}
+
 fn alphabet() -> Vec<(&'static str, Input)> {
     vec![
         ("WantPlus Chat", plus("Chat")),
