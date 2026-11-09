@@ -8,3 +8,4 @@ mod preload_load_tests;
 mod sequence_tests;
 mod chat_album_pending_tests;
 mod registry_tests;
+mod supply_values_tests;
