@@ -241,6 +241,8 @@ fn feed_io_broken_next_drops() {
     let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
     pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":{}}) }).unwrap();
+    pump(&mut det, |det| saw_input(det, "ProtocolError") == 1);
+    det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
     pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     assert!(batches.all().is_empty());
     assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
