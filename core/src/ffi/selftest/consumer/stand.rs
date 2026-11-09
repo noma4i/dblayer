@@ -40,6 +40,7 @@ impl FakeTransport for Cable {
 /// The server behind the encrypted path: it answers each operation with the data the test set, anything else with an empty `data`. The pair and sequence rules are the server contract.
 struct Server {
     answers: StdMutex<HashMap<String, Value>>,
+    next_answers: StdMutex<HashMap<String, std::collections::VecDeque<Value>>>,
     asked: StdMutex<Vec<(String, Value)>>,
     sequenced: StdMutex<Vec<(String, i64)>>,
     contract: StdMutex<Contract<Value>>,
@@ -52,7 +53,7 @@ impl Default for Server {
     fn default() -> Self {
         let mut contract = Contract::adopting();
         contract.cache_everything();
-        Server { answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -85,7 +86,8 @@ impl FakeHttp for Server {
             }
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
-            let answer = self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}));
+            let queued = self.next_answers.lock().unwrap().get_mut(&operation).and_then(|queue| queue.pop_front());
+            let answer = queued.unwrap_or_else(|| self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}})));
             crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
             self.contract.lock().unwrap().settle(&contract_request, answer.clone());
             answer
@@ -144,6 +146,9 @@ impl Stand {
 
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }
+
+    /// The next request of the operation gets `answer` (the whole body, `data` or `errors`) once, then the standing answer again.
+    pub(super) fn answer_next(&self, operation: &str, answer: Value) { self.server.next_answers.lock().unwrap().entry(operation.into()).or_default().push_back(answer); }
 
     /// Every request the server received, in order: the operation and its `sequence`.
     pub(super) fn sequenced(&self) -> Vec<(String, i64)> { self.server.sequenced.lock().unwrap().clone() }

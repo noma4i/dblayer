@@ -107,3 +107,32 @@ async fn matrix_window_landing_refetch() { run("refetch").await }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn matrix_window_landing_load_more() { run("load_more").await }
+
+/// Restart after INVALID_CURSOR: a `load_more` of a window with 2 pages is refused, the window asks page 1 again and lands it.
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_window_landing_invalid_cursor() {
+    let mut matrix = Matrix::new("W-window-landing-invalid_cursor");
+    for position in ["head", "middle", "tail", "all"] {
+        for has_next in [false, true] {
+            let stand = Stand::open().await;
+            let epoch = stand.database.session_epoch();
+            let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+            std::mem::forget(stand.database.watch(ReadRequest::List { query: blocked_query() }, rows.clone()));
+            stand.answer("blockedUsers", page(&["u1", "u2"], true));
+            bound(stand.database.refresh(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
+            stand.answer("blockedUsers", page(&["u3", "u4"], true));
+            bound(stand.database.load_more(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
+            stand.settle().await;
+            let remaining = removal(position, &ALL);
+            stand.answer_next("blockedUsers", json!({"errors": [{"message": "cursor", "extensions": {"code": "INVALID_CURSOR"}}]}));
+            stand.answer("blockedUsers", page(&remaining, has_next));
+            let outcome = bound(stand.database.load_more(epoch, "User".into(), Some("blocked".into()), "{}".into())).await;
+            stand.settle().await;
+            let mut want = expected(&ALL, &remaining, has_next, true);
+            want.sort();
+            let got = members(&stand).await;
+            matrix.check(&format!("invalid cursor restart / page {}", if has_next { "with cursor" } else { "last" }), &format!("members of the window (load_more {})", if outcome.is_ok() { "ok" } else { "failed" }), position, &format!("{want:?}"), &format!("{got:?}"));
+        }
+    }
+    matrix.finish();
+}
