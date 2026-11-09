@@ -164,13 +164,26 @@ impl SessionState {
         }
     }
 
+    /// The pair went out once before the restart: the send counts.
+    fn start_calling_again(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
+        if self.is_online() {
+            self.request_http(pending, 1, fx);
+        } else {
+            self.phase = SessionPhase::Calling { pending, attempts: 1, phase: AttemptPhase::WaitingNetwork };
+        }
+    }
+
     pub(super) fn start_restored(&mut self, fx: &mut Vec<SessionEffect>) -> bool {
         if let Some(pending) = self.restored_direct.take() {
             self.restored_active = Some(pending.request_id);
             self.start_calling(pending, fx);
             return true;
         }
-        let Some(pending) = self.restored_detached.take().or_else(|| self.restored_transfer.take()) else { return false };
+        if let Some(pending) = self.restored_transfer.take() {
+            self.start_calling_again(pending, fx);
+            return true;
+        }
+        let Some(pending) = self.restored_detached.take() else { return false };
         self.start_calling(pending, fx);
         true
     }
@@ -180,7 +193,7 @@ impl SessionState {
         let SessionPhase::PendingHeld { pending } = self.phase.clone() else { return };
         if !matches!(pending.owner, Some(MutateOwner::Transfer { .. })) || pending.reply.is_some() { return; }
         self.restored_transfer = None;
-        self.start_calling(PendingCall { author: Some(TRANSFER_AUTHOR), ..pending }, fx);
+        self.start_calling_again(PendingCall { author: Some(TRANSFER_AUTHOR), ..pending }, fx);
     }
 
     pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) { self.resume_finish_retained(pending, result, false, fx); }
