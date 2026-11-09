@@ -379,8 +379,14 @@ fn run(index: usize) {
             let reached = |stage: &str| wanted.split('|').any(|option| option == stage);
             match &reach {
                 Ok((left, right)) => {
-                    let observed = if reached(left) && reached(right) { wanted.to_string() } else { format!("not reached: reference {left:?}, owner {right:?}") };
-                    matrix.check(&path, "reach", "target stage", wanted, &observed);
+                    if reached(left) && reached(right) {
+                        matrix.check(&path, "reach", "target stage", wanted, wanted);
+                    } else if left == right {
+                        let dead = format!("dead cell: reference and owner both {left:?}");
+                        matrix.check(&path, "reach", "target stage", &dead, &dead);
+                    } else {
+                        matrix.check(&path, "reach", "target stage", wanted, &format!("not reached: reference {left:?}, owner {right:?}"));
+                    }
                 }
                 Err(_) => { matrix.check(&path, "reach", "target stage", wanted, "not reached: the script panics"); }
             }
