@@ -36,6 +36,8 @@ const STEPS: [(&str, &str); 6] = [
 #[derive(Clone)]
 pub(super) enum Answer {
     Data(String),
+    Unconfirmed(String),
+    Unreadable,
     Status(u16),
     Lost,
     Held(Arc<Hold>, Box<Answer>),
@@ -89,9 +91,8 @@ fn document_hash(document: &str) -> String {
 fn settled_of(answer: &Answer) -> Option<Answer> {
     match answer {
         Answer::Data(text) => Some(Answer::Data(text.clone())),
-        Answer::Status(_) => None,
+        Answer::Status(_) | Answer::Unconfirmed(_) | Answer::Unreadable | Answer::Lost => None,
         Answer::Held(_, next) => settled_of(next),
-        Answer::Lost => None,
     }
 }
 
@@ -154,6 +155,8 @@ impl FakeHttp for ScriptedHttp {
                 Some(Answer::Lost) => return Err(DbError::Network { detail: "lost answer".into() }),
                 Some(Answer::Status(status)) => return Ok(EncryptedReply { status, body: String::new() }),
                 Some(Answer::Data(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), serde_json::from_str(&text).unwrap()) }),
+                Some(Answer::Unconfirmed(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, serde_json::from_str(&text).unwrap()) }),
+                Some(Answer::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),
                 None => panic!("the request {operation} has no scripted answer"),
             }
         }

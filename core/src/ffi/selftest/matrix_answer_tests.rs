@@ -74,7 +74,8 @@ fn stand_answers(faults: &[Fault]) -> Option<Vec<Answer>> {
         Fault::Http(status) => Some(Answer::Status(*status)),
         Fault::Answer(value) => Some(Answer::Data(value.to_string())),
         Fault::Refuse { code, confirmed: true } => Some(Answer::Data(json!({"error": code}).to_string())),
-        Fault::Unreadable => Some(Answer::Data("not json".into())),
+        Fault::Refuse { code, confirmed: false } => Some(Answer::Unconfirmed(json!({"error": code}).to_string())),
+        Fault::Unreadable => Some(Answer::Unreadable),
         _ => None,
     }).collect()
 }
