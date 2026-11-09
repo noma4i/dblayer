@@ -433,7 +433,7 @@ struct OwnerThread<O: StateOwner> {
 }
 
 fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, timeline: Arc<Timeline>) {
-    owner.cell.set_jitter(|| rand_core::RngCore::next_u64(&mut rand_core::OsRng));
+    owner.cell.set_jitter(super::process_seed);
     let back = {
         let own = owner.slot;
         let router = router.clone();
