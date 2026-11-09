@@ -66,7 +66,7 @@ async fn a_mutation_over_the_size_limit_never_leaves_and_leaves_the_next_sequenc
     let rig = Rig::signed_in().await;
     let transport = rig.transport();
     assert!(matches!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await, Err(TransportError::RequestTooLarge { .. })));
-    assert_eq!(documents(&rig.graphql_requests()), Vec::<bool>::new(), "the full document is refused before the send");
+    assert!(!documents(&rig.graphql_requests()).contains(&true), "the full document is refused before the send");
     assert_eq!(rig.pending_sequence(), None);
     transport.mutate(request(WRITE)).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2);
@@ -121,26 +121,26 @@ async fn an_invalid_hash_is_not_sent_again() {
 }
 
 #[tokio::test]
-async fn a_mutation_missing_from_the_registry_is_sent_once_with_the_document() {
+async fn a_mutation_missing_from_the_registry_is_sent_again_once_with_the_document_and_the_same_number() {
     let rig = Rig::signed_in().await;
 
     let response = rig.transport().mutate(request(WRITE)).await.unwrap();
 
     let sent = rig.graphql_requests();
     assert_eq!(response.data, Some(json!({ "done": WRITE })));
-    assert_eq!(documents(&sent), [true]);
-    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2)]);
+    assert_eq!(documents(&sent), [false, true]);
+    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(2)]);
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (2, None));
 }
 
 #[tokio::test]
-async fn a_registered_mutation_is_sent_once_as_the_next_sequence() {
+async fn a_registered_mutation_is_sent_once_by_its_hash_as_the_next_sequence() {
     let rig = Rig::signed_in().await;
     rig.server.register(WRITE);
 
     rig.transport().mutate(request(WRITE)).await.unwrap();
 
     let sent = rig.graphql_requests();
-    assert_eq!((documents(&sent), sent[0]["sequence"].clone()), (vec![true], json!(2)));
+    assert_eq!((documents(&sent), sent[0]["sequence"].clone()), (vec![false], json!(2)));
 }
 

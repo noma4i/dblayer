@@ -49,7 +49,16 @@ impl Request {
         }
     }
 
+    /// A request of a plain transport: no sequence, no persisted document.
+    pub(crate) fn plain(scope: &str, request_id: u64, operation: &str, variables: &Value) -> Self {
+        Request { scope: scope.to_string(), request_id: request_id.to_string(), sequence: None, body: json!({ "operationName": operation, "variables": variables }).to_string(), hash: None, document: false }
+    }
+
     fn pair(&self) -> (String, String, Option<i64>) { (self.scope.clone(), self.request_id.clone(), self.sequence) }
+}
+
+impl<A: Clone> Default for Contract<A> {
+    fn default() -> Self { Self::new() }
 }
 
 impl<A: Clone> Contract<A> {

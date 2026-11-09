@@ -10,6 +10,7 @@ use super::error::TransportError;
 use super::put::{PutRequest, PutReply};
 use super::request::{GraphQLError, GraphQLRequest, Response};
 use super::Upstream;
+use crate::server_contract::{Admission, Contract, Request};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordedKind {
@@ -100,8 +101,7 @@ struct MockState {
     put_calls: Vec<RecordedPut>,
     puts_running: usize,
     puts_peak: usize,
-    replies: HashMap<String, VecDeque<Reply>>,
-    settled: HashMap<(super::Author, u64), (String, Value, Reply)>,
+    contract: Contract<Reply>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -128,7 +128,7 @@ impl MockTransport {
     }
 
     pub fn enqueue(&self, operation_name: &str, reply: Reply) {
-        self.lock().replies.entry(operation_name.to_string()).or_default().push_back(reply);
+        self.lock().contract.script(operation_name, reply);
     }
 
     pub fn respond_with(&self, responder: impl Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync + 'static) {
@@ -204,19 +204,20 @@ impl MockTransport {
 
     async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
-        let pair = request.wire.map(|wire| (wire.author, wire.request_id));
-        let repeated = pair.and_then(|pair| self.lock().settled.get(&pair).cloned()).map(|(operation, variables, reply)| {
-            assert!(operation == request.operation_name && variables == request.variables, "the pair {pair:?} went with two bodies: {operation} {variables} and {} {}", request.operation_name, request.variables);
-            reply
+        let pair = request.wire.map(|wire| Request::plain(&format!("{:?}", wire.author), wire.request_id, &request.operation_name, &request.variables));
+        let repeated = pair.as_ref().and_then(|pair| match self.lock().contract.admit(pair) {
+            Admission::Stored(reply) => Some(reply),
+            Admission::TwoBodies => panic!("the pair {} went with two bodies: {} {}", pair.request_id, request.operation_name, request.variables),
+            Admission::Refused(_) | Admission::Fresh => None,
         });
         let responder = self.lock().responder.clone();
         let reply = repeated.or_else(|| {
             let answered = responder.and_then(|answer| answer(&request));
-            answered.or_else(|| self.lock().replies.get_mut(&request.operation_name).and_then(VecDeque::pop_front))
+            answered.or_else(|| self.lock().contract.take(&request.operation_name))
         });
-        if let (Some(pair), Some(reply)) = (pair, &reply) {
+        if let (Some(pair), Some(reply)) = (&pair, &reply) {
             if !matches!(reply.result, Err(TransportError::Network(_) | TransportError::Interrupted(_))) {
-                self.lock().settled.entry(pair).or_insert_with(|| (request.operation_name.clone(), request.variables.clone(), reply.clone()));
+                self.lock().contract.settle(pair, reply.clone());
             }
         }
         let reply = reply.ok_or_else(|| TransportError::Unscripted(request.operation_name.clone()))?;
