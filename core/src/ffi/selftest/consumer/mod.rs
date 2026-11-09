@@ -9,3 +9,4 @@ mod sequence_tests;
 mod chat_album_pending_tests;
 mod registry_tests;
 mod supply_values_tests;
+mod matrix_write_server_tests;
