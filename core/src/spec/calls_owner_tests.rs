@@ -25,6 +25,88 @@ fn call_deadline_expired() {
     }
 }
 
+#[test]
+fn call_caller_cancel() {
+    for (operation, kind) in [("Op", CallKind::Query), ("Change", CallKind::Mutate)] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::CallerCancel { reply: 1 });
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { .. })));
+        assert_eq!(effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Query, .. })), kind == CallKind::Query);
+        assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Mutate, .. })));
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), errors: Vec::new(), extensions: None });
+        twin.det.tick(crate::runtime::Time(30_000));
+        twin.det.run_until_quiet(100).unwrap();
+        assert!(take(&twin.log).is_empty());
+    }
+}
+
+#[test]
+fn call_transport_retry() {
+    let mut twin = Twin::new();
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 2 });
+    let first = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
+    let second = twin.history.iter().filter_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).nth(1).unwrap();
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id: 1, error: CallError::Network });
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.tick(crate::runtime::Time(1_000));
+    twin.det.run_until_quiet(100).unwrap();
+    let effects = take(&twin.log);
+    assert!(effects.iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, request_id, .. } if *request_id != first && *request_id != second)));
+}
+
+#[test]
+fn call_deadline_after_done() {
+    let mut twin = Twin::new();
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    twin.feed(Input::Response { call_id: 1, body: Some("ok".into()), errors: Vec::new() });
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+}
+
+#[test]
+fn call_deadline_before_snapshot() {
+    let mut twin = Twin::with(None);
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.run_until_quiet(100).unwrap();
+    let effects = take(&twin.log);
+    assert!(matches!(effects.as_slice(), [CallsEffect::Reply { id: 1, answer: Err(CallError::Network) }]));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+}
+
+#[test]
+fn call_cancel_before_snapshot() {
+    let mut twin = Twin::with(None);
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::CallerCancel { reply: 1 });
+    twin.det.run_until_quiet(100).unwrap();
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+}
+
+#[test]
+fn call_waiting_network_online() {
+    let mut twin = Twin::new();
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id: 1 });
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty());
+    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(true)));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+}
+
 fn kind_of(kind: Kind) -> CallKind {
     match kind {
         Kind::Query => CallKind::Query,

@@ -393,7 +393,15 @@ impl Database {
     pub(crate) async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
         let variables_json = self.offload(move || Ok(parse_json::<Value>(&variables_json)?.to_string())).await?;
-        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
+        struct CancelCall { life: Arc<crate::owners::life::Life>, reply: u64, armed: bool }
+        impl Drop for CancelCall {
+            fn drop(&mut self) { if self.armed { self.life.cancel_call(self.reply); } }
+        }
+        let waiter = self.life.run(epoch, operation, variables_json);
+        let mut cancel = CancelCall { life: self.life.clone(), reply: waiter.id().raw(), armed: true };
+        let result = self.await_life(waiter).await;
+        cancel.armed = false;
+        match result? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
             _ => Err(foreign_reply()),

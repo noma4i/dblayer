@@ -1,9 +1,11 @@
 //! Owner `Calls`: the arbitrary operation `run`, one transport request per call, no cache and no Store write.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use super::contract::{Drained, Online, RequestId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
+const CALL_DEADLINE: Duration = Duration::from_secs(30);
 
 pub type CallId = u64;
 use super::contract::ReplyId;
@@ -83,6 +85,9 @@ pub enum CallsInput {
     Response { call_id: CallId, body: Option<String>, errors: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
+    Deadline { call_id: CallId },
+    RetryDue { call_id: CallId, attempt: u32 },
+    CallerCancel { reply: ReplyId },
     /// The broadcast of `Network`: it changes `online` only after the addressed `Snapshot` of the epoch.
     Online(Online),
     /// The addressed answer of `Network` to `SnapshotRequest{Calls}`.
@@ -99,55 +104,114 @@ pub struct CallsState {
     declared: BTreeMap<String, CallKind>,
     generation: u64,
     calls: BTreeMap<CallId, (CallPhase, ReplyId)>,
+    by_reply: BTreeMap<ReplyId, CallId>,
+    attempts: BTreeMap<CallId, CallAttempt>,
     /// `Run` calls that came before the addressed snapshot of the epoch.
-    awaiting: Vec<(String, String, ReplyId)>,
+    awaiting: BTreeMap<ReplyId, (CallId, String, String)>,
+    awaiting_by_id: BTreeMap<CallId, ReplyId>,
     next: u64,
     drained: bool,
 }
 
+struct CallAttempt {
+    operation: String,
+    variables: String,
+    epoch: Epoch,
+    attempt: u32,
+    last: Option<CallError>,
+    waiting_network: bool,
+}
+
+fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::RetryPolicy> {
+    use crate::runtime::RetryPolicy;
+    match error {
+        CallError::Network | CallError::Dropped | CallError::Http { status: 408 | 425 | 429 | 500..=599, .. } => Some(if kind == CallKind::Mutate { RetryPolicy::Http } else { RetryPolicy::QueryNetwork }),
+        CallError::Graphql { messages, extensions } if kind == CallKind::Query => {
+            let code = extensions.as_ref().and_then(|extension| extension.code.as_deref()).or_else(|| messages.first().map(String::as_str));
+            let body = serde_json::json!({ "error": code });
+            matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false), crate::transport::AnswerKind::Transient { .. }).then_some(RetryPolicy::QueryServer)
+        }
+        _ => None,
+    }
+}
+
 impl CallsState {
     pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), awaiting: Vec::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
 
     fn sending(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { .. })) }
 
-    fn finish(&mut self, call_id: CallId, answer: CallAnswer, fx: &mut Vec<CallsEffect>) {
+    fn finish(&mut self, call_id: CallId, answer: CallAnswer, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
         if let Some((phase, reply)) = self.calls.get_mut(&call_id) {
             *phase = CallPhase::Done;
+            self.by_reply.remove(reply);
+            self.attempts.remove(&call_id);
+            finished.push(call_id);
             fx.push(CallsEffect::Reply { id: *reply, answer });
         }
     }
 
-    fn run(&mut self, (operation, variables, reply): (String, String, ReplyId), fx: &mut Vec<CallsEffect>) {
+    fn run(&mut self, (operation, variables, reply): (String, String, ReplyId), held: Option<CallId>, fx: &mut Vec<CallsEffect>, deadlines: &mut Vec<CallId>, finished: &mut Vec<CallId>) {
         if self.online != Some(true) {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) });
+            if let Some(id) = held { finished.push(id); }
             return;
         }
         let Some(kind) = self.declared.get(&operation).copied() else {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) });
+            if let Some(id) = held { finished.push(id); }
             return;
         };
-        let id = self.next;
-        self.next += 1;
+        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
         self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: self.generation }, reply));
+        self.by_reply.insert(reply, id);
+        self.attempts.insert(id, CallAttempt { operation: operation.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false });
         fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: self.epoch });
     }
 
-    fn interrupt(&mut self, fx: &mut Vec<CallsEffect>) {
-        for (_, _, reply) in std::mem::take(&mut self.awaiting) {
+    fn interrupt(&mut self, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
+        for (reply, (id, _, _)) in std::mem::take(&mut self.awaiting) {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Interrupted) });
+            finished.push(id);
         }
+        self.awaiting_by_id.clear();
         let sending: Vec<(CallId, RequestId, CallKind)> = self.calls.iter().filter_map(|(id, (phase, _))| match phase {
             CallPhase::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
             CallPhase::Done => None,
         }).collect();
         for (call_id, request_id, kind) in sending {
-            self.finish(call_id, Err(CallError::Interrupted), fx);
+            self.finish(call_id, Err(CallError::Interrupted), fx, finished);
             fx.push(CallsEffect::Cancel { request_id, kind });
         }
+    }
+
+    fn retry(&mut self, call_id: CallId, error: CallError, policy: crate::runtime::RetryPolicy, fx: &mut Vec<CallsEffect>, scheduled: &mut Vec<(CallId, u32, Duration)>, finished: &mut Vec<CallId>) {
+        let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
+        if !policy.allows(attempt.attempt + 1) {
+            let phase = self.phase(call_id);
+            self.finish(call_id, Err(error), fx, finished);
+            if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = phase { fx.push(CallsEffect::Release { request_id }); }
+            return;
+        }
+        attempt.last = Some(error);
+        if self.online != Some(true) { attempt.waiting_network = true; return; }
+        scheduled.push((call_id, attempt.attempt, policy.delay(attempt.attempt)));
+    }
+
+    fn send_again(&mut self, call_id: CallId, fx: &mut Vec<CallsEffect>) {
+        let Some(CallPhase::Sending { mut request_id, kind, generation }) = self.phase(call_id) else { return };
+        if kind == CallKind::Query {
+            request_id = self.next;
+            self.next += 1;
+            if let Some((phase, _)) = self.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind, generation }; }
+        }
+        let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
+        attempt.attempt += 1;
+        attempt.waiting_network = false;
+        fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), kind, epoch: attempt.epoch });
     }
 }
 
@@ -162,53 +226,112 @@ impl StateOwner for Calls {
 
     fn step(state: &mut CallsState, input: CallsInput) -> Effects<Self> {
         let mut fx = Vec::new();
+        let (mut deadlines, mut scheduled, mut finished) = (Vec::new(), Vec::new(), Vec::new());
         match input {
             CallsInput::Run { epoch, reply, .. } if epoch != state.epoch => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::NoSession) }),
             CallsInput::Run { reply, ref operation, .. } if !state.declared.contains_key(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
-            CallsInput::Run { operation, variables, reply, .. } if state.online.is_none() => state.awaiting.push((operation, variables, reply)),
-            CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), &mut fx),
+            CallsInput::Run { operation, variables, reply, .. } if state.online.is_none() => {
+                let id = state.next;
+                state.next += 1;
+                state.awaiting.insert(reply, (id, operation, variables));
+                state.awaiting_by_id.insert(id, reply);
+                deadlines.push(id);
+            }
+            CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), None, &mut fx, &mut deadlines, &mut finished),
             CallsInput::Response { call_id, body, errors, extensions } if state.sending(call_id) => {
                 let answer = match (errors.is_empty(), body) {
                     (false, _) => Err(CallError::Graphql { messages: errors, extensions }),
                     (true, Some(body)) => Ok(body),
                     (true, None) => Err(CallError::InvalidResponse),
                 };
-                state.finish(call_id, answer, &mut fx);
+                let retry = match (&answer, state.phase(call_id)) { (Err(error), Some(CallPhase::Sending { kind, .. })) => retry_policy(error, kind), _ => None };
+                if let (Some(policy), Err(error)) = (retry, &answer) { state.retry(call_id, error.clone(), policy, &mut fx, &mut scheduled, &mut finished); }
+                else { state.finish(call_id, answer, &mut fx, &mut finished); }
             }
-            CallsInput::TransportError { call_id, error } if state.sending(call_id) => state.finish(call_id, Err(error), &mut fx),
+            CallsInput::TransportError { call_id, error } if state.sending(call_id) => {
+                let policy = match state.phase(call_id) { Some(CallPhase::Sending { kind, .. }) => retry_policy(&error, kind), _ => None };
+                if let Some(policy) = policy {
+                    state.retry(call_id, error, policy, &mut fx, &mut scheduled, &mut finished);
+                } else { state.finish(call_id, Err(error), &mut fx, &mut finished); }
+            }
             CallsInput::Dropped { call_id } if state.sending(call_id) => {
-                if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = state.phase(call_id) { fx.push(CallsEffect::Release { request_id }); }
-                state.finish(call_id, Err(CallError::Dropped), &mut fx);
+                let policy = if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) { crate::runtime::RetryPolicy::Http } else { crate::runtime::RetryPolicy::QueryNetwork };
+                state.retry(call_id, CallError::Dropped, policy, &mut fx, &mut scheduled, &mut finished);
+            }
+            CallsInput::Deadline { call_id } if state.awaiting_by_id.contains_key(&call_id) => {
+                if let Some(reply) = state.awaiting_by_id.remove(&call_id) {
+                    state.awaiting.remove(&reply);
+                    finished.push(call_id);
+                    fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Network) });
+                }
+            }
+            CallsInput::Deadline { call_id } if state.sending(call_id) => {
+                let phase = state.phase(call_id);
+                let error = state.attempts.get(&call_id).and_then(|attempt| attempt.last.clone()).filter(|error| *error != CallError::Dropped).unwrap_or(CallError::Network);
+                state.finish(call_id, Err(error), &mut fx, &mut finished);
+                if let Some(CallPhase::Sending { request_id, kind: CallKind::Query, .. }) = phase { fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }); }
+                if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = phase { fx.push(CallsEffect::Release { request_id }); }
+            }
+            CallsInput::CallerCancel { reply } => {
+                if let Some((id, _, _)) = state.awaiting.remove(&reply) { state.awaiting_by_id.remove(&id); finished.push(id); }
+                if let Some((call_id, phase)) = state.by_reply.remove(&reply).and_then(|id| state.phase(id).map(|phase| (id, phase))) {
+                    state.calls.insert(call_id, (CallPhase::Done, reply));
+                    state.attempts.remove(&call_id);
+                    finished.push(call_id);
+                    match phase {
+                        CallPhase::Sending { request_id, kind: CallKind::Query, .. } => fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }),
+                        CallPhase::Sending { request_id, kind: CallKind::Mutate, .. } => fx.push(CallsEffect::Release { request_id }),
+                        CallPhase::Done => {}
+                    }
+                }
+            }
+            CallsInput::RetryDue { call_id, attempt } if state.sending(call_id) && state.attempts.get(&call_id).is_some_and(|current| current.attempt == attempt) => {
+                if state.online == Some(true) { state.send_again(call_id, &mut fx); }
+                else if let Some(current) = state.attempts.get_mut(&call_id) { current.waiting_network = true; }
             }
             CallsInput::Declare(operations) => {
                 state.declared = operations.into_iter().collect();
                 state.generation += 1;
             }
-            CallsInput::Online(Online(online)) if state.online.is_some() => state.online = Some(online),
+            CallsInput::Online(Online(online)) if state.online.is_some() => {
+                state.online = Some(online);
+                if online {
+                    let waiting: Vec<_> = state.attempts.iter().filter(|(_, attempt)| attempt.waiting_network).map(|(id, _)| *id).collect();
+                    for id in waiting { state.send_again(id, &mut fx); }
+                }
+            }
             CallsInput::Online(_) => {}
             CallsInput::Snapshot(Online(online)) => {
                 state.online = Some(online);
-                for held in std::mem::take(&mut state.awaiting) {
-                    state.run(held, &mut fx);
+                for (reply, (id, operation, variables)) in std::mem::take(&mut state.awaiting) {
+                    state.awaiting_by_id.remove(&id);
+                    state.run((operation, variables, reply), Some(id), &mut fx, &mut deadlines, &mut finished);
                 }
             }
             CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch;
                 state.online = None;
                 state.calls.clear();
+                state.by_reply.clear();
+                state.attempts.clear();
                 state.awaiting.clear();
+                state.awaiting_by_id.clear();
                 fx.push(CallsEffect::SnapshotRequest { epoch });
             }
-            CallsInput::EpochEnded => state.interrupt(&mut fx),
+            CallsInput::EpochEnded => state.interrupt(&mut fx, &mut finished),
             CallsInput::Closing => {
-                state.interrupt(&mut fx);
+                state.interrupt(&mut fx, &mut finished);
                 if !state.drained {
                     state.drained = true;
                     fx.push(CallsEffect::Drained(Drained { owner: "calls" }));
                 }
             }
-            CallsInput::Response { .. } | CallsInput::TransportError { .. } | CallsInput::Dropped { .. } | CallsInput::Idle => {}
+            CallsInput::Response { .. } | CallsInput::TransportError { .. } | CallsInput::Dropped { .. } | CallsInput::Deadline { .. } | CallsInput::RetryDue { .. } | CallsInput::Idle => {}
         }
-        fx.into_iter().map(Effect::Run).collect()
+        let mut out: Effects<Self> = fx.into_iter().map(Effect::Run).collect();
+        out.extend(deadlines.into_iter().map(|call_id| Effect::Schedule { id: crate::runtime::ScheduleId(call_id * 2), after: CALL_DEADLINE, input: CallsInput::Deadline { call_id } }));
+        out.extend(scheduled.into_iter().map(|(call_id, attempt, after)| Effect::Schedule { id: crate::runtime::ScheduleId(call_id * 2 + 1), after, input: CallsInput::RetryDue { call_id, attempt } }));
+        for call_id in finished { out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2))); out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2 + 1))); }
+        out
     }
 
     fn epoch_started(epoch: Epoch) -> Option<CallsInput> { Some(CallsInput::ActivateEpoch(epoch)) }

@@ -12,7 +12,7 @@ use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorId, SessionInput};
 use crate::owners::read::windows::WindowsInput;
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput};
-use crate::runtime::{Epoch, EpochStamp, Waiter};
+use crate::runtime::{Epoch, EpochStamp, OutcomeId, Waiter};
 
 impl Life {
     /// `set_online`: Network answers after its `step`.
@@ -67,6 +67,11 @@ impl Life {
         let waiter = self.wiring.outcomes.register(epoch);
         self.wiring.to_calls(CallsInput::Run { epoch, operation, variables, reply: waiter.id().raw() });
         waiter
+    }
+
+    pub fn cancel_call(&self, reply: u64) {
+        self.wiring.outcomes.forget(OutcomeId::from_raw(reply));
+        self.wiring.to_calls(CallsInput::CallerCancel { reply });
     }
 
     /// `session_call`: the owner Session, the answer by `Outcomes`.
