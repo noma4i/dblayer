@@ -28,7 +28,7 @@ pub use raw::{classify, classify_upgrade, encrypted_call, graphql_call, graphql_
 pub use put::{ByteSink, PutFile, PutRequest, PutReply, TransferIdentity, TransferStep};
 pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
-pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
+pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetryEntry, RetryOwner, RetrySnapshot};
 pub use session_code::SessionCode;
 
 #[async_trait]

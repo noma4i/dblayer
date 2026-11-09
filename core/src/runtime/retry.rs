@@ -4,7 +4,7 @@ use std::time::Duration;
 use rand_core::RngCore;
 
 /// The one place of the retry rules: how many sends a policy allows and how long it waits before the next one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RetryPolicy {
     Http,
     QueryNetwork,

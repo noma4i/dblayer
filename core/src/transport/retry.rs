@@ -45,6 +45,18 @@ impl RetryClass {
 
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RetryOwner { Bootstrap, Session, Window, Calls, Outbox, Transfer, Feed }
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RetryEntry {
+    pub owner: RetryOwner,
+    pub kind: crate::runtime::RetryPolicy,
+    pub id: u64,
+    pub attempt: u32,
+    pub delay_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RetryAttempt {
     pub attempt: u64,
