@@ -104,6 +104,7 @@ impl SessionState {
     pub(super) fn begin(&mut self, queued: Queued, fx: &mut Vec<SessionEffect>) {
         match queued {
             Queued::Call { operation, body, reply: id } => {
+                if let Some(error) = self.admission(None) { reply(fx, id, Err(error)); return; }
                 let Some(def) = self.def(&operation) else {
                     reply(fx, id, Err(SessionError::Invalid));
                     return;

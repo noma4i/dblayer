@@ -13,21 +13,6 @@ impl SessionState {
             }
             return;
         }
-        let admission = match &input {
-            SessionInput::Mutate { epoch, .. } => self.admission(Some(*epoch)),
-            SessionInput::SessionCall { .. } | SessionInput::SessionResume { .. } => self.admission(None),
-            _ => None,
-        };
-        if let Some(error) = admission {
-            self.phase = phase;
-            match input {
-                SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, error),
-                SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(error)),
-                SessionInput::SessionResume { reply: id } => fx.push(SessionEffect::ResumeReply { id, answer: Err(error) }),
-                _ => {}
-            }
-            return;
-        }
         if let SessionInput::HttpFailed { attempt_id } = &input {
             if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
                 self.phase = phase;
@@ -335,9 +320,13 @@ impl SessionState {
             }
             (SessionPhase::Idle, SessionInput::Open { credential, pending, dropped_pending, secret }) => self.open(credential, pending, dropped_pending, secret, fx),
             (phase, SessionInput::Open { .. }) => self.phase = phase,
-            (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply: id }) => self.idle_call(operation, body, id, fx),
+            (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply: id }) => {
+                if let Some(error) = self.admission(None) { self.phase = SessionPhase::Idle; reply(fx, id, Err(error)); }
+                else { self.idle_call(operation, body, id, fx); }
+            }
             (SessionPhase::Idle, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 self.phase = SessionPhase::Idle;
+                if let Some(error) = self.admission(Some(epoch)) { author_error(fx, author, req_id, ErrorClass::Permanent, error); return; }
                 if self.awaits_publication() {
                     self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
                     return;
