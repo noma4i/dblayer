@@ -40,3 +40,57 @@ async fn sess_request_ids_unique_per_process() {
     assert_eq!(second.read_query(second.session_epoch(), super::QuerySpec::json(FEED)).await.unwrap().len(), 0, "the second load took the second reply");
     second.close_database().await.unwrap();
 }
+
+/// wire_prop_retry_progress_one_source: the public `RetryProgress` lists one waiting entry per owner that backs off (Session, Window, Outbox, Transfer), each keyed by its owner and first attempt, and every entry leaves when its tick fires (wire.md P-WIRE-03, D-274).
+#[tokio::test(flavor = "multi_thread")]
+async fn wire_prop_retry_progress_one_source() {
+    use std::collections::BTreeSet;
+    use crate::transport::{PutScript, RetryEntry, RetryOwner};
+
+    let transport = Arc::new(MockTransport::new());
+    transport.respond_with(|_| Some(Reply::graphql_error("busy", "SERVICE_UNAVAILABLE")));
+    transport.enqueue_put("https://put/part/1", PutScript::status(503));
+    let clock = Arc::new(ManualClock::new(std::time::Duration::from_secs(1)));
+    let wired = transport.clone();
+    let spec = super::sealed_errors_tests::moment_spec();
+    let database = Database::start_with(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), clock.clone(), move |db, _| {
+        super::signed_session_tests::signed_session(db);
+        Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
+    }).unwrap();
+    database.register_operations(super::sealed_errors_tests::OPERATIONS.into()).await.unwrap();
+    database.set_online(true).unwrap();
+    let epoch = database.session_epoch();
+
+    let window = tokio::spawn({ let db = database.clone(); async move { db.load(epoch, "Moment".into(), "feed".into(), "{}".into()).await } });
+    let outbox = tokio::spawn({ let db = database.clone(); async move { db.create(epoch, "Moment".into(), "{\"text\":\"a\"}".into(), "{}".into()).await } });
+    let session = tokio::spawn({ let db = database.clone(); async move { db.run(epoch, "MakeMoment".into(), "{}".into()).await } });
+    let transfer = tokio::spawn({
+        let db = database.clone();
+        async move { db.upload(epoch, "Moment".into(), "r1".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None }, variables_json: "{}".into() }).await }
+    });
+
+    let progress = database.retry_progress();
+    let mut reader = progress.subscribe();
+    let waiting = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.len() == 4 { break snapshot; }
+    };
+    let owners: BTreeSet<RetryOwner> = waiting.waiting.iter().map(|entry: &RetryEntry| entry.owner).collect();
+    assert_eq!(owners, [RetryOwner::Session, RetryOwner::Window, RetryOwner::Outbox, RetryOwner::Transfer].into_iter().collect(), "one waiting entry per owner");
+    assert!(waiting.waiting.iter().all(|entry| entry.attempt == 1), "the first retry of each owner: {:?}", waiting.waiting);
+
+    for entry in &waiting.waiting {
+        clock.advance(std::time::Duration::from_millis(entry.delay_ms));
+    }
+    let drained = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.is_empty() { break snapshot; }
+    };
+    assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
+
+    window.abort();
+    outbox.abort();
+    session.abort();
+    transfer.abort();
+    database.close_database().await.unwrap();
+}
