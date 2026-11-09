@@ -80,3 +80,4 @@ mod transfer_prop_tests;
 mod transfer_wait_tests;
 mod transfer_pending_tests;
 mod transfer_shown_tests;
+mod transfer_staged_tests;

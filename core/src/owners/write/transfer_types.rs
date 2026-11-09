@@ -38,6 +38,9 @@ pub struct TransferPeers {
 /// The id of the copy of a transfer in the file directory: it never holds a character of the key.
 pub fn file_id(transfer_id: TransferId) -> String { format!("transfers/{transfer_id}") }
 
+/// The temporary file of the new copy of a retry with a new source: it replaces `file_id` after the `Committed` of the metadata.
+pub fn staged_file_id(transfer_id: TransferId) -> String { format!("{}.staged", file_id(transfer_id)) }
+
 /// The request the codec of the executor builds the steps of a file from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Steps {
@@ -216,6 +219,7 @@ pub enum TransferInput {
     RoundStatus { epoch: Epoch, transfer_ids: Vec<TransferId>, refused: Option<String> },
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
+    StagedPromoted { transfer_id: TransferId },
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
@@ -314,7 +318,9 @@ pub enum StoreKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
-    Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source },
+    Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source, staged: bool },
+    /// The temporary file of the copy takes the place of the copy: the answer comes back as `StagedPromoted`.
+    PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
     Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },

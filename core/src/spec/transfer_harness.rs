@@ -93,6 +93,12 @@ impl Out {
 
     pub fn copies(&self) -> usize { self.count(|run| matches!(run, Run::Copy { .. })) }
 
+    pub fn staged_copies(&self) -> usize { self.count(|run| matches!(run, Run::Copy { staged: true, .. })) }
+
+    pub fn promotions(&self) -> usize { self.count(|run| matches!(run, Run::PromoteStaged { .. })) }
+
+    pub fn deleted(&self) -> Vec<String> { self.runs.iter().filter_map(|run| if let Run::DeleteFile { path } = run { Some(path.clone()) } else { None }).collect() }
+
     pub fn copy_cancels(&self) -> usize { self.count(|run| matches!(run, Run::CopyCancel { .. })) }
 
     pub fn deletes(&self) -> usize { self.count(|run| matches!(run, Run::DeleteFile { .. })) }

@@ -307,6 +307,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
+            TransferEffect::PromoteStaged { .. } => {}
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
             TransferEffect::Step { transfer_id, attempt_id, key, operation, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);

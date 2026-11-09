@@ -139,7 +139,7 @@ impl TransferState {
         transfer.stage = TransferStage::Copying;
         transfer.attempt_id = attempt_id;
         let Some(source) = transfer.source.clone() else { return };
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source };
+        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source, staged: false };
         self.show(id, Shown::Copying, fx);
         run(fx, effect);
         self.rounds_needed(vec![id], fx);

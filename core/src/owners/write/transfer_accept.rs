@@ -35,7 +35,7 @@ impl TransferState {
         transfer.supply_reply = Some(rep);
         transfer.stage = TransferStage::Copying;
         transfer.attempt_id = attempt_id;
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file };
+        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged: false };
         run(fx, effect);
         self.rounds_needed(vec![id], fx);
     }
@@ -219,7 +219,7 @@ impl TransferState {
             transfer.stage = TransferStage::Copying;
             transfer.attempt_id = attempt_id;
             let Some(source) = transfer.source.clone() else { continue };
-            let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source };
+            let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source, staged: false };
             self.show(id, Shown::Copying, fx);
             run(fx, effect);
         }
