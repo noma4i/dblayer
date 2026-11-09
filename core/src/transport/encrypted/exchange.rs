@@ -105,7 +105,7 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::StateLost => TransportError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
-        Failed::Revoked { body } => TransportError::Session { code: SessionCode::SessionEnded, detail: crate::owners::session::revoked_detail(&body) },
+        Failed::Revoked { body } => TransportError::Session { code: SessionCode::SessionEnded, detail: body },
         Failed::NoCredential => TransportError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::SequenceConflict => TransportError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Invalid => TransportError::Decode("the answer does not confirm the sequence".into()),
@@ -116,6 +116,7 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => TransportError::Storage(detail),
         Failed::Rejected(crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) => TransportError::Interrupted("the session ended while its answer was pending".into()),
         Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => TransportError::Internal(format!("the request was refused by the store: {reason:?}")),
+        Failed::Session { code: SessionCode::Unauthenticated, body } => TransportError::Http { status: 401, body },
         Failed::Session { code, body } => TransportError::Session { code, detail: body },
         Failed::Graphql { code, body } => TransportError::graphql_answer(code, body),
         Failed::SessionExists => TransportError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },

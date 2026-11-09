@@ -534,7 +534,7 @@ impl SessionState {
                 } else { Ok(body.clone()) };
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
-                    let error = if code == crate::transport::SessionCode::Unauthenticated { SessionError::Unauthorized } else { SessionError::Session { code, body: body.clone() } };
+                    let error = SessionError::Session { code, body: body.clone() };
                     self.land(pending, Err(error), None, confirmed, false, fx);
                 } else if pending.class == OperationClass::Sessionless {
                     self.land(pending, answer, None, None, false, fx);

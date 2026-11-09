@@ -54,6 +54,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Rejected(RejectReason::Storage(_)) => Fail::Reason(Reason::Storage),
         SessionError::Rejected(RejectReason::Closed) => Fail::Reason(Reason::Closed),
         SessionError::Rejected(other) => panic!("the Session table has no {other:?}"),
+        SessionError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => Fail::Unauthorized,
         SessionError::Session { code, .. } => Fail::Session(*code),
         SessionError::Graphql { code, .. } => Fail::Graphql(code.clone()),
         SessionError::Storage(_) => Fail::Storage,

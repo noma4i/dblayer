@@ -64,10 +64,6 @@ pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
     }
 }
 
-pub fn revoked_detail(body: &str) -> String {
-    serde_json::from_str(body).ok().and_then(|body| crate::transport::refusal_name(&body)).unwrap_or_else(|| crate::transport::SessionCode::SessionEnded.name().to_string())
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Credential {
     pub digest: Digest,

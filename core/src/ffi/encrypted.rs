@@ -156,7 +156,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Invalid => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
         Failed::NoCredential => DbError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::StateLost => DbError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
-        Failed::Revoked { body } => DbError::Session { code: SessionCode::SessionEnded, detail: crate::owners::session::revoked_detail(&body) },
+        Failed::Revoked { body } => DbError::Session { code: SessionCode::SessionEnded, detail: body },
         Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Unauthorized => DbError::Unauthorized { detail: "the server refused the credential".into() },
         Failed::Security { code, detail } => DbError::Security { code, detail },
