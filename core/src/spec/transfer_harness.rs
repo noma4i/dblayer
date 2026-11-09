@@ -53,6 +53,8 @@ const SPY: u64 = u64::MAX;
 pub(super) struct Out {
     pub runs: Vec<Run>,
     pub batches: Vec<StoreBatch>,
+    /// The batches that only write the shown value of a row: the owner does not wait for their answer.
+    pub shown: Vec<StoreBatch>,
     pub outbox: Vec<OutboxInput>,
     pub rounds: Vec<RoundsInput>,
     pub timers: usize,
@@ -124,7 +126,7 @@ impl Out {
     pub fn round_errors(&self) -> Vec<(String, Option<String>)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadRoundError { key, error } = op { Some((key.clone(), error.clone())) } else { None }).collect() }
 
     /// The shown values that the batches wrote to `sync_upload`.
-    pub fn stored_shows(&self) -> Vec<Shown> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadShown { shown, .. } = op { Some(shown.clone()) } else { None }).collect() }
+    pub fn stored_shows(&self) -> Vec<Shown> { self.shown.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadShown { shown, .. } = op { Some(shown.clone()) } else { None }).collect() }
 
     pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
@@ -278,6 +280,7 @@ impl Twin {
         }
         for input in take(&self.store) {
             if let StoreInput::Commit(batch) = input {
+                if batch.ops.iter().all(|op| matches!(op, StoreOp::UploadShown { .. })) { out.shown.push(batch); continue; }
                 self.unanswered.push(batch.id);
                 out.batches.push(batch);
             }

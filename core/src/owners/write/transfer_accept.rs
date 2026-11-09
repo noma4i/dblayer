@@ -95,6 +95,7 @@ impl TransferState {
             from_cache: false,
             cache_stale: false,
             round_error: None,
+            stored_shown: None,
             removal: None,
             prior: None,
             failure_abort: false,

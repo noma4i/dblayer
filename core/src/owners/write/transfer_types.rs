@@ -264,6 +264,18 @@ pub enum Shown {
 }
 
 impl Shown {
+    /// What the shown value writes to `sync_upload`: two values that give the same columns write once.
+    pub fn columns(&self) -> (u8, bool) {
+        match self {
+            Self::Copying => (0, false),
+            Self::WaitingSource => (1, false),
+            Self::Queued => (2, false),
+            Self::Uploading { progress } => (3, *progress >= 100),
+            Self::Failed { .. } => (4, false),
+            Self::Gone => (5, false),
+        }
+    }
+
     pub fn wait_reason(&self) -> Option<crate::owners::write::upload::WaitReason> {
         match self {
             Self::WaitingSource => Some(crate::owners::write::upload::WaitReason::SourcePending),
@@ -409,6 +421,8 @@ pub struct Transfer {
     /// The cache entry of the content is old: the write of the copy removes it.
     pub cache_stale: bool,
     pub round_error: Option<String>,
+    /// The columns of `sync_upload` that the last shown value wrote.
+    pub stored_shown: Option<(u8, bool)>,
     pub removal: Option<Removal>,
     pub prior: Option<TransferStage>,
     /// A batch of the Store for the failure mark carries `abort`.

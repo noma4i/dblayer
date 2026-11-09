@@ -42,10 +42,16 @@ impl TransferState {
     }
 
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
-    pub(super) fn show(&self, id: TransferId, shown: Shown, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get(&id) else { return };
-        for stream_id in self.subscribers.get(&transfer.key).into_iter().flatten() {
-            run(fx, TransferEffect::Status { stream_id: *stream_id, key: transfer.key.clone(), shown: shown.clone() });
+    pub(super) fn show(&mut self, id: TransferId, shown: Shown, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let key = transfer.key.clone();
+        let columns = shown.columns();
+        if shown != Shown::Gone && transfer.stored_shown != Some(columns) {
+            transfer.stored_shown = Some(columns);
+            self.send_batch(vec![StoreOp::UploadShown { key: key.clone(), shown: shown.clone() }], fx);
+        }
+        for stream_id in self.subscribers.get(&key).into_iter().flatten() {
+            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.clone(), shown: shown.clone() });
         }
     }
 
@@ -184,13 +190,19 @@ impl TransferState {
         if ops.is_empty() {
             return None;
         }
+        let id = self.send_batch(ops, fx);
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
+        Some(id)
+    }
+
+    /// A batch whose answer the owner does not wait for: the shown value of a row.
+    fn send_batch(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> crate::owners::contract::BatchId {
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
         let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
         batch.basis = crate::owners::store::basis_for(batch.models().into_iter().map(|model| (self.generations.get(&model).copied().unwrap_or(self.base_generation), model)).map(|(generation, model)| (model, generation)));
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
-        Some(id)
+        id
     }
 
     pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {

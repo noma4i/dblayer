@@ -16,6 +16,7 @@ mod batch_tests;
 mod members_among_tests;
 mod stable_tests;
 mod progress_tests;
+mod upload_shown_tests;
 mod boot_tests;
 mod file_ops_tests;
 mod memory_tests;
