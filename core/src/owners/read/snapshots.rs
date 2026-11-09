@@ -35,10 +35,10 @@ impl Snapshots for DbSnapshots {
         if view.kind == Kind::Blob {
             let (model, id, action) = crate::store::split_transfer_key(&view.subject).ok_or_else(|| format!("{} is no transfer key", view.subject))?;
             let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
-            let row = self.db.find(model, &id).map_err(|error| error.to_string())?;
+            let (seen, row) = self.db.read_row(model, &id, revision).map_err(|error| error.to_string())?;
             let upload = row.and_then(|row| row.sync.uploads.get(action).cloned());
             let (wait_reason, local_url, processing) = upload.map_or((None, None, None), |upload| { let wire = crate::ffi::wire::upload(&upload); (upload.wait_reason, wire.local_url, wire.processing) });
-            return Ok((self.db.published_revision().load(std::sync::atomic::Ordering::Acquire).max(revision), ReadData::Upload { wait_reason, local_url, processing }));
+            return Ok((seen, ReadData::Upload { wait_reason, local_url, processing }));
         }
         let (query, count) = match view.kind {
             Kind::List | Kind::Count => (view.query.as_deref().cloned().ok_or_else(|| "a list or count view has no query".to_string())?, view.kind == Kind::Count),
@@ -49,18 +49,18 @@ impl Snapshots for DbSnapshots {
             ReadMode::Snapshot => None,
             ReadMode::Changes { from_revision, from_position, limit } => Some(crate::store::HeldVersion { from: (from_revision, from_position), limit }),
         };
-        let (seen, read) = self.db.read_view(&query, count, revision, view.remote.then_some(&view.window), held).map_err(|error| error.to_string())?;
-        let replaced = |db: &Store| db.replaced().replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
+        let (seen, read, swapped) = self.db.read_view(&query, count, revision, after, view.remote.then_some(&view.window), held).map_err(|error| error.to_string())?;
+        let replaced = || swapped.into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
         Ok((seen, match read {
             crate::store::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
             crate::store::ViewRead::Overflow => ReadData::Overflow,
             crate::store::ViewRead::Rows(rows, total) => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(&self.db), total }
+                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
             crate::store::ViewRead::Changes { keys, rows, total } => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(&self.db), total }
+                ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
         }))
     }

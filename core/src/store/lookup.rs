@@ -150,8 +150,22 @@ impl Store {
         })
     }
 
-    /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), CoreError> {
+    /// The row `id` and the revision of the snapshot that shows it, in one read not older than `floor`.
+    pub(crate) fn read_row(&self, model: &str, id: &RowId, floor: i64) -> Result<(i64, Option<Row>), CoreError> {
+        self.spec(model)?;
+        let ids = [id.to_string()];
+        self.read_models(&[model], |reader| {
+            let seen = reader.revision_seq()?;
+            if seen < floor {
+                return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
+            }
+            let mut loaded = self.load(reader, model, &ids)?;
+            Ok((seen, loaded.remove(id.as_str())))
+        })
+    }
+
+    /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot and the temporary ids swapped for server ids after `after` up to it.
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead, Vec<(RowId, RowId)>), CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
         let model = query.model.as_str();
@@ -162,14 +176,14 @@ impl Store {
             }
             if count {
                 let statement = compile_count(query, self.spec(model)?)?;
-                return Ok((seen, ViewRead::Count(fetch_count(reader.connection(), &statement)?)));
+                return Ok((seen, ViewRead::Count(fetch_count(reader.connection(), &statement)?), Vec::new()));
             }
             let named = match held {
                 Some(held) if super::plan::nested_ref::link_targets(self.spec(model)?).is_empty() => self.context.changed.changed_between(held.from, seen, held.limit),
                 _ => None,
             };
             if held.is_some() && named.is_none() {
-                return Ok((seen, ViewRead::Overflow));
+                return Ok((seen, ViewRead::Overflow, Vec::new()));
             }
             let keys = self.query_keys(reader, query)?;
             let wanted: Vec<RowKey> = match &named {
@@ -196,7 +210,7 @@ impl Store {
                 _ => None,
             };
             let stamped = wanted.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect();
-            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }))
+            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, self.replaced().replaced_between(after, seen)))
         })
     }
 }
