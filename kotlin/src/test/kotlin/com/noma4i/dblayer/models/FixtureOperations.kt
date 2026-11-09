@@ -59,7 +59,7 @@ data class Clip(
         }
         MutationReceipt(database_, Clip, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<Clip> = Clip.retry(id, action, source, account)
+    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Clip> = Clip.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Clip> = Clip.destroy(id, account)
     suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Clip> = account.upload(this, "create_file", request, Clip)
 }
@@ -118,7 +118,7 @@ data class Inbox(
         }
         MutationReceipt(database_, Inbox, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<Inbox> = Inbox.retry(id, action, source, account)
+    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Inbox> = Inbox.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Inbox> = Inbox.destroy(id, account)
     suspend fun move(list: ContainerShelfKind, account: AccountScope? = null): MutationReceipt<Inbox> = this.act("move", JsonObject(parseJsonObject("""{"stance":{"${'$'}map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}""") + mapOf()), JsonObject(mapOf("list" to jsonValue(list))), Inbox, account)
 }
@@ -173,7 +173,7 @@ data class MediaEntry(
         }
         MutationReceipt(database_, MediaEntry, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<MediaEntry> = MediaEntry.retry(id, action, source, account)
+    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<MediaEntry> = MediaEntry.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<MediaEntry> = MediaEntry.destroy(id, account)
 }
 
@@ -226,7 +226,7 @@ data class Roster(
         }
         MutationReceipt(database_, Roster, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<Roster> = Roster.retry(id, action, source, account)
+    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Roster> = Roster.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Roster> = Roster.destroy(id, account)
 }
 

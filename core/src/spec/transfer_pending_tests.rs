@@ -140,7 +140,7 @@ fn xfer_pending_closing() {
     twin.commit();
     let (reply, _) = twin.outcome(id, 1);
     let out = twin.close();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted, None)]);
     assert_eq!((out.drained(), out.removed().len()), (1, 0));
 }
 
@@ -151,7 +151,7 @@ fn xfer_pending_epoch_end() {
     twin.commit();
     let (reply, _) = twin.outcome(id, 1);
     let out = twin.end_epoch();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Interrupted, None)]);
     assert_eq!(twin.stage(id), TransferStage::Done);
 }
 

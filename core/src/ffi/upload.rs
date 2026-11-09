@@ -215,8 +215,8 @@ impl Database {
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         self.account_call(epoch)?;
-        self.upload_operations()?;
         let (items, request) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
+        self.upload_operations()?;
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = action.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;

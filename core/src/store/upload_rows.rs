@@ -125,7 +125,7 @@ impl Store {
             transfer_id,
             key,
             seq,
-            source: raw.source.map(|path| Ok(Source { path, parts: unsigned(raw.total, "total")? })).transpose()?,
+            source: raw.source.map(|path| Ok::<_, CoreError>(Source { path, parts: unsigned(raw.total, "total")? })).transpose()?,
             awaiting_source,
             batch: raw.batch.and_then(|group| u64::try_from(group).ok()).filter(|group| *group > 0),
             upload_id: raw.upload_id,

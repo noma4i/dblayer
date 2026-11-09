@@ -350,7 +350,9 @@ impl Store {
         if let Some(log) = self.commit_log.get() { log(&event); }
         let ticket = self.line.ticket();
         drop(inner);
-        ResetCommitted { store: self, ticket: Some(ticket), revision, models: None }.run();
+        let committed = ResetCommitted { store: self, ticket: Some(ticket), revision, models: None };
+        self.files().remove_all()?;
+        committed.run();
         Ok(revision)
     }
 

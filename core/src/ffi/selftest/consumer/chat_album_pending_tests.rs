@@ -31,7 +31,7 @@ async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
         assert_eq!(row["mediaGroup"]["position"], json!(position));
         assert_eq!(row["mediaGroup"]["size"], json!(2));
     }
-    stand.answer("CreateBlob", json!({"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"b"}}));
+    stand.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
     let mut first = message("m0", "c1", "");
     first["clientKey"] = json!("key-0");
     let mut third = message("m2", "c1", "");
@@ -79,6 +79,7 @@ async fn consumer_chat_album_pending_source_restart_and_reset() {
     bound(stand.database.close_database()).await.unwrap();
     drop(stand);
     let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
+    reopened.settle().await;
     let epoch = reopened.database.session_epoch();
     for id in &ids {
         let row = reopened.database.peek_row(epoch, "Message".into(), id.clone()).unwrap().unwrap();

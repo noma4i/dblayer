@@ -92,7 +92,7 @@ impl TransferState {
                     if let (Some(Removal::Cancel), Some(upload_id)) = (&transfer.removal, Self::orphan_of(transfer)) {
                         ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                     }
-                    if let Some(op_id) = own.filter(|_| transfer.restored || !transfer.mutation.effects.is_empty()) {
+                    if let Some(op_id) = own {
                         match transfer.removal {
                             Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
                             Some(Removal::Confirmed { .. }) => {}
