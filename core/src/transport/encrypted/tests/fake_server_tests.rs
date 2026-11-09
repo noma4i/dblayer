@@ -79,7 +79,7 @@ pub fn seal_response(request: &Value, sequence: Option<i64>, body: Value) -> Str
     format!("{header}..{}.{}.{}", URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(text), URL_SAFE_NO_PAD.encode(tag))
 }
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -110,16 +110,16 @@ struct Session {
     reads: HashSet<String>,
 }
 
-fn document_of(documents: &mut HashMap<String, String>, body: &Value) -> Result<Value, &'static str> {
+fn document_of(contract: &mut Contract<String>, body: &Value) -> Result<Value, &'static str> {
     let Some(persisted) = body.get("extensions").and_then(|extensions| extensions.get("persistedQuery")) else { return Ok(body["query"].clone()) };
     let hash = persisted["sha256Hash"].as_str().unwrap_or_default().to_string();
     match body["query"].as_str() {
         Some(query) if hex_of(query) == hash => {
-            documents.insert(hash, query.to_string());
+            contract.register_document(&hash, query);
             Ok(json!(query))
         }
         Some(_) => Err("INVALID_INPUT"),
-        None => documents.get(&hash).map(|query| json!(query)).ok_or(DOCUMENT_MISSING),
+        None => contract.document(&hash).map(|query| json!(query)).ok_or(DOCUMENT_MISSING),
     }
 }
 
@@ -133,7 +133,6 @@ struct State {
     faults: Faults,
     seen: Vec<Value>,
     executed: Vec<Value>,
-    documents: HashMap<String, String>,
     contract: Contract<String>,
     reply: Option<Value>,
 }
@@ -155,8 +154,7 @@ impl FakeServer {
     pub fn register(&self, document: &str) {
         let hash = hex_of(document);
         let mut state = self.state.lock().unwrap();
-        state.contract.register(&hash);
-        state.documents.insert(hash, document.to_string());
+        state.contract.register_document(&hash, document);
     }
 
     pub fn reply_with(&self, data: Value) {
@@ -169,7 +167,6 @@ impl FakeServer {
 
     pub fn empty_registry(&self) {
         let mut state = self.state.lock().unwrap();
-        state.documents.clear();
         state.contract.forget();
     }
 
@@ -245,7 +242,7 @@ impl FakeServer {
             Admission::Refused(refusal) => return seal_response(data, None, refusal),
             Admission::Fresh => {}
         }
-        let resolved = if graphql { document_of(&mut state.documents, &data["body"]) } else { Ok(Value::Null) };
+        let resolved = if graphql { document_of(&mut state.contract, &data["body"]) } else { Ok(Value::Null) };
         if let Err(code) = &resolved {
             return seal_response(data, None, refusal(code));
         }

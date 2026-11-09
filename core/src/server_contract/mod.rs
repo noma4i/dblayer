@@ -1,6 +1,6 @@
 //! The one server contract that every test double of the server follows: a pair carries one body, an answer without a sequence spends no number, an unknown hash gets `PERSISTED_QUERY_NOT_FOUND`, a request nobody scripted is refused.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use serde_json::{json, Value};
 
@@ -24,7 +24,7 @@ pub(crate) enum Admission<A> {
 }
 
 pub(crate) struct Contract<A> {
-    known: HashSet<String>,
+    known: HashMap<String, Option<String>>,
     everything_cached: bool,
     last: Option<i64>,
     settled: HashMap<(String, String, Option<i64>), (String, A)>,
@@ -87,13 +87,17 @@ impl<A: Clone> Default for Contract<A> {
 
 impl<A: Clone> Contract<A> {
     pub(crate) fn new() -> Self {
-        Contract { known: HashSet::new(), everything_cached: false, last: Some(0), settled: HashMap::new(), numbers: HashMap::new(), script: HashMap::new(), standing: None }
+        Contract { known: HashMap::new(), everything_cached: false, last: Some(0), settled: HashMap::new(), numbers: HashMap::new(), script: HashMap::new(), standing: None }
     }
 
     /// A server whose session number the double was never told: the first sequenced request sets it.
     pub(crate) fn adopting() -> Self { Contract { last: None, ..Self::new() } }
 
-    pub(crate) fn register(&mut self, hash: &str) { self.known.insert(hash.to_string()); }
+    pub(crate) fn register(&mut self, hash: &str) { self.known.entry(hash.to_string()).or_insert(None); }
+
+    pub(crate) fn register_document(&mut self, hash: &str, document: &str) { self.known.insert(hash.to_string(), Some(document.to_string())); }
+
+    pub(crate) fn document(&self, hash: &str) -> Option<&str> { self.known.get(hash).and_then(Option::as_deref) }
 
     /// The server cache holds every document.
     pub(crate) fn cache_everything(&mut self) { self.everything_cached = true; }
@@ -123,8 +127,8 @@ impl<A: Clone> Contract<A> {
             return if *body == request.body { Admission::Stored(answer.clone()) } else { Admission::TwoBodies };
         }
         match (request.document, &request.hash) {
-            (true, Some(hash)) => { self.known.insert(hash.clone()); }
-            (false, Some(hash)) if !self.everything_cached && !self.known.contains(hash) => return Admission::Refused(refusal(DOCUMENT_MISSING)),
+            (true, Some(hash)) => { self.register(hash); }
+            (false, Some(hash)) if !self.everything_cached && !self.known.contains_key(hash) => return Admission::Refused(refusal(DOCUMENT_MISSING)),
             _ => {}
         }
         match request.sequence {
