@@ -79,6 +79,7 @@ impl SessionState {
                     match pending.owner {
                         None if pending.author.is_none() => self.restored_direct = Some(PendingCall { epoch, ..pending }),
                         Some(MutateOwner::Detached) => self.restored_detached = Some(PendingCall { epoch, ..pending }),
+                        Some(MutateOwner::Transfer { .. }) => self.restored_transfer = Some(PendingCall { epoch, author: Some(TRANSFER_AUTHOR), ..pending }),
                         _ => {}
                     }
                 }
@@ -88,6 +89,7 @@ impl SessionState {
                 self.phase = phase;
                 if epoch == self.epoch && self.current(epoch) { self.restore_ready = true; }
                 if self.restore_ready && matches!(self.phase, SessionPhase::Idle) { self.start_restored(fx); }
+                else if self.restore_ready { self.drive_held_transfer(fx); }
             }
             SessionInput::RestoreFailed { epoch, error } => {
                 self.phase = phase;
@@ -119,6 +121,7 @@ impl SessionState {
                 }
                 self.restored_direct = None;
                 self.restored_detached = None;
+                self.restored_transfer = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 self.restore_error = None;

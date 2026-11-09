@@ -23,7 +23,7 @@ impl TransferState {
     fn can_start(&self, transfer: &Transfer) -> bool {
         let opened = !transfer.restored || self.phase == Phase::Ready;
         let allowed = !self.saving || transfer.urgent;
-        opened && allowed && transfer.stage == TransferStage::Ready
+        opened && allowed && transfer.stage == TransferStage::Ready && transfer.pending_step.is_none()
     }
 
     fn step_effect(transfer: &Transfer, operation: u64) -> Option<TransferEffect> {

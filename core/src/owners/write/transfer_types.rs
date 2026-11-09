@@ -223,6 +223,8 @@ pub enum TransferInput {
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
     StagedPromoted { transfer_id: TransferId },
+    /// The answer of the pair that Session re-sent for a restored step: the transfer starts its attempt, the executor serves the answer to the first request of the step.
+    StepAnswer { request_id: u64, outcome: crate::owners::session::AuthorOutcome },
     StagedPromoteFailed { transfer_id: TransferId, detail: String },
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },

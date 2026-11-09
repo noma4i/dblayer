@@ -110,6 +110,13 @@ impl Life {
             Some(owner @ crate::transport::RequestOwner::Transfer { .. }) => self.wiring.request_of(owner),
             _ => crate::owners::contract::next_request_id(),
         };
+        if let Some(outcome) = self.wiring.take_seed(req_id) {
+            let author = WAITER_AUTHOR.saturating_add(req_id);
+            let waiter = self.wiring.mutations.register_as(author, Epoch::MAX);
+            self.wiring.settle_request(req_id);
+            self.wiring.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome));
+            return waiter;
+        }
         self.mutate_answered(owner, req_id, path, body, purpose)
     }
 

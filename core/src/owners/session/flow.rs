@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -170,9 +170,17 @@ impl SessionState {
             self.start_calling(pending, fx);
             return true;
         }
-        let Some(pending) = self.restored_detached.take() else { return false };
+        let Some(pending) = self.restored_detached.take().or_else(|| self.restored_transfer.take()) else { return false };
         self.start_calling(pending, fx);
         true
+    }
+
+    /// A pair held for the transfer that owned it before the restart: Session sends it itself and the answer goes to that transfer.
+    pub(super) fn drive_held_transfer(&mut self, fx: &mut Vec<SessionEffect>) {
+        let SessionPhase::PendingHeld { pending } = self.phase.clone() else { return };
+        if !matches!(pending.owner, Some(MutateOwner::Transfer { .. })) || pending.reply.is_some() { return; }
+        self.restored_transfer = None;
+        self.start_calling(PendingCall { author: Some(TRANSFER_AUTHOR), ..pending }, fx);
     }
 
     pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) { self.resume_finish_retained(pending, result, false, fx); }
@@ -229,6 +237,7 @@ impl SessionState {
         self.held = None;
         self.restored_direct = None;
         self.restored_detached = None;
+        self.restored_transfer = None;
         self.phase = SessionPhase::Closed;
         fx.push(SessionEffect::Drained(Drained { owner: "session" }));
     }
@@ -254,7 +263,7 @@ impl SessionState {
     }
 
     pub(super) fn adopt_epoch(&mut self, epoch: Epoch) {
-        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_detached.as_mut()) { pending.epoch = epoch; }
+        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_detached.as_mut()).or(self.restored_transfer.as_mut()) { pending.epoch = epoch; }
         if let SessionPhase::PendingHeld { pending } | SessionPhase::Calling { pending, .. } = &mut self.phase { pending.epoch = epoch; }
     }
 
