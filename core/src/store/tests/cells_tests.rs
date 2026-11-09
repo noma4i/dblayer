@@ -99,7 +99,9 @@ fn store_prop_edge_values() {
     assert_eq!(edges(&db, &["m1", "m2"]), json!({"m1": stamp(json!("a"), json!(1)), "m2": stamp(json!("b"), Value::Null)}));
     let revision = db.read(&["moments"], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap().revision;
 
-    db.write_queue_ops(&[page(&db, "feed", &[("m1", stamp(Value::Null, Value::Null))], false)]).unwrap();
+    let mut second = page(&db, "feed", &[("m1", stamp(Value::Null, Value::Null))], false);
+    if let StoreOp::Window { cursor, .. } = &mut second { *cursor = Some("c1".into()); }
+    db.write_queue_ops(&[second]).unwrap();
     assert_eq!(edges(&db, &["m1", "m2"]), json!({"m1": stamp(Value::Null, Value::Null), "m2": stamp(json!("b"), Value::Null)}), "a page replaces the values of its rows, null too");
     assert_eq!(db.read(&["moments"], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap().revision, revision, "an edge change does not touch the row");
 
