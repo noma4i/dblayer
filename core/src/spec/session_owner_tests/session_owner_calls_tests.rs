@@ -490,7 +490,7 @@ fn sess_calling_server_refusal_code() {
         assert!(twin.replies.is_empty() && !before.iter().any(|effect| matches!(effect, RefEffect::Answer { .. })), "answered after the commit");
         let after = twin.feed(committed());
         if author {
-            assert!(after.contains(&answer(7, 11, permanent(Fail::Session(code)))), "{after:?}");
+            assert!(after.contains(&answer(7, 11, permanent(Fail::Unauthorized))), "{after:?}");
         } else {
             assert_eq!(twin.replies, vec![(1, Err(Fail::Session(code)))]);
         }

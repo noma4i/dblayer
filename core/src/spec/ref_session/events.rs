@@ -469,7 +469,8 @@ impl Session {
             Input::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != Class::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
-                    self.land(pending, Err(Fail::Session(code)), None, confirmed, false, out);
+                    let failure = if code == crate::transport::SessionCode::Unauthenticated { Fail::Unauthorized } else { Fail::Session(code) };
+                    self.land(pending, Err(failure), None, confirmed, false, out);
                 } else if pending.class == Class::Sessionless {
                     self.land(pending, Ok(body), None, None, false, out);
                 } else if sequence == Some(pending.sequence) {
