@@ -25,7 +25,7 @@ class ReconnectTest {
         transport.enqueue("MomentsFeed", FEED_PAGE)
         transport.enqueue("MomentsFeed", FEED_PAGE)
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations(FEED_DEFS)
+        registerStandOperations(DBlayer.database, FEED_DEFS)
         val screen = CoroutineScope(SupervisorJob())
         try {
             val list = Projected(AccountScope.current().stream(Moment.feed, refreshOnConnect = true), Moment, screen)
@@ -47,7 +47,7 @@ class ReconnectTest {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", FEED_PAGE)
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations(FEED_DEFS)
+        registerStandOperations(DBlayer.database, FEED_DEFS)
         val screen = CoroutineScope(SupervisorJob())
         try {
             val list = Projected(AccountScope.current().stream(Moment.feed), Moment, screen)
@@ -71,7 +71,7 @@ class ReconnectTest {
         transport.enqueue("CreateMoment", DbException.Network("down"))
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations(FEED_DEFS)
+        registerStandOperations(DBlayer.database, FEED_DEFS)
         val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", JsonPrimitive("hello")) })
         eventually("the first attempt failed on the network") { count(transport, "CreateMoment") == 1 }
         DBlayer.database.setOnline(false)

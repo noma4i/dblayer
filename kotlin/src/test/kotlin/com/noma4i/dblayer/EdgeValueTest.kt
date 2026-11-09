@@ -23,7 +23,7 @@ class EdgeValueTest {
     fun edgeCallsDecodeNullableFieldsAliasesAndEnums() = bounded {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"$document"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"$document"}]""")
         transport.enqueue("MomentsFeed", reply("imp-1", 5))
         Moment.feed.refresh()
         assertEquals(MomentFeedEdge("imp-1", 5L), Moment.feedEdge("1"))

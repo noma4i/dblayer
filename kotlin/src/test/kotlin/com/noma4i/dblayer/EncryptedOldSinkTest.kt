@@ -34,7 +34,7 @@ class EncryptedOldSinkTest {
             DBlayer.openTesting(peer, modelsJSON, encrypted = encrypted, credentials = CableCredentials(), http = server)
             val fixtureOperations = """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"""
             server.registerDocuments(fixtureOperations)
-            DBlayer.database.registerOperations(fixtureOperations)
+            registerStandOperations(DBlayer.database, fixtureOperations)
             DBlayer.database.setOnline(true)
             DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
             val query = Notice.recent.spec()

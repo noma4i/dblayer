@@ -27,7 +27,7 @@ class OperationCallTest {
         val transport = MockTransport()
         transport.enqueue(name, reply)
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"$name","document":"$document"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"$name","document":"$document"}]""")
         return transport
     }
 
@@ -62,7 +62,7 @@ class OperationCallTest {
             val transport = MockTransport()
             transport.enqueue("QrCodeCreate", failure)
             openSigned(Config(null, null), modelsJSON, transport)
-            DBlayer.database.registerOperations("""[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
+            registerStandOperations(DBlayer.database, """[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
             val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
             assertEquals(expected, refusal(error as DbException))
         }

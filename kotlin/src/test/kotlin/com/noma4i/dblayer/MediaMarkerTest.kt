@@ -24,7 +24,7 @@ class MediaMarkerTest {
             put("name", JsonPrimitive(name))
             put("document", JsonPrimitive(document))
         } }
-        DBlayer.database.registerOperations(JsonArray(definitions).toString())
+        registerStandOperations(DBlayer.database, JsonArray(definitions).toString())
         fun marker(count: Int, sequence: Int) {
             transport.enqueue("chatMediaState", """{"data":{"node":{"mediaLibrary":{"revision":"1","visualCount":$count,"audioCount":0,"giftCount":0,"latestSequence":$sequence}}}}""")
         }

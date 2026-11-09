@@ -58,7 +58,7 @@ class BridgeProbeTest {
         transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         transport.enqueue("DeleteMoment", """{"data":{"deleteMoment":{"id":"1"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
         scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }); TestPulse.pulse() } }
@@ -82,7 +82,7 @@ class BridgeProbeTest {
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
         transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
         scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }); TestPulse.pulse() } }
@@ -121,7 +121,7 @@ class BridgeProbeTest {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val before = DBlayer.subscriptionCensus()
 
         Moment.feed.load()
@@ -138,7 +138,7 @@ class BridgeProbeTest {
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
         val thrown = runCatching { Moment.feed.refresh() }.exceptionOrNull()
 
@@ -152,7 +152,7 @@ class BridgeProbeTest {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
         val listScope = CoroutineScope(SupervisorJob())
         val list = ListReader(Moment.feed, listScope)
@@ -174,7 +174,7 @@ class BridgeProbeTest {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
 
         val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
         assertEquals(true, sent.optimisticValue?.id?.startsWith("temp"))
@@ -186,7 +186,7 @@ class BridgeProbeTest {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val stream = AccountScope.current().stream(Moment.recent)
 
         val local = Moment.create(text = "hello", media = null, account = AccountScope.current()).optimisticValue!!

@@ -26,7 +26,7 @@ class FutureHandleTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
-        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         val holds = (0 until 8).map { transport.hold("ContainerMembers", page(it)) }
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {

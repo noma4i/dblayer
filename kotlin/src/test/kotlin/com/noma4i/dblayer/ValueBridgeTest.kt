@@ -81,7 +81,7 @@ class ValueBridgeTest {
         DBlayer.database.setOnline(true)
         val fixtureOperations = """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]"""
         server.registerDocuments(fixtureOperations)
-        DBlayer.database.registerOperations(fixtureOperations)
+        registerStandOperations(DBlayer.database, fixtureOperations)
     }
 
     private fun text(value: String): JsonObject = buildJsonObject { put("text", value) }

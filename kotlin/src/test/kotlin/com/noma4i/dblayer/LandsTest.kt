@@ -11,7 +11,7 @@ class LandsTest {
         val transport = MockTransport()
         transport.enqueue("CreateRecord", """{"data":{"createRecord":{"record":{"id":"r1"},"extra":{"id":"r2"}}}}""")
         val database = openSigned(Config(null, null), specs(schema), transport)
-        database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
+        registerStandOperations(database, """[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
         val receipt = database.send(CommandRequest(database.sessionEpoch(), "Record", "{}", "{}", null))
         assertTrue(database.outcome(receipt) is WireOperationOutcome.Confirmed)
         assertEquals("r2", database.readRow(database.sessionEpoch(), "Record", "r2")?.id)

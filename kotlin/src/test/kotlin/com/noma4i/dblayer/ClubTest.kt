@@ -163,7 +163,7 @@ class ClubTest {
             val transport = MockTransport()
             transport.enqueue("CreateClub", CLUB_CREATED)
             openClubSession(transport, clubModels(destroy = true))
-            DBlayer.database.registerOperations("""[{"name":"DeleteClub","document":"mutation DeleteClub(${'$'}id: ID!) { deleteClub(id: ${'$'}id) { id } }"}]""")
+            registerStandOperations(DBlayer.database, """[{"name":"DeleteClub","document":"mutation DeleteClub(${'$'}id: ID!) { deleteClub(id: ${'$'}id) { id } }"}]""")
             val club = confirmedClub()
             val hold = if (business) transport.hold("DeleteClub", """{"errors":[{"message":"refused","extensions":{"code":"REFUSED"}}]}""") else transport.hold("DeleteClub", failure = DbException.Http(422.toUShort(), "refused"))
             try {

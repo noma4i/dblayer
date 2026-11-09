@@ -114,7 +114,7 @@ class UnionTest {
         val transport = MockTransport()
         transport.enqueue("ContainerThread", threadReply(nodes))
         open(transport)
-        DBlayer.database.registerOperations(JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ContainerThread")); put("document", JsonPrimitive(threadDocument)) })).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ContainerThread")); put("document", JsonPrimitive(threadDocument)) })).toString())
         val thread = Record.thread("c1")
         thread.load()
 
@@ -146,7 +146,7 @@ class UnionTest {
         val transport = MockTransport()
         transport.enqueue("CreateRecord", """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z","attachment":{"__typename":"MomentAttachment","momentId":"m9","caption":"look"}}}}""")
         open(transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]""")
 
         val sent = Record.create(containerId = "c", authorId = "u1", text = "hi", account = AccountScope.current())
         assertNull(sent.optimisticValue!!.attachment)

@@ -20,7 +20,7 @@ class NodeReadTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val defs = documents.map { (name, document) -> buildJsonObject { put("name", JsonPrimitive(name)); put("document", JsonPrimitive(document)) } }
-        DBlayer.database.registerOperations(JsonArray(defs).toString())
+        registerStandOperations(DBlayer.database, JsonArray(defs).toString())
         return transport
     }
 

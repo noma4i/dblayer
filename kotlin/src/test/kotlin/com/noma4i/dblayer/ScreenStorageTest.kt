@@ -33,7 +33,7 @@ class ScreenStorageTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val document = "query ScreenNode(\$id: ID!) { node(id: \$id) { ... on CustomScreen { id slug version requires { ios android } spec { root state { path value } elements { id type slot children padding margin background radius expand align accessibilityLabel props visible press change } } } } }"
-        DBlayer.database.registerOperations(JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ScreenNode")); put("document", JsonPrimitive(document)) })).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ScreenNode")); put("document", JsonPrimitive(document)) })).toString())
         val row = buildJsonObject {
             put("__typename", JsonPrimitive("CustomScreen"))
             put("id", JsonPrimitive("sample"))

@@ -32,7 +32,7 @@ class SealedErrorsTest {
     fun aGraphqlRefusalKeepsEveryExtensionFieldThroughAnOperationCall() = bounded {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations(operations)
+        registerStandOperations(DBlayer.database, operations)
         val sent = GraphqlExtensions("FORBIDDEN", TransactionDisposition.Keep, mapOf("reasonCode" to "\"child\""))
         transport.enqueue("QrCodeCreate", DbException.Graphql(listOf("Forbidden"), sent))
         val failure = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull() as? DbException.Graphql
@@ -46,7 +46,7 @@ class SealedErrorsTest {
         for (code in codes) {
             val transport = MockTransport()
             openSigned(Config(null, null), modelsJSON, transport)
-            DBlayer.database.registerOperations(operations)
+            registerStandOperations(DBlayer.database, operations)
             val failure = DbException.Session(code, code.name)
 
             transport.enqueue("MomentsFeed", failure)

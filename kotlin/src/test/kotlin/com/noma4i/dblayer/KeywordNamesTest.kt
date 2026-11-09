@@ -23,7 +23,7 @@ class KeywordNamesTest {
         assertEquals(parseJson(expected), dbJson.encodeToJsonElement(KeywordValue.serializer(), nested))
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"KeywordCall","document":"query KeywordCall(${'$'}class: String!) { keywordCall(class: ${'$'}class) { default when container r } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"KeywordCall","document":"query KeywordCall(${'$'}class: String!) { keywordCall(class: ${'$'}class) { default when container r } }"}]""")
         transport.enqueue("KeywordCall", """{"data":{"keywordCall":{"default":"answer","when":"now","container":"box","r":"reader"}}}""")
         val answer = Operations.`when`(`class` = "request")
         assertEquals(listOf("answer", "now", "box", "reader"), listOf(answer.default, answer.`when`, answer.container, answer.r))

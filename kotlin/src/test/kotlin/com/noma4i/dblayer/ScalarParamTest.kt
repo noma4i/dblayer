@@ -29,7 +29,7 @@ class ScalarParamTest {
     fun aTypedScopeParamReachesTheServerAsANumber() = bounded {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"tailSince","document":"$document"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"tailSince","document":"$document"}]""")
         transport.enqueue("tailSince", """{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}""")
         Tail.since("c1", afterSequence = 120L, pinned = false).refresh()
         assertEquals(parseJson("""{"containerId":"c1","afterSequence":120,"pinned":false,"first":50}"""), parseJson(transport.calls.first { it.operationName == "tailSince" }.variablesJson))

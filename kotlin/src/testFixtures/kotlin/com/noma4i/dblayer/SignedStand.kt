@@ -1,9 +1,17 @@
 package com.noma4i.dblayer
 
+@Volatile private var standServer: SealedServer? = null
+
+suspend fun registerStandOperations(database: Database, defsJson: String) {
+    standServer?.registerDocuments(defsJson)
+    database.registerOperations(defsJson)
+}
+
 /** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
 interface WrapsMock { val base: MockTransport }
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database {
+    standServer = null
     DBlayer.openedDatabase()?.closeDatabase()
     return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
 }
@@ -55,16 +63,8 @@ const val SEND_MOMENT = """[{"name":"CreateMoment","document":"mutation CreateMo
 
 private const val SESSION_PROFILE = """{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}"""
 
-private fun mutationNames(operations: String): Set<String> =
-    (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray)
-        .map { it as kotlinx.serialization.json.JsonObject }
-        .filter { (it["document"] as kotlinx.serialization.json.JsonPrimitive).content.trimStart().startsWith("mutation") }
-        .map { (it["name"] as kotlinx.serialization.json.JsonPrimitive).content }
-        .toSet()
-
 /** The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock. */
-fun bridgeToTransport(transport: ScriptedTransport, operations: String): suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject {
-    val mutations = mutationNames(operations)
+fun bridgeToTransport(transport: ScriptedTransport): suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject {
     val json = kotlinx.serialization.json.Json
     return { path, body ->
         when {
@@ -78,7 +78,7 @@ fun bridgeToTransport(transport: ScriptedTransport, operations: String): suspend
                     val variables = body["variables"]?.toString() ?: "{}"
                     val document = (body["query"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
                     val request = TransportRequest(document, operation, variables, kotlin.coroutines.coroutineContext[RequestPurpose]?.value ?: NetworkPurpose.STANDARD, kotlin.coroutines.coroutineContext[ScriptedWire]?.author ?: Author.SESSION, kotlin.coroutines.coroutineContext[ScriptedWire]?.requestId ?: 0uL, kotlin.coroutines.coroutineContext[ScriptedWire]?.attempt ?: 0u)
-                    json.parseToJsonElement(if (operation in mutations) transport.mutate(request) else transport.query(request)) as kotlinx.serialization.json.JsonObject
+                    json.parseToJsonElement(if (document.trimStart().startsWith("mutation")) transport.mutate(request) else transport.query(request)) as kotlinx.serialization.json.JsonObject
                 }
             }
         }
@@ -116,7 +116,7 @@ suspend fun loginAgain() {
 suspend fun openSigned(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", onlineAtOpen: Boolean = false): Database {
     val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
     val credential = credentialOf(config)
-    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(mock, withUploadSteps(operations, modelsJson)))
+    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(mock))
     server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)
@@ -132,6 +132,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
     } else {
         adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations)))
     }
+    standServer = server
     signIn(database, restored, setsOnline = !onlineAtOpen)
     return database
 }
@@ -140,7 +141,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
 @OptIn(DBlayerTestingApi::class)
 suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null): TestClock {
     val credential = credentialOf(Config(path, null))
-    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(transport, withUploadSteps(operations, modelsJson)))
+    val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(transport))
     server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
     transport.cable = EncryptedCablePeer(server)
     try {
@@ -151,6 +152,7 @@ suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, oper
     val restored = credential.get() != null
     val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = observers ?: if (onlineAtOpen) null else SilentPlatform())
     if (onlineAtOpen) DBlayer.database.setOnline(true)
+    standServer = server
     DBlayer.database.registerOperations(withSessionProfile(operations))
     signIn(DBlayer.database, restored)
     return clock

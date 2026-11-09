@@ -135,7 +135,7 @@ class RecordParityTest {
         for (case in cases) {
             val transport = MockTransport()
             openSigned(Config(null, null), modelsJSON, transport)
-            DBlayer.database.registerOperations(failureOperations)
+            registerStandOperations(DBlayer.database, failureOperations)
             case.failure?.let { transport.enqueue("CreateMoment", it) }
             val refused = withTimeout(5000) { Moment.create(text = case.text, media = null, account = AccountScope.current()).refusal() }
             assertEquals(case.label, case.code, refused.sessionCode)

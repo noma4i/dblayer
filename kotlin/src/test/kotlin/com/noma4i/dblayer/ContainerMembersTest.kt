@@ -23,7 +23,7 @@ class ContainerMembersTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
-        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))
         transport.enqueue("ContainerMembers", page("a1", false))
 
@@ -48,7 +48,7 @@ class ContainerMembersTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
-        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))
         transport.enqueue("ContainerMembers", page("a1", false))
         transport.enqueue("ContainerMembers", page("a2", false))
@@ -68,7 +68,7 @@ class ContainerMembersTest {
         val transport = MockTransport()
         openSigned(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
-        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))
         transport.enqueue("ContainerMembers", page("a1", false))
         val query = User.completeMembers("c1")

@@ -111,7 +111,7 @@ class LifecycleSessionTest {
         DBlayer.database.setOnline(true)
         val fixtureOperations = """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]"""
         server.registerDocuments(fixtureOperations)
-        DBlayer.database.registerOperations(fixtureOperations)
+        registerStandOperations(DBlayer.database, fixtureOperations)
     }
 
     /** REL-24 and the login hang: a login after a logout refreshes the held entity, no read reaches the server after the logout, and the next account never shows the last one. */

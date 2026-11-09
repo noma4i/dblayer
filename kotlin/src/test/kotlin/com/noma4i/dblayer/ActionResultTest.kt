@@ -15,7 +15,7 @@ class ActionResultTest {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment(${'$'}momentId: ID!) { shareMoment(momentId: ${'$'}momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment(${'$'}momentId: ID!) { shareMoment(momentId: ${'$'}momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]""")
         val moment = Moment.find(withTimeout(5000) { Moment.create(text = "hello", media = null, account = AccountScope.current()).confirmed() }.id).current()!!
 
         transport.enqueue("ShareMoment", """{"data":{"shareMoment":{"moment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"},"successMessage":"Shared","copies":3,"other":"x"}}}""")
@@ -38,7 +38,7 @@ class ActionResultTest {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         openSigned(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment(${'$'}momentId: ID!) { shareMoment(momentId: ${'$'}momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]""")
+        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment(${'$'}momentId: ID!) { shareMoment(momentId: ${'$'}momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]""")
         val moment = Moment.find(withTimeout(5000) { Moment.create(text = "hello", media = null, account = AccountScope.current()).confirmed() }.id).current()!!
 
         transport.enqueue("ShareMoment", """{"data":{"shareMoment":{"moment":null,"successMessage":null,"copies":null}}}""")
