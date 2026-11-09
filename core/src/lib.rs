@@ -24,3 +24,5 @@ mod task;
 mod tests;
 #[cfg(test)]
 mod test_wait;
+#[cfg(test)]
+mod test_matrix;

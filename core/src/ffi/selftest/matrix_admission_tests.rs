@@ -1,0 +1,203 @@
+//! Matrix E: every exported call of `Database` that names a model and a row, against every subset of the violated admission conditions (stale epoch, unknown model, missing row) and against a closed database. Oracle: `bridge.md` «Допуск публичного вызова (D-207)»: closed -> `Closed`, stale epoch -> `NoSession`, arguments -> `Invalid`, row -> `NotFound`; the first violated step answers.
+use std::path::Path;
+use std::sync::Arc;
+
+use super::bridge_support_tests::message;
+use super::rig_tests::{bound, Rig};
+use crate::ffi::{Database, DbError, FileBytes};
+use crate::test_matrix::{crate_dir, Matrix};
+
+struct Args {
+    epoch: u64,
+    model: String,
+    row: String,
+    field: String,
+    local_path: String,
+    local_value: String,
+    values: String,
+}
+
+/// A database with a local model that has a file field and a local field: the calls of files and local values run on it.
+async fn files_database(path: &Path) -> (Arc<Database>, u64, String) {
+    let mut local = crate::schema::FieldSpec::object("draft").optional();
+    local.fields = vec![crate::schema::FieldSpec::scalar("text", crate::value::ScalarKind::Str).optional()];
+    local.merge = Some(crate::schema::MergeRule::Local);
+    let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable(), local]);
+    spec.storage = crate::schema::Storage::Local;
+    let models = serde_json::to_string(&vec![spec]).unwrap();
+    let config = crate::ffi::Config { path: Some(path.to_string_lossy().into()), data_version: None };
+    let database = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
+    let epoch = database.session_epoch();
+    let row = database.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
+    (database, epoch, row)
+}
+
+const FILE_CALLS: [&str; 6] = ["file", "read", "url", "attach", "detach", "set_local"];
+
+fn exported_calls() -> Vec<String> {
+    fn files(directory: &Path, found: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(directory) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "selftest" || name == "tests") { continue; }
+                files(&path, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") && !path.to_string_lossy().ends_with("_tests.rs") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    files(&crate_dir().join("src/ffi"), &mut found);
+    let mut names = Vec::new();
+    for file in found {
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let mut from = 0;
+        while let Some(at) = text[from..].find("#[uniffi::export") {
+            let start = from + at;
+            from = start + 10;
+            let rest = &text[start..];
+            let Some(line_end) = rest.find('\n') else { break };
+            let after = rest[line_end..].trim_start();
+            if !after.starts_with("impl Database {") { continue; }
+            let open = start + line_end + rest[line_end..].find('{').unwrap_or(0);
+            let (mut depth, mut end) = (0usize, open);
+            for (offset, character) in text[open..].char_indices() {
+                match character {
+                    '{' => depth += 1,
+                    '}' => { depth -= 1; if depth == 0 { end = open + offset; break; } }
+                    _ => {}
+                }
+            }
+            for line in text[open..end].lines() {
+                let line = line.strip_prefix("    pub async fn ").or_else(|| line.strip_prefix("    pub fn "));
+                if let Some(name) = line.and_then(|line| line.split('(').next()) { names.push(name.to_string()); }
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Calls that carry no model and no row: they have no admission steps 3 to 5.
+const WITHOUT_ROW: [&str; 24] = [
+    "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch",
+    "interrupted_session_answer", "session_reset", "session_call", "set_round_jobs", "round_started", "round_refused", "round_ended", "outcome",
+    "call", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch",
+];
+
+async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
+    let (epoch, model, row) = (args.epoch, args.model.clone(), args.row.clone());
+    let field = args.field.clone();
+    Some(match name {
+        "peek_row" => database.peek_row(epoch, model, row).map(|_| ()),
+        "read_row" => database.read_row(epoch, model, row).await.map(|_| ()),
+        "file" => database.file(epoch, model, row, field).await.map(|_| ()),
+        "read" => database.read(epoch, model, row, field).await.map(|_| ()),
+        "url" => database.url(epoch, model, row, field).await.map(|_| ()),
+        "retry" => database.retry(epoch, model, row, None, None).await.map(|_| ()),
+        "discard" => database.discard(epoch, model, row, None).await,
+        "destroy" => database.destroy(epoch, model, row).await.map(|_| ()),
+        "update" => database.update(epoch, model, row, "{\"text\":\"x\"}".into(), "{}".into()).await.map(|_| ()),
+        "act" => database.act(epoch, model, row, "edit".into(), "{}".into(), "{}".into()).await.map(|_| ()),
+        "set_local" => database.set_local(epoch, model, row, args.local_path.clone(), args.local_value.clone()).await,
+        "set_ephemeral" => database.set_ephemeral(epoch, model, row, args.values.clone()).await,
+        "attach" => database.attach(epoch, model, row, field, FileBytes { bytes: vec![1], name: "a".into(), mime: "image/png".into() }).await.map(|_| ()),
+        "detach" => database.detach(epoch, model, row, field).await.map(|_| ()),
+        "create" => database.create(epoch, model, args.values.clone(), "{}".into()).await.map(|_| ()),
+        "cancel_upload" => database.cancel_upload(epoch, model, row, "upload".into()).await.map(|_| ()),
+        "supply_source" | "fail_source" | "upload" => return None,
+        _ => return None,
+    })
+}
+
+async fn invoke_bounded(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
+    match tokio::time::timeout(std::time::Duration::from_millis(400), invoke(name, database, args)).await {
+        Ok(result) => result,
+        Err(_) => Some(Err(DbError::Interrupted { detail: "matrix timeout".into() })),
+    }
+}
+
+fn observed(result: &Result<(), DbError>) -> &'static str {
+    match result {
+        Err(DbError::Interrupted { detail }) if detail == "matrix timeout" => "hangs",
+        Err(DbError::Closed { .. }) => "Closed",
+        Err(DbError::NoSession { .. }) => "NoSession",
+        Err(DbError::Invalid { .. }) => "Invalid",
+        Err(DbError::NotFound { .. }) => "NotFound",
+        _ => "admitted",
+    }
+}
+
+fn expected(closed: bool, stale: bool, invalid: bool, missing: bool) -> &'static str {
+    if closed { "Closed" } else if stale { "NoSession" } else if invalid { "Invalid" } else if missing { "NotFound" } else { "admitted" }
+}
+
+async fn admission_group(group: usize) {
+    let name = ["E-call-admission-0", "E-call-admission-1", "E-call-admission-2", "E-call-admission-3"][group];
+    let mut matrix = Matrix::new(name);
+    let all = exported_calls();
+    let calls: Vec<String> = all.iter().enumerate().filter(|(index, _)| index % 4 == group).map(|(_, call)| call.clone()).collect();
+    let calls = if group == 0 { calls } else { calls };
+    if group == 0 && all.len() < 30 { matrix.unclassified("Database", "-", "-", &format!("the source scan found {} exported calls", all.len())); }
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let receipt = bound(rig.database.send(message(epoch, "present", 1))).await.unwrap();
+    let present = receipt.optimistic_value.as_ref().map(|row| row.id.clone()).unwrap_or_default();
+    let closed_rig = Rig::encrypted().await;
+    closed_rig.login_ios("A").await;
+    let closed_epoch = closed_rig.database.session_epoch();
+    let closed_present = bound(closed_rig.database.send(message(closed_epoch, "present", 1))).await.unwrap().optimistic_value.map(|row| row.id).unwrap_or_default();
+    let _ = bound(closed_rig.database.close_database()).await;
+    let directory = tempfile::tempdir().unwrap();
+    let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
+    let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
+    let _ = closed_files.close_database().await;
+    let target = |name: &str, closed: bool| -> (Arc<Database>, Args) {
+        let (database, epoch, row) = match (FILE_CALLS.contains(&name), closed) {
+            (true, false) => (files.clone(), files_epoch, files_row.clone()),
+            (true, true) => (closed_files.clone(), closed_files_epoch, closed_files_row.clone()),
+            (false, false) => (rig.database.clone(), epoch, present.clone()),
+            (false, true) => (closed_rig.database.clone(), closed_epoch, closed_present.clone()),
+        };
+        let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into() };
+        if name == "set_ephemeral" { args.model = "User".into(); args.row = "user".into(); args.values = "{\"typing\":true}".into(); }
+        (database, args)
+    };
+    for name in &calls {
+        if WITHOUT_ROW.contains(&name.as_str()) { continue; }
+        for mask in 0u8..8 {
+            if name == "create" && mask & 4 != 0 { continue; }
+            let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0 && name != "create");
+            let (database, mut args) = target(name, false);
+            if stale { args.epoch += 1000; }
+            if invalid { args.model = "NoSuchModel".into(); }
+            if missing { args.row = "absent-row".into(); }
+            let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
+            match invoke_bounded(name, &database, &args).await {
+                Some(result) => matrix.check(name, "open", &input, expected(false, stale, invalid, missing), observed(&result)),
+                None => matrix.unclassified(name, "open", &input, "the matrix has no way to call this export"),
+            }
+        }
+        let (database, args) = target(name, true);
+        match invoke_bounded(name, &database, &args).await {
+            Some(result) => matrix.check(name, "closed", "valid arguments", "Closed", observed(&result)),
+            None => matrix.unclassified(name, "closed", "valid arguments", "the matrix has no way to call this export"),
+        }
+    }
+    matrix.finish();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_0() { admission_group(0).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_1() { admission_group(1).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_2() { admission_group(2).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_3() { admission_group(3).await; }

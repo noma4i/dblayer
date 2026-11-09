@@ -259,7 +259,7 @@ for path in files:
         number = code.count("\n", 0, match.start()) + 1
         findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {contents[path].splitlines()[number - 1].strip()}")
 
-test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs", "/ffi/selftest/")
+test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs", "/test_matrix.rs", "/ffi/selftest/")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
 for path in files:
@@ -436,7 +436,7 @@ for path in files:
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_decl = re.compile(r"^(pub(\(crate\))? )?mod (\w+);\s*$")
-test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig"}
+test_directories = {"spec", "selftest", "check", "schema_fixtures", "test_wait", "test_matrix", "mock", "test_clock", "screens_fixture", "tape", "fixtures", "rig"}
 for path in sorted(root.rglob("*.rs")):
     if any(part.startswith(("target", ".")) for part in path.relative_to(root).parts):
         continue

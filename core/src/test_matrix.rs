@@ -10,6 +10,7 @@ pub(crate) fn crate_dir() -> std::path::PathBuf {
 pub(crate) enum Verdict {
     Green,
     Red,
+    Unclassified,
 }
 
 pub(crate) struct Cell {
@@ -28,6 +29,8 @@ pub(crate) struct Matrix {
 
 impl Matrix {
     pub fn new(name: &'static str) -> Self { Self { name, cells: Vec::new() } }
+
+    pub fn unclassified(&mut self, path: &str, kind: &str, input: &str, why: &str) { self.push(path, kind, input, "", why, Verdict::Unclassified); }
 
     pub fn check(&mut self, path: &str, kind: &str, input: &str, expected: &str, observed: &str) {
         let verdict = if expected == observed { Verdict::Green } else { Verdict::Red };
@@ -49,9 +52,9 @@ impl Matrix {
         }
         let directory = crate_dir().join("../.orca-artifacts/matrix");
         let written = std::fs::create_dir_all(&directory).and_then(|()| std::fs::write(directory.join(format!("{}.tsv", self.name)), &table));
-        let (green, red) = (self.count(Verdict::Green), self.count(Verdict::Red));
-        let summary = format!("matrix {}: rows {} green {green} red {red}; tsv {}", self.name, self.cells.len(), if written.is_ok() { "written" } else { "NOT written" });
+        let (green, red, unclassified) = (self.count(Verdict::Green), self.count(Verdict::Red), self.count(Verdict::Unclassified));
+        let summary = format!("matrix {}: rows {} green {green} red {red} unclassified {unclassified}; tsv {}", self.name, self.cells.len(), if written.is_ok() { "written" } else { "NOT written" });
         eprintln!("{summary}");
-        assert!(red == 0, "{summary}\n{table}");
+        assert!(red + unclassified == 0, "{summary}\n{table}");
     }
 }
