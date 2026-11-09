@@ -23,7 +23,6 @@ use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
 use crate::transport::{NetworkPurpose, SessionCode, TransportError};
 
-
 struct Wire {
     id: String,
     key: String,
