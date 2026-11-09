@@ -623,7 +623,9 @@ fn feed_proto_frame_counter_mismatch() {
 #[test]
 fn feed_proto_error() {
     let mut twin = live();
-    assert_eq!(twin.step(Input::ProtocolError { to: To::Active }), [Effect::Connect]);
+    assert_eq!(twin.step(Input::ProtocolError { to: To::Active }), [Effect::Close, Effect::ScheduleDrain]);
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
     let mut handshake = opening();
     assert_eq!(handshake.step(Input::ProtocolError { to: To::Opening }), [Effect::ScheduleResubscribe]);
     assert!(handshake.step(Input::ProtocolError { to: To::Stray }).is_empty());

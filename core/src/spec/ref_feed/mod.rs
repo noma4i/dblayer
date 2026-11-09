@@ -459,7 +459,7 @@ impl Feed {
         let then = self.then;
         match input {
             Input::Drain { own: true } => self.drain_over(false, then),
-            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } => self.drain_over(true, then),
+            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } | Input::ProtocolError { to: To::Draining } => self.drain_over(true, then),
             Input::EpochEnded => self.drain_over(true, Then::End),
             Input::Closing => {
                 self.closing_asked = true;
@@ -560,7 +560,11 @@ impl Feed {
                 (None, _) => {}
             },
             Input::ProtocolError { to } => {
-                if self.named(to).is_some() {
+                if self.mode == Mode::Live && to == To::Active && self.named(to) == Some(Proto::Established) {
+                    effects.push(Effect::Close);
+                    effects.push(Effect::ScheduleDrain);
+                    self.fail_live(&mut effects);
+                } else if self.named(to).is_some() {
                     return self.dropped(to);
                 }
             }
