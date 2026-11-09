@@ -101,8 +101,8 @@ impl OutboxState {
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Ok);
                 }
-                if why == Why::Discarded && self.ops[&op_id].pending_owned {
-                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
+                if why == Why::Discarded && (self.ops[&op_id].pending_owned || self.ops[&op_id].pair_in_flight) {
+                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; operation.pair_in_flight = false; }
                     if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
                 }
                 let outcome = if why == Why::Discarded {
@@ -113,8 +113,8 @@ impl OutboxState {
                 if self.ops[&op_id].cancels == Some(op_id) {
                     let following: Vec<OpId> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage == Stage::RollingBack(Why::Discarded)).map(|other| other.op_id).collect();
                     for id in following {
-                        if self.ops[&id].pending_owned {
-                            if let Some(operation) = self.ops.get_mut(&id) { operation.pending_owned = false; }
+                        if self.ops[&id].pending_owned || self.ops[&id].pair_in_flight {
+                            if let Some(operation) = self.ops.get_mut(&id) { operation.pending_owned = false; operation.pair_in_flight = false; }
                             if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&id].request_id }))); }
                         }
                         if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }

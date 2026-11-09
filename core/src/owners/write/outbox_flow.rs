@@ -38,6 +38,7 @@ impl OutboxState {
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         if let Some(temporary) = errors {
             return self.transport_failed(op_id, temporary, fx);
         }
@@ -59,6 +60,7 @@ impl OutboxState {
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         if !temporary {
             self.reject_or_keep(op_id, fx);
             return self.drain(fx);
@@ -386,6 +388,7 @@ impl OutboxState {
         use crate::owners::session::AuthorOutcome;
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         if self.removed.contains(&op_id) { return; }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         match outcome {
             AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. } } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }

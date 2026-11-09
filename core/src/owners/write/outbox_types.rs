@@ -311,6 +311,7 @@ pub struct QueuedOperation {
     pub sent: bool,
     /// An unresolved `encrypted_pending` of `request_id` exists: `Restored.pending` and `pending_retained = true` set it, `pending_retained = false` clears it.
     pub pending_owned: bool,
+    pub pair_in_flight: bool,
     /// `Sending` after a temporary failure: the backoff timer is set.
     pub waiting_retry: bool,
     /// The rows of the server answer, kept for every attempt to land them.

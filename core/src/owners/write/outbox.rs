@@ -211,6 +211,7 @@ impl OutboxState {
                 sends: 0,
                 sent: false,
                 pending_owned: false,
+                pair_in_flight: false,
                 waiting_retry: false,
                 landing: Vec::new(),
                 swaps: Vec::new(),
@@ -237,7 +238,7 @@ impl OutboxState {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.sends += 1;
         operation.sent = true;
-        operation.pending_owned = true;
+        operation.pair_in_flight = true;
         operation.waiting_retry = false;
         let purpose = if matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
@@ -278,7 +279,7 @@ impl OutboxState {
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => [StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]
                 .into_iter()
-                .chain((operation.pending_owned && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
+                .chain(((operation.pending_owned || operation.pair_in_flight) && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
                 .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
@@ -315,7 +316,7 @@ impl OutboxState {
                     earlier.extend([StoreOp::RollBack { op_id: other.op_id }, StoreOp::RemoveAnswer { request_id: other.request_id }]);
                 }
                 earlier.push(StoreOp::RemoveIntent { op_id: other.op_id });
-                if other.pending_owned { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
+                if other.pending_owned || other.pair_in_flight { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
                 earlier.extend(Self::transfer_outcomes(other, &OutboxOutcome::Discarded).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
             }
             earlier.append(&mut ops);
