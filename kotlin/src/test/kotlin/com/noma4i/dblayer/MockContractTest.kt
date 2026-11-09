@@ -65,4 +65,21 @@ class MockContractTest {
             assertEquals(case.getValue("name").jsonPrimitive.content, case.getValue("expect").jsonArray.map { it.jsonPrimitive.content }, seen)
         }
     }
+
+    /** A PUT nobody scripted is refused like a call without a reply. */
+    @Test
+    fun mock_contract_unscripted_put_is_refused() = bounded {
+        val mock = MockTransport()
+        val file = PutFile("/nonexistent", 0uL, 1uL)
+        val identity = TransferIdentity(1L, "i", TransferStep.Part(1u))
+        val refused = try {
+            mock.scriptedPut("https://s3/unscripted", emptyMap(), file, identity, ByteProgress(NoHandle))
+            false
+        } catch (error: DbException) {
+            true
+        }
+        mock.claimUnscripted()
+        assertEquals(true, refused)
+        Unit
+    }
 }

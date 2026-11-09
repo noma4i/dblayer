@@ -66,4 +66,20 @@ struct MockContractTests {
       #expect(seen == (entry["expect"] as! [String]), "\(entry["name"] as! String)")
     }
   }
+
+  /// A PUT nobody scripted is refused like a call without a reply.
+  @Test(.timeLimit(.minutes(1)))
+  func mock_contract_unscripted_put_is_refused() async {
+    await withKnownIssue {
+      let mock = MockTransport()
+      let file = PutFile(path: "/nonexistent", offset: 0, length: 1)
+      let identity = TransferIdentity(operationId: 1, itemId: "i", step: .part(number: 1))
+      do {
+        _ = try await mock.scriptedPut(url: "https://s3/unscripted", headers: [:], file: file, identity: identity, progress: ByteProgress(noHandle: .init()))
+        Issue.record("the mock accepted a PUT nobody scripted")
+      } catch {
+        #expect("\(error)".contains("Invalid"))
+      }
+    } matching: { "\($0.comments)".contains("MockTransport") }
+  }
 }

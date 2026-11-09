@@ -4,5 +4,6 @@
   {"name": "the same id of another author is a new pair", "replies": {"Ping": [1, 2]}, "calls": [["outbox", 1, "Ping", {"n": 1}], ["window", 1, "Ping", {"n": 1}]], "expect": ["data:1", "data:2"]},
   {"name": "a pair resent with other variables is refused", "replies": {"Ping": [1, 2]}, "calls": [["outbox", 1, "Ping", {"n": 1}], ["outbox", 1, "Ping", {"n": 2}]], "expect": ["data:1", "refused"]},
   {"name": "a pair resent with another operation is refused", "replies": {"Ping": [1], "Pong": [2]}, "calls": [["outbox", 1, "Ping", {"n": 1}], ["outbox", 1, "Pong", {"n": 1}]], "expect": ["data:1", "refused"]},
-  {"name": "a request without a scripted reply is refused", "replies": {}, "calls": [["outbox", 1, "Ping", {"n": 1}]], "expect": ["refused"]}
+  {"name": "a request without a scripted reply is refused", "replies": {}, "calls": [["outbox", 1, "Ping", {"n": 1}]], "expect": ["refused"]},
+  {"name": "a reply belongs to its operation, whatever the call order", "replies": {"Ping": [1], "Pong": [2]}, "calls": [["outbox", 1, "Pong", {"n": 1}], ["outbox", 2, "Ping", {"n": 1}]], "expect": ["data:2", "data:1"]}
 ]
