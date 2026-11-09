@@ -487,6 +487,28 @@ fn out_queued_stray() {
 }
 
 #[test]
+fn out_landing_no_session() {
+    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = sending(&mut twin, Policy::Rollback, true);
+        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        let effects = refuse(&mut twin, id, reason);
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects)), (Some(St::Done), Some(OutboxOutcome::Interrupted), vec![OutboxOutcome::Interrupted]));
+    }
+}
+
+#[test]
+fn out_rollback_no_session() {
+    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = sending(&mut twin, Policy::Rollback, true);
+        twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+        let effects = refuse(&mut twin, id, reason);
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects)), (Some(St::Done), Some(OutboxOutcome::Interrupted), vec![OutboxOutcome::Interrupted]));
+    }
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
