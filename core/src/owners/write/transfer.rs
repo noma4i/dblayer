@@ -186,7 +186,7 @@ impl TransferState {
                     }
                     if let (Some(op_id), StoreKind::Completed, None, Some(signed)) = (own, kind, transfer.batch_id, transfer.signed_id.as_ref()) {
                         let body = transfer.new_source.as_ref().filter(|_| transfer.supply_back.is_some()).map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
-                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id }, attempts: 1, cycle_id: 1 });
+                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id }, attempts: 1, cycle_id: cycle_of(transfer, kind) });
                     }
                 }
                 ops

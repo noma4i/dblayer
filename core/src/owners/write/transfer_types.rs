@@ -612,6 +612,12 @@ pub(super) fn run(fx: &mut Fx, effect: TransferEffect) { fx.push(Effect::Run(eff
 
 pub(super) fn reply(fx: &mut Fx, reply: ReplyId, answer: TransferAnswer) { run(fx, TransferEffect::Reply { reply, answer }); }
 
+/// The cycle a batch of `kind` writes for the transfer: a retry or a supplied source opens the next one.
+pub(super) fn cycle_of(transfer: &Transfer, kind: StoreKind) -> CycleId {
+    let supplied = transfer.supply_back.is_some() && transfer.new_source.is_some() && transfer.stage == TransferStage::PersistingCopy;
+    transfer.cycle_id + u64::from((kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry) || (supplied && transfer.supply_back == Some(TransferStage::Failed)))
+}
+
 /// The row of `sync_upload` of a transfer after a batch of `kind`.
 pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
     let supplied = transfer.supply_back.and(transfer.new_source.as_ref()).filter(|_| transfer.stage == TransferStage::PersistingCopy);
@@ -641,7 +647,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         steps_path: steps.map(|steps| steps.path.clone()),
         steps_body: steps.map(|steps| steps.body.clone()),
         transfer_id: transfer.transfer_id,
-        cycle_id: transfer.cycle_id + u64::from((kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry) || (supplied.is_some() && transfer.supply_back == Some(TransferStage::Failed))),
+        cycle_id: cycle_of(transfer, kind),
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
         staged: transfer.previous.is_some(),
