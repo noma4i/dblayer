@@ -65,6 +65,15 @@ async fn replayed_read_uses_a_new_request_id() {
 }
 
 #[tokio::test]
+async fn query_replayed_single_retry_owner() {
+    let rig = rig().await;
+    let before = rig.server.seen().len();
+    rig.server.refuse_next("REPLAYED_REQUEST", false);
+    let _ = rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({})).by(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))).await;
+    assert_eq!(rig.server.seen().len() - before, 1, "the transport sends the query once; REPLAYED_REQUEST is the owner's retry by RetryPolicy (D-220, calls.md call_response_transient)");
+}
+
+#[tokio::test]
 async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_credential_and_clears_the_pending_request() {
     for (wire, code) in TABLE {
         for mutation in [false, true] {
