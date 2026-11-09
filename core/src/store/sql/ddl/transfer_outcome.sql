@@ -4,5 +4,6 @@ CREATE TABLE IF NOT EXISTS transfer_outcome (
   kind TEXT NOT NULL CHECK (kind IN ('confirmed', 'rejected', 'failed', 'discarded')),
   revision INTEGER,
   value TEXT,
+  terminal_at INTEGER NOT NULL,
   PRIMARY KEY (transfer_id, cycle_id)
 ) STRICT, WITHOUT ROWID

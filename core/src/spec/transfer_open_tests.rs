@@ -60,10 +60,11 @@ async fn xfer_prop_saved_outcome_reopens_sqlite() {
     within(rig.db.close_database()).await.unwrap();
     drop(rig);
     sqlite.execute_batch("DROP TRIGGER hold_upload_removal").unwrap();
+    sqlite.execute_batch("UPDATE transfer_outcome SET terminal_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000").unwrap();
     let reopened = Rig::open_at(OnFailure::Keep, Some(path), server.clone()).await;
     crate::test_wait::settled(&reopened, "the restored upload is removed", || sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap_or(1) == 0).await;
     assert_eq!(server.count("MakeMoment"), 1);
-    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "RemoveUpload keeps the outcome of the cycle (D-237)");
     within(reopened.db.close_database()).await.unwrap();
 }
 
@@ -487,4 +488,11 @@ fn xfer_open_saved_outcome_failed() {
     assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::PersistingFailure, 0, Vec::new()));
     assert_eq!(out.rows()[0].0.failed.as_deref(), Some("server"));
     assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: "server".into() }]);
+}
+
+#[test]
+fn xfer_open_saved_outcome_of_a_removed_transfer_is_readable() {
+    let (mut twin, _) = Twin::opened(Vec::new(), BTreeMap::from([(7, OutboxOutcome::Discarded)]));
+    let (reply, out) = twin.outcome(7, 1);
+    assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Discarded, _)]), "the receipt of a cycle reads its outcome after the removal and the restart (D-237): {:?}", out.replies(reply));
 }

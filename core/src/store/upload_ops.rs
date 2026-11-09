@@ -59,14 +59,13 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
 
 pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(key)?;
-    connection.execute(include_str!("sql/upload_ops/remove_upload_delete_transfer_outcome.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload_batch.sql"), [])?;
     Ok(())
 }
 
-pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, revision: i64) -> Result<(), StoreError> {
+pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, (revision, now): (i64, i64)) -> Result<(), StoreError> {
     use crate::owners::write::outbox::OutboxOutcome;
     let id = i64::try_from(transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
     let cycle = i64::try_from(cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
@@ -77,7 +76,7 @@ pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u
         OutboxOutcome::Discarded => ("discarded", None, None),
         OutboxOutcome::Interrupted => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
     };
-    connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value])?;
+    connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value, now])?;
     Ok(())
 }
 

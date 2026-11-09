@@ -1,1 +1,1 @@
-INSERT INTO transfer_outcome (transfer_id, cycle_id, kind, revision, value) VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO transfer_outcome (transfer_id, cycle_id, kind, revision, value, terminal_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
