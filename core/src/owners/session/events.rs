@@ -408,7 +408,12 @@ impl SessionState {
                 self.phase = phase;
                 self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, req_id, .. }) if req_id == pending.request_id => self.start_calling(PendingCall { author: Some(author), ..pending }, fx),
+            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, req_id, epoch, .. }) if req_id == pending.request_id => {
+                if let Some(error) = self.admission(Some(epoch)) {
+                    self.phase = SessionPhase::PendingHeld { pending };
+                    author_error(fx, author, req_id, ErrorClass::Permanent, error);
+                } else { self.start_calling(PendingCall { author: Some(author), ..pending }, fx); }
+            }
             (SessionPhase::PendingHeld { pending }, SessionInput::SessionCall { operation, body, reply: id }) => {
                 self.queue.push_back(Queued::Call { operation, body, reply: id });
                 self.phase = SessionPhase::PendingHeld { pending };
@@ -421,8 +426,15 @@ impl SessionState {
                 self.phase = SessionPhase::Blocked { pending, reason, landing };
                 reply(fx, id, Err(SessionError::StateLost));
             }
-            (SessionPhase::Blocked { pending, reason, landing }, SessionInput::Mutate { author, req_id, .. }) => {
+            (SessionPhase::Blocked { pending, reason, landing }, SessionInput::Mutate { author, req_id, epoch, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
+                if same {
+                    if let Some(error) = self.admission(Some(epoch)) {
+                        self.phase = SessionPhase::Blocked { pending, reason, landing };
+                        author_error(fx, author, req_id, ErrorClass::Permanent, error);
+                        return;
+                    }
+                }
                 match (same, pending, reason, landing) {
                     (true, Some(pending), Block::Storage, Some(landed)) if pending.author.is_some() => self.land_again(pending, landed, fx),
                     (true, pending, reason, landing) => {
