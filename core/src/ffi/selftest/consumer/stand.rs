@@ -12,8 +12,8 @@ use crate::server_contract::{Admission, Contract, Request, SEQUENCE_CONFLICT};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
-const SPEC: &str = include_str!("../../../../tests/corpus/consumer/spec.json");
-const OPERATIONS: &str = include_str!("../../../../tests/corpus/consumer/operations.json");
+pub(super) const SPEC: &str = include_str!("../../../../tests/corpus/consumer/spec.json");
+pub(super) const OPERATIONS: &str = include_str!("../../../../tests/corpus/consumer/operations.json");
 
 struct Cable {
     peer: CablePeer,

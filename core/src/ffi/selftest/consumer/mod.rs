@@ -13,3 +13,4 @@ mod matrix_write_server_tests;
 mod universal_properties_tests;
 mod stream_lifecycle_tests;
 mod crash_image_tests;
+mod mode_axis_tests;
