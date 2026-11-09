@@ -9,7 +9,7 @@ pub fn submitting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     match i {
         Input::Committed { .. } => {
             row(e, "out_submitting_committed_revision");
-            let out = goes_out(s, op);
+            let out = goes_out(s, op) && slot_free(s);
             if out {
                 row(e, "out_submitting_committed");
                 send_mutate(op, e);
