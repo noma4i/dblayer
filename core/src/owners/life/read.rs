@@ -105,7 +105,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::WantPlus { model, id, stream, scoped } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantPlus { model, id, stream, scoped, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
             DeliveryEffect::WantMinus { model, id } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantMinus { model, id, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
             DeliveryEffect::Stream { stream, effect: StreamEffect::CloseSink } => deliveries_wiring.to_deliveries(DeliveryInput::SinkClosed { stream }),
-            DeliveryEffect::Stream { effect: StreamEffect::Cancelled { reply }, .. } => {
+            DeliveryEffect::CancelAnswered { reply } | DeliveryEffect::Stream { effect: StreamEffect::Cancelled { reply }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Cancelled);
             }
             DeliveryEffect::Stream { effect: StreamEffect::ReaderClaimed { reply, claimed }, .. } => {

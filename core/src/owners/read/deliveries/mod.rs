@@ -252,6 +252,8 @@ pub enum DeliveryEffect {
     WantPlus { model: String, id: StreamId, stream: bool, scoped: Vec<ScopedChannel> },
     WantMinus { model: String, id: StreamId },
     Drained(Drained),
+    /// A `Cancel` of a stream that is gone: the caller gets its answer, no stream is touched.
+    CancelAnswered { reply: ReplyId },
     /// The answer of `Census`: the streams that read a window and the streams that ended without a `Release`.
     Census { reply: ReplyId, observed: usize, retained: usize },
 }
@@ -544,7 +546,7 @@ impl StateOwner for Deliveries {
                 if state.streams.contains_key(&stream) {
                     on(state, stream, &mut out, |machine, fx| machine.cancel(reply, fx));
                 } else {
-                    out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Cancelled { reply } }));
+                    out.push(Effect::Run(DeliveryEffect::CancelAnswered { reply }));
                 }
             }
             DeliveryInput::ClaimReader { stream, reader, reply } => {
