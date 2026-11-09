@@ -43,7 +43,7 @@ fn response_input(call_id: u64, root: &str, response: crate::transport::Response
 fn call_error(error: crate::ffi::DbError) -> CallError {
     use crate::ffi::DbError;
     match error {
-        DbError::Http { status: 401, .. } | DbError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => CallError::Unauthorized,
+        DbError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => CallError::Unauthorized,
         DbError::Network { .. } => CallError::Network,
         DbError::Graphql { messages, extensions } => CallError::Graphql { messages, extensions },
         DbError::Session { code, detail } => CallError::Session { code, detail },
