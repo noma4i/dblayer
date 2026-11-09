@@ -171,7 +171,7 @@ async fn a_cancelled_upload_sends_nothing() {
 
 /// A send with a file writes the row at once and the confirmed row replaces it when the file and its mutation went out.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_send_with_a_file_confirms_the_row_the_server_answers() {
+async fn store_resolve_peek_row_temp_id() {
     let rig = SessionRig::new();
     let database = opened(&rig, Arc::new(Puts::default())).await;
     let directory = tempfile::tempdir().unwrap();
@@ -184,5 +184,6 @@ async fn a_send_with_a_file_confirms_the_row_the_server_answers() {
     let outcome = bound(database.outcome(receipt)).await.unwrap();
     let WireOperationOutcome::Confirmed { value, .. } = outcome else { panic!("{outcome:?}") };
     assert_eq!(value.map(|row| row.id), Some("42".to_string()));
+    assert_eq!(database.peek_row(epoch, "Moment".into(), shown.id).unwrap().map(|row| row.id), Some("42".to_string()));
     database.close_now();
 }
