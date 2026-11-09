@@ -32,6 +32,33 @@ fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
 }
 
 #[test]
+fn out_local_write() {
+    for kind in [LocalWriteKind::SetLocal, LocalWriteKind::SetEphemeral { expire_after: None }, LocalWriteKind::Attach { source: None }, LocalWriteKind::Detach] {
+        let mut twin = Twin::new();
+        let effects = twin.post(write(kind));
+        assert_eq!((kinds(&effects), answers(&effects, WRITE)), (vec![CommitKind::LocalWrite], Vec::<OutboxAnswer>::new()));
+    }
+}
+
+#[test]
+fn out_local_write_stale() {
+    let mut twin = Twin::new();
+    let input = OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH + 1, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: WRITE, now: Time(100) };
+    let effects = twin.post(input);
+    assert_eq!((answers(&effects, WRITE), kinds(&effects), effects.len()), (vec![OutboxAnswer::Err(Fault::NoSession)], Vec::<CommitKind>::new(), 1));
+}
+
+#[test]
+fn out_local_write_stale_generation() {
+    let mut twin = Twin::new();
+    twin.post(write(LocalWriteKind::SetLocal));
+    let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 2 } }));
+    assert!(answers(&effects, WRITE).is_empty());
+    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::LocalWrite, generation: 2, .. }]));
+    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+}
+
+#[test]
 fn out_local_write_closing() {
     let mut twin = Twin::new();
     close(&mut twin);
