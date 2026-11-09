@@ -21,7 +21,7 @@ use crate::transport::{classify_answer, AnswerKind, WireOutcome};
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
-use crate::transport::{NetworkPurpose, TransportError};
+use crate::transport::{NetworkPurpose, SessionCode, TransportError};
 
 struct Wire {
     id: String,
@@ -190,7 +190,7 @@ fn secret_for(credentials: &dyn CredentialSlot, expected: Option<&str>) -> Resul
 pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, logout: bool, sequenced: bool, result: Result<crate::transport::encrypted::Answer, TransportError>) -> SessionInput {
     match result {
         Ok(answer) => {
-            if let Some(code) = crate::transport::refusal_sent(&answer.body) {
+            if let Some(code) = crate::transport::refusal(&answer.body).filter(|code| *code != SessionCode::Other) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
             if matches!(classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced), AnswerKind::Transient { .. }) {
