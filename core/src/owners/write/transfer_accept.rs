@@ -233,7 +233,7 @@ impl TransferState {
         }
     }
 
-    /// `Accepting x Rejected`: no receipt, nothing is accepted. A retry with a new source goes back to `Failed`.
+    /// `Accepting x Rejected`: no receipt, nothing is accepted.
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         let fault = if matches!(reason, RejectReason::Storage(_)) { Fault::Rejected(reason) } else if self.closing { Fault::Interrupted } else { Fault::Rejected(reason) };
         for &id in ids {
@@ -241,10 +241,6 @@ impl TransferState {
             let group_reply = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
             if let Some(rep) = transfer.accept_reply.take().or(group_reply) {
                 reply(fx, rep, TransferAnswer::Err(fault.clone()));
-            }
-            if transfer.prior.take() == Some(TransferStage::Failed) {
-                transfer.stage = TransferStage::Failed;
-                continue;
             }
             transfer.stage = TransferStage::Done;
         }
@@ -342,9 +338,6 @@ impl TransferState {
                 transfer.mutation.body = source.body;
             }
             transfer.supply_values = Default::default();
-            if transfer.prior.take() == Some(TransferStage::Failed) {
-                transfer.cycle_id += 1;
-            }
             transfer.next_step = NextStep::Part(1);
             transfer.confirmed_parts = 0;
             transfer.upload_id = None;
@@ -385,11 +378,11 @@ impl TransferState {
     }
 
     /// `PersistingCopy x Rejected(Storage)`: the copy is not durable, the whole batch is removed.
-    pub(super) fn copy_rejected(&mut self, ids: &[TransferId], fx: &mut Fx) {
+    pub(super) fn copy_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         let mut removing = Vec::new();
         for &id in ids {
             if self.transfers.get(&id).is_some_and(|transfer| transfer.supply_back.is_some()) {
-                self.source_rejected(id, Fault::Rejected(RejectReason::Storage("storage".into())), fx);
+                self.source_rejected(id, Fault::Rejected(reason.clone()), fx);
                 continue;
             }
             self.remove_with(id, Removal::Storage, fx);

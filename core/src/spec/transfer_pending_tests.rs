@@ -89,16 +89,32 @@ fn xfer_supply_starts_copy() {
     assert!(out.shows().is_empty());
 }
 
+/// `back` of the supply: `AwaitingSource` after `SupplySource`, `Failed` after `Retry` with a source of a transfer without a copy.
+fn supplied_with_back(twin: &mut Twin, back: TransferStage) -> (u64, u64) {
+    if back == TransferStage::AwaitingSource {
+        let (id, _) = pending(twin);
+        twin.commit();
+        supply(twin, EPOCH, 9);
+        return (id, 9);
+    }
+    let id = source_failed(twin);
+    let (reply, _) = twin.retry(KEY, Some(Source { path: "/source".into(), parts: 1 }));
+    (id, reply)
+}
+
 #[test]
 fn xfer_supply_copy_failed() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    supply(&mut twin, EPOCH, 9);
-    let out = twin.copy_failed(id);
-    assert_eq!((twin.stage(id), out.writes(), out.deletes()), (TransferStage::AwaitingSource, 0, 1));
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::Copy("unreadable".into())));
-    assert!(out.shows().is_empty());
+    for back in [TransferStage::AwaitingSource, TransferStage::Failed] {
+        let mut twin = Twin::offline();
+        let (id, reply) = supplied_with_back(&mut twin, back);
+        let out = twin.copy_failed(id);
+        assert_eq!((twin.stage(id), out.writes(), out.deletes()), (back, 0, 1));
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::Copy("unreadable".into())));
+        assert!(out.shows().is_empty());
+        if back == TransferStage::Failed {
+            assert_eq!(twin.state().transfers[&id].error.as_deref(), Some("source_failed:preparation"));
+        }
+    }
 }
 
 #[test]
@@ -180,21 +196,24 @@ fn xfer_supply_committed() {
     twin.copy_done(id);
     let out = twin.commit();
     assert_eq!(out.replies(9), vec![TransferAnswer::Ok]);
-    assert_eq!(twin.stage(id), TransferStage::Ready);
+    assert_eq!((twin.stage(id), out.shows()), (TransferStage::Ready, vec![crate::owners::write::transfer::Shown::Queued]));
 }
 
 #[test]
 fn xfer_supply_rejected() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    supply(&mut twin, EPOCH, 9);
-    twin.copy_done(id);
-    let out = twin.reject(crate::owners::contract::RejectReason::Storage("disk".into()));
-    assert_eq!(twin.stage(id), TransferStage::AwaitingSource);
-    assert!(matches!(Twin::fault(&out, 9), Some(Fault::Rejected(crate::owners::contract::RejectReason::Storage(_)))));
-    assert_eq!(out.deletes(), 1);
-    assert!(out.shows().is_empty());
+    for back in [TransferStage::AwaitingSource, TransferStage::Failed] {
+        let mut twin = Twin::offline();
+        let (id, reply) = supplied_with_back(&mut twin, back);
+        twin.copy_done(id);
+        let out = twin.reject(crate::owners::contract::RejectReason::Storage("disk".into()));
+        assert_eq!(twin.stage(id), back);
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(crate::owners::contract::RejectReason::Storage("disk".into()))));
+        assert_eq!(out.deletes(), 1);
+        assert!(out.shows().is_empty());
+        if back == TransferStage::Failed {
+            assert_eq!(twin.state().transfers[&id].error.as_deref(), Some("source_failed:preparation"));
+        }
+    }
 }
 
 #[test]

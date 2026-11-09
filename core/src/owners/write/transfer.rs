@@ -428,7 +428,7 @@ impl TransferState {
             (Some(TransferStage::PersistingRetry), false) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
             (Some(TransferStage::PersistingBatchIntent), false) => self.schedule_retry(pending.ids[0], fx),
             (Some(TransferStage::PersistingFailure), false) => self.failure_rejected(pending.ids[0], fx),
-            (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, fx),
+            (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => {
                 self.persist_failed(pending.ids[0], rejected.reason, fx);
                 self.start_in_order(fx);
