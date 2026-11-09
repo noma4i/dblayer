@@ -33,6 +33,12 @@ pub enum AnswerKind {
     Permanent { status: Option<u16> },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    Session(SessionCode),
+    Graphql(String),
+}
+
 /// The name of the refusal code of a body: `error` first, then `errors[].extensions.code`, the first wins.
 pub fn refusal_name(body: &Value) -> Option<String> {
     body.get("error").and_then(Value::as_str).into_iter()
@@ -41,9 +47,8 @@ pub fn refusal_name(body: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The code of a body; an unknown name is `SessionCode::Other`, `refusal_name` keeps the name.
-pub fn refusal(body: &Value) -> Option<SessionCode> {
-    refusal_name(body).map(|name| SessionCode::of(&name))
+pub fn refusal(body: &Value) -> Option<Refusal> {
+    refusal_name(body).map(|name| SessionCode::from_wire(&name).map_or(Refusal::Graphql(name), Refusal::Session))
 }
 
 const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";

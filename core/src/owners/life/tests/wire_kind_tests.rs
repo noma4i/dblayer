@@ -56,7 +56,8 @@ fn canonical(body: &Value) -> Code {
 
 fn from_refusal(body: &Value) -> Code {
     match refusal(body) {
-        Some(code) => Code::Session(code),
+        Some(crate::transport::Refusal::Session(code)) => Code::Session(code),
+        Some(crate::transport::Refusal::Graphql(code)) => Code::Graphql(code),
         None => Code::None,
     }
 }

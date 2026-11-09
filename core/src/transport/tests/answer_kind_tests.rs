@@ -71,9 +71,9 @@ fn wire_classify_table() {
 
 #[test]
 fn wire_refusal_reads_the_first_code_and_keeps_an_unknown_name() {
-    assert_eq!(refusal(&json!({ "error": "SEQUENCE_CONFLICT", "errors": [{ "extensions": { "code": "RATE_LIMITED" } }] })), Some(SessionCode::SequenceConflict));
-    assert_eq!(refusal(&code_body("RATE_LIMITED")), Some(SessionCode::RateLimited));
-    assert_eq!(refusal(&code_body("BRAND_NEW")), Some(SessionCode::Other));
+    assert_eq!(refusal(&json!({ "error": "SEQUENCE_CONFLICT", "errors": [{ "extensions": { "code": "RATE_LIMITED" } }] })), Some(super::answer_kind::Refusal::Session(SessionCode::SequenceConflict)));
+    assert_eq!(refusal(&code_body("RATE_LIMITED")), Some(super::answer_kind::Refusal::Session(SessionCode::RateLimited)));
+    assert_eq!(refusal(&code_body("BRAND_NEW")), Some(super::answer_kind::Refusal::Graphql("BRAND_NEW".into())));
     assert_eq!(refusal_name(&code_body("BRAND_NEW")).as_deref(), Some("BRAND_NEW"));
     assert_eq!(refusal(&json!({ "data": {} })), None);
     assert_eq!(refusal_name(&json!({ "data": {} })), None);

@@ -339,7 +339,10 @@ fn author_error_retained(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: 
 
 fn answer_code(body: &str) -> crate::transport::SessionCode {
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    crate::transport::refusal(&parsed).unwrap_or(crate::transport::SessionCode::Other)
+    match crate::transport::refusal(&parsed) {
+        Some(crate::transport::Refusal::Session(code)) => code,
+        _ => crate::transport::SessionCode::Other,
+    }
 }
 
 /// A sign-in that the server did not accept: the credential its call issued goes, the server did not end the session.
