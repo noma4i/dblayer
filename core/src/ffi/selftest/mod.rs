@@ -30,6 +30,7 @@ mod delivery_reactivity_tests;
 mod refetch_tests;
 mod upload_tests;
 mod sequenced_paths_tests;
+mod session_replay_tests;
 mod rig_events;
 mod stale_event_tests;
 mod rig_held;

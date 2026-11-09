@@ -73,6 +73,7 @@ pub(super) struct Entry {
 struct State {
     contract: Contract<Value>,
     account: String,
+    credential: String,
     signed: bool,
     profile_empty: bool,
     forbidden: bool,
@@ -101,7 +102,7 @@ impl Default for State {
     fn default() -> Self {
         let mut contract = Contract::adopting();
         contract.cache_everything();
-        State { contract, account: String::new(), signed: false, profile_empty: false, forbidden: false, calls: BTreeMap::new(), violations: Vec::new(), log: Vec::new(), marks: Vec::new(), script: Vec::new(), messages: Vec::new(), group_members: BTreeMap::new(), profile: Map::new(), blocked: Vec::new(), canned: BTreeMap::new() }
+        State { contract, account: String::new(), credential: String::new(), signed: false, profile_empty: false, forbidden: false, calls: BTreeMap::new(), violations: Vec::new(), log: Vec::new(), marks: Vec::new(), script: Vec::new(), messages: Vec::new(), group_members: BTreeMap::new(), profile: Map::new(), blocked: Vec::new(), canned: BTreeMap::new() }
     }
 }
 
@@ -327,7 +328,11 @@ impl FakeHttp for World {
             _ => request["body"]["operationName"].as_str().unwrap().to_string(),
         };
         let contract_request = Request::from_wire(&self.label, &request);
-        if matches!(operation.as_str(), "login_link" | "social") { if let Some(sequence) = sequence { self.state.lock().unwrap().contract.set_last(sequence - 1); } }
+        if matches!(operation.as_str(), "login_link" | "social") && sequence == Some(1) {
+            let credential = request["credential"].as_str().unwrap_or_default().to_string();
+            let mut state = self.state.lock().unwrap();
+            if state.credential != credential { state.credential = credential; state.contract.set_last(0); }
+        }
         let admission = self.state.lock().unwrap().contract.admit(&contract_request);
         match admission {
             Admission::Stored(stored) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) }),
