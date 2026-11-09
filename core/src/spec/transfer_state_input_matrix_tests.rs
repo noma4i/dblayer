@@ -1,14 +1,48 @@
-//! Matrix S for the owner Transfer: scripts of the table (accept, write, copy, steps, failure) are played on the owner and on `ref_transfer`; after every step of a script and after every second input, the stage of the transfer on both sides must be the same. The reference is `ref_transfer::step` written from the table only; a mismatch is a red cell, not a change of the reference. The adapter between the inputs of the reference and the inputs of the owner is the code of this file; a cell can be red because of it, the message tells which side moved.
+//! Matrix S for the owner Transfer: scripts of the table (accept, write, copy, steps, failure) are played on the owner and on `ref_transfer`; after every step of a script and after every second input, the stage and the reply tokens of the transfer on both sides must be the same. Reply tokens keep the full `Ended(cause)` so a bare fault on the owner reads as a red cell. The reference is `ref_transfer::step` written from the table only; a mismatch is a red cell, not a change of the reference. The adapter between the inputs of the reference and the inputs of the owner is the code of this file; a cell can be red because of it, the message tells which side moved.
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use super::ref_transfer::{step, Cached, Check, Effect, Failure, Input as RefInput, Item, MutOut, Source as RefSource, St, State, Target, TransferKey, ErrKind};
-use super::transfer_harness::Twin;
+use super::ref_transfer::{step, Answer as RefAnswer, Cached, Check, Effect, Failure, Input as RefInput, Item, MutOut, Source as RefSource, St, State, Target, TransferKey, ErrKind};
+use super::transfer_harness::{Out, Twin};
 use crate::owners::write::outbox::OutboxOutcome;
+use crate::owners::write::transfer::{TransferAnswer, TransferEffect};
 use crate::test_matrix::Matrix;
 
 static LOCATION: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 const KEY: &str = "Moment:r1:upload";
+
+/// The reply token both sides compare, keeping the full `Ended(cause)`.
+fn outcome_token(text: &str) -> String {
+    if text.starts_with("Ended(") { text.to_string() } else { text.split(['(', ' ', '{']).next().unwrap_or("").to_string() }
+}
+
+fn ref_answer(answer: &RefAnswer) -> String {
+    match answer {
+        RefAnswer::Receipt(_) => "Receipt".into(),
+        RefAnswer::Receipts(list) => format!("Receipts({})", list.len()),
+        RefAnswer::Ok => "Ok".into(),
+        RefAnswer::Bool(flag) => format!("Cancelled({flag})"),
+        RefAnswer::Err(fault) => format!("Err({})", outcome_token(&format!("{fault:?}"))),
+        RefAnswer::Outcome(outcome) => format!("Outcome({})", outcome_token(&format!("{outcome:?}"))),
+    }
+}
+
+fn own_answer(answer: &TransferAnswer) -> String {
+    match answer {
+        TransferAnswer::Receipt(_) => "Receipt".into(),
+        TransferAnswer::Receipts(list) => format!("Receipts({})", list.len()),
+        TransferAnswer::Ok => "Ok".into(),
+        TransferAnswer::Cancelled(flag) => format!("Cancelled({flag})"),
+        TransferAnswer::Err(fault) => format!("Err({})", outcome_token(&format!("{fault:?}"))),
+        TransferAnswer::Outcome(outcome, _) => format!("Outcome({})", outcome_token(&format!("{outcome:?}"))),
+    }
+}
+
+fn own_replies(out: &Out) -> Vec<String> {
+    out.runs.iter().filter_map(|run| if let TransferEffect::Reply { answer, .. } = run { Some(own_answer(answer)) } else { None }).collect()
+}
+
+fn line(stage: &str, replies: &[String]) -> String { format!("{stage} [{}]", replies.join("; ")) }
 
 #[test]
 fn xfer_accepting_closing() {
@@ -247,6 +281,7 @@ struct RefRun {
     state: State,
     pending: Vec<u64>,
     reply: u64,
+    replies: Vec<String>,
 }
 
 fn key() -> TransferKey { TransferKey { model: "Moment".into(), row_id: "r1".into(), action: "upload".into() } }
@@ -255,7 +290,7 @@ fn failure() -> Failure { Failure { kind: ErrKind::InternalInvalid, message: "re
 
 impl RefRun {
     fn new() -> Self {
-        let mut run = Self { state: State::new(1, 100, 10), pending: Vec::new(), reply: 100 };
+        let mut run = Self { state: State::new(1, 100, 10), pending: Vec::new(), reply: 100, replies: Vec::new() };
         run.feed(RefInput::RegisterOperations { declarations: [("Moment".to_string(), "upload".to_string())].into_iter().collect() });
         run.feed(RefInput::EpochStarted { epoch: 1, generation: 0 });
         run.feed(RefInput::Restored { epoch: 1, revision: 0, now: 0, orphans: Vec::new(), uploads: Vec::new(), transfer_outcomes: Default::default() });
@@ -267,6 +302,7 @@ impl RefRun {
     fn feed(&mut self, input: RefInput) {
         let (state, effects) = step(&self.state, &input);
         for effect in &effects { if let Effect::Store { batch, .. } = effect { self.pending.push(*batch); } }
+        for effect in &effects { if let Effect::Reply(_, answer) = effect { self.replies.push(ref_answer(answer)); } }
         self.state = state;
         if effects.iter().any(|effect| matches!(effect, Effect::SelfSlotFreed)) { self.feed(RefInput::SlotFreed); }
     }
@@ -288,6 +324,7 @@ impl RefRun {
     }
 
     fn apply(&mut self, step_kind: Step) {
+        self.replies.clear();
         let reply = self.next_reply();
         let attempt = self.attempt();
         match step_kind {
@@ -319,10 +356,11 @@ impl RefRun {
 struct OwnerRun {
     twin: Twin,
     id: Option<u64>,
+    replies: Vec<String>,
 }
 
 impl OwnerRun {
-    fn new() -> Self { Self { twin: Twin::new(), id: None } }
+    fn new() -> Self { Self { twin: Twin::new(), id: None, replies: Vec::new() } }
 
     fn stage(&self) -> String {
         match self.id {
@@ -351,27 +389,29 @@ impl OwnerRun {
     }
 
     fn apply(&mut self, step_kind: Step) {
+        self.replies.clear();
         if self.id.is_none() && self.stray(step_kind) { return; }
         let id = self.id.unwrap_or(1);
-        match step_kind {
-            Step::Accept => { let (id, _, _) = self.twin.accepting(KEY, 1); self.id = Some(id); }
-            Step::Commit => { if self.twin.has_pending() { self.twin.commit(); } }
-            Step::CopyDone => { self.twin.copy_done(id); }
-            Step::CopyFailed => { self.twin.copy_failed(id); }
-            Step::PartOk => { self.twin.step_ok(id, 1, None); }
-            Step::ErrorTemporary => { self.twin.step_error(id, true); }
-            Step::ErrorPermanent => { self.twin.step_error(id, false); }
-            Step::Completed => { self.twin.completed(id); }
-            Step::CompleteErrorTemporary => { self.twin.complete_error(id, true); }
-            Step::Cancel => { self.twin.cancel(KEY); }
-            Step::Discard => { self.twin.discard(KEY); }
-            Step::Retry => { self.twin.retry(KEY, None); }
-            Step::OfflineThenOnline => { self.twin.online(false); self.twin.online(true); }
-            Step::Offline => { self.twin.online(false); }
-            Step::MutationConfirmed => { self.twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None }); }
-            Step::EndEpoch => { self.twin.end_epoch(); }
-            Step::Close => { self.twin.close(); }
-        }
+        let out: Option<Out> = match step_kind {
+            Step::Accept => { let (id, _, out) = self.twin.accepting(KEY, 1); self.id = Some(id); Some(out) }
+            Step::Commit => { if self.twin.has_pending() { Some(self.twin.commit()) } else { None } }
+            Step::CopyDone => Some(self.twin.copy_done(id)),
+            Step::CopyFailed => Some(self.twin.copy_failed(id)),
+            Step::PartOk => Some(self.twin.step_ok(id, 1, None)),
+            Step::ErrorTemporary => Some(self.twin.step_error(id, true)),
+            Step::ErrorPermanent => Some(self.twin.step_error(id, false)),
+            Step::Completed => Some(self.twin.completed(id)),
+            Step::CompleteErrorTemporary => Some(self.twin.complete_error(id, true)),
+            Step::Cancel => Some(self.twin.cancel(KEY).1),
+            Step::Discard => Some(self.twin.discard(KEY).1),
+            Step::Retry => Some(self.twin.retry(KEY, None).1),
+            Step::OfflineThenOnline => { self.twin.online(false); Some(self.twin.online(true)) }
+            Step::Offline => Some(self.twin.online(false)),
+            Step::MutationConfirmed => Some(self.twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2, result: None, row_id: None })),
+            Step::EndEpoch => Some(self.twin.end_epoch()),
+            Step::Close => Some(self.twin.close()),
+        };
+        if let Some(out) = out { self.replies = own_replies(&out); }
     }
 }
 
@@ -416,7 +456,7 @@ fn matrix_owner_state_input_transfer() {
                 for step_kind in script.iter().copied().chain(second) {
                     reference.apply(step_kind);
                     owner.apply(step_kind);
-                    seen.push((format!("{step_kind:?}"), reference.stage(), owner.stage()));
+                    seen.push((format!("{step_kind:?}"), line(&reference.stage(), &reference.replies), line(&owner.stage(), &owner.replies)));
                 }
                 seen
             }));
