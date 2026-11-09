@@ -457,10 +457,7 @@ impl TransferState {
             self.orphan_flight.remove(upload_id);
             return;
         }
-        if pending.kind == StoreKind::StagedCleared {
-            if let RejectReason::Storage(_) = rejected.reason { self.copy_rejected(&pending.ids, rejected.reason, fx); }
-            return;
-        }
+        if pending.kind == StoreKind::StagedCleared { return; }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
                 (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
@@ -558,7 +555,7 @@ impl TransferState {
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::StagedPromoted { transfer_id } => self.staged_promoted(transfer_id, fx),
-            TransferInput::StagedPromoteFailed { transfer_id, detail } => self.copy_rejected(&[transfer_id], RejectReason::Storage(detail), fx),
+            TransferInput::StagedPromoteFailed { transfer_id, detail } => self.staged_promote_failed(transfer_id, detail, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),

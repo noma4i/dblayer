@@ -338,20 +338,26 @@ impl TransferState {
     /// The temporary file took the place of the copy: the marker of the row goes, a call that waits for the swap gets its answer.
     pub(super) fn staged_promoted(&mut self, id: TransferId, fx: &mut Fx) {
         let Some((key, waiting)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage == TransferStage::PersistingCopy)) else { return };
+        if let Some(previous) = self.transfers.get_mut(&id).and_then(|transfer| transfer.previous.take()) {
+            if let Some(upload_id) = previous.upload_id {
+                self.orphans.insert(upload_id, previous.key);
+                self.send_orphans(false, fx);
+            }
+        }
         let batch = self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
         self.pending.insert(batch, Pending { ids: vec![id], kind: StoreKind::StagedCleared, orphan: None, written: BTreeMap::new() });
         if waiting { self.copy_committed(&[id], fx); }
+    }
+
+    /// The rename of the temporary file failed: the old copy and its metadata stay, only the temporary file goes, the call that waits for the swap learns it.
+    pub(super) fn staged_promote_failed(&mut self, id: TransferId, detail: String, fx: &mut Fx) {
+        self.source_rejected(id, Fault::Rejected(RejectReason::Storage(detail)), fx);
     }
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
     pub(super) fn copy_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
         let swapping: Vec<TransferId> = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(|transfer| transfer.previous.is_some())).collect();
         for &id in &swapping {
-            let Some(previous) = self.transfers.get_mut(&id).and_then(|transfer| transfer.previous.take()) else { continue };
-            if let Some(upload_id) = previous.upload_id {
-                self.orphans.insert(upload_id, previous.key);
-                self.send_orphans(false, fx);
-            }
             run(fx, TransferEffect::PromoteStaged { transfer_id: id });
         }
         let ids: Vec<TransferId> = ids.iter().copied().filter(|id| !swapping.contains(id)).collect();
