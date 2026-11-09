@@ -26,7 +26,7 @@ enum Step {
     Age,
 }
 
-fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
+pub(super) fn spec(row: u8, keep: bool, transfer: bool) -> OpSpec {
     OpSpec { op_id: None, model: "Moment".into(), row_id: format!("r{row}"), action: "update".into(), expires_after: None, created_at: 0, keep, effects_empty: false, destroy: false, response_ignore: false, batch: false, origin: if transfer { OpOrigin::Transfer(1) } else { OpOrigin::Api }, attempts: 0 }
 }
 
@@ -40,7 +40,7 @@ fn kind_name(what: &str) -> &'static str {
     else { "Intent" }
 }
 
-fn ref_tokens(effects: &[Effect]) -> Vec<String> {
+pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
     effects.iter().filter_map(|effect| match effect {
         Effect::Row(_) => None,
         Effect::Undefined { row, .. } => Some(format!("undefined {row}")),
@@ -67,7 +67,7 @@ fn own_answer(answer: &OutboxAnswer) -> String {
     }
 }
 
-fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
+pub(super) fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
     effects.iter().filter_map(|effect| match effect {
         OutboxEffect::Store { op_id: Some(op), kind, .. } => Some(format!("store {op} {kind:?}")),
         OutboxEffect::Send { op_id, .. } => Some(format!("send {op_id}")),
@@ -287,13 +287,13 @@ fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
     ]
 }
 
-fn split_line(stages: &str, tokens: &[String]) -> String {
+pub(super) fn split_line(stages: &str, tokens: &[String]) -> String {
     let replies: Vec<&str> = tokens.iter().filter(|token| token.starts_with("reply ")).map(String::as_str).collect();
     let effects: Vec<&str> = tokens.iter().filter(|token| !token.starts_with("reply ")).map(String::as_str).collect();
     format!("{stages} effects [{}] replies [{}]", effects.join("; "), replies.join("; "))
 }
 
-fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
+pub(super) fn first_line(payload: &(dyn std::any::Any + Send)) -> String {
     payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string())).unwrap_or_default().lines().next().unwrap_or("").chars().take(110).collect()
 }
 

@@ -36,6 +36,7 @@ mod window_gap_tests;
 mod ref_outbox;
 mod state_input_matrix_outbox_tests;
 mod state_input_matrix_local_tests;
+mod state_input_matrix_restore_tests;
 mod ref_transfer;
 mod ref_transfer_tests;
 mod transfer_state_input_matrix_tests;
