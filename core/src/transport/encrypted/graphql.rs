@@ -41,17 +41,8 @@ impl EncryptedTransport {
 
     async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
-        let answer = self.exchange_once(&credential, path, &body, wire).await?;
-        let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
-        if matches!(crate::transport::classify_answer(&outcome, false, true), crate::transport::AnswerKind::Transient { reason } if reason == "REPLAYED_REQUEST") {
-            return self.exchange_once(&credential, path, &body, crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await;
-        }
-        Ok(answer)
-    }
-
-    async fn exchange_once(&self, credential: &str, path: &str, body: &Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let (request_id, response_key) = (uuid::Uuid::new_v4().to_string(), random_token());
-        self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await
+        self.exchange.send_once(super::SendOnce { credential: Some(&credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body: &body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
