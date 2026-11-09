@@ -7,7 +7,7 @@ impl Lifecycle {
             published: Published { epoch: 0, identity: None, generation: 0, state: PubState::NoSession, closed: false },
             publishing: Vec::new(),
             cell: Published { epoch: 0, identity: None, generation: 0, state: PubState::NoSession, closed: false },
-            restoring: None,
+            restoring: None, open_reply: None,
             cell_publication: 0,
             ended_up_to: None,
             next_publication: 1,
@@ -35,6 +35,7 @@ impl Lifecycle {
             life.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Owner::Session].into(), open_reply: reply });
             life.publish(&mut out, Some((epoch, saved_identity, saved_generation)), Vec::new());
         } else {
+            life.open_reply = reply;
             life.publish(&mut out, Some((epoch, saved_identity, saved_generation)), reply.into_iter().collect());
         }
         (life, out)
@@ -80,6 +81,12 @@ impl Lifecycle {
         self.published.closed = true;
         self.publish(out, None, Vec::new());
         self.drop_restoring(out, Answer::Closed);
+        if let Some(id) = self.open_reply.take() {
+            if let Some(publication) = self.publishing.iter_mut().find(|publication| publication.replies.contains(&id)) {
+                publication.replies.retain(|reply| *reply != id);
+                answer_all(out, vec![id], Answer::Closed);
+            }
+        }
         if let Some(epoch) = end {
             self.ended(epoch);
             out.effects.push(Effect::EpochEnded(epoch, Cause::Close));

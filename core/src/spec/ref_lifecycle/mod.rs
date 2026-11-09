@@ -153,6 +153,8 @@ pub struct Lifecycle {
     /// The value of `PublishedCell`: restricting publications are written at once, active ones at `Saved`.
     pub cell: Published,
     pub restoring: Option<Restoring>,
+    /// The `open` reply held by the initial publication (no identity, no pending): answered `Closed` by Close before `Saved` (D-271).
+    open_reply: Option<Id>,
     cell_publication: PublicationId,
     ended_up_to: Option<u64>,
     next_publication: PublicationId,
