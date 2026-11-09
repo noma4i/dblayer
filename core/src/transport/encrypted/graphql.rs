@@ -105,7 +105,7 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
 
 
 pub fn response_from_answer(answer: Answer) -> Result<Response, TransportError> {
-    if let Some(code) = crate::transport::refusal_name(&answer.body).as_deref() {
+    if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
         if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
             return Err(session);
         }

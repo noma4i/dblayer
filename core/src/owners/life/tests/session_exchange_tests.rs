@@ -510,9 +510,9 @@ fn only_a_revoked_logout_answer_is_revoked() {
     use crate::transport::encrypted::Answer;
     let answer = |body: Value| Ok(Answer { sequence: Some(2), body });
     let revoked = json!({ "revoked": true });
-    assert!(matches!(super::session_runner::session_input(1, 1, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, false, answer(revoked)), SessionInput::Response { .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, true, answer(json!({}))), SessionInput::Response { .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, false, true, answer(revoked)), SessionInput::Response { .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, answer(json!({}))), SessionInput::Response { .. }));
 }
 
 #[test]
