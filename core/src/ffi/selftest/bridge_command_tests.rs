@@ -79,13 +79,7 @@ async fn server_calls_without_a_transport_report_no_session() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id() {
-    use crate::schema::{EphemeralSpec, FieldSpec};
-    use crate::value::ScalarKind;
-    let typing = serde_json::to_value(EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))).unwrap();
-    let rig = Rig::encrypted_edited(false, false, false, |models| {
-        let user = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "User").unwrap();
-        user.as_object_mut().unwrap().entry("ephemeral").or_insert(json!([])).as_array_mut().unwrap().push(typing);
-    }).await;
+    let rig = Rig::encrypted_edited(false, false, false, |_| {}).await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     bound(rig.database.set_ephemeral(epoch, "User".into(), "user".into(), r#"{"typing":true}"#.into())).await.unwrap();
