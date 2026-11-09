@@ -208,7 +208,7 @@ async fn a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_th
         for retry in 0..failures {
             rig.clock.await_armed(armed).await;
             armed = rig.clock.armed();
-            rig.clock.advance(crate::runtime::RetryPolicy::Outbox.delay(retry).as_nanos().div_ceil(1_000_000) as u64);
+            rig.clock.advance(crate::runtime::RetryPolicy::Outbox.delay(retry + 1).as_nanos().div_ceil(1_000_000) as u64);
         }
         let outcome = bound(waiting).await.unwrap().unwrap();
         assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{failures} failures: the command was not delivered: {outcome:?}");
