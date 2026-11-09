@@ -128,7 +128,7 @@ async fn matrix_window_landing_invalid_cursor() {
             stand.answer("blockedUsers", page(&remaining, has_next));
             let outcome = bound(stand.database.load_more(epoch, "User".into(), Some("blocked".into()), "{}".into())).await;
             stand.settle().await;
-            let mut want = expected(&ALL, &remaining, has_next, true);
+            let mut want = remaining.clone();
             want.sort();
             let got = members(&stand).await;
             matrix.check(&format!("invalid cursor restart / page {}", if has_next { "with cursor" } else { "last" }), &format!("members of the window (load_more {})", if outcome.is_ok() { "ok" } else { "failed" }), position, &format!("{want:?}"), &format!("{got:?}"));
