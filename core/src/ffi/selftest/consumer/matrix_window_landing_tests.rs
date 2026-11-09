@@ -136,3 +136,51 @@ async fn matrix_window_landing_invalid_cursor() {
     }
     matrix.finish();
 }
+
+fn members_page(ids: &[&str], has_next: bool) -> Value {
+    let edges: Vec<Value> = ids.iter().map(|id| json!({"cursor": format!("c-{id}"), "node": user(id)})).collect();
+    let end = ids.last().map(|id| format!("c-{id}")).or_else(|| Some("c-none".to_string()));
+    json!({"data": {"node": {"__typename": "Chat", "id": "chat1", "membersCount": 4, "members": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": if has_next { json!(end) } else { Value::Null }}, "totalCount": 4}}}})
+}
+
+fn chat_members_query() -> QuerySpec { QuerySpec::json(r#"{"model":"User","relation":"chat_members","params":{"chatId":"chat1"}}"#) }
+
+async fn chat_member_ids(stand: &Stand) -> Vec<String> {
+    let epoch = stand.database.session_epoch();
+    let mut found: Vec<String> = bound(stand.database.read_query(epoch, chat_members_query())).await.unwrap().into_iter().map(|row| row.id).collect();
+    found.sort();
+    found
+}
+
+/// `members_complete` scope `User.chat_members`: the chain loads every page after the first; a reload of the chain must leave exactly the members of its pages.
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_window_landing_members_complete() {
+    let mut matrix = Matrix::new("W-window-landing-members_complete");
+    for position in ["head", "middle", "tail", "all"] {
+        let stand = Stand::open().await;
+        let epoch = stand.database.session_epoch();
+        let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+        std::mem::forget(stand.database.watch(ReadRequest::List { query: chat_members_query() }, rows.clone()));
+        let params = r#"{"chatId":"chat1"}"#;
+        stand.answer_next("chatMembers", members_page(&["u1", "u2"], true));
+        stand.answer_next("chatMembers", members_page(&["u3", "u4"], false));
+        bound(stand.database.refresh(epoch, "User".into(), Some("chat_members".into()), params.into())).await.unwrap();
+        stand.settle().await;
+        let before = chat_member_ids(&stand).await;
+        let remaining = removal(position, &ALL);
+        let split = remaining.len().div_ceil(2);
+        if remaining.len() > 1 {
+            stand.answer_next("chatMembers", members_page(&remaining[..split], true));
+            stand.answer_next("chatMembers", members_page(&remaining[split..], false));
+        } else {
+            stand.answer_next("chatMembers", members_page(&remaining, false));
+        }
+        bound(stand.database.refresh(epoch, "User".into(), Some("chat_members".into()), params.into())).await.unwrap();
+        stand.settle().await;
+        let mut want: Vec<String> = remaining.iter().map(|id| id.to_string()).collect();
+        want.sort();
+        let got = chat_member_ids(&stand).await;
+        matrix.check("members_complete chain reload", &format!("members of the window (before {before:?})"), position, &format!("{want:?}"), &format!("{got:?}"));
+    }
+    matrix.finish();
+}
