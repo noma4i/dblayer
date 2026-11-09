@@ -20,7 +20,12 @@ pub trait WindowCodec: Send + Sync + 'static {
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
         if response.errors.is_empty() { return None; }
-        let class = if response.errors.iter().any(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR)) { ErrorClass::InvalidCursor } else { ErrorClass::Permanent };
+        let body = match serde_json::to_value(response) {
+            Ok(body) => body,
+            Err(error) => return Some(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Internal { detail: error.to_string() } }),
+        };
+        let kind = crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false, true);
+        let class = if response.errors.iter().any(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR)) { ErrorClass::InvalidCursor } else if matches!(kind, crate::transport::AnswerKind::Transient { .. }) { ErrorClass::Server } else { ErrorClass::Permanent };
         let source = TransportError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() };
         Some(RequestError { class, failure: crate::ffi::DbError::from(source) })
     }
