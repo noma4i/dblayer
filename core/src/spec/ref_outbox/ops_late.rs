@@ -29,10 +29,15 @@ pub fn landing(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             finish(op, Outcome::Confirmed, e);
         }
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_landing_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{Land,basis=generations}" }); }
-        Input::Rejected { reason: Reason::NoSession | Reason::Closed, .. } => {
+        Input::Rejected { reason: Reason::NoSession, .. } => {
             row(e, "out_landing_no_session");
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
+            finish(op, Outcome::Ended(EndCause::SessionEnded), e);
+        }
+        Input::Rejected { reason: Reason::Closed, .. } => {
+            row(e, "out_landing_no_session");
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_landing_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
         Input::Rejected { reason: Reason::Invalid, .. } => { row(e, "out_landing_invalid"); mark_failed(op, ErrKind::Internal, e); }
@@ -60,11 +65,17 @@ pub fn rolling_back(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>)
             finish(op, o, e);
         }
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_rollback_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{Rollback,basis=generations}" }); }
-        Input::Rejected { reason: Reason::NoSession | Reason::Closed, .. } => {
+        Input::Rejected { reason: Reason::NoSession, .. } => {
             row(e, "out_rollback_no_session");
             interrupt_waiters(op, e);
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
+            finish(op, Outcome::Ended(EndCause::SessionEnded), e);
+        }
+        Input::Rejected { reason: Reason::Closed, .. } => {
+            row(e, "out_rollback_no_session");
+            interrupt_waiters(op, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_rollback_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
         Input::Rejected { reason: Reason::Invalid, .. } => {
@@ -95,10 +106,15 @@ pub fn marking_failed(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect
             transfer_outcome(op, Outcome::Failed, e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_marking_failed_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
-        Input::Rejected { reason: Reason::NoSession | Reason::Closed, .. } => {
+        Input::Rejected { reason: Reason::NoSession, .. } => {
             row(e, "out_marking_failed_no_session");
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
+            finish(op, Outcome::Ended(EndCause::SessionEnded), e);
+        }
+        Input::Rejected { reason: Reason::Closed, .. } => {
+            row(e, "out_marking_failed_no_session");
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::StaleGeneration(_), .. } => { row(e, "out_marking_failed_stale_generation"); e.push(Effect::Store { op: op.id, what: "Commit{MarkFailed,basis=generations}" }); }
         Input::Rejected { reason: Reason::Invalid, .. } => {
@@ -230,8 +246,8 @@ pub fn epoch_ended(op: &mut Op, e: &mut Vec<Effect>) {
     row(e, "out_epoch_ended");
     if op.stage == Stage::Sending { e.push(Effect::Session { op: op.id, what: "Cancel{req_id}" }); }
     interrupt_waiters(op, e);
-    transfer_outcome(op, Outcome::Interrupted, e);
-    finish(op, Outcome::Interrupted, e);
+    transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
+    finish(op, Outcome::Ended(EndCause::SessionEnded), e);
 }
 
 /// Closing for one operation. `Drained` is emitted once by the owner.
@@ -241,15 +257,15 @@ pub fn closing(op: &mut Op, e: &mut Vec<Effect>) {
         Stage::WaitingDeclaration | Stage::Queued | Stage::Failed => {
             row(e, "out_closing_queued");
             interrupt_waiters(op, e);
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         _ => {
             row(e, "out_closing");
             if op.stage == Stage::Sending { e.push(Effect::Session { op: op.id, what: "Cancel{req_id}" }); }
             interrupt_waiters(op, e);
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
     }
 }

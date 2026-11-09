@@ -29,7 +29,8 @@ pub fn mutation_outcome_name(o: Outcome) -> &'static str {
         Outcome::Rejected => "MutationOutcome(Rejected)",
         Outcome::Failed => "MutationOutcome(Failed)",
         Outcome::Discarded => "MutationOutcome(Discarded)",
-        Outcome::Interrupted => "MutationOutcome(Interrupted)",
+        Outcome::Ended(EndCause::SessionEnded) => "MutationOutcome(Ended(SessionEnded))",
+        Outcome::Ended(EndCause::Closed) => "MutationOutcome(Ended(Closed))",
     }
 }
 
@@ -39,7 +40,8 @@ fn outcome_reply(o: Outcome) -> &'static str {
         Outcome::Rejected => "Outcome:Rejected",
         Outcome::Failed => "Outcome:Failed",
         Outcome::Discarded => "Outcome:Discarded",
-        Outcome::Interrupted => "Outcome:Interrupted",
+        Outcome::Ended(EndCause::SessionEnded) => "Outcome:Ended(SessionEnded)",
+        Outcome::Ended(EndCause::Closed) => "Outcome:Ended(Closed)",
     }
 }
 
@@ -96,7 +98,7 @@ pub fn roll_back(op: &mut Op, cause: Cause, e: &mut Vec<Effect>) {
 pub fn requeue(op: &mut Op, e: &mut Vec<Effect>) {
     op.stage = Stage::Queued;
     op.waiting_retry = false;
-    e.push(Effect::Store { op: op.id, what: "Commit{Intent{status=pending}}" });
+    e.push(Effect::Store { op: op.id, what: "Commit{Requeue}" });
 }
 
 pub fn blank_op(id: OpId, spec: &OpSpec) -> Op {

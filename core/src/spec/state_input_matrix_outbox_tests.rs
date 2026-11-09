@@ -53,9 +53,14 @@ fn kind_name(what: &str) -> &'static str {
     else if what.contains("MarkFailed") { "ErrorMark" }
     else if what.contains("rows,") || what.contains("delete row") || what.contains("items,") || what.contains("Land") || what.contains("Swap") { "Land" }
     else if what.contains("Rollback") || what.contains("RemoveIntent") { "Rollback" }
-    else if what.contains("status=pending") { "Requeue" }
+    else if what.contains("Requeue") { "Requeue" }
     else if what.contains("attempts+1") { "Attempt" }
     else { "Intent" }
+}
+
+/// The outcome token both sides compare, keeping the full `Ended(cause)`.
+fn outcome_token(text: &str) -> String {
+    if text.starts_with("Ended(") { text.to_string() } else { text.split([' ', '{']).next().unwrap_or("").to_string() }
 }
 
 pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
@@ -69,7 +74,7 @@ pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
         Effect::Session { .. } => None,
         Effect::Schedule { .. } => Some("schedule".to_string()),
         Effect::Transfer { what, .. } if what.starts_with("SelectRow") => None,
-        Effect::Transfer { what, .. } => Some(format!("transfer {}", what.trim_start_matches("MutationOutcome(").trim_end_matches(')'))),
+        Effect::Transfer { what, .. } => { let inner = what.strip_prefix("MutationOutcome(").and_then(|rest| rest.strip_suffix(')')).unwrap_or(what); Some(format!("transfer {}", outcome_token(inner))) }
         Effect::Reply { what, .. } => Some(format!("reply {what}")),
         Effect::Drained(which) if *which == "LocalWrites" => None,
         Effect::Drained(_) => Some("drained".to_string()),
@@ -80,7 +85,7 @@ pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
 fn own_answer(answer: &OutboxAnswer) -> String {
     match answer {
         OutboxAnswer::Receipt(_) => "Receipt".into(),
-        OutboxAnswer::Outcome(outcome) => format!("Outcome:{}", format!("{outcome:?}").split([' ', '{']).next().unwrap_or("")),
+        OutboxAnswer::Outcome(outcome) => format!("Outcome:{}", outcome_token(&format!("{outcome:?}"))),
         OutboxAnswer::Ok => "Ok".into(),
         OutboxAnswer::Err(fault) => format!("Err({})", format!("{fault:?}").split(['(', ' ', '{']).next().unwrap_or("")),
         other => format!("{other:?}").chars().take(24).collect(),
@@ -93,7 +98,7 @@ pub(super) fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
         OutboxEffect::Send { op_id, .. } => Some(format!("send {op_id}")),
         OutboxEffect::CancelRequest => Some("cancel".to_string()),
         OutboxEffect::Reply { answer, .. } => Some(format!("reply {}", own_answer(answer))),
-        OutboxEffect::TransferOutcome { outcome } => Some(format!("transfer {}", format!("{outcome:?}").split([' ', '{']).next().unwrap_or(""))),
+        OutboxEffect::TransferOutcome { outcome } => Some(format!("transfer {}", outcome_token(&format!("{outcome:?}")))),
         OutboxEffect::Schedule => Some("schedule".to_string()),
         OutboxEffect::Drained => Some("drained".to_string()),
         _ => None,
@@ -299,14 +304,17 @@ fn scripts(context: &Context) -> Vec<(&'static str, Vec<Step>)> {
     use Step::*;
     let t = context.target;
     if context.restored {
-        return vec![
+        let mut list = vec![
             ("none", vec![]),
             ("queued or sending", vec![Commit(t)]),
             ("landing", vec![Commit(t), Response(t)]),
-            ("waiting retry", vec![Commit(t), Error { op: t, temporary: true }]),
-            ("persisting attempt", vec![Commit(t), Error { op: t, temporary: true }, Tick(t)]),
             ("marking failed", vec![Commit(t), Error { op: t, temporary: false }]),
         ];
+        if context.name != "attempts exhausted" {
+            list.push(("waiting retry", vec![Commit(t), Error { op: t, temporary: true }]));
+            list.push(("persisting attempt", vec![Commit(t), Error { op: t, temporary: true }, Tick(t)]));
+        }
+        return list;
     }
     let mut list = vec![
         ("none", vec![]),

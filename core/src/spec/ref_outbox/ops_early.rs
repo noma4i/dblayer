@@ -105,7 +105,7 @@ pub fn persisting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
                 send_mutate(op, e);
             } else {
                 row(e, "out_persisting_attempt_committed_offline");
-                op.stage = Stage::Queued;
+                requeue(op, e);
             }
         }
         Input::Rejected { reason: Reason::Storage, .. } => {
@@ -116,10 +116,15 @@ pub fn persisting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             row(e, "out_persisting_attempt_stale_generation");
             e.push(Effect::Store { op: op.id, what: "Commit{Intent{attempts+1},basis=generations}" });
         }
-        Input::Rejected { reason: Reason::NoSession | Reason::Closed, .. } => {
+        Input::Rejected { reason: Reason::NoSession, .. } => {
             row(e, "out_persisting_attempt_no_session");
-            transfer_outcome(op, Outcome::Interrupted, e);
-            finish(op, Outcome::Interrupted, e);
+            transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
+            finish(op, Outcome::Ended(EndCause::SessionEnded), e);
+        }
+        Input::Rejected { reason: Reason::Closed, .. } => {
+            row(e, "out_persisting_attempt_no_session");
+            transfer_outcome(op, Outcome::Ended(EndCause::Closed), e);
+            finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Invalid, .. } => {
             row(e, "out_persisting_attempt_invalid");

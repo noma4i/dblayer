@@ -26,7 +26,10 @@ pub enum ErrKind { Exhausted, Server, RestoreFailed, StateLost, Internal }
 pub enum Cause { Discard, Refusal, Expired, DiscardRestoreFailed }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome { Confirmed, Rejected, Failed, Discarded, Interrupted }
+pub enum EndCause { SessionEnded, Closed }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome { Confirmed, Rejected, Failed, Discarded, Ended(EndCause) }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind { Submit, Attempt, Land, Rollback, MarkFailed, Retry }
@@ -252,5 +255,5 @@ pub fn row(e: &mut Vec<Effect>, id: &'static str) { e.push(Effect::Row(id)); }
 pub fn undefined(e: &mut Vec<Effect>, row: &str, reason: &str) { e.push(Effect::Undefined { row: row.to_string(), reason: reason.to_string() }); }
 pub fn reply(e: &mut Vec<Effect>, to: Addr, op: u64, what: &'static str) { e.push(Effect::Reply { to, op, what }); }
 pub fn outcome_name(o: Outcome) -> &'static str {
-    match o { Outcome::Confirmed => "Confirmed", Outcome::Rejected => "Rejected", Outcome::Failed => "Failed", Outcome::Discarded => "Discarded", Outcome::Interrupted => "Interrupted" }
+    match o { Outcome::Confirmed => "Confirmed", Outcome::Rejected => "Rejected", Outcome::Failed => "Failed", Outcome::Discarded => "Discarded", Outcome::Ended(EndCause::SessionEnded) => "Ended(SessionEnded)", Outcome::Ended(EndCause::Closed) => "Ended(Closed)" }
 }
