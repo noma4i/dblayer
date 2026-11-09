@@ -183,6 +183,8 @@ pub(super) struct Feed {
     generation: BTreeMap<String, u64>,
     pub(super) reread: Reread,
     pub(super) refused: u64,
+    /// Connection attempts since the last data: a reconnect bumps them, the first `Event` after `Ready` resets them.
+    pub(super) attempts: u32,
     pub(super) marks: Vec<bool>,
     pub(super) obs: Vec<Obs>,
     drained: bool,
@@ -209,6 +211,7 @@ impl Feed {
             generation: BTreeMap::new(),
             reread: Reread::None,
             refused: 0,
+            attempts: 0,
             marks: Vec::new(),
             obs: Vec::new(),
             drained: false,

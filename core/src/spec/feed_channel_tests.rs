@@ -381,6 +381,17 @@ fn feed_chan_ended_resubscribes() {
 }
 
 #[test]
+fn feed_chan_ended_retryable() {
+    let mut rig = Rig::live();
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) }), ["schedule:channel"]);
+    assert_eq!(rig.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
+    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
+    let mut shown = rig.confirm("B");
+    shown.sort();
+    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap1", "stale:Post:gap1"], "each model of the channel sees one gap after the new confirmation, no second ready");
+}
+
+#[test]
 fn feed_chan_gap_cause_names_last_online() {
     let mut rig = Rig::live();
     rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });

@@ -284,6 +284,17 @@ fn feed_live_event_unwatched() {
 }
 
 #[test]
+fn feed_live_attempts_reset_on_data() {
+    let mut twin = opening();
+    twin.step(Input::Dropped { to: To::Opening });
+    twin.step(Input::Resubscribe { to: To::Opening });
+    twin.step(Input::HandshakeDone);
+    assert_eq!((twin.state().attempts(), twin.reference.attempts), (1, 1), "a reconnect bumped the connection attempts");
+    assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick]);
+    assert_eq!((twin.state().attempts(), twin.reference.attempts), (0, 0), "the first event after Ready resets the attempts");
+}
+
+#[test]
 fn feed_live_stray() {
     let mut twin = live();
     for input in [event(To::Stray, "Chat", "x"), Input::ChannelLost { to: To::Stray, dropped: None }, Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }] {

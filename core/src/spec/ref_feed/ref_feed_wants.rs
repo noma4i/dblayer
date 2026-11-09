@@ -69,6 +69,7 @@ impl Feed {
             (Mode::Opening { .. }, To::Opening) => {
                 let lost = self.lose_held(None);
                 self.opening = Some(Proto::Handshake);
+                self.attempts += 1;
                 effects.push(Effect::ScheduleResubscribe);
                 Self::stale(&lost, &mut effects);
             }
@@ -79,6 +80,7 @@ impl Feed {
                 self.active = None;
                 self.mode = Mode::Opening { gap: true };
                 self.opening = Some(Proto::Handshake);
+                self.attempts = 0;
                 effects.push(Effect::Connect);
             }
             _ => {}
@@ -97,6 +99,7 @@ impl Feed {
                 self.held.push(event);
             }
             (Mode::Live, To::Active) => {
+                self.attempts = 0;
                 let event = self.accept(model, payload);
                 self.seat(vec![event], effects);
             }
