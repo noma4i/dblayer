@@ -47,13 +47,14 @@ struct Server {
     conflicts: std::sync::atomic::AtomicUsize,
     held: tokio::sync::watch::Sender<HashSet<String>>,
     answered: tokio::sync::watch::Sender<usize>,
+    received: tokio::sync::watch::Sender<usize>,
 }
 
 impl Default for Server {
     fn default() -> Self {
         let mut contract = Contract::adopting();
         contract.cache_everything();
-        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -79,6 +80,7 @@ impl FakeHttp for Server {
                 _ => {}
             }
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
+            crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
             self.sequenced.lock().unwrap().push((operation.clone(), sequence.unwrap_or(0)));
             if let Admission::Refused(refusal) = admission {
                 if refusal["error"] == SEQUENCE_CONFLICT { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
@@ -177,6 +179,9 @@ impl Stand {
 
     /// The server has answered `count` requests in all.
     pub(super) async fn answered(&self, count: usize) { bound(self.server.answered.subscribe().wait_for(|answered| *answered >= count)).await.unwrap(); }
+
+    /// The server has received `count` requests in all, answered or held.
+    pub(super) async fn received(&self, count: usize) { bound(self.server.received.subscribe().wait_for(|received| *received >= count)).await.unwrap(); }
 
     /// The next subscription the cable opened: its token.
     pub(super) async fn next_subscription(&self) -> String { let mut subscribed = self.subscribed.lock().await; bound(async { subscribed.recv().await }).await.expect("the cable is open") }
