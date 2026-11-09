@@ -272,11 +272,12 @@ fn feed_prop_pending_never_vanishes() {
         if state.landing() != 0 {
             return Err("a batch is left in landing after the store answered".into());
         }
-        if state.held() == 0 && state.pending() == 0 {
-            let covered = covers(&positions(&seen(), "Chat"))?;
-            if covered != state.position("Chat") {
-                return Err(format!("{} positions were given but {covered} are covered", state.position("Chat")));
-            }
+        if state.held() != 0 || state.pending() != 0 {
+            return Err(format!("{} held and {} pending events are left at rest", state.held(), state.pending()));
+        }
+        let covered = covers(&positions(&seen(), "Chat"))?;
+        if covered != state.position("Chat") {
+            return Err(format!("{} positions were given but {covered} are covered", state.position("Chat")));
         }
         Ok(())
     });
