@@ -386,7 +386,8 @@ fn stable_list_merges_an_id_list_and_is_refused_on_a_scalar() {
     let model = build_one("  attribute :momentIds, [:id], merge: :stable_list");
     assert_eq!(model.fields.iter().find(|field| field.name == "momentIds").unwrap().merge, Some(dblayer::schema::MergeRule::StableList));
     let source = "model Sample do\n  attribute :name, :string, merge: :stable_list\nend\n";
-    assert!(check_source(source).is_err());
+    let errors = check_source(source).unwrap_err();
+    assert_eq!(errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>(), ["model Sample: field name has a merge rule that does not fit its type"]);
 }
 
 #[test]

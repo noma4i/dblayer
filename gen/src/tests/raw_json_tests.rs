@@ -23,7 +23,8 @@ fn json_parsing_is_declared_only_for_raw_fields_with_canonical_defaults() {
         "attribute :value, :json, parse: :json, default: 12",
     ] {
         let source = format!("model Sample do\n{body}\nend\n");
-        assert!(parse_models(&source).is_err(), "{source}");
+        let errors = parse_models(&source).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("parse")), "{source}: {errors:?}");
     }
 }
 

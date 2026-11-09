@@ -33,7 +33,8 @@ fn batch_renumber_requires_known_integer_fields_and_an_explicit_base() {
         assert_eq!(result.is_ok(), accepted, "{result:?}");
     }
     let unbatched = source.replace("    batch items: \"items\", single: :create_file, input: { clientKey: :clientKey }, renumber: { position: \"position\", size: \"size\", start: 0 }\n", "    renumber position: \"position\", size: \"size\", start: 0\n");
-    assert!(crate::parse_models(&unbatched).is_err());
+    let errors = crate::parse_models(&unbatched).unwrap_err();
+    assert!(errors.iter().any(|error| error.message.contains("renumber")), "{errors:?}");
 }
 
 #[test]

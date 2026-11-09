@@ -64,7 +64,8 @@ fn gen_error_not_dropped() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("bad.dbl");
     fs::write(&file, "model Sample do\n  bogus\nend\n").unwrap();
-    assert!(compile_files(&[file], None, &[]).is_err());
+    let errors = compile_files(&[file], None, &[]).unwrap_err();
+    assert!(errors.iter().any(|error| error.file.ends_with("bad.dbl") && error.error.line == 2), "{errors:?}");
 }
 
 #[test]
