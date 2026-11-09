@@ -66,6 +66,20 @@ pub enum UploadKind {
     Retrying,
 }
 
+impl UploadKind {
+    /// The value that the status columns of this write hold.
+    pub fn shown(self) -> crate::owners::write::transfer::Shown {
+        use crate::owners::write::transfer::Shown;
+        match self {
+            Self::AwaitingSource => Shown::WaitingSource,
+            Self::SyncUpload | Self::Retrying => Shown::Queued,
+            Self::ConfirmedParts => Shown::Uploading { progress: 0 },
+            Self::Completed => Shown::Uploading { progress: 100 },
+            Self::Failed => Shown::Failed { error: String::new() },
+        }
+    }
+}
+
 /// The columns of a row of `sync_upload`: the whole value of a transfer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UploadRow {

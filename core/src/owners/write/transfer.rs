@@ -113,6 +113,10 @@ impl TransferState {
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
+                    let shown = self.shown_now(transfer.transfer_id);
+                    if shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
+                        ops.push(StoreOp::UploadShown { key: transfer.key.clone(), shown });
+                    }
                     if kind == StoreKind::Failed && transfer.failure_abort {
                         if let Some(upload_id) = transfer.upload_id.clone() {
                             ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
@@ -156,6 +160,10 @@ impl TransferState {
             })
             .chain(numbers)
             .collect();
+        for id in ids {
+            let columns = self.shown_now(*id).columns();
+            if let Some(transfer) = self.transfers.get_mut(id).filter(|_| kind != StoreKind::Removed) { transfer.stored_shown = Some(columns); }
+        }
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None });
