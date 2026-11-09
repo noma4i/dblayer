@@ -2,8 +2,18 @@
 import Foundation
 import Testing
 
+private let standServerLock = NSLock()
+nonisolated(unsafe) private var standServer: SealedServer?
+
+public func registerStandOperations(_ database: Database, defsJson: String) async throws {
+  let server = standServerLock.withLock { standServer }
+  try server?.registerDocuments(defsJson)
+  try await database.registerOperations(defsJson: defsJson)
+}
+
 /// The one database of the process: a test that opens the next one closes the previous.
 func closePrevious() async {
+  standServerLock.withLock { standServer = nil }
   do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {} catch { fatalError("closing the previous database failed: \(error)") }
 }
 
@@ -84,13 +94,7 @@ public let sendMoment = #"[{"name":"CreateMoment","document":"mutation CreateMom
 private let sessionProfile = #"{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}"#
 
 /// The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock.
-private func mutationNames(_ operations: String) throws -> Set<String> {
-  let listed = try JSONSerialization.jsonObject(with: Data(operations.utf8)) as? [[String: Any]] ?? []
-  return Set(listed.compactMap { ($0["document"] as? String)?.drop(while: \.isWhitespace).hasPrefix("mutation") == true ? $0["name"] as? String : nil })
-}
-
-public func bridgeToTransport(_ transport: any ScriptedTransport, operations: String) throws -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
-  let mutations = try mutationNames(operations)
+public func bridgeToTransport(_ transport: any ScriptedTransport) -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
   return { path, body in
     if path == "/api/auth/login_link" { return ["sessionId": "stand"] }
     if path == "/api/logout" { return ["revoked": true] }
@@ -100,7 +104,7 @@ public func bridgeToTransport(_ transport: any ScriptedTransport, operations: St
     let document = body["query"] as? String ?? ""
     let request = TransportRequest(document: document, operationName: operation, variablesJson: variables, purpose: SealedServer.purpose, author: ScriptedWire.ids.author, requestId: ScriptedWire.ids.requestId, attempt: ScriptedWire.ids.attempt)
     let text: String
-    if mutations.contains(operation) { text = try await transport.mutate(request: request) } else { text = try await transport.query(request: request) }
+    if document.drop(while: \.isWhitespace).hasPrefix("mutation") { text = try await transport.mutate(request: request) } else { text = try await transport.query(request: request) }
     return try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] ?? [:]
   }
 }
@@ -146,7 +150,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
     return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
   }
   let held = credential(of: config)
-  let server = try SealedServer(contract: held.contract, bridge: try bridgeToTransport(mock, operations: withUploadSteps(operations, models: modelsJson)))
+  let server = try SealedServer(contract: held.contract, bridge: bridgeToTransport(mock))
   try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
   (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
   let restored = try held.get() != nil
@@ -162,6 +166,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
   } else {
     database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations)))
   }
+  standServerLock.withLock { standServer = server }
   try await signIn(restored: restored, setsOnline: !onlineAtOpen)
   return database
 }
@@ -170,12 +175,13 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
 @MainActor @discardableResult
 public func openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil, onlineAtOpen: Bool = true) async throws -> TestClock {
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
-  let server = try SealedServer(contract: held.contract, bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
+  let server = try SealedServer(contract: held.contract, bridge: bridgeToTransport(transport))
   try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
   let restored = try held.get() != nil
   let clock = try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJson), path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers ?? (onlineAtOpen ? nil : SilentPlatform()))
+  standServerLock.withLock { standServer = server }
   try await DB.opener.opened().registerOperations(defsJson: withSessionProfile(operations))
   try await signIn(restored: restored)
   return clock

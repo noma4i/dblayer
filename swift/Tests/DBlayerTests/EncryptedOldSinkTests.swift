@@ -27,7 +27,7 @@ extension BridgeProbeTests {
     try await DB.openTesting(transport: peer, modelsJSON: modelsJSON, encrypted: encrypted, credentials: CableCredentials(), http: server)
     let fixtureOperations = #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#
     try server.registerDocuments(fixtureOperations)
-    try await DB.database.registerOperations(defsJson: fixtureOperations)
+    try await registerStandOperations(DB.database, defsJson: fixtureOperations)
     try await DB.sessionCall("login_link", body: CableLogin(account: "A"))
     let query = try Notice.recent.spec()
     let first = try DB.account().stream(Notice.recent)

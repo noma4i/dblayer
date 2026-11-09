@@ -14,7 +14,7 @@ extension BridgeProbeTests {
     }
     transport.enqueue("DeleteMoment", reply: #"{"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]}"#)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
+    try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
     let held = Projected<Moment>(try DB.account().stream(Moment.feed))
     let (events, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(events)

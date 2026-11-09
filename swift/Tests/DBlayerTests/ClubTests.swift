@@ -165,7 +165,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("CreateClub", reply: clubCreated)
     try await Self.openClubSession(transport, models: clubModels(destroy: true))
-    try await DB.database.registerOperations(defsJson: #"[{"name":"DeleteClub","document":"mutation DeleteClub($id: ID!) { deleteClub(id: $id) { id } }"}]"#)
+    try await registerStandOperations(DB.database, defsJson: #"[{"name":"DeleteClub","document":"mutation DeleteClub($id: ID!) { deleteClub(id: $id) { id } }"}]"#)
     let club = try await Self.confirmedClub()
     let hold = business
       ? transport.hold("DeleteClub", reply: #"{"errors":[{"message":"refused","extensions":{"code":"REFUSED"}}]}"#)

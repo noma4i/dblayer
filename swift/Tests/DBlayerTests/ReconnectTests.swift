@@ -15,7 +15,7 @@ extension BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: feedPage)
     transport.enqueue("MomentsFeed", reply: feedPage)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: feedDefs)
+    try await registerStandOperations(DB.database, defsJson: feedDefs)
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed, refreshOnConnect: true))
     try await list.loaded()
     let loads = { transport.calls.filter { $0.operationName == "MomentsFeed" }.count }
@@ -35,7 +35,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: feedPage)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: feedDefs)
+    try await registerStandOperations(DB.database, defsJson: feedDefs)
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
     try await list.loaded()
     await eventually("the events subscription of the stream opened") { transport.calls.filter { $0.operationName == "MomentEvents" }.count == 1 }
@@ -66,7 +66,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateMoment", failure: .Network(detail: "down"))
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: feedDefs)
+    try await registerStandOperations(DB.database, defsJson: feedDefs)
     let sent = try await AccountScope().send(Moment.self, values: ["text": .string("hello")])
     let attempts = { transport.calls.filter { $0.operationName == "CreateMoment" }.count }
     await eventually("the first attempt failed on the network") { attempts() == 1 }

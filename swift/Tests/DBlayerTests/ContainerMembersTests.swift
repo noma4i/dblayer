@@ -41,7 +41,7 @@ extension BridgeProbeTests {
     let (signals, signal) = AsyncStream<Int>.makeStream()
     let transport = PageTransport(cancelAt: 1) { signal.yield(2) }
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     let hold = transport.mock.hold("ContainerMembers", reply: membersPage("a0", hasNext: false))
     defer { hold.release(); signal.finish() }
     let request = try User.containerMembers("c1").beginLoad()
@@ -61,7 +61,7 @@ extension BridgeProbeTests {
     let (signals, signal) = AsyncStream<Int>.makeStream()
     let transport = PageTransport { signal.yield(3) }
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     for number in 0..<5 { transport.mock.enqueue("ContainerMembers", reply: membersPage("a\(number)", hasNext: true)) }
     let sixth = transport.mock.hold("ContainerMembers", reply: membersPage("a5", hasNext: true))
     defer { sixth.release(); signal.finish() }
@@ -86,7 +86,7 @@ extension BridgeProbeTests {
   func bridge_prop_future_handle_cancelAndAnswerFromManyTasksEndEveryWait() async throws {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     let holds = (0..<8).map { transport.hold("ContainerMembers", reply: membersPage("a\($0)", hasNext: false)) }
     let calls = try (0..<8).map { number in
       let query = try User.containerMembers("c\(number)")
@@ -110,7 +110,7 @@ extension BridgeProbeTests {
   func containerMembersPassesArgumentsAndDecodesTypedSnapshots() async throws {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
 
@@ -135,7 +135,7 @@ extension BridgeProbeTests {
   func loadAllReadsEveryPageAndForceRestartsTheList() async throws {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
     transport.enqueue("ContainerMembers", reply: membersPage("a2", hasNext: false))
@@ -156,7 +156,7 @@ extension BridgeProbeTests {
   func membersSnapshotPlatforms() async throws {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
     let query = try User.completeMembers("c1")

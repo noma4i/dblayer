@@ -20,7 +20,7 @@ extension BridgeProbeTests {
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: operations)
+    try await registerStandOperations(DB.database, defsJson: operations)
   }
 
   @MainActor

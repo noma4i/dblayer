@@ -140,7 +140,7 @@ extension BridgeProbeTests {
   func bridge_prop_record_parity_aRefusalKeepsTheSessionCodeTheRequestSizeAndTheLimitOrTheirAbsence(_ refusal: RefusalCase) async throws {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: failureOperations)
+    try await registerStandOperations(DB.database, defsJson: failureOperations)
     if let failure = refusal.failure { transport.enqueue("CreateMoment", failure: failure) }
     let refused = try await Moment.create(text: refusal.text, media: nil, in: DB.account()).refusal()
     let comment = Comment(rawValue: refusal.label)

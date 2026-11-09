@@ -14,7 +14,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     let defs = Self.nodeDocuments.map { JSONValue.object(["name": .string($0.0), "document": .string($0.1)]) }
-    try await DB.database.registerOperations(defsJson: JSONValue.array(defs).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array(defs).text)
     return transport
   }
 

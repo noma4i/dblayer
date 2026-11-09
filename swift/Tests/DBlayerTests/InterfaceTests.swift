@@ -33,7 +33,7 @@ extension BridgeProbeTests {
   private func openSampleRig() async throws -> MockTransport {
     let transport = MockTransport()
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("SampleNode"), "document": .string(Self.screenDocument)])]).text)
+    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("SampleNode"), "document": .string(Self.screenDocument)])]).text)
     return transport
   }
 

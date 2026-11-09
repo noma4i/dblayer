@@ -74,7 +74,7 @@ private func openStand(_ transport: HoldSecondFile, path: String, encrypted: Enc
   await DB.closeForCleanup()
   _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server, observers: onlineAtOpen ? nil : SilentPlatform())
   try server.registerDocuments(operations)
-  try await DB.database.registerOperations(defsJson: operations)
+  try await registerStandOperations(DB.database, defsJson: operations)
   if !onlineAtOpen { try DB.database.setOnline(online: true) }
 }
 

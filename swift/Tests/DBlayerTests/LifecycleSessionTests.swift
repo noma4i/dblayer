@@ -111,7 +111,7 @@ extension BridgeProbeTests {
     try await DB.openTesting(transport: MockTransport(), modelsJSON: withRawCalls(modelsJSON), encrypted: encrypted, credentials: LifecycleCredential(), http: server)
     let fixtureOperations = #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]"#
     try server.registerDocuments(fixtureOperations)
-    try await DB.database.registerOperations(defsJson: fixtureOperations)
+    try await registerStandOperations(DB.database, defsJson: fixtureOperations)
     return server
   }
 
