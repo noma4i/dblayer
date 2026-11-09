@@ -75,23 +75,31 @@ pub(in super::super) fn note_blocking_thread(caller: std::thread::ThreadId) {
 
 type FileCall = Box<dyn FnOnce(std::sync::Arc<super::Database>) -> std::pin::Pin<Box<dyn Future<Output = ()>>> + Send>;
 
-fn file_calls() -> Vec<(&'static str, FileCall)> {
-    let ids = || ("Moment".to_string(), "r1".to_string(), "photo".to_string());
+/// A database with a local model that owns a file field and one row of it: the file calls reach the file work instead of failing at the model check.
+async fn files_rig() -> (std::sync::Arc<super::Database>, String) {
+    let spec = crate::schema::ModelSpec { storage: crate::schema::Storage::Local, ..crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]) };
+    let database = super::Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let row = database.create(database.session_epoch(), "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
+    (database, row)
+}
+
+fn file_calls(row: String) -> Vec<(&'static str, FileCall)> {
+    let ids = move || ("Files".to_string(), row.clone(), "photo".to_string());
     vec![
-        ("attach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(db.session_epoch(), m, r, f, crate::ffi::FileBytes { bytes: vec![1], name: "n".into(), mime: "image/png".into() }).await; }))),
-        ("file", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.file(db.session_epoch(), m, r, f).await; }))),
-        ("read", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(db.session_epoch(), m, r, f).await; }))),
-        ("url", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(db.session_epoch(), m, r, f).await; }))),
-        ("detach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.detach(db.session_epoch(), m, r, f).await; }))),
+        ("attach", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(db.session_epoch(), m, r, f, crate::ffi::FileBytes { bytes: vec![1], name: "n".into(), mime: "image/png".into() }).await; })) }),
+        ("file", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.file(db.session_epoch(), m, r, f).await; })) }),
+        ("read", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(db.session_epoch(), m, r, f).await; })) }),
+        ("url", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(db.session_epoch(), m, r, f).await; })) }),
+        ("detach", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.detach(db.session_epoch(), m, r, f).await; })) }),
     ]
 }
 
 #[tokio::test]
 async fn calls_that_touch_files_run_their_work_off_the_caller_thread() {
-    let (db, _) = rig(Ok("{}")).await;
+    let (db, row) = files_rig().await;
     let mut on_caller = Vec::new();
     let mut unobserved = Vec::new();
-    for (name, call) in file_calls() {
+    for (name, call) in file_calls(row) {
         let db = db.clone();
         let caller = join_within(std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
