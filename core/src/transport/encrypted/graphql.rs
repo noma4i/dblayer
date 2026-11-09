@@ -13,7 +13,6 @@ use crate::store::Store;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
-const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
 
 pub struct EncryptedTransport {
     exchange: Arc<Exchange>,
@@ -46,12 +45,12 @@ impl EncryptedTransport {
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
-    async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
+    async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<(Answer, crate::transport::AnswerKind), TransportError> {
         let life = self.life.get().and_then(Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
         let waiter = life.mutate_for_call(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
-                crate::owners::session::AuthorOutcome::Response { body, .. } => Ok(Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }),
+                crate::owners::session::AuthorOutcome::Response { body, kind } => Ok((Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }, kind)),
                 crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Server, pending_retained: true, .. } => Err(TransportError::Network("the server asked to retry".into())),
                 crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
                 crate::owners::session::AuthorOutcome::Dropped => Err(TransportError::Network("the answer was not received".into())),
@@ -86,29 +85,25 @@ pub fn hash_only(body: &str) -> Option<String> {
     Some(Value::Object(fields).to_string())
 }
 
-pub fn document_missing(body: &str) -> bool {
-    serde_json::from_str::<Response>(body).is_ok_and(|response| missing_from_registry(&response))
-}
-
 pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: &str, body: &Value) -> bool {
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
 
 pub fn response_from_answer(answer: Answer) -> Result<Response, TransportError> {
-    response_from_answer_with_kind(answer, false)
+    let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
+    let kind = crate::transport::classify_answer(&outcome, false, true);
+    response_from_answer_with_kind(answer, kind)
 }
 
-pub(crate) fn response_from_answer_with_kind(answer: Answer, transient: bool) -> Result<Response, TransportError> {
+pub(crate) fn response_from_answer_with_kind(answer: Answer, kind: crate::transport::AnswerKind) -> Result<Response, TransportError> {
+    match kind {
+        crate::transport::AnswerKind::Refused { code: crate::transport::SessionCode::Unauthenticated } => return Err(TransportError::Http { status: 401, body: answer.body.to_string() }),
+        crate::transport::AnswerKind::Refused { code } | crate::transport::AnswerKind::NotConsumed { code } | crate::transport::AnswerKind::PermanentSession { code } => return Err(TransportError::Session { code, detail: answer.body.to_string() }),
+        crate::transport::AnswerKind::Revoked => return Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail: answer.body.to_string() }),
+        _ => {}
+    }
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
-        if !transient {
-            if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
-                if matches!(session, TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }) {
-                    return Err(TransportError::Http { status: 401, body: answer.body.to_string() });
-                }
-                return Err(session);
-            }
-        }
         let error = GraphQLError { message: code.to_string(), path: None, extensions: json!({ "code": code }).as_object().cloned() };
         return Ok(Response { data: None, errors: vec![error] });
     }
@@ -117,12 +112,12 @@ pub(crate) fn response_from_answer_with_kind(answer: Answer, transient: bool) ->
 
 fn response_from_read(answer: Answer) -> Result<Response, TransportError> {
     let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
-    let transient = matches!(crate::transport::classify_answer(&outcome, false, true), crate::transport::AnswerKind::Transient { .. });
-    response_from_answer_with_kind(answer, transient)
+    let kind = crate::transport::classify_answer(&outcome, false, true);
+    response_from_answer_with_kind(answer, kind)
 }
 
 pub fn missing_from_registry(response: &Response) -> bool {
-    response.errors.iter().any(|error| error.code() == Some(PERSISTED_QUERY_NOT_FOUND))
+    serde_json::to_value(response).is_ok_and(|body| matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false, false), crate::transport::AnswerKind::DocumentMissing))
 }
 
 #[async_trait]
@@ -142,7 +137,8 @@ impl Upstream for EncryptedTransport {
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        response_from_answer(self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
+        let (answer, kind) = self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?;
+        response_from_answer_with_kind(answer, kind)
     }
 
     async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {

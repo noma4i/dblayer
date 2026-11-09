@@ -48,8 +48,10 @@ pub fn refusal_name(body: &Value) -> Option<String> {
 }
 
 pub fn refusal(body: &Value) -> Option<Refusal> {
-    refusal_name(body).map(|name| SessionCode::from_wire(&name).map_or(Refusal::Graphql(name), Refusal::Session))
+    refusal_name(body).map(refusal_code)
 }
+
+pub(crate) fn refusal_code(name: String) -> Refusal { SessionCode::from_wire(&name).map_or(Refusal::Graphql(name), Refusal::Session) }
 
 const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";
 pub(crate) const RETRYABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
@@ -76,10 +78,9 @@ fn answered(sequence: Option<i64>, body: &Value, sequenced: bool, has_document: 
         return AnswerKind::Transient { reason: name.into() };
     }
     if sequenced {
-        return match (sequence, name) {
-            (Some(_), _) => AnswerKind::Answered { sequence },
-            (None, Some(name)) => AnswerKind::NotConsumed { code: SessionCode::of(name) },
-            (None, None) => AnswerKind::NotConsumed { code: SessionCode::Other },
+        return match (sequence, refusal(body)) {
+            (None, Some(Refusal::Session(code))) => AnswerKind::NotConsumed { code },
+            _ => AnswerKind::Answered { sequence },
         };
     }
     AnswerKind::Answered { sequence }

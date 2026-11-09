@@ -39,8 +39,11 @@ fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary:
 pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
     let parsed = serde_json::from_str::<Value>(&job.body).ok();
     let temporary = false;
-    if let Some(code) = parsed.as_ref().and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
-        return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None) };
+    if let Some(body) = parsed.as_ref().filter(|body| body.get("error").is_some()) {
+        if let Some(refusal) = crate::transport::refusal(body) {
+            let code = match refusal { crate::transport::Refusal::Session(code) => code.name().to_string(), crate::transport::Refusal::Graphql(code) => code };
+            return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None) };
+        }
     }
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {

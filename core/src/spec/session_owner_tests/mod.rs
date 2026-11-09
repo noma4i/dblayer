@@ -71,6 +71,18 @@ fn fail_of(error: &SessionError) -> Fail {
     }
 }
 
+fn answer_of(answer: &owner::SessionAnswer) -> Result<String, Fail> {
+    match answer {
+        Err(error) => Err(fail_of(error)),
+        Ok(body) => match serde_json::from_str(body).ok().and_then(|value| crate::transport::refusal(&value)) {
+            Some(crate::transport::Refusal::Session(crate::transport::SessionCode::Unauthenticated)) => Err(Fail::Unauthorized),
+            Some(crate::transport::Refusal::Session(code)) => Err(Fail::Session(code)),
+            Some(crate::transport::Refusal::Graphql(name)) => Err(Fail::Graphql(name)),
+            None => Ok(body.clone()),
+        },
+    }
+}
+
 
 fn cause(cause: EndCause) -> Cause {
     match cause {
@@ -139,7 +151,7 @@ fn phase_of(phase: &SessionPhase) -> RefState {
             owner::AfterStore::Clear(error) => AfterStore::Clear(fail_of(error)),
             owner::AfterStore::Drain => AfterStore::Drain,
         } },
-        SessionPhase::ClearingSecret { call, reason, op, after } => RefState::ClearingSecret { call: call.as_ref().map(queued_of), reason: reason.as_ref().map(fail_of), op: *op, after: match after {
+        SessionPhase::ClearingSecret { call, reason, op, after } => RefState::ClearingSecret { call: call.as_ref().map(queued_of), reason: reason.as_ref().and_then(|answer| answer_of(answer).err()), op: *op, after: match after {
             owner::AfterClear::Idle => AfterClear::Idle,
             owner::AfterClear::Drain => AfterClear::Drain,
         } },
@@ -148,8 +160,8 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::SecretUnavailable { error, read } => RefState::SecretUnavailable { error: error.clone(), read: *read },
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, phase } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase) },
-        SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended },
-        SessionPhase::Blocked { pending, reason, landing } => RefState::Blocked { pending: pending.as_ref().map(pending_of), landing: landing.as_ref().map(|Landed { answer, identity, sequence, server_ended }| RefLanded { answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended }), reason: match reason {
+        SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: if pending.class == owner::OperationClass::Login && sequence.is_none() { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended },
+        SessionPhase::Blocked { pending, reason, landing } => RefState::Blocked { pending: pending.as_ref().map(pending_of), landing: landing.as_ref().map(|Landed { answer, identity, sequence, server_ended }| RefLanded { answer: if sequence.is_none() && pending.as_ref().is_some_and(|pending| pending.class == owner::OperationClass::Login) { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended }), reason: match reason {
             owner::Block::Storage => Block::Storage,
             owner::Block::SequenceConflict => Block::SequenceConflict,
             owner::Block::StateLost => Block::StateLost,
@@ -274,6 +286,7 @@ impl Twin {
             other => other,
         };
         let traced = self.det.trace().len();
+        let cleared = matches!(&owner_input, SessionInput::SecretCleared { .. });
         self.det.post(self.addr, EpochStamp::Control, owner_input);
         self.det.run_until_quiet(100).expect("the owner is quiet");
         let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count();
@@ -290,7 +303,7 @@ impl Twin {
         sorted_want.sort_by_key(|effect| format!("{effect:?}"));
         assert_eq!(sorted_have, sorted_want, "the same effects");
         let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {
-            SessionEffect::Reply { id, answer } => Some((*id, answer.clone().map_err(|error| fail_of(&error)))),
+            SessionEffect::Reply { id, answer } => Some((*id, if cleared { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) })),
             _ => None,
         }).collect();
         assert_eq!(replies, want.replies, "the same replies");

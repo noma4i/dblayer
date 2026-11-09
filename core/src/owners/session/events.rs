@@ -368,8 +368,8 @@ impl SessionState {
                     let epoch = self.epoch;
                     self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation: operation.name, path: operation.path, body, document: None, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
                 }
-                (AfterStore::Persist, false) => self.clearing(Some(call.into()), Some(SessionError::Storage("the secret could not be stored".into())), AfterClear::Idle, fx),
-                (AfterStore::Clear(reason), _) => self.clearing(Some(call.into()), Some(reason), AfterClear::Idle, fx),
+                (AfterStore::Persist, false) => self.clearing(Some(call.into()), Some(Err(SessionError::Storage("the secret could not be stored".into()))), AfterClear::Idle, fx),
+                (AfterStore::Clear(reason), _) => self.clearing(Some(call.into()), Some(Err(reason)), AfterClear::Idle, fx),
                 (AfterStore::Drain, _) => {
                     refuse(fx, call.into(), SessionError::Closed);
                     self.drained(fx);
@@ -378,8 +378,14 @@ impl SessionState {
             (SessionPhase::ClearingSecret { call, reason, op, after }, SessionInput::SecretCleared { secret_op_id, .. }) if secret_op_id == op => {
                 match after {
                     AfterClear::Idle => {
-                        if let (Some(call), Some(reason)) = (call, reason) { refuse(fx, call, reason); }
-                        if let Some(error) = self.resume_clearing.take() { self.deliver_resume(Err(error), fx); }
+                        if let (Some(call), Some(reason)) = (call, reason) {
+                            match (call, reason) {
+                                (Queued::Call { reply: id, .. }, answer) => reply(fx, id, answer),
+                                (call, Err(error)) => refuse(fx, call, error),
+                                (call, Ok(_)) => refuse(fx, call, SessionError::Invalid),
+                            }
+                        }
+                        if let Some(answer) = self.resume_clearing.take() { self.deliver_resume(answer, fx); }
                         self.report_failed(fx);
                         self.idle(fx);
                     }
@@ -455,9 +461,9 @@ impl SessionState {
                     }
                     None if login_failed(&pending, &answer, server_ended) => {
                         self.credential = None;
-                        if self.restored_active == Some(pending.request_id) { self.resume_clearing = answer.clone().err(); }
+                        if self.restored_active == Some(pending.request_id) { self.resume_clearing = Some(answer.clone()); }
                         let call = pending.reply.map(|id| Queued::Call { operation: pending.operation.clone(), body: pending.body.clone(), reply: id });
-                        let reason = call.as_ref().and(answer.err());
+                        let reason = call.as_ref().map(|_| answer);
                         self.clearing(call, reason, AfterClear::Idle, fx);
                         return;
                     }
@@ -508,6 +514,12 @@ impl SessionState {
                     } else { self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork }; }
                     return;
                 }
+                if matches!(kind, crate::transport::AnswerKind::DocumentMissing) {
+                    if let Some(document) = pending.document.clone() {
+                        self.persist(PendingCall { body: document, document: None, ..pending }, None, fx);
+                        return;
+                    }
+                }
                 self.answer_kind = Some(kind);
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
@@ -519,12 +531,6 @@ impl SessionState {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
                     self.land(pending, Ok(body), identity, Some(sequence), false, fx);
-                } else if sequence.is_none() && pending.document.is_some() && crate::transport::encrypted::document_missing(&body) {
-                    let document = pending.document.clone();
-                    self.persist(PendingCall { body: document.unwrap_or_default(), document: None, ..pending }, None, fx);
-                } else if sequence.is_none() && pending.class == OperationClass::Login {
-                    let code = answer_code(&body);
-                    self.land(pending, Err(SessionError::Session { code, body }), None, None, false, fx);
                 } else if sequence.is_none() {
                     self.land(pending, Ok(body), None, None, false, fx);
                 } else {

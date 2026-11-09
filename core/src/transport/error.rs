@@ -28,9 +28,9 @@ pub enum TransportError {
 
 impl TransportError {
     pub fn refusal(code: &str) -> Self {
-        match super::SessionCode::from_wire(code) {
-            Some(session) => Self::Session { code: session, detail: code.to_string() },
-            None => Self::Graphql { messages: vec![code.to_string()], extensions: None },
+        match super::answer_kind::refusal_code(code.to_string()) {
+            super::Refusal::Session(session) => Self::Session { code: session, detail: code.to_string() },
+            super::Refusal::Graphql(name) => Self::Graphql { messages: vec![name], extensions: None },
         }
     }
 }

@@ -56,17 +56,21 @@ impl core::CredentialSlot for ForeignCredentials {
     fn clear(&self) -> Result<(), core::TransportError> { crate::lock::assert_no_library_lock("CredentialStore::clear"); self.0.clear().map_err(transport_error) }
 }
 
-fn typed(error: core::TransportError) -> DbError {
-    match error {
-        core::TransportError::Graphql { messages, .. } if messages.len() == 1 => DbError::Session { code: SessionCode::of(&messages[0]), detail: messages[0].clone() },
-        other => DbError::from(other),
-    }
-}
-
 fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
-    match crate::transport::refusal_name(&answer.body) {
-        Some(name) => Err(DbError::Session { code: SessionCode::of(&name), detail: name }),
-        None => Ok(answer),
+    let kind = crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, false, true);
+    match kind {
+        crate::transport::AnswerKind::Refused { code: SessionCode::Unauthenticated } => Err(DbError::Unauthorized { detail: answer.body.to_string() }),
+        crate::transport::AnswerKind::Refused { code } | crate::transport::AnswerKind::PermanentSession { code } | crate::transport::AnswerKind::NotConsumed { code } => Err(DbError::Session { code, detail: answer.body.to_string() }),
+        crate::transport::AnswerKind::Revoked => Err(DbError::Session { code: SessionCode::SessionEnded, detail: answer.body.to_string() }),
+        _ if answer.body.get("data").is_some_and(|data| !data.is_null()) => Ok(answer),
+        _ => match crate::transport::refusal(&answer.body) {
+            Some(refusal) => {
+                let name = match refusal { crate::transport::Refusal::Session(code) => code.name().to_string(), crate::transport::Refusal::Graphql(name) => name };
+                let response = serde_json::from_value::<crate::transport::Response>(answer.body).ok();
+                Err(DbError::Graphql { messages: response.as_ref().map(|response| response.errors.iter().map(|error| error.message.clone()).collect()).filter(|messages: &Vec<String>| !messages.is_empty()).unwrap_or_else(|| vec![name]), extensions: response.and_then(|response| response.extensions()) })
+            }
+            None => Ok(answer),
+        },
     }
 }
 
@@ -230,6 +234,6 @@ pub(super) struct Waits { pub connectivity: Arc<core::Connectivity>, pub clock: 
 pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, waits: Waits) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
-        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(typed)
+        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(DbError::from)
     }).await?
 }

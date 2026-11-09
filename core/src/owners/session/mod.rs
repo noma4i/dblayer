@@ -167,7 +167,7 @@ pub enum SessionPhase {
     Sealing { pending: PendingCall, seal_id: u64 },
     Generating { call: LoginCall, op: SecretOpId },
     Storing { call: LoginCall, credential_new: Digest, op: SecretOpId, after: AfterStore },
-    ClearingSecret { call: Option<Queued>, reason: Option<SessionError>, op: SecretOpId, after: AfterClear },
+    ClearingSecret { call: Option<Queued>, reason: Option<SessionAnswer>, op: SecretOpId, after: AfterClear },
     PendingHeld { pending: PendingCall },
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
@@ -313,7 +313,7 @@ pub struct SessionState {
     restore_error: Option<String>,
     resume_waiters: Vec<ReplyId>,
     resume_published: Option<String>,
-    resume_clearing: Option<SessionError>,
+    resume_clearing: Option<SessionAnswer>,
     failed_batch: Option<BatchId>,
     operations: Vec<SessionOperation>,
     next_request: RequestId,
@@ -338,17 +338,10 @@ fn author_error_retained(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: 
     fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error, pending_retained } });
 }
 
-fn answer_code(body: &str) -> crate::transport::SessionCode {
-    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    match crate::transport::refusal(&parsed) {
-        Some(crate::transport::Refusal::Session(code)) => code,
-        _ => crate::transport::SessionCode::Other,
-    }
-}
-
 /// A sign-in that the server did not accept: the credential its call issued goes, the server did not end the session.
 fn login_failed(pending: &PendingCall, answer: &SessionAnswer, server_ended: bool) -> bool {
-    pending.class == OperationClass::Login && pending.credential.is_some() && answer.is_err() && !server_ended
+    let refused = answer.as_ref().map_or(true, |body| serde_json::from_str(body).ok().and_then(|body| crate::transport::refusal(&body)).is_some());
+    pending.class == OperationClass::Login && pending.credential.is_some() && refused && !server_ended
 }
 
 fn reply(fx: &mut Vec<SessionEffect>, id: ReplyId, answer: SessionAnswer) { fx.push(SessionEffect::Reply { id, answer }); }

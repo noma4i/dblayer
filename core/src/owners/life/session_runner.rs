@@ -191,7 +191,7 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logou
     match result {
         Ok(answer) => {
             let kind = classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced, has_document);
-            let refusal = match kind { AnswerKind::Refused { code } | AnswerKind::PermanentSession { code } => Some(code), _ => None };
+            let refusal = match kind { AnswerKind::Refused { code } | AnswerKind::NotConsumed { code } | AnswerKind::PermanentSession { code } => Some(code), _ => None };
             if matches!(kind, AnswerKind::Revoked) {
                 return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
             }
@@ -199,6 +199,7 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logou
         }
         Err(TransportError::Security { code, detail }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: Some((code, detail)), body: None },
         Err(TransportError::Http { status: 401, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, status: 0, too_large: None, security: None, body: None },
+        Err(TransportError::Decode(_)) if matches!(classify_answer(&WireOutcome::Unreadable, sequenced, has_document), AnswerKind::Unknown) => SessionInput::Dropped { request_id, attempt_id },
         Err(error) if matches!(&error, TransportError::Http { status, .. } if matches!(classify_answer(&WireOutcome::Status(*status), sequenced, has_document), AnswerKind::Permanent { .. })) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. } | TransportError::Storage(_) | TransportError::Internal(_)) => {
             let (status, too_large) = match &error {
                 TransportError::Http { status, .. } => (*status, None),
