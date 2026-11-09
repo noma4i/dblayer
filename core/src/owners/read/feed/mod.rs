@@ -474,7 +474,7 @@ impl StateOwner for Feed {
             FeedInput::FrameOpened { connection_id, counter, frame, .. } => state.frame_opened(connection_id, counter, frame, &mut fx),
             FeedInput::ProtocolError { connection_id, .. } => {
                 if state.connection_mut(connection_id).is_some() {
-                    state.dropped(connection_id, &mut fx);
+                    state.protocol_error(connection_id, &mut fx);
                 }
             }
             FeedInput::Event { connection_id, channel, event } => state.event(connection_id, &channel, event, &mut fx),

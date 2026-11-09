@@ -139,6 +139,12 @@ impl FeedState {
         }
     }
 
+    /// `ProtocolError` of the executor: an `Established` live connection drains and reopens, any other connection is dropped (the executor closed it).
+    pub(super) fn protocol_error(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
+        let established = self.connection_mut(connection).is_some_and(|found| found.goodbye());
+        if established && self.mode == Mode::Live && self.active_connection() == Some(connection) { self.protocol_failed(connection, fx); } else { self.dropped(connection, fx); }
+    }
+
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         let goodbye = self.connection_mut(connection).is_some_and(|found| found.goodbye());
         if goodbye && self.mode == Mode::Live && self.active_connection() == Some(connection) {
