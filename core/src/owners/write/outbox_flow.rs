@@ -79,6 +79,9 @@ impl OutboxState {
         if self.ops.get(&op_id).is_none_or(|operation| operation.cycle_id != cycle_id) {
             return;
         }
+        if self.stage_of(op_id) == Some(Stage::Sending) && !self.ops[&op_id].waiting_retry {
+            return;
+        }
         match self.stage_of(op_id) {
             Some(Stage::Sending) if self.online && self.slots_taken() - usize::from(!self.ops[&op_id].waiting_retry) >= DRAIN_LIMIT => {
                 self.requeue(op_id, fx);
