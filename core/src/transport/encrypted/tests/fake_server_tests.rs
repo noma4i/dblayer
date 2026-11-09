@@ -87,7 +87,7 @@ use sha2::{Digest, Sha256};
 
 use super::{CredentialSlot, HttpExchange, HttpReply};
 use crate::runtime::Clock;
-use crate::server_contract::{Admission, Contract, Request};
+use crate::server_contract::{refusal, Admission, Contract, Request, DOCUMENT_MISSING};
 use crate::transport::TransportError;
 
 #[derive(Default)]
@@ -119,16 +119,12 @@ fn document_of(documents: &mut HashMap<String, String>, body: &Value) -> Result<
             Ok(json!(query))
         }
         Some(_) => Err("INVALID_INPUT"),
-        None => documents.get(&hash).map(|query| json!(query)).ok_or("PERSISTED_QUERY_NOT_FOUND"),
+        None => documents.get(&hash).map(|query| json!(query)).ok_or(DOCUMENT_MISSING),
     }
 }
 
 fn hex_of(text: &str) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn persisted_failure(code: &str) -> Value {
-    json!({ "errors": [{ "message": code, "extensions": { "code": code } }] })
 }
 
 #[derive(Default)]
@@ -233,7 +229,7 @@ impl FakeServer {
         let graphql = path == "/api/graphql";
         let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
         if graphql && (forget || refuse) {
-            return seal_response(data, None, persisted_failure(if forget { "PERSISTED_QUERY_NOT_FOUND" } else { "INVALID_INPUT" }));
+            return seal_response(data, None, refusal(if forget { DOCUMENT_MISSING } else { "INVALID_INPUT" }));
         }
         let request = Request::from_wire(&credential_digest, data);
         let sequence = request.sequence;
@@ -251,7 +247,7 @@ impl FakeServer {
         }
         let resolved = if graphql { document_of(&mut state.documents, &data["body"]) } else { Ok(Value::Null) };
         if let Err(code) = &resolved {
-            return seal_response(data, None, persisted_failure(code));
+            return seal_response(data, None, refusal(code));
         }
         if sequence.is_none() {
             let document = resolved.unwrap_or_default();

@@ -485,6 +485,17 @@ for path in files:
     if ("persistedQuery" in text or "hash_only(" in text) and relative not in {"transport/encrypted/graphql.rs", "owners/session/flow.rs"}:
         findings.append(f"Z36 the hash-only body of a pair is made only by Session pair_bodies from the full body: {path.relative_to(root)}")
 
+double_impl = re.compile(r"\bimpl(?:<[^>]*>)? (?:FakeHttp|HttpExchange|Upstream|FakeTransport|Transport) for\b")
+double_rules = re.compile(r'"PERSISTED_QUERY_NOT_FOUND"|"SEQUENCE_CONFLICT"|(?<![.\w])(?:sequence|last) \+ 1\b|\bsettled\s*:')
+for path in sorted(source.rglob("*.rs")):
+    relative = str(path.relative_to(source))
+    if relative.startswith("server_contract/") or not in_test_module(path): continue
+    text = path.read_text()
+    if not double_impl.search(text): continue
+    for number, line in enumerate(text.splitlines(), 1):
+        if double_rules.search(line) and f"z37:{relative}" not in allowed:
+            findings.append(f"Z37 a double of the server keeps no pair memory, sequence rule or document registry of its own: it asks server_contract: {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

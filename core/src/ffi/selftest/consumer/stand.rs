@@ -8,7 +8,7 @@ use crate::ffi::tape::Rows;
 use crate::ffi::tests::session_guards_tests::WatchedHeld;
 use crate::ffi::wire::{wire_fields, Cell, WireRow};
 use crate::ffi::{Config, Database, DbError, EncryptedReply, FakeHttp, FakeTransport, ReadFetch, ReadRequest, ReadStream, ReadValue};
-use crate::server_contract::{Admission, Contract, Request};
+use crate::server_contract::{Admission, Contract, Request, SEQUENCE_CONFLICT};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
@@ -80,7 +80,7 @@ impl FakeHttp for Server {
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
             self.sequenced.lock().unwrap().push((operation.clone(), sequence.unwrap_or(0)));
             if let Admission::Refused(refusal) = admission {
-                if refusal["error"] == "SEQUENCE_CONFLICT" { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+                if refusal["error"] == SEQUENCE_CONFLICT { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
             }
             let mut held = self.held.subscribe();

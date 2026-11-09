@@ -32,7 +32,10 @@ pub(crate) struct Contract<A> {
     standing: Option<A>,
 }
 
-fn code(code: &str) -> Value {
+pub(crate) const DOCUMENT_MISSING: &str = "PERSISTED_QUERY_NOT_FOUND";
+pub(crate) const SEQUENCE_CONFLICT: &str = "SEQUENCE_CONFLICT";
+
+pub(crate) fn refusal(code: &str) -> Value {
     json!({ "errors": [{ "message": code, "extensions": { "code": code } }] })
 }
 
@@ -97,11 +100,11 @@ impl<A: Clone> Contract<A> {
         }
         match (request.document, &request.hash) {
             (true, Some(hash)) => { self.known.insert(hash.clone()); }
-            (false, Some(hash)) if !self.everything_cached && !self.known.contains(hash) => return Admission::Refused(code("PERSISTED_QUERY_NOT_FOUND")),
+            (false, Some(hash)) if !self.everything_cached && !self.known.contains(hash) => return Admission::Refused(refusal(DOCUMENT_MISSING)),
             _ => {}
         }
         match request.sequence {
-            Some(sequence) if self.last.is_some_and(|last| sequence != last + 1) => Admission::Refused(json!({ "error": "SEQUENCE_CONFLICT" })),
+            Some(sequence) if self.last.is_some_and(|last| sequence != last + 1) => Admission::Refused(json!({ "error": SEQUENCE_CONFLICT })),
             _ => Admission::Fresh,
         }
     }
