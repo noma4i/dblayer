@@ -117,6 +117,7 @@ pub struct StoredTransfer {
     pub mutation: NewOp,
     pub steps: Option<Steps>,
     /// The row was dropped by the layout move or cannot be read.
+    pub staged: bool,
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
 }
@@ -633,6 +634,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         cycle_id: transfer.cycle_id + u64::from((kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry) || (supplied.is_some() && transfer.supply_back == Some(TransferStage::Failed))),
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
+        staged: transfer.previous.is_some(),
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
     }

@@ -16,7 +16,7 @@ fn row() -> UploadRow {
     UploadRow {
         key: KEY.into(), seq: 1, source: Some("/source".into()), parts: 3, batch: None, fields: None, upload_id: None, confirmed_parts: 1, attempts: 2, completed: false, failed: None,
         created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None,
-        transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, op_id: None, etags: vec![Some("etag".into())],
+        transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, staged: false, op_id: None, etags: vec![Some("etag".into())],
     }
 }
 
@@ -37,4 +37,14 @@ fn a_shown_value_writes_status_stage_and_wait_and_keeps_the_durable_columns() {
     assert_eq!(columns(&db), ("failed".into(), "prepare".into(), None, 1, 2), "the wait goes with the next value and the stage stays");
     write(&db, vec![StoreOp::UploadShown { key: KEY.into(), shown: Shown::Gone }]);
     assert_eq!(columns(&db).0, "failed", "a gone transfer writes nothing");
+}
+
+#[test]
+fn the_staged_marker_is_written_with_the_row_and_cleared_by_its_own_op() {
+    let db = Store::open_models(None, all_specs(), None).unwrap();
+    let staged = |db: &Store| db.lock().connection.query_row("SELECT COALESCE(staged, 0) FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| found.get::<_, i64>(0)).unwrap();
+    write(&db, vec![StoreOp::Upload { row: UploadRow { staged: true, ..row() }, kind: UploadKind::SyncUpload }]);
+    assert_eq!(staged(&db), 1);
+    write(&db, vec![StoreOp::UploadStaged { key: KEY.into() }]);
+    assert_eq!(staged(&db), 0);
 }

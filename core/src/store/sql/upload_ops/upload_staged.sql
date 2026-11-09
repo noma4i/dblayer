@@ -1,0 +1,1 @@
+UPDATE sync_upload SET staged = 0 WHERE model = ?1 AND row_id = ?2 AND action = ?3

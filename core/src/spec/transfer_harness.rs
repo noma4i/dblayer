@@ -134,6 +134,8 @@ impl Out {
     /// The shown values that the batches wrote to `sync_upload`.
     pub fn stored_shows(&self) -> Vec<Shown> { self.shown.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadShown { shown, .. } = op { Some(shown.clone()) } else { None }).collect() }
 
+    pub fn staged_cleared(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadStaged { key } = op { Some(key.clone()) } else { None }).collect() }
+
     pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
     pub fn writes(&self) -> usize { self.batches.len() }
@@ -182,6 +184,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         has_intent: false,
         mutation: mutation(key),
         steps: Some(Steps { path: "/upload".into(), body: String::new() }),
+        staged: false,
         restore_failed: None,
         pending_step: None,
     }

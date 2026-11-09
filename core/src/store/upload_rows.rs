@@ -42,6 +42,7 @@ pub(crate) struct UploadRaw {
     op_id: Option<i64>,
     fields: Option<String>,
     etags: Vec<Option<String>>,
+    staged: bool,
 }
 
 impl UploadRaw {
@@ -90,6 +91,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             op_id: row.get(24)?,
             fields: row.get(25)?,
             attempts: row.get(26)?,
+            staged: row.get::<_, Option<bool>>(27)?.unwrap_or(false),
         })
     })?;
     rows.collect()
@@ -137,6 +139,7 @@ impl Store {
             signed_id: raw.signed_id,
             failed: raw.failed,
             aborted: raw.aborted,
+            staged: raw.staged,
             op_id: raw.op_id.map(|op| unsigned(op, "op_id")).transpose()?,
             copying,
             pending_step: None,

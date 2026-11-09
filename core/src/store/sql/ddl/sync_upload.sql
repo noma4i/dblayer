@@ -31,5 +31,6 @@ CREATE TABLE IF NOT EXISTS sync_upload (
   op_id INTEGER,
   fields TEXT,
   round_error TEXT,
+  staged INTEGER,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID

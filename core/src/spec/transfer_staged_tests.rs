@@ -36,3 +36,26 @@ fn xfer_retry_source_failure_keeps_copy() {
         assert_eq!((twin.stage(id), twin.state().transfers[&id].source.clone(), out.deleted()), (TransferStage::Failed, old, vec![staged_file_id(id)]), "store_fails={store_fails}: the old copy and the metadata stay, only the temporary file goes");
     }
 }
+
+#[test]
+fn xfer_retry_source_marks_the_swap_in_the_row() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    twin.retry(KEY, Some(fresh()));
+    twin.copy_done(id);
+    let out = twin.commit();
+    assert_eq!(out.rows().iter().map(|(row, _)| row.staged).collect::<Vec<_>>(), vec![true], "the commit of the metadata carries the marker");
+    let out = twin.post(TransferInput::StagedPromoted { transfer_id: id });
+    assert_eq!(out.staged_cleared(), vec![format!("{KEY}")], "after the rename the marker goes");
+}
+
+#[test]
+fn xfer_restored_staged_finishes_the_swap() {
+    let mut row = stored(1, KEY, 2);
+    row.staged = true;
+    let (mut twin, out) = Twin::opened(vec![row], Default::default());
+    let id = 1;
+    assert_eq!((out.promotions(), out.deleted(), twin.stage(id) == TransferStage::Failed), (1, Vec::<String>::new(), false), "a crash between Committed and the rename does not end as missing_file");
+    let out = twin.post(TransferInput::StagedPromoted { transfer_id: id });
+    assert_eq!(out.staged_cleared(), vec![format!("{KEY}")]);
+}

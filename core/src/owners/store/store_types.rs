@@ -111,6 +111,8 @@ pub struct UploadRow {
     pub cycle_id: u64,
     pub signed_id: Option<String>,
     pub aborted: bool,
+    /// The new copy is committed and the rename of the temporary file is not.
+    pub staged: bool,
     /// The operation the optimistic effects of the transfer belong to (`ReserveOp`).
     pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).
@@ -185,6 +187,8 @@ pub enum StoreOp {
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
     UploadShown { key: String, shown: crate::owners::write::transfer::Shown },
+    /// The swap of the copy of a transfer is done: `staged` of its row is cleared.
+    UploadStaged { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
     UploadOrphan { upload_id: String, key: String },
     RemoveOrphan { upload_id: String },
