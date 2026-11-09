@@ -13,17 +13,27 @@ async fn run_unregister(rig: &Rig) -> Result<(), DbError> {
 
 async fn ends(database: &Database) { bound(crate::ffi::settled(database)).await.unwrap(); }
 
-/// D-153: a mutation call whose request fails at the transport answers `Network`.
+/// D-220: a mutation call retries the held pair on a transient transport failure and answers the server once the retry lands; `wire.md` «transport failure without an answer» sequenced = `Ok|2`.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_mutation_call_with_a_transport_failure_answers_network_and_is_sent_once() {
+async fn a_mutation_call_with_a_transient_transport_failure_retries_the_held_pair() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
-    let hits = rig.world.log().len();
     rig.world.fail_next("UnregisterDevice", Fault::Down);
-    let refused = run_unregister(&rig).await.unwrap_err();
-    assert!(matches!(&refused, DbError::Network { .. }), "{refused:?}");
+    let database = rig.database.clone();
+    let epoch = database.session_epoch();
+    let mut call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+    let mut armed = rig.clock.armed();
+    let answer = loop {
+        tokio::select! {
+            result = &mut call => break result.unwrap(),
+            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
+        }
+    };
+    assert!(answer.is_ok(), "{answer:?}");
     ends(&rig.database).await;
-    assert_eq!(rig.world.log().len(), hits + 1);
+    let sends: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect();
+    assert_eq!(sends.len(), 2, "the transient failure is retried once");
+    assert_eq!(sends[0].sequence, sends[1].sequence, "the retry reuses the held pair");
     rig.database.close_now();
 }
 
