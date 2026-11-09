@@ -43,7 +43,9 @@ impl TransferState {
 
     /// The Store op that writes the shown value with the counters it shows.
     pub(super) fn shown_op(transfer: &super::transfer_types::Transfer, shown: Shown) -> StoreOp {
-        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts }
+        let refused = transfer.round_error.is_some() && matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading);
+        let error = if let (Shown::Failed { error }, false) = (&shown, refused) { Some(error.clone()) } else { None };
+        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error }
     }
 
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.

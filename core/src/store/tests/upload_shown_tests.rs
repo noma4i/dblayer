@@ -24,7 +24,7 @@ fn columns(db: &Store) -> (String, String, Option<String>, i64, i64, i64, Option
     db.lock().connection.query_row("SELECT status, stage, wait, sent, total, attempts, error_kind FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?, found.get(3)?, found.get(4)?, found.get(5)?, found.get(6)?))).unwrap()
 }
 
-fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreOp::UploadShown { key: KEY.into(), shown, sent, total, attempts } }
+fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreOp::UploadShown { key: KEY.into(), error: if let Shown::Failed { error } = &shown { Some(error.clone()) } else { None }, shown, sent, total, attempts } }
 
 #[test]
 fn a_shown_value_writes_the_whole_shown_columns_and_keeps_the_durable_ones() {
