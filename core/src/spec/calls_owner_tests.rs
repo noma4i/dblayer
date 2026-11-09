@@ -102,6 +102,22 @@ fn call_awaiting_snapshot_stray() {
 }
 
 #[test]
+fn call_awaiting_snapshot_end() {
+    for closing in [false, true] {
+        let mut twin = Twin::with(None);
+        twin.feed(run(1));
+        if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, Cause::SessionReset); }
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        let answers: Vec<_> = effects.iter().filter_map(|effect| if let CallsEffect::Reply { id: 1, answer } = effect { Some(format!("{answer:?}")) } else { None }).collect();
+        assert_eq!(answers, vec![if closing { "Err(Closed)" } else { "Err(SessionEnded)" }]);
+        twin.det.tick(crate::runtime::Time(30_000));
+        twin.det.run_until_quiet(100).unwrap();
+        assert!(take(&twin.log).iter().all(|effect| !matches!(effect, CallsEffect::Reply { id: 1, .. })));
+    }
+}
+
+#[test]
 fn call_awaiting_snapshot_declare() {
     let mut twin = Twin::with(None);
     twin.feed(run(1));
