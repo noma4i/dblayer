@@ -34,6 +34,8 @@ mod feed_gap_tests;
 mod window_gap_tests;
 
 mod ref_outbox;
+mod ref_transfer;
+mod ref_transfer_tests;
 mod rig;
 mod outbox_tests;
 mod outbox_trace_tests;
