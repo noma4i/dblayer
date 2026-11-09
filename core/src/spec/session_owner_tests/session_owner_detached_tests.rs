@@ -68,7 +68,7 @@ fn sess_restored_detached_on_idle() {
     let input = busy.response(1);
     busy.feed(input);
     let effects = busy.feed(committed());
-    assert!(effects.iter().any(|effect| matches!(effect, RefEffect::HttpRequest { pending, .. } if pending.request_id == 5 && pending.sequence == 2 && pending.reply.is_none())), "{effects:?}");
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, RefEffect::HttpRequest { pending, .. } if pending.request_id == 5 && pending.sequence == 2 && pending.reply.is_none())).count(), 1, "{effects:?}");
 }
 
 #[test]

@@ -84,7 +84,8 @@ struct EncryptedSessionTests {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     let http = UrlSessionTransport(session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    #expect(rawFailure(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x"))) != nil)
+    let failure = rawFailure(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x")))
+    #expect(failure?.domain == "NSURLErrorDomain" && failure?.code == -1008, "\(String(describing: failure))")
   }
 
   @Test
