@@ -495,10 +495,10 @@ impl StateOwner for Deliveries {
                 }
                 state.revision = state.revision.max(revision);
                 let mut fx = Vec::new();
-                let machine = if !valid {
-                    Delivery::ended(view, epoch, EndCause::Invalid, &mut fx)
-                } else if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
+                let machine = if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
                     Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
+                } else if !valid {
+                    Delivery::ended(view, epoch, EndCause::Invalid, &mut fx)
                 } else {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };

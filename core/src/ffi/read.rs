@@ -278,9 +278,10 @@ impl ReadStream {
         }
     }
 
-    /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
+    /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `NoSession` when its session ended.
     pub async fn refresh(&self) -> Result<(), DbError> {
         let database = self.database.upgrade().ok_or_else(super::command::closed)?;
+        database.account_call(self.epoch)?;
         let load = self.relation()?;
         database.refresh(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
@@ -288,6 +289,7 @@ impl ReadStream {
     /// Loads the next page of the relation of this stream.
     pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> {
         let database = self.database.upgrade().ok_or_else(super::command::closed)?;
+        database.account_call(self.epoch)?;
         let load = self.relation()?;
         database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
