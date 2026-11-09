@@ -143,7 +143,7 @@ pub enum Input {
     RestoreFailed { epoch: u64, error: String },
     Restored { epoch: u64, pending: Option<Pending> },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
-    Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
+    Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<AuthorId> },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     Unknown { request_id: RequestId, attempt_id: AttemptId },

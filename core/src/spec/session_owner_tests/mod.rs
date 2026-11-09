@@ -270,7 +270,7 @@ impl Twin {
             Input::RestoreFailed { epoch, error } => SessionInput::RestoreFailed { epoch, error },
             Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
             Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
-            Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
+            Input::Revoked { request_id, attempt_id, body, .. } => SessionInput::Revoked { request_id, attempt_id, body },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
@@ -492,7 +492,7 @@ fn concrete(twin: &Twin, input: Abstract) -> Input {
         Abstract::RejectedStorage => rejected(Reason::Storage),
         Abstract::Response(sequence) => Input::Response { request_id, attempt_id, body: "{}".into(), sequence: Some(sequence), refusal: None },
         Abstract::ResponseRefused => Input::Response { request_id, attempt_id, body: "{}".into(), sequence: None, refusal: Some(crate::transport::SessionCode::RateLimited) },
-        Abstract::Revoked => Input::Revoked { request_id, attempt_id, body: "{}".into() },
+        Abstract::Revoked => Input::Revoked { request_id, attempt_id, body: "{}".into(), author_ref: None },
         Abstract::HttpTemporary => Input::HttpError { request_id, attempt_id, temporary: true, auth: false, security: None, body: None },
         Abstract::HttpAuth => Input::HttpError { request_id, attempt_id, temporary: false, auth: true, security: None, body: None },
         Abstract::Dropped => Input::Dropped { request_id, attempt_id },

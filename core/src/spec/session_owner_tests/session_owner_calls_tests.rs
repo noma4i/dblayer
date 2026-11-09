@@ -381,7 +381,7 @@ fn sess_calling_response_sessionless() {
 #[test]
 fn sess_calling_revoked() {
     let mut twin = calling();
-    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), author_ref: None };
     let effects = twin.feed(input);
     assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, .. }]));
     let done = twin.feed(committed());
@@ -396,7 +396,7 @@ fn sess_calling_revoked() {
 fn sess_calling_revoked_logout() {
     let mut twin = Twin::new();
     twin.feed_all([call_of("logout", 1), committed()]);
-    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: r#"{"revoked":true}"#.into() };
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: r#"{"revoked":true}"#.into(), author_ref: None };
     twin.feed(input);
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
@@ -408,7 +408,7 @@ fn sess_calling_revoked_logout() {
 #[test]
 fn sess_landing_server_ended_held() {
     let mut twin = calling();
-    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), author_ref: None };
     twin.feed(input);
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
@@ -420,7 +420,7 @@ fn sess_landing_server_ended_held() {
 fn sess_landing_server_ended_mutate_answers() {
     let mut twin = Twin::new();
     twin.feed_all([mutate(7, 11), committed()]);
-    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), author_ref: None };
     twin.feed(input);
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
@@ -510,7 +510,7 @@ fn sess_calling_stray() {
     twin.feed_all([
         Input::Response { request_id: rid + 50, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Response { request_id: rid, attempt_id: aid + 50, body: "{}".into(), sequence: Some(1), refusal: None },
-        Input::Revoked { request_id: rid, attempt_id: aid + 50, body: "{}".into() },
+        Input::Revoked { request_id: rid, attempt_id: aid + 50, body: "{}".into(), author_ref: None },
         Input::HttpError { request_id: rid, attempt_id: aid + 50, temporary: false, auth: true, security: None, body: None },
         Input::Dropped { request_id: rid + 50, attempt_id: aid },
     ]);

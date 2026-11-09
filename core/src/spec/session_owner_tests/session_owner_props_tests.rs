@@ -65,7 +65,7 @@ fn http_pairs(history: &[RefEffect]) -> Vec<(u64, u64)> {
 fn at_attempt(input: Input, attempt: u64) -> Input {
     match input {
         Input::HttpError { request_id, temporary, auth, security, body, .. } => Input::HttpError { request_id, attempt_id: attempt, temporary, auth, security, body },
-        Input::Revoked { request_id, body, .. } => Input::Revoked { request_id, attempt_id: attempt, body },
+        Input::Revoked { request_id, body, author_ref, .. } => Input::Revoked { request_id, attempt_id: attempt, body, author_ref },
         other => other,
     }
 }
@@ -146,7 +146,7 @@ fn sess_prop_durable_answer() {
         (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, security: None, body: None }, Fail::Http),
         (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: true, security: None, body: None }, Fail::Unauthorized),
         (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, security: Some((crate::transport::SecurityCode::TlsTrust, "trust".into())), body: None }, Fail::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "trust".into() }),
-        (Input::Revoked { request_id: 11, attempt_id: 0, body: "{}".into() }, Fail::Revoked),
+        (Input::Revoked { request_id: 11, attempt_id: 0, body: "{}".into(), author_ref: None }, Fail::Revoked),
     ];
     for (input, fail) in outcomes {
         let mut twin = calling_mutate();
@@ -179,7 +179,7 @@ fn sess_prop_server_end_atomic() {
         assert_eq!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: body.clone() }, true, true), crate::transport::AnswerKind::Revoked, "both server-end forms are a Revoked answer");
         let mut twin = calling_mutate();
         let (rid, aid) = (twin.rid(), twin.aid());
-        let landing = twin.feed(Input::Revoked { request_id: rid, attempt_id: aid, body: body.to_string() });
+        let landing = twin.feed(Input::Revoked { request_id: rid, attempt_id: aid, body: body.to_string(), author_ref: None });
         assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, answer: Some((11, Err(Fail::Revoked))), .. }]), "{body}: the credential removal lands in the same batch as the answer: {landing:?}");
     }
 }

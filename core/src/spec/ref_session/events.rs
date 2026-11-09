@@ -114,6 +114,11 @@ impl Session {
                 }
                 self.on_epoch_ended(state, epoch, cause, out);
             }
+            Input::Revoked { request_id, author_ref: Some(_), .. } => {
+                let batch = self.batch();
+                out.effects.push(Effect::CommitLanding { batch, epoch: self.epoch, digest: None, sequence: None, answer: Some((request_id, Err(Fail::Revoked))), erase_session: true });
+                self.state = state;
+            }
             input => self.by_state(state, input, out),
         }
     }
@@ -492,7 +497,7 @@ impl Session {
                     self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::SequenceConflict, landing: None };
                 }
             }
-            Input::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
+            Input::Revoked { request_id, attempt_id, body, .. } if mine(request_id, attempt_id) => {
                 let answer = if pending.class == Class::Logout { Ok(body) } else { Err(Fail::Revoked) };
                 self.land(pending, answer, None, None, true, out);
             }

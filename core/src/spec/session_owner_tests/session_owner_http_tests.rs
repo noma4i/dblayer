@@ -319,10 +319,18 @@ fn sess_idle_stray() {
         Input::Response { request_id: 1, attempt_id: 1, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::HttpError { request_id: 1, attempt_id: 1, temporary: true, auth: false, security: None, body: None },
         Input::Dropped { request_id: 1, attempt_id: 1 },
-        Input::Revoked { request_id: 1, attempt_id: 1, body: "{}".into() },
+        Input::Revoked { request_id: 1, attempt_id: 1, body: "{}".into(), author_ref: None },
         committed(), rejected(Reason::Storage), Input::Tick,
     ]);
     assert!(twin.history.is_empty());
+}
+
+#[test]
+fn sess_revoked_other_author() {
+    for mut twin in [Twin::new(), calling()] {
+        let effects = twin.feed(Input::Revoked { request_id: 77, attempt_id: 88, body: "{}".into(), author_ref: Some(31) });
+        assert!(matches!(&effects[..], [RefEffect::CommitLanding { erase_session: true, answer: Some((77, Err(Fail::Revoked))), digest: None, sequence: None, .. }]), "the erase-session landing commits with the author answer: {effects:?}");
+    }
 }
 
 #[test]
@@ -375,7 +383,7 @@ fn sess_published_login_failed() {
 
 pub(super) fn revoked_and_landed() -> Twin {
     let mut twin = calling();
-    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), author_ref: None };
     twin.feed_all([input, committed()]);
     twin
 }
@@ -545,7 +553,7 @@ fn sess_prop_answer_kinds_table() {
         assert!(matches!(twin.reference.state, RefState::Idle), "refused {code:?}: not blocked");
     }
     let mut revoked = calling();
-    let input = Input::Revoked { request_id: revoked.rid(), attempt_id: revoked.aid(), body: "{}".into() };
+    let input = Input::Revoked { request_id: revoked.rid(), attempt_id: revoked.aid(), body: "{}".into(), author_ref: None };
     revoked.feed_all([input, committed()]);
     revoked.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
     assert_eq!((revoked.replies.clone(), revoked.reference.credential.map(|credential| credential.sequence)), (vec![(1, Err(Fail::Revoked))], Some(0)), "revoked: no number spent");

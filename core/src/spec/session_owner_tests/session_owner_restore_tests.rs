@@ -476,7 +476,7 @@ fn sess_held_other() {
     let (rid, aid) = (twin.rid(), 1);
     twin.feed_all([Input::Online(false), Input::Online(true), Input::Tick, published(PubState::Session), committed(), rejected(Reason::Storage),
         Input::Response { request_id: rid, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None },
-        Input::Revoked { request_id: rid, attempt_id: aid, body: "{}".into() },
+        Input::Revoked { request_id: rid, attempt_id: aid, body: "{}".into(), author_ref: None },
         Input::HttpError { request_id: rid, attempt_id: aid, temporary: false, auth: true, security: None, body: None },
         Input::Dropped { request_id: rid, attempt_id: aid }]);
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
@@ -531,7 +531,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             3 | 4 => committed(),
             5 => rejected(Reason::Storage),
             6 | 7 => Input::Response { request_id: request, attempt_id: attempt, body: "{}".into(), sequence: Some(if next(&mut s).is_multiple_of(6) { sequence + 1 } else { sequence }), refusal: None },
-            8 => Input::Revoked { request_id: request, attempt_id: attempt, body: String::new() },
+            8 => Input::Revoked { request_id: request, attempt_id: attempt, body: String::new(), author_ref: None },
             9 => Input::HttpError { request_id: request, attempt_id: attempt, temporary: next(&mut s).is_multiple_of(2), auth: next(&mut s).is_multiple_of(2), security: None, body: None },
             10 => Input::Tick,
             11 => Input::Online(next(&mut s).is_multiple_of(2)),

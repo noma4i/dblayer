@@ -10,7 +10,7 @@ pub(super) fn landing_detached(revoked: bool) -> Twin {
     let mut twin = Twin::new();
     restored_detached(&mut twin, 5, 1);
     twin.feed(Input::RestoreReady { epoch: EPOCH });
-    let input = if revoked { Input::Revoked { request_id: 5, attempt_id: twin.aid(), body: "{}".into() } } else { twin.response(1) };
+    let input = if revoked { Input::Revoked { request_id: 5, attempt_id: twin.aid(), body: "{}".into(), author_ref: None } } else { twin.response(1) };
     twin.feed(input);
     assert!(matches!(&twin.reference.state, RefState::Landing { pending, .. } if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_none() && pending.author.is_none()));
     twin
