@@ -463,6 +463,8 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::Dropped => DbError::Dropped { detail: "the request left and the answer did not come".into() },
         CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },
         CallError::Interrupted => DbError::Interrupted { detail: "the call ended".into() },
+        CallError::SessionEnded => super::cause_error(&super::EndCause::SessionEnded),
+        CallError::Closed => super::cause_error(&super::EndCause::Closed),
         CallError::Storage => DbError::Storage { detail: "the database could not save its state".into() },
         CallError::Failed(error) => error,
     }

@@ -24,6 +24,8 @@ pub enum CallError {
     Dropped,
     InvalidResponse,
     Interrupted,
+    SessionEnded,
+    Closed,
     Storage,
     /// A refusal that a transport or the owner Session already typed: it reaches the platform as it is.
     Failed(crate::ffi::DbError),
@@ -169,9 +171,9 @@ impl CallsState {
         fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: self.epoch });
     }
 
-    fn interrupt(&mut self, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
+    fn interrupt(&mut self, end: CallError, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
         for (reply, (id, _, _)) in std::mem::take(&mut self.awaiting) {
-            fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Interrupted) });
+            fx.push(CallsEffect::Reply { id: reply, answer: Err(end.clone()) });
             finished.push(id);
         }
         self.awaiting_by_id.clear();
@@ -311,9 +313,9 @@ impl StateOwner for Calls {
                 state.awaiting_by_id.clear();
                 fx.push(CallsEffect::SnapshotRequest { epoch });
             }
-            CallsInput::EpochEnded => state.interrupt(&mut fx, &mut finished),
+            CallsInput::EpochEnded => state.interrupt(CallError::SessionEnded, &mut fx, &mut finished),
             CallsInput::Closing => {
-                state.interrupt(&mut fx, &mut finished);
+                state.interrupt(CallError::Closed, &mut fx, &mut finished);
                 if !state.drained {
                     state.drained = true;
                     fx.push(CallsEffect::Drained(Drained { owner: "calls" }));
