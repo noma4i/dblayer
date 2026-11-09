@@ -49,6 +49,30 @@ fn xfer_step_answer_failed() {
     }
 }
 
+/// xfer_step_answer_restart (K1, D-246/D-269, transfer.md:108 rule 2): Session committed the pair answer and
+/// removed pending, then the process died before the Transfer PersistingAttempt commit. On reopen the saved
+/// answer must be read by request_id and applied as the step answer (Restored carries it), so the step is served
+/// from the save without a fresh Session capture: the attempt is written on open and the step goes out once.
+/// Prod keeps the answer only in Transfer memory (transfer.seeded) and the restored row carries no saved answer,
+/// so the restored held pair waits for Session to re-drive it, repeating the step (a second blob).
+#[test]
+fn xfer_step_answer_restart() {
+    let (mut twin, _) = Twin::opened(vec![saved()], Default::default());
+    twin.online(true);
+    let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(
+        (ready.writes(), twin.stage(1)),
+        (1, TransferStage::PersistingAttempt),
+        "rule 2: the saved pair answer is applied on open, the attempt is written without a fresh StepAnswer: {ready:?}",
+    );
+    let started = twin.commit();
+    assert_eq!(
+        (started.steps().len(), twin.stage(1)),
+        (1, TransferStage::Uploading),
+        "the committed attempt sends the step once, served from the saved answer",
+    );
+}
+
 #[test]
 fn xfer_step_answer_stray() {
     let mut twin = held();
