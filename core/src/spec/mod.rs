@@ -55,6 +55,7 @@ mod outbox_restore_tests;
 mod outbox_release_tests;
 mod outbox_local_tests;
 mod outbox_wait_tests;
+mod outbox_selector_tests;
 mod transfer_harness;
 mod transfer_accept_tests;
 mod transfer_batch_tests;

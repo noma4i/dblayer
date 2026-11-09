@@ -276,6 +276,16 @@ impl Twin {
         }
     }
 
+    /// Posts `input` and returns the owner effects with the raw text of every send to Transfer, without the auto-answer of `post`.
+    pub(super) fn selector(&mut self, input: OutboxInput) -> (Vec<OutboxEffect>, Vec<String>) {
+        take_fx(&self.log, None);
+        self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
+        self.run();
+        let sends = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } => Some(input), _ => None }).collect();
+        let effects = take_fx(&self.log, state_of(&self.det));
+        (effects, sends)
+    }
+
     fn post_input(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         take_fx(&self.log, None);
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
