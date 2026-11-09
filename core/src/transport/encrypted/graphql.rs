@@ -41,7 +41,12 @@ impl EncryptedTransport {
 
     async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
-        self.exchange_once(&credential, path, &body, wire).await
+        let answer = self.exchange_once(&credential, path, &body, wire).await?;
+        let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
+        if matches!(crate::transport::classify_answer(&outcome, false, true), crate::transport::AnswerKind::Transient { reason } if reason == "REPLAYED_REQUEST") {
+            return self.exchange_once(&credential, path, &body, crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await;
+        }
+        Ok(answer)
     }
 
     async fn exchange_once(&self, credential: &str, path: &str, body: &Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
@@ -100,14 +105,29 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
 
 
 pub fn response_from_answer(answer: Answer) -> Result<Response, TransportError> {
+    response_from_answer_with_kind(answer, false)
+}
+
+pub(crate) fn response_from_answer_with_kind(answer: Answer, transient: bool) -> Result<Response, TransportError> {
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
-        if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
-            return Err(session);
+        if !transient {
+            if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
+                if matches!(session, TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }) {
+                    return Err(TransportError::Http { status: 401, body: answer.body.to_string() });
+                }
+                return Err(session);
+            }
         }
         let error = GraphQLError { message: code.to_string(), path: None, extensions: json!({ "code": code }).as_object().cloned() };
         return Ok(Response { data: None, errors: vec![error] });
     }
     serde_json::from_value(answer.body).map_err(|error| TransportError::Decode(error.to_string()))
+}
+
+fn response_from_read(answer: Answer) -> Result<Response, TransportError> {
+    let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
+    let transient = matches!(crate::transport::classify_answer(&outcome, false, true), crate::transport::AnswerKind::Transient { .. });
+    response_from_answer_with_kind(answer, transient)
 }
 
 pub fn missing_from_registry(response: &Response) -> bool {
@@ -123,11 +143,11 @@ impl Upstream for EncryptedTransport {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
         let wire = request.authored()?;
-        let response = response_from_answer(self.read(path, graphql_body(&request, false), wire).await?)?;
+        let response = response_from_read(self.read(path, graphql_body(&request, false), wire).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_from_answer(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
+        response_from_read(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {

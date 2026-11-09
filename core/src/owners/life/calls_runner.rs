@@ -58,7 +58,7 @@ fn call_error(error: crate::ffi::DbError) -> CallError {
 pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
         AuthorOutcome::Response { body: text, kind } => match serde_json::from_str::<Value>(&text) {
-            Ok(body) => match crate::transport::encrypted::response_from_answer(crate::transport::encrypted::Answer { sequence: None, body }) {
+            Ok(body) => match crate::transport::encrypted::response_from_answer_with_kind(crate::transport::encrypted::Answer { sequence: None, body }, matches!(kind, crate::transport::AnswerKind::Transient { .. })) {
                 Ok(response) => response_input(call_id, root, response, kind),
                 Err(error) => calls_input(call_id, root, Err(error)),
             },
