@@ -51,3 +51,32 @@ fn xfer_release_pending_step() {
     let (_, discarded) = twin.discard(KEY);
     assert_eq!(all(&[&ready, &answered, &started, &failed, &discarded]), Vec::<u64>::new(), "a replayed and answered step releases nothing");
 }
+
+#[derive(Clone, Debug)]
+enum Setup { RestoreReady, Online, Interest }
+
+/// P-XFER-45 (xfer_prop_held_step_released): in every order of {Restored, RestoreReady, Online, Interest+} a restored held pair is driven by Session alone: Transfer sends no step of its own and no Release until `StepAnswer`, which then lands exactly one physical request (D-246).
+#[test]
+fn xfer_prop_held_step_released() {
+    use crate::owners::session::AuthorOutcome;
+    for order in crate::test_wait::permutations(&[Setup::RestoreReady, Setup::Online, Setup::Interest]) {
+        let (mut twin, opening) = Twin::opened(vec![saved(0)], Default::default());
+        let mut outs = vec![opening];
+        for step in &order {
+            outs.push(match step {
+                Setup::RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
+                Setup::Online => twin.online(true),
+                Setup::Interest => twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 }),
+            });
+        }
+        let refs: Vec<&Out> = outs.iter().collect();
+        let steps: usize = refs.iter().map(|out| out.steps().len()).sum();
+        assert_eq!((steps, all(&refs)), (0, Vec::<u64>::new()), "held pair: no step of its own and no Release before the answer, order {order:?}");
+        assert_eq!(twin.stage(1), TransferStage::Ready, "the restored transfer waits for the pair, order {order:?}");
+        let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: AuthorOutcome::Dropped });
+        assert_eq!((answered.steps().len(), twin.stage(1)), (0, TransferStage::PersistingAttempt), "StepAnswer clears the pair and writes a plain attempt first, order {order:?}");
+        let started = twin.commit();
+        assert_eq!((started.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "exactly one physical request for the pair, order {order:?}");
+        assert!(all(&[&answered, &started]).is_empty(), "the answered pair is not released, order {order:?}");
+    }
+}
