@@ -8,6 +8,7 @@ use crate::ffi::tape::Rows;
 use crate::ffi::tests::session_guards_tests::WatchedHeld;
 use crate::ffi::wire::{wire_fields, Cell, WireRow};
 use crate::ffi::{Config, Database, DbError, EncryptedReply, FakeHttp, FakeTransport, ReadFetch, ReadRequest, ReadStream, ReadValue};
+use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
@@ -36,43 +37,22 @@ impl FakeTransport for Cable {
     }
 }
 
-/// The server behind the encrypted path: it answers each operation with the data the test set, anything else with an empty `data`.
+/// The server behind the encrypted path: it answers each operation with the data the test set, anything else with an empty `data`. The pair and sequence rules are the server contract.
 struct Server {
     answers: StdMutex<HashMap<String, Value>>,
     asked: StdMutex<Vec<(String, Value)>>,
     sequenced: StdMutex<Vec<(String, i64)>>,
-    registry: StdMutex<Option<Registry>>,
-    settled: StdMutex<HashMap<(String, i64), (String, Value)>>,
+    contract: StdMutex<Contract<Value>>,
+    conflicts: std::sync::atomic::AtomicUsize,
     held: tokio::sync::watch::Sender<HashSet<String>>,
     answered: tokio::sync::watch::Sender<usize>,
 }
 
-struct Registry {
-    known: HashSet<String>,
-    last: i64,
-    conflicts: usize,
-}
-
-impl Registry {
-    fn answer(&mut self, request: &Value) -> Option<(Option<i64>, Value)> {
-        let sequence = request["sequence"].as_i64().filter(|sequence| *sequence > 0);
-        let code = |code: &str| json!({"errors": [{"message": code, "extensions": {"code": code}}]});
-        let persisted = request["body"].pointer("/extensions/persistedQuery/sha256Hash").and_then(Value::as_str).map(str::to_string);
-        match (request["body"].get("query").is_some(), persisted) {
-            (true, Some(hash)) => { self.known.insert(hash); }
-            (false, Some(hash)) if !self.known.contains(&hash) => return Some((None, code("PERSISTED_QUERY_NOT_FOUND"))),
-            _ => {}
-        }
-        let sequence = sequence?;
-        if sequence != self.last + 1 { self.conflicts += 1; return Some((None, json!({"error": "SEQUENCE_CONFLICT"}))); }
-        self.last = sequence;
-        None
-    }
-}
-
 impl Default for Server {
     fn default() -> Self {
-        Server { answers: StdMutex::default(), registry: StdMutex::default(), settled: StdMutex::default(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
+        let mut contract = Contract::adopting();
+        contract.cache_everything();
+        Server { answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -81,29 +61,33 @@ impl FakeHttp for Server {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let answer = if path == "/api/auth/login_link" {
-            self.sequenced.lock().unwrap().push(("login_link".into(), request["sequence"].as_i64().unwrap_or(0)));
-            if let Some(registry) = self.registry.lock().unwrap().as_mut() { registry.last = request["sequence"].as_i64().unwrap_or(0); }
+            let sequence = request["sequence"].as_i64().unwrap_or(0);
+            self.sequenced.lock().unwrap().push(("login_link".into(), sequence));
+            if sequence > 0 { self.contract.lock().unwrap().set_last(sequence); }
             json!({"sessionId": request["body"]["account"]})
         } else if path == "/api/auth/otp" {
             json!({"sent": true})
         } else {
             let operation = request["body"]["operationName"].as_str().unwrap().to_string();
-            let pair = request["sequence"].as_i64().filter(|sequence| *sequence > 0).map(|sequence| (request["requestId"].as_str().unwrap().to_string(), sequence));
-            if let Some(pair) = &pair {
-                if let Some((bytes, stored)) = self.settled.lock().unwrap().get(pair) {
-                    assert_eq!(*bytes, request["body"].to_string(), "the pair {pair:?} went with two bodies");
-                    return Ok(EncryptedReply { status: 200, body: seal_response(&request, Some(pair.1), stored.clone()) });
-                }
+            let contract_request = Request::from_wire("stand", &request);
+            let admission = self.contract.lock().unwrap().admit(&contract_request);
+            let sequence = request["sequence"].as_i64();
+            match admission {
+                Admission::Stored(stored) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) }),
+                Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
+                _ => {}
             }
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
-            self.sequenced.lock().unwrap().push((operation.clone(), request["sequence"].as_i64().unwrap_or(0)));
-            let refused = self.registry.lock().unwrap().as_mut().and_then(|registry| registry.answer(&request));
-            if let Some((sequence, body)) = refused { return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, body) }); }
+            self.sequenced.lock().unwrap().push((operation.clone(), sequence.unwrap_or(0)));
+            if let Admission::Refused(refusal) = admission {
+                if refusal["error"] == "SEQUENCE_CONFLICT" { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+                return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
+            }
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
             let answer = self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}}));
             crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
-            if let Some(pair) = pair { self.settled.lock().unwrap().insert(pair, (request["body"].to_string(), answer.clone())); }
+            self.contract.lock().unwrap().settle(&contract_request, answer.clone());
             answer
         };
         Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), answer) })
@@ -150,10 +134,13 @@ impl Stand {
 
     pub(super) fn empty_registry(&self) {
         let last = self.server.sequenced.lock().unwrap().iter().map(|(_, sequence)| *sequence).max().unwrap_or(0);
-        *self.server.registry.lock().unwrap() = Some(Registry { known: HashSet::new(), last, conflicts: 0 });
+        let mut contract = self.server.contract.lock().unwrap();
+        contract.forget();
+        contract.set_last(last);
+        self.server.conflicts.store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
-    pub(super) fn conflicts(&self) -> usize { self.server.registry.lock().unwrap().as_ref().map_or(0, |registry| registry.conflicts) }
+    pub(super) fn conflicts(&self) -> usize { self.server.conflicts.load(std::sync::atomic::Ordering::SeqCst) }
 
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }

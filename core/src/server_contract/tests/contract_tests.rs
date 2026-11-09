@@ -89,3 +89,17 @@ fn server_contract_unscripted_request() {
     assert_eq!(contract.take("Other").as_deref(), Some("always"));
     assert_eq!(contract.take("Other").as_deref(), Some("always"));
 }
+
+#[test]
+fn server_contract_session_number_known_or_adopted() {
+    let mut contract: Contract<String> = Contract::adopting();
+    contract.cache_everything();
+    let first = request("a", "r1", Some(7), hash_only("M", json!({})));
+    assert!(matches!(contract.admit(&first), Admission::Fresh));
+    contract.settle(&first, "seven".into());
+    let skip = request("a", "r2", Some(9), hash_only("M", json!({})));
+    assert!(matches!(contract.admit(&skip), Admission::Refused(body) if code_of(&body) == "SEQUENCE_CONFLICT"));
+    contract.forget();
+    let cold = request("a", "r3", Some(8), hash_only("M", json!({})));
+    assert!(matches!(contract.admit(&cold), Admission::Refused(body) if code_of(&body) == "PERSISTED_QUERY_NOT_FOUND"));
+}
