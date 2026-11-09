@@ -318,8 +318,13 @@ impl OutboxState {
         if self.removed.contains(&op_id) { return; }
         match outcome {
             AuthorOutcome::Response(body) => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
+                if let Some(operation) = self.ops.get_mut(&op_id) {
+                    operation.pending_owned = false;
+                    operation.stage = Stage::Landing;
+                    operation.rows_pending = true;
+                }
                 self.decode_answer(op_id, body, fx);
+                self.drain(fx);
             }
             AuthorOutcome::Error { class, error, pending_retained } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {

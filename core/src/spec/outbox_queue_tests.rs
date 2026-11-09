@@ -10,6 +10,19 @@ use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, Outbo
 use crate::runtime::Time;
 use crate::value::sync::FailureKind;
 
+#[test]
+fn out_answer_releases_slot_before_decoding() {
+    let mut twin = Twin::new();
+    let first = twin.submit("r1", Policy::Rollback, false);
+    twin.committed(first);
+    let second = twin.submit("r2", Policy::Rollback, false);
+    twin.committed(second);
+    assert_eq!(twin.stage(second), Some(St::Queued));
+    let request_id = twin.state().ops[&first].request_id;
+    let effects = twin.post(OutboxInput::Answered { req_id: request_id, outcome: crate::owners::session::AuthorOutcome::Response("{}".into()) });
+    assert_eq!((twin.stage(first), twin.stage(second), sent_ids(&effects)), (Some(St::Landing), Some(St::Sending), vec![second]));
+}
+
 fn respond(twin: &mut Twin, id: OpId) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None })
 }
