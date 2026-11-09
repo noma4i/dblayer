@@ -58,7 +58,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Storage(_) => Fail::Storage,
         SessionError::SessionExists => Fail::SessionExists,
         SessionError::NoCredential => Fail::NoCredential,
-        SessionError::Revoked => Fail::Revoked,
+        SessionError::Revoked { .. } => Fail::Revoked,
         SessionError::StateLost => Fail::StateLost,
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Unauthorized => Fail::Unauthorized,

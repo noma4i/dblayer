@@ -36,7 +36,7 @@ pub enum SessionError {
     Storage(String),
     SessionExists,
     NoCredential,
-    Revoked,
+    Revoked { body: String },
     StateLost,
     SequenceConflict,
     Unauthorized,
@@ -58,10 +58,14 @@ pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
         Err(SessionError::TooLarge { size, limit }) => Some(StoredAnswer::TooLarge { size: *size, limit: *limit }),
         Err(SessionError::Unauthorized) => Some(StoredAnswer::Unauthorized),
         Err(SessionError::Security { code, detail }) => Some(StoredAnswer::Security { code: *code, detail: detail.clone() }),
-        Err(SessionError::Revoked) => Some(StoredAnswer::Revoked),
+        Err(SessionError::Revoked { body }) => Some(StoredAnswer::Revoked { body: body.clone() }),
         Err(SessionError::Session(code)) => Some(StoredAnswer::Session(*code)),
         Err(_) => None,
     }
+}
+
+pub fn revoked_detail(body: &str) -> String {
+    serde_json::from_str(body).ok().and_then(|body| crate::transport::refusal_name(&body)).unwrap_or_else(|| crate::transport::SessionCode::SessionEnded.name().to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

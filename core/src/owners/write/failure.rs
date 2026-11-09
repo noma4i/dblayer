@@ -17,7 +17,7 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
         SessionError::SequenceConflict => Some(SessionCode::SequenceConflict),
         SessionError::Unauthorized => Some(SessionCode::Unauthenticated),
         SessionError::StateLost => Some(SessionCode::StateLost),
-        SessionError::Revoked => Some(SessionCode::SessionEnded),
+        SessionError::Revoked { .. } => Some(SessionCode::SessionEnded),
         SessionError::NoCredential => Some(SessionCode::NoCredential),
         _ => None,
     };

@@ -531,7 +531,7 @@ impl SessionState {
             }
             SessionInput::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
                 self.answer_kind = Some(crate::transport::AnswerKind::Revoked);
-                let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked) };
+                let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked { body }) };
                 self.land(pending, answer, None, None, true, fx);
             }
             SessionInput::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::Security { code, detail }), None, None, false, fx),
