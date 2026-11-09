@@ -76,10 +76,14 @@ pub(super) struct Script {
 
 impl Default for Script {
     fn default() -> Self {
-        let mut contract = Contract::adopting();
-        contract.cache_everything();
-        Script { contract: Mutex::new(contract), calls: Mutex::default(), wires: Mutex::default() }
+        Script { contract: Mutex::new(Contract::adopting()), calls: Mutex::default(), wires: Mutex::default() }
     }
+}
+
+/// The hash the core sends for a document: sha256 of its text, the same as `graphql_body`.
+fn document_hash(document: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(document.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn settled_of(answer: &Answer) -> Option<Answer> {
@@ -105,6 +109,11 @@ impl Script {
     pub(super) fn pairs(&self, operation: &str, filename: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation && call.variables["filename"] == filename).map(|call| call.pair.clone()).collect() }
     pub(super) fn variables(&self, operation: &str) -> Vec<Value> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.variables.clone()).collect() }
     pub(super) fn purposes(&self, operation: &str) -> Vec<NetworkPurpose> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.purpose).collect() }
+    /// The documents the app declared: a real server knows them, an undeclared document gets `PERSISTED_QUERY_NOT_FOUND`.
+    pub(super) fn register_documents(&self, named: &[(&str, &str)]) {
+        let mut contract = self.contract.lock().unwrap();
+        for (_, document) in named { contract.register(&document_hash(document)); }
+    }
 }
 
 struct ScriptedHttp {
@@ -249,6 +258,7 @@ impl Stand {
         }
         .unwrap();
         let named: Vec<(&str, &str)> = STEPS.iter().copied().filter(|(name, _)| !operations.iter().any(|(declared, _)| declared == name)).chain(operations.iter().copied()).collect();
+        self.script.register_documents(&named);
         let declared: Vec<Value> = named.iter().map(|(name, document)| json!({"name": name, "document": document})).collect();
         let register = || database.register_operations(Value::Array(declared.clone()).to_string());
         let session = || async { if !restored { super::rig_tests::bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap(); } };

@@ -45,9 +45,17 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         let mut contract = Contract::adopting();
-        contract.cache_everything();
+        for operation in serde_json::from_str::<Vec<Value>>(OPERATIONS).unwrap() {
+            if let Some(document) = operation["document"].as_str() { contract.register(&document_hash(document)); }
+        }
         State { seen: Vec::new(), held: Default::default(), hold: [false; 3], hold_ops: Vec::new(), auto: Default::default(), script: HashMap::new(), cancelled: 0, next: 0, in_flight: HashMap::new(), overlap: false, contract }
     }
+}
+
+/// The hash the core sends for a document: sha256 of its text, the same as `graphql_body`.
+fn document_hash(document: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(document.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 pub(super) struct Server { state: Mutex<State>, signal: tokio::sync::Notify }

@@ -52,9 +52,24 @@ struct Server {
 
 impl Default for Server {
     fn default() -> Self {
-        let mut contract = Contract::adopting();
-        contract.cache_everything();
-        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(contract), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(Contract::adopting()), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
+    }
+}
+
+/// The hash the core sends for a document: sha256 of its text, the same as `graphql_body`.
+fn document_hash(document: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(document.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+impl Server {
+    /// The documents the app declared: a real server knows them, an undeclared document gets `PERSISTED_QUERY_NOT_FOUND`.
+    fn register_documents(&self, operations: &str) {
+        let declared: Vec<Value> = serde_json::from_str(operations).unwrap();
+        let mut contract = self.contract.lock().unwrap();
+        for operation in declared {
+            if let Some(document) = operation["document"].as_str() { contract.register(&document_hash(document)); }
+        }
     }
 }
 
@@ -124,6 +139,7 @@ impl Stand {
 
     pub(super) async fn prepare_contract(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>) -> Stand {
         let server = Arc::new(Server::default());
+        server.register_documents(OPERATIONS);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("otp".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
