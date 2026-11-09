@@ -418,6 +418,42 @@ fn out_landing_other() {
 }
 
 #[test]
+fn out_unknown_operation() {
+    let mut twin = Twin::new();
+    for input in [
+        OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
+        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
+        OutboxInput::Outcome { receipt: twin.receipt(99, EPOCH), reply: WAITER },
+    ] {
+        let effects = twin.post(input);
+        assert_eq!((answers(&effects, WAITER), effects.len(), twin.state().ops.len()), (vec![OutboxAnswer::Err(Fault::NotFound)], 1, 0));
+    }
+}
+
+#[test]
+fn out_queued_send() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    assert_eq!(twin.stage(id), Some(St::Queued));
+    let effects = twin.post(OutboxInput::Online(Online(true)));
+    assert_eq!((twin.stage(id), sends(&effects), effects.len()), (Some(St::Sending), 1, 1));
+    assert_eq!(twin.state().ops[&id].attempts, 1);
+}
+
+#[test]
+fn out_queued_discard() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback], 1));
+    assert!(twin.store_text.contains("RollBack") && twin.store_text.contains("RemoveIntent"));
+}
+
+#[test]
 fn out_sending_tick_not_waiting() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
