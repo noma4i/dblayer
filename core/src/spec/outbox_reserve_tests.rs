@@ -245,3 +245,133 @@ fn out_group_member_removed() {
     twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!((twin.store_text.contains("\\\"member\\\":\\\"a\\\""), twin.store_text.contains("\\\"member\\\":\\\"b\\\""), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")), (true, true, true, false), "the answer of the pair lands with every received row, the tombstone of the removed member is kept by Store (D-258d): {} {removed:?}", twin.store_text);
 }
+
+#[test]
+fn out_group_member_removed_keeps_group() {
+    use super::outbox_harness::St;
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let membership = format!("IntentOrigin {{ op_id: {group}, origin: TransferGroup {{ batch_id: 9, transfer_ids: [11] }} }}");
+    assert_eq!(
+        (twin.stores.len(), twin.store_text.contains(&membership), twin.store_text.contains("RemoveUploadByTransferId { transfer_id: 12 }"), twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 1, outcome: Discarded"), twin.store_text.contains("TransferOutcome { transfer_id: 11"), twin.session_text.contains("Cancel"), twin.session_text.contains("Release"), twin.stage(group)),
+        (1, true, true, true, false, false, false, Some(St::Sending)),
+        "one batch rewrites membership to [11], drops member 12 and its upload, the shared pair is untouched: {}", twin.store_text);
+    let batch = twin.stores[0].0;
+    twin.commit_batch(batch);
+    assert_eq!(twin.stage(group), Some(St::Sending), "after Committed the group still waits for the pair");
+    let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
+    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!(
+        (twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")),
+        (true, false),
+        "the pair answer then lands with Confirmed for 11 and nothing for 12: {}", twin.store_text);
+}
+
+#[test]
+fn out_group_last_member_removed() {
+    use super::outbox_harness::{St, RWhy};
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    twin.commit_batch(first);
+    let removed = twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "a".into(), revision: 31 });
+    assert_eq!(
+        (twin.stores.len(), twin.store_text.contains(&format!("RollBack {{ op_id: {group} }}")), twin.store_text.contains(&format!("RemoveIntent {{ op_id: {group} }}")), twin.store_text.contains("RemoveUploadByTransferId { transfer_id: 11 }"), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Discarded"), twin.stage(group)),
+        (1, true, true, true, true, Some(St::RollingBack(RWhy::Discarded))),
+        "removing the last member discards the group in one batch: {} {removed:?}", twin.store_text);
+    let batch = twin.stores[0].0;
+    let done = twin.commit_batch(batch);
+    assert_eq!(
+        (twin.session_text.contains("Release"), done.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcomes)), twin.stage(group), twin.stores.is_empty()),
+        (true, true, Some(St::Done), true),
+        "the started pair is released, the shared mutation ends Discarded, no empty group remains: {} {done:?}", twin.session_text);
+}
+
+#[test]
+fn out_group_member_removal_rejected() {
+    use super::outbox_harness::St;
+    use crate::owners::contract::{Rejected, RejectReason};
+
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    let membership = format!("IntentOrigin {{ op_id: {group}, origin: TransferGroup {{ batch_id: 9, transfer_ids: [11] }} }}");
+    let resent = twin.reject_batch(first, RReason::StaleGeneration);
+    assert_eq!(
+        (twin.stores.len(), twin.stores[0].0 != first, twin.store_text.contains(&membership), twin.store_text.contains("RemoveUploadByTransferId { transfer_id: 12 }")),
+        (1, true, true, true),
+        "StaleGeneration resends the same membership batch on a new generation: {} {resent:?}", twin.store_text);
+
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    twin.reject_batch(first, RReason::Storage);
+    assert_eq!(
+        (twin.stores.is_empty(), twin.store_text.contains("Discarded"), twin.stage(group)),
+        (true, false, Some(St::Sending)),
+        "Storage keeps the member in the group, nothing is written and no Discarded is delivered: {}", twin.store_text);
+    let membership = format!("IntentOrigin {{ op_id: {group}, origin: TransferGroup {{ batch_id: 9, transfer_ids: [11] }} }}");
+    twin.waiter(group);
+    assert!(twin.store_text.contains(&membership) && twin.store_text.contains("RemoveUploadByTransferId { transfer_id: 12 }"), "the next owner input for the group resends the membership batch: {}", twin.store_text);
+
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::NoSession }));
+    let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
+    assert!(transfer.iter().any(|text| text.contains("11: Ended(SessionEnded)") && text.contains("12: Ended(SessionEnded)")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
+
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Closed }));
+    let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
+    assert!(transfer.iter().any(|text| text.contains("11: Ended(Closed)") && text.contains("12: Ended(Closed)")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
+}
+
+#[test]
+fn out_group_answer_waits_membership() {
+    use super::outbox_harness::St;
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let member_batch = twin.stores[0].0;
+    assert_eq!(twin.stores.len(), 1, "the membership batch is in flight: {}", twin.store_text);
+    let waited = twin.post(OutboxInput::Response { op_id: group, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!((twin.stores.is_empty(), twin.stage(group)), (true, Some(St::Sending)), "the pair answer waits for the membership batch, no landing yet: {} {waited:?}", twin.store_text);
+    twin.commit_batch(member_batch);
+    assert_eq!(
+        (twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")),
+        (true, false),
+        "Committed of the membership batch lets the answer land on [11]: {}", twin.store_text);
+
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    twin.post(OutboxInput::Response { op_id: group, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert!(twin.stores.is_empty(), "the pair answer waits: {}", twin.store_text);
+    let membership = format!("IntentOrigin {{ op_id: {group}, origin: TransferGroup {{ batch_id: 9, transfer_ids: [11] }} }}");
+    let resent = twin.reject_batch(first, RReason::Storage);
+    assert_eq!(
+        (twin.store_text.contains(&membership), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed")),
+        (true, false),
+        "Storage resends the membership batch first, nothing lands yet (D-258c): {} {resent:?}", twin.store_text);
+    let second = twin.stores[0].0;
+    twin.commit_batch(second);
+    assert!(twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed") && !twin.store_text.contains("TransferOutcome { transfer_id: 12"), "then the answer lands on [11]: {}", twin.store_text);
+}
