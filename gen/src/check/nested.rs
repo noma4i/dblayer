@@ -6,7 +6,7 @@ use super::{at, Found};
 use crate::decl::{AttributeBlock, AttributeDecl, ModelDecl};
 
 fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
-    if value.is_null() { return field.nullable || field.optional; }
+    if value.is_null() { return crate::emit::is_nullable(field); }
     match &field.kind {
         FieldKind::Scalar { kind } => match kind {
             ScalarKind::Bool => value.is_boolean(),
@@ -23,7 +23,7 @@ fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
             let Some(target) = types.iter().find(|candidate| candidate.app_type == field.app_type) else { return false };
             target.fields.iter().all(|child| match values.get(child.from.as_deref().unwrap_or(&child.name)) {
                 Some(value) => fits(child, value, types),
-                None => child.nullable || child.optional || child.default.is_some(),
+                None => crate::emit::is_nullable(child) || child.default.is_some(),
             })
         }),
         FieldKind::Array => value.as_array().is_some_and(|items| field.app_type.is_none() || items.iter().all(|item| fits(&FieldSpec { kind: FieldKind::Object, ..field.clone() }, item, types))),

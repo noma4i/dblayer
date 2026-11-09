@@ -97,7 +97,7 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
         },
         _ => raw_type(swift),
     };
-    if field.nullable || field.optional { format!("{base}?") } else { base }
+    if is_nullable(field) { format!("{base}?") } else { base }
 }
 
 pub(super) fn text_param(relation: &RelationSpec, key: &str, decls: &[EnumDecl], swift: bool) -> String {
@@ -175,7 +175,7 @@ pub fn specs_text(models: &[ModelSpec], operations: &[crate::operation::Operatio
     format!("{{\"models\":{},\"operations\":[{}]}}", serde_json::to_string(models).unwrap(), declared.join(","))
 }
 
-fn is_nullable(field: &FieldSpec) -> bool {
+pub(crate) fn is_nullable(field: &FieldSpec) -> bool {
     field.nullable || field.optional
 }
 
@@ -193,7 +193,7 @@ fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a Fie
 }
 
 fn create_optional(model: &ModelSpec, field: &FieldSpec) -> bool {
-    field.nullable || field.optional || field.default.is_some() || model.actions.iter().any(|action| action.name == "create" && action.local_from.contains_key(&field.name))
+    is_nullable(field) || field.default.is_some() || model.actions.iter().any(|action| action.name == "create" && action.local_from.contains_key(&field.name))
 }
 
 fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a str)> {
@@ -224,18 +224,18 @@ fn arg_type(kind: &str, swift: bool) -> String {
 }
 
 fn kotlin_patch_param(field: &FieldSpec) -> String {
-    if field.nullable || field.optional { format!("{}: GraphQLNullable<{}> = GraphQLNullable.Omitted", identifier(&field.name, false), field_type(field, false).trim_end_matches('?')) }
+    if is_nullable(field) { format!("{}: GraphQLNullable<{}> = GraphQLNullable.Omitted", identifier(&field.name, false), field_type(field, false).trim_end_matches('?')) }
     else { format!("{}: {}? = null", identifier(&field.name, false), field_type(field, false)) }
 }
 
 fn kotlin_patch_put(field: &FieldSpec) -> String {
     let printed = identifier(&field.name, false);
-    if field.nullable || field.optional { format!("            this.put(\"{}\", {printed})", field.name) }
+    if is_nullable(field) { format!("            this.put(\"{}\", {printed})", field.name) }
     else { format!("            {printed}?.let {{ this.put(\"{}\", jsonValue(it)) }}", field.name) }
 }
 
 fn swift_default(field: &FieldSpec) -> Option<String> {
-    if field.nullable || field.optional { return Some("nil".into()); }
+    if is_nullable(field) { return Some("nil".into()); }
     match (&field.kind, field.default.as_ref()?) {
         (FieldKind::Scalar { kind: ScalarKind::Bool }, serde_json::Value::Bool(flag)) => Some(flag.to_string()),
         (FieldKind::Scalar { kind: ScalarKind::Int | ScalarKind::Num }, serde_json::Value::Number(number)) => Some(number.to_string()),
@@ -432,7 +432,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         let built = "built_".to_string();
         writeln!(out, "@Immutable\ndata class {class}(").unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
-            writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, identifier(&field.name, false), field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
+            writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, identifier(&field.name, false), field_type(field, false), if is_nullable(field) { " = null" } else { "" }).unwrap();
         }
         writeln!(out, "    override val {SYNC}: SyncInfo = SyncInfo(),\n    override val {UPLOADS}: Map<String, UploadInfo> = emptyMap(),\n    override val {ROW_REVISION}: Long = 0,\n    override val {ESTIMATED_BYTES}: ULong = 0u\n) : DBModel {{\n    override val {MODEL_NAME} get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val {LAYOUT} = \"{}\"\n        override val {MODEL_NAME} = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                uploads = row.uploads.associate {{ it.action to UploadInfo.of(it.upload) }},\n                {ROW_REVISION} = row.revision,\n                {ESTIMATED_BYTES} = row.estimatedBytes,\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| is_file(field)) { writeln!(out, "        val {} = FileField<{class}>(\"{}\")", identifier(&field.name, false), field.name).unwrap(); }

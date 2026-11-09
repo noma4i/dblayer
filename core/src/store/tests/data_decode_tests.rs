@@ -85,6 +85,24 @@ fn data_nested_decode_table() {
     }
 }
 
+/// M71 (D-200): a required nested object that is null, or whose required member object is absent or null, refuses the row.
+#[test]
+fn data_required_nested_object_absent_or_null_refuses_row() {
+    let inner = typed(FieldSpec::object("inner"), "Inner", vec![FieldSpec::scalar("v", ScalarKind::Str)]);
+    let spec = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("box"), "Box", vec![inner])]);
+    let db = Store::open_models(None, vec![spec], None).unwrap();
+    for (case, row) in [
+        ("member absent", json!({"id": "r1", "box": {}})),
+        ("member null", json!({"id": "r1", "box": {"inner": null}})),
+        ("row attribute null", json!({"id": "r1", "box": null})),
+    ] {
+        assert!(matches!(land(&db, row), Err(StoreError::Invalid(_))), "{case}: the row landed");
+    }
+    assert!(stored(&db).is_none(), "no refused row is stored");
+    land(&db, json!({"id": "r1", "box": {"inner": {"v": "x"}}})).unwrap();
+    assert!(stored(&db).is_some(), "the complete row lands");
+}
+
 /// P-DATA-64: a row that does not decode lands nothing: neither the row nor a revision.
 #[test]
 fn data_nested_decode_error_lands_nothing() {

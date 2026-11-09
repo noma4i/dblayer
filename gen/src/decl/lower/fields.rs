@@ -116,6 +116,9 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         (Some(schema), Some(type_name), false) => schema_field(schema, type_name, &source_name),
         _ => None,
     };
+    if let Some(reached) = &schema_field {
+        ty_owner = Owner(Some(reached.name().to_string()));
+    }
     let schema_null = site != Site::Returns && schema_field.as_ref().is_some_and(|reached| reached.nullable);
     if let (Some(schema), Some(type_name), true) = (cx.schema, &owner.0, !local && needs_inference(call)) {
         let mut ty = Ty { kind: TyKind::Named(type_name.clone()), nullable: false, has_default: false };

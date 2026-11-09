@@ -15,6 +15,8 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 
 An object always has a name. Use `:json` for a value without a fixed shape.
 
+A typed object or scalar is `Optional` at every depth only with `null: true`, `optional: true` or a nullable schema field at its own path; otherwise its constructor argument has no default and a missing or null value fails the row decode.
+
 ## Defaults
 
 Defaults accept scalar values, non-empty lists, JSON values and typed objects. A typed object default must supply its required fields. A default can accompany `null` or `optional`.

@@ -10,6 +10,7 @@
 ### Fixed
 
 - A write, a session call and an upload mutation always send the full document: the first send no longer carries the hash alone, so a server without the document no longer spends the sequence on a miss and refuses the resend with `SEQUENCE_CONFLICT`.
+- A nested field with a declared type took the nullability of a same-named field of the model root type: `versions[].requires` was `Optional` in Swift and Kotlin. It now follows its own schema path.
 
 ## 6.19.0 - 2026-11-09
 

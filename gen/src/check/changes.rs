@@ -12,7 +12,7 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
     let mut seen: std::collections::HashMap<(usize, &str, bool), (usize, usize, usize)> = std::collections::HashMap::new();
     for (index, (node, model)) in nodes.iter().zip(models).enumerate() {
         if let Some(field) = &model.server_revision {
-            if !model.field(field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Int }) && !field.optional && !field.nullable && !field.is_local()) {
+            if !model.field(field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Int }) && !crate::emit::is_nullable(field) && !field.is_local()) {
                 errors.push(at(node.file, node.pos, "server_revision requires a required integer attribute"));
             }
         }

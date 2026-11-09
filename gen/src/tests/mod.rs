@@ -39,3 +39,4 @@ mod removed_by_tests;
 mod default_decisions_tests;
 mod refusal_tests;
 mod norm_tests;
+mod nullability_tests;
