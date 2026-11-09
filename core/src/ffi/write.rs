@@ -200,7 +200,7 @@ impl Database {
         self.account_call(epoch)?;
         let row = id(&row_id)?;
         let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
-        self.read_in_epoch(epoch, "attach", move |database| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from)).await?;
+        self.read_in_epoch(epoch, "attach", move |database| row_present(database, &checked_model, &checked).and_then(|()| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from))).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.life.now());
         let OutboxAnswer::Written { shown: Some(shown), .. } = self.outbox_answer(waiter, "attach").await? else { return Err(DbError::Internal { detail: "the attach was answered with no row".into() }) };
         let attached = shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value).ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
@@ -211,7 +211,7 @@ impl Database {
         self.account_call(epoch)?;
         let row = id(&row_id)?;
         let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
-        self.read_in_epoch(epoch, "detach", move |database| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from)).await?;
+        self.read_in_epoch(epoch, "detach", move |database| row_present(database, &checked_model, &checked).and_then(|()| database.db.file(&checked_model, &checked, &checked_field).map(drop).map_err(DbError::from))).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.life.now());
         let OutboxAnswer::Written { files_removed, .. } = self.outbox_answer(waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
         Ok(files_removed > 0)
@@ -309,4 +309,8 @@ impl Database {
 pub(super) enum Retried {
     Receipt(Box<WireOperationReceipt>),
     Transfer(String),
+}
+
+pub(super) fn row_present(database: &Database, model: &str, row: &crate::identity::RowId) -> Result<(), DbError> {
+    database.db.find(model, row)?.map(drop).ok_or_else(|| DbError::NotFound { detail: format!("row {row} of {model} does not exist") })
 }

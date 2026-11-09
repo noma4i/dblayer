@@ -249,8 +249,11 @@ impl Database {
 
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         self.account_call(epoch)?;
-        if self.uploads.is_none() { return Ok(false); }
+        self.wire(&model)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let (checked_model, checked) = (model.clone(), row.clone());
+        self.read_in_epoch(epoch, "cancel upload", move |database| super::write::row_present(database, &checked_model, &checked)).await?;
+        if self.uploads.is_none() { return Ok(false); }
         let waiter = self.life.cancel_upload(epoch, key_of(&model, row.as_str(), &action));
         match self.transfer_answer(waiter, "cancel upload").await? {
             TransferAnswer::Cancelled(cancelled) => Ok(cancelled),
