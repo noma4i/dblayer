@@ -165,3 +165,83 @@ fn out_group_rollback_outcome() {
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
     assert!(matches!(events.as_slice(), [(_, input)] if input.contains("11: Rejected") && input.contains("12: Rejected")), "{events:?}");
 }
+
+/// A TransferGroup on the root row `a` and the member `member`: its intent is written by Transfer under the reserved `op_id`.
+fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
+    use crate::owners::write::outbox::{OpSource, TransferMember};
+    let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9) });
+    let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into() }];
+    let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
+    twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op });
+    op_id
+}
+
+/// Brings the group to `Sending`: the write of its attempt (out_submit_intent_written) is committed when the owner asked for one.
+fn group_sending(twin: &mut Twin, group: OpId) {
+    if twin.stage(group) == Some(super::outbox_harness::St::PersistingAttempt) { twin.committed(group); }
+    assert_eq!(twin.stage(group), Some(super::outbox_harness::St::Sending), "the group reached Sending");
+}
+
+fn receipts_of(effects: &[OutboxEffect], reply: u64) -> Vec<OpId> {
+    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer: OutboxAnswer::Receipt(receipt) } if *found == reply => Some(receipt.op_id), _ => None }).collect()
+}
+
+#[test]
+fn out_selector_group_member() {
+    use super::outbox_harness::{St, RWhy};
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    assert_eq!(twin.stage(group), Some(St::Queued));
+    let retried = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "b".into(), action: Some("update".into()), reply: 61 });
+    assert_eq!(receipts_of(&retried, 61), vec![group], "a Retry of the member row b answers the receipt of the group: {retried:?}");
+    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "b".into(), action: Some("update".into()), reply: 62 });
+    assert_eq!((twin.stage(group), twin.store_text.contains(&format!("RollBack {{ op_id: {group} }}")), twin.store_text.contains(&format!("RemoveIntent {{ op_id: {group} }}"))), (Some(St::RollingBack(RWhy::Discarded)), true, true), "a Discard of the member row b reaches the group: {effects:?}");
+}
+
+#[test]
+fn out_selector_group_member_orders_the_row() {
+    use super::outbox_harness::St;
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Keep);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::Refused { op_id: group, temporary: false, detail: "refused".into() });
+    twin.committed(group);
+    assert_eq!(twin.stage(group), Some(St::Failed));
+    let member = twin.submit("b", Policy::Rollback, false);
+    let effects = twin.committed(member);
+    assert_eq!((twin.stage(member), sends_of(&effects)), (Some(St::Queued), 0), "an operation of the member row b waits behind the failed group: {effects:?}");
+}
+
+#[test]
+fn out_selector_group_member_swapped() {
+    use super::outbox_harness::{St, RWhy};
+    let mut twin = Twin::new();
+    let created = twin.submit("tb", Policy::Rollback, false);
+    twin.committed(created);
+    twin.post(OutboxInput::Response { op_id: created, rows: Vec::new(), swaps: vec![("tb".to_string(), "rb".to_string())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.committed(created);
+    assert_eq!(twin.stage(created), Some(St::Done), "the create of tb landed as rb");
+    twin.post(OutboxInput::Online(Online(false)));
+    let group = group_on_rows(&mut twin, "tb", Policy::Rollback);
+    let retried = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "rb".into(), action: Some("update".into()), reply: 63 });
+    assert_eq!(receipts_of(&retried, 63), vec![group], "the real id of the member row reaches the group: {retried:?}");
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "rb".into(), action: Some("update".into()), reply: 64 });
+    assert_eq!(twin.stage(group), Some(St::RollingBack(RWhy::Discarded)));
+}
+
+#[test]
+fn out_group_member_removed() {
+    use super::outbox_harness::St;
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    let removed = twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    assert_eq!((twin.stage(group), twin.session_text.contains("Cancel"), twin.stores.len(), twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 1, outcome: Discarded"), twin.store_text.contains("TransferOutcome { transfer_id: 11")), (Some(St::Sending), false, 1, true, false), "the removed member b gets Discarded in one batch, the shared pair goes on: {}", twin.store_text);
+    let batch = twin.stores[0].0;
+    twin.commit_batch(batch);
+    let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"member\":\"{row}\"}}") }).collect())];
+    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!((twin.store_text.contains("\\\"member\\\":\\\"a\\\""), twin.store_text.contains("\\\"member\\\":\\\"b\\\""), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")), (true, false, true, false), "the answer of the pair lands without the removed row: {} {removed:?}", twin.store_text);
+}
