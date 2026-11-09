@@ -386,3 +386,15 @@ fn xfer_orphan_remove_rejected() {
     twin.online(false);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "the refused removal keeps the debt and the abort goes again");
 }
+
+#[test]
+fn xfer_upload_minted_rejected() {
+    for reason in [RejectReason::Closed, RejectReason::NoSession, RejectReason::Storage("disk".into())] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        twin.online(false);
+        minted(&mut twin, id, "u1");
+        twin.reject(reason.clone());
+        assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "{reason:?}: the refused write of the id leaves it in the orphans of the process and the next network aborts it");
+    }
+}
