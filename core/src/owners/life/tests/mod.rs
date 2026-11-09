@@ -10,3 +10,4 @@ mod session_exchange_tests;
 mod session_panic_tests;
 mod session_cut_tests;
 mod sequenced_body_tests;
+mod wire_kind_tests;

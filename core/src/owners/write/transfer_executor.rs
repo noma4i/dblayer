@@ -182,7 +182,7 @@ impl TransferExecutor {
         Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, ids: self.wire.ids.clone() })
     }
 
-    /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.
+    /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
     fn task<T: Send + 'static>(
         &self,
         stamp: EpochStamp,
@@ -190,7 +190,7 @@ impl TransferExecutor {
         transfer_id: TransferId,
         no_link: TransferInput,
         call: impl FnOnce(Arc<dyn StepCodec>, Link) -> Call<T> + Send + 'static,
-        input_of: impl FnOnce(Result<T, TransportError>) -> TransferInput + Send + 'static,
+        into_input: impl FnOnce(Result<T, TransportError>) -> TransferInput + Send + 'static,
     ) {
         let Some(link) = self.link(stamp) else {
             back.reply(stamp, no_link);
@@ -201,7 +201,7 @@ impl TransferExecutor {
         let running = self.wire.tasks.start(Box::pin(async move {
             let result = call(codec, link).await;
             steps.done(&transfer_id);
-            back.reply(stamp, input_of(result));
+            back.reply(stamp, into_input(result));
         }));
         self.steps.put(transfer_id, Running::new(move || {
             cancel.cancel();

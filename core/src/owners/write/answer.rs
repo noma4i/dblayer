@@ -39,7 +39,7 @@ fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary:
 pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
     let parsed = serde_json::from_str::<Value>(&job.body).ok();
     let temporary = parsed.as_ref().is_some_and(|body| crate::transport::answer_kind::transient_failure(body).is_some());
-    if let Some(code) = parsed.and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
+    if let Some(code) = parsed.as_ref().and_then(|body| crate::transport::refusal_name(body)) {
         return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None) };
     }
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
