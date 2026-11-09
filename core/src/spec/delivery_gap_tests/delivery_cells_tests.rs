@@ -167,7 +167,7 @@ fn dlv_cancel_sink_closed_released() {
 fn dlv_cancelling_other() {
     let mut twin = live_rows();
     twin.step(Input::Cancel { reply: 1 });
-    for input in [Input::Committed { revision: 2, touches: true }, Input::ReadDone { revision: 2, rows: rows(&["r2"]) }, Input::ReadFailed { revision: 2 }, Input::WindowState(Ws::loaded_at(2)), Input::Joined { position: 1 }, Input::ModelReady, Input::ModelGap, Input::Transfer { state: "x".into() }, Input::ModelsReset { own_model: true }] {
+    for input in [Input::Committed { revision: 2, touches: true }, Input::ReadDone { revision: 2, rows: rows(&["r2"]) }, Input::ReadFailed { revision: 2 }, Input::WindowState(Ws::loaded_at(2)), Input::Joined { position: 1 }, Input::ModelReady, Input::ModelGap, Input::Transfer { state: "x".into(), revision: 41 }, Input::ModelsReset { own_model: true }] {
         assert!(twin.step(input).is_empty());
     }
     assert!(twin.step(Input::Pull).is_empty(), "a Pull waits for Ended");
