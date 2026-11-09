@@ -25,25 +25,39 @@ pub fn owner_addressed(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
             if *epoch != s.g.epoch { row(e, "r4b_no_session"); reply(e, *r, Answer::Err(Fault::NoSession)); return; }
             match find_open(s, key) { Some(id) => run_on(s, id, i, e), None => { row(e, "xfer_done"); row(e, "boundary_transfer_selector"); reply(e, *r, Answer::Err(Fault::NotFound)); } }
         }
-        Input::SelectRow { epoch, model, row_id, retry, source, outbox_min, reply: r } => {
+        Input::SelectRow { epoch, model, row_id, retry, source: _, outbox_min, reply: r, version } => {
             if *epoch != s.g.epoch { row(e, "r4b_no_session"); reply(e, *r, Answer::Err(Fault::NoSession)); return; }
-            let mut best: Option<(OpId, TransferId, TransferKey)> = None;
+            if s.g.selecting.remove(r).is_some() { row(e, "xfer_select_replaced"); }
+            let mut best: Option<(OpId, TransferId)> = None;
             for t in s.transfers.values() {
                 if t.key.model == *model && t.key.row_id == *row_id {
                     if let Some(op) = t.op_id {
-                        if outbox_min.map(|m| op <= m).unwrap_or(true) && best.as_ref().map(|b| op < b.0).unwrap_or(true) { best = Some((op, t.id, t.key.clone())); }
+                        if outbox_min.map(|m| op <= m).unwrap_or(true) && best.as_ref().map(|b| op < b.0).unwrap_or(true) { best = Some((op, t.id)); }
                     }
                 }
             }
-            row(e, "boundary_selector_without_action");
             match best {
-                Some((_, id, key)) => {
-                    let inner = if *retry { Input::Retry { epoch: *epoch, key, source: source.clone(), reply: *r } } else { Input::Discard { epoch: *epoch, key, reply: *r } };
-                    run_on(s, id, &inner, e);
+                Some((_, id)) => {
+                    row(e, "xfer_select_transfer");
+                    s.g.selecting.insert(*r, (id, *retry));
+                    e.push(Effect::Outbox(OutboxEffect::SelectedTransfer { reply: *r, transfer_id: id, version: *version }));
                 }
                 None => {
-                    if outbox_min.is_some() { e.push(Effect::Outbox(OutboxEffect::SelectedOutbox { reply: *r })); } else { e.push(Effect::Outbox(OutboxEffect::SelectedNone { reply: *r })); }
+                    row(e, "boundary_selector_without_action");
+                    if outbox_min.is_some() { e.push(Effect::Outbox(OutboxEffect::SelectedOutbox { reply: *r, version: *version })); } else { e.push(Effect::Outbox(OutboxEffect::SelectedNone { reply: *r, version: *version })); }
                 }
+            }
+        }
+        Input::SelectConfirmed { reply: r } => {
+            match s.g.selecting.remove(r) {
+                Some((transfer_id, retry)) => {
+                    row(e, "xfer_select_confirmed");
+                    if let Some(key) = s.transfers.get(&transfer_id).map(|t| t.key.clone()) {
+                        let inner = if retry { Input::Retry { epoch: s.g.epoch, key, source: None, reply: *r } } else { Input::Discard { epoch: s.g.epoch, key, reply: *r } };
+                        run_on(s, transfer_id, &inner, e);
+                    }
+                }
+                None => row(e, "xfer_select_confirmed_stray"),
             }
         }
         Input::Outcome { transfer_id, saved, reply: r, .. } => {

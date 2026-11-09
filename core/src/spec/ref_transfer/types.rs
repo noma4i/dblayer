@@ -126,7 +126,8 @@ pub enum Input {
     Cancel { epoch: u64, key: TransferKey, reply: ReplyId },
     Retry { epoch: u64, key: TransferKey, source: Option<Supplied>, reply: ReplyId },
     Discard { epoch: u64, key: TransferKey, reply: ReplyId },
-    SelectRow { epoch: u64, model: String, row_id: String, retry: bool, source: Option<Supplied>, outbox_min: Option<OpId>, reply: ReplyId },
+    SelectRow { epoch: u64, model: String, row_id: String, retry: bool, source: Option<Supplied>, outbox_min: Option<OpId>, reply: ReplyId, version: u64 },
+    SelectConfirmed { reply: ReplyId },
     SlotFreed,
     Online(bool),
     PowerSaving(bool),
@@ -171,8 +172,9 @@ pub enum OutboxEffect {
     Submit { op_id: OpId, origin: OpOrigin },
     Discard { op_id: OpId, reply_to_transfer: TransferId },
     RetryTransfer { target: Target },
-    SelectedOutbox { reply: ReplyId },
-    SelectedNone { reply: ReplyId },
+    SelectedOutbox { reply: ReplyId, version: u64 },
+    SelectedNone { reply: ReplyId, version: u64 },
+    SelectedTransfer { reply: ReplyId, transfer_id: TransferId, version: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -290,6 +292,7 @@ pub struct G {
     pub file_slots: u32, pub multipart_threshold: u64, pub part_size: u64,
     pub subs: BTreeMap<TransferId, BTreeSet<StreamId>>, pub key_subs: BTreeMap<TransferKey, BTreeSet<StreamId>>,
     pub deferred: Vec<(String, Vec<TransferId>, Vec<Op>)>, pub post: Vec<Post>, pub round_needed: Vec<TransferId>, pub slots_used: u32, pub drained: bool, pub quiet: bool, pub saved_outcomes: BTreeMap<TransferId, BTreeMap<u64, Outcome>>,
+    pub selecting: BTreeMap<ReplyId, (TransferId, bool)>,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +307,7 @@ impl State {
                 next_transfer: 1, next_attempt: 1, next_batch: 1, next_group: 1, next_seq: 1, batches: BTreeMap::new(),
                 file_slots, multipart_threshold, part_size, subs: BTreeMap::new(), key_subs: BTreeMap::new(),
                 deferred: Vec::new(), post: Vec::new(), round_needed: Vec::new(), slots_used: 0, drained: false, quiet: false, saved_outcomes: BTreeMap::new(),
+                selecting: BTreeMap::new(),
             },
             transfers: BTreeMap::new(),
         }
