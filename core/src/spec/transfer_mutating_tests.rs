@@ -194,3 +194,14 @@ fn xfer_mutating_other() {
     ]);
     twin.ignores(id, inputs);
 }
+
+#[test]
+fn xfer_mutation_outcome_stale_cycle() {
+    let mut twin = Twin::new();
+    let id = twin.mutating(KEY);
+    let current = twin.t(id).cycle_id;
+    let out = twin.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id: current + 1, intent_removed: true, outcome: confirmed(3) });
+    assert_eq!((twin.stage(id), out.batches.len(), out.all_replies()), (TransferStage::Mutating, 0, 0), "an outcome of another cycle is a foreign input (R2)");
+    let out = twin.mutation_outcome(KEY, confirmed(3));
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+}
