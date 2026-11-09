@@ -18,12 +18,32 @@ pub use types::*;
 
 pub fn step(s: &State, i: &Input) -> (State, Vec<Effect>) {
     let mut s = s.clone();
+    let before = unfinished_per_row(&s);
     let mut e = Vec::new();
     inner(&mut s, i, &mut e);
+    bump_changed_rows(&mut s, &before);
     (s, e)
 }
 
 fn done_count(s: &State) -> usize { s.ops.values().filter(|o| o.stage == Stage::Done).count() }
+
+fn unfinished_per_row(s: &State) -> std::collections::BTreeMap<(String, String), usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for op in s.ops.values() {
+        if op.stage != Stage::Done { *counts.entry((op.model.clone(), op.row_id.clone())).or_insert(0) += 1; }
+    }
+    counts
+}
+
+/// A change to the set of unfinished operations of a row (submit, operation to Done, RowRemoved, restore landing) raises its version.
+fn bump_changed_rows(s: &mut State, before: &std::collections::BTreeMap<(String, String), usize>) {
+    let after = unfinished_per_row(s);
+    let mut rows: std::collections::BTreeSet<(String, String)> = before.keys().cloned().collect();
+    rows.extend(after.keys().cloned());
+    for key in rows {
+        if before.get(&key).copied().unwrap_or(0) != after.get(&key).copied().unwrap_or(0) { bump_selection_row(s, &key.0, &key.1); }
+    }
+}
 
 pub(crate) fn inner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
     let queued_before: Vec<OpId> = s.ops.values().filter(|o| o.stage == Stage::Queued).map(|o| o.id).collect();
@@ -215,7 +235,7 @@ fn route(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
         Input::Response { op_id, .. } | Input::TransportError { op_id, .. } | Input::Dropped { op_id, .. } | Input::Tick { op_id, .. } => addressed(s, *op_id, i, e),
         Input::Retry { .. } | Input::Discard { .. } => calls::retry_discard(s, i, e),
         Input::Outcome { receipt } => calls::outcome(s, receipt, e),
-        Input::SelectedOutbox { .. } | Input::SelectedNone { .. } => calls::selected(s, i, e),
+        Input::SelectedOutbox { .. } | Input::SelectedNone { .. } | Input::SelectedTransfer { .. } => calls::selected(s, i, e),
         Input::Online(b) => {
             s.online = Some(*b);
             if s.phase == Phase::Restoring { row(e, "out_restoring_online"); } else { broadcast(s, i, e); }

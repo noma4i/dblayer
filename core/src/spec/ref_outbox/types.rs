@@ -140,8 +140,9 @@ pub enum Input {
     Retry { epoch: Epoch, sel: Sel, reply_to: Addr },
     Discard { epoch: Epoch, sel: Sel, reply_to: Addr },
     Outcome { receipt: Receipt },
-    SelectedOutbox { reply: u64, action: String },
-    SelectedNone { reply: u64 },
+    SelectedOutbox { reply: u64, action: String, version: u64 },
+    SelectedNone { reply: u64, version: u64 },
+    SelectedTransfer { reply: u64, transfer_id: u64, version: u64 },
     Online(bool),
     EpochEnded(Epoch),
     ModelsReset { models: Vec<String>, generations: BTreeMap<String, u64> },
@@ -229,7 +230,9 @@ pub struct State {
     pub closing: bool,
     pub drained: bool,
     pub pending_requests: BTreeSet<u64>,
-    pub selects: BTreeMap<u64, (SelKind, Sel, Addr, Epoch)>,
+    pub selects: BTreeMap<u64, (SelKind, Sel, Addr, Epoch, u64)>,
+    pub selection_clock: u64,
+    pub selection_versions: BTreeMap<(String, String), u64>,
     pub pending_lost: bool,
     pub local: BTreeMap<u64, LStage>,
     pub local_expiry: BTreeSet<u64>,
@@ -243,7 +246,7 @@ impl State {
             phase: Phase::NoOwner, epoch: None, epoch_live: false, queue_failed: false, online: None, now: 0,
             generations: BTreeMap::new(), declared: BTreeSet::new(), ops: BTreeMap::new(), next_seq: 1, next_request: 1,
             held: Vec::new(), aliases: BTreeMap::new(), closing: false, drained: false, pending_requests: BTreeSet::new(),
-            selects: BTreeMap::new(), pending_lost: false, local: BTreeMap::new(), local_expiry: BTreeSet::new(), local_closing: false, local_drained: false,
+            selects: BTreeMap::new(), selection_clock: 0, selection_versions: BTreeMap::new(), pending_lost: false, local: BTreeMap::new(), local_expiry: BTreeSet::new(), local_closing: false, local_drained: false,
         }
     }
     pub fn epoch_is(&self, e: Epoch) -> bool { self.epoch_live && self.epoch == Some(e) }

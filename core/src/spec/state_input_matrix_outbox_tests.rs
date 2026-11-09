@@ -73,7 +73,7 @@ pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
         Effect::Session { what, .. } if what.starts_with("Cancel") => Some("cancel".to_string()),
         Effect::Session { .. } => None,
         Effect::Schedule { .. } => Some("schedule".to_string()),
-        Effect::Transfer { what, .. } if what.starts_with("SelectRow") => None,
+        Effect::Transfer { what, .. } if what.starts_with("SelectRow") || what.starts_with("SelectConfirmed") => None,
         Effect::Transfer { what, .. } => { let inner = what.strip_prefix("MutationOutcome(").and_then(|rest| rest.strip_suffix(')')).unwrap_or(what); Some(format!("transfer {}", outcome_token(inner))) }
         Effect::Reply { what, .. } => Some(format!("reply {what}")),
         Effect::Drained(which) if *which == "LocalWrites" => None,
@@ -88,6 +88,7 @@ fn own_answer(answer: &OutboxAnswer) -> String {
         OutboxAnswer::Outcome(outcome) => format!("Outcome:{}", outcome_token(&format!("{outcome:?}"))),
         OutboxAnswer::Ok => "Ok".into(),
         OutboxAnswer::Err(fault) => format!("Err({})", format!("{fault:?}").split(['(', ' ', '{']).next().unwrap_or("")),
+        OutboxAnswer::Transfer { .. } => "Transfer".into(),
         other => format!("{other:?}").chars().take(24).collect(),
     }
 }
@@ -136,8 +137,9 @@ impl Reference {
         let mut effects = self.feed(input);
         let asked: Vec<u64> = self.state.selects.keys().copied().collect();
         for reply in asked {
+            let version = self.state.selects.get(&reply).map(|entry| entry.4).unwrap_or(0);
             let open = self.state.ops.values().find(|op| op.row_id == "r" && op.stage != RStage::Done).map(|op| op.action.clone());
-            effects.extend(self.feed(match open { Some(action) => RIn::SelectedOutbox { reply, action }, None => RIn::SelectedNone { reply } }));
+            effects.extend(self.feed(match open { Some(action) => RIn::SelectedOutbox { reply, action, version }, None => RIn::SelectedNone { reply, version } }));
         }
         effects
     }

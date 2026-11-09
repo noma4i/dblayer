@@ -154,8 +154,9 @@ pub fn retry_discard(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
             if action.is_none() {
                 row(e, "boundary_selector_without_action");
                 let key = s.selects.keys().next_back().copied().unwrap_or(0) + 1;
-                s.selects.insert(key, (kind, sel.clone(), to, epoch));
-                e.push(Effect::Transfer { op: key, what: "SelectRow{model,row,outbox_min,kind,reply}" });
+                let version = selection_version(s, model, row_id);
+                s.selects.insert(key, (kind, sel.clone(), to, epoch, version));
+                e.push(Effect::Transfer { op: key, what: "SelectRow{model,row,outbox_min,kind,reply,version}" });
                 return;
             }
             row(e, "boundary_selector_orders");
@@ -181,20 +182,40 @@ fn dispatch_to(s: &mut State, target: Option<OpId>, kind: SelKind, to: Addr, i: 
 }
 
 pub fn selected(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
+    let (r, version) = match i {
+        Input::SelectedOutbox { reply, version, .. } | Input::SelectedNone { reply, version, .. } | Input::SelectedTransfer { reply, version, .. } => (*reply, *version),
+        _ => return,
+    };
+    let (kind, sel, to, epoch, _) = match s.selects.get(&r) { Some(x) => x.clone(), None => { row(e, "rule_R2_foreign"); return; } };
+    let (model, row_id) = match &sel { Sel::Row { model, row_id, .. } => (model.clone(), row_id.clone()), Sel::Op(_) => { row(e, "rule_R2_foreign"); return; } };
+    if version != selection_version(s, &model, &row_id) {
+        row(e, "out_selector_version");
+        let current = selection_version(s, &model, &row_id);
+        if let Some(entry) = s.selects.get_mut(&r) { entry.4 = current; }
+        e.push(Effect::Transfer { op: r, what: "SelectRow{model,row,outbox_min,kind,reply,version}" });
+        return;
+    }
+    s.selects.remove(&r);
     match i {
-        Input::SelectedOutbox { reply: r, action } => {
-            let (kind, sel, to, epoch) = match s.selects.remove(r) { Some(x) => x, None => { row(e, "rule_R2_foreign"); return; } };
+        Input::SelectedTransfer { .. } => {
+            row(e, "out_selector_transfer_confirmed");
+            e.push(Effect::Transfer { op: r, what: "SelectConfirmed{reply}" });
+        }
+        Input::SelectedNone { .. } => {
             row(e, "boundary_selector_without_action");
-            let (model, row_id) = match &sel { Sel::Row { model, row_id, .. } => (model.clone(), row_id.clone()), Sel::Op(_) => { row(e, "rule_R2_foreign"); return; } };
+            reply(e, to, 0, if let Addr::Transfer(_) = to { "DiscardOutcome{Err(NotFound)}" } else { "Err(NotFound)" });
+        }
+        Input::SelectedOutbox { action, .. } => {
+            row(e, "boundary_selector_without_action");
             let target = address(s, &model, &row_id, &Some(action.clone()));
+            if kind == SelKind::Retry && target.and_then(|id| s.ops.get(&id)).map(|op| op.origin != OpOrigin::Api).unwrap_or(false) {
+                reply(e, to, 0, "Transfer");
+                return;
+            }
             let sel2 = Sel::Row { model, row_id, action: Some(action.clone()) };
             let input = match kind { SelKind::Retry => Input::Retry { epoch, sel: sel2, reply_to: to }, SelKind::Discard => Input::Discard { epoch, sel: sel2, reply_to: to } };
             dispatch_to(s, target, kind, to, &input, e);
         }
-        Input::SelectedNone { reply: r } => match s.selects.remove(r) {
-            Some((_, _, to, _)) => { row(e, "boundary_selector_without_action"); reply(e, to, 0, if let Addr::Transfer(_) = to { "DiscardOutcome{Err(NotFound)}" } else { "Err(NotFound)" }); }
-            None => row(e, "rule_R2_foreign"),
-        },
         _ => {}
     }
 }

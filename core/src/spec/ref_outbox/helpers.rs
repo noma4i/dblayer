@@ -2,6 +2,17 @@
 
 use super::types::*;
 
+/// The row-queue version: a counter of the changes to the set of unfinished operations of the row (D-259).
+pub fn selection_version(s: &State, model: &str, row_id: &str) -> u64 {
+    let row_id = s.aliases.get(&(model.to_string(), row_id.to_string())).map(|r| r.as_str()).unwrap_or(row_id);
+    s.selection_versions.get(&(model.to_string(), row_id.to_string())).copied().unwrap_or(0)
+}
+
+pub fn bump_selection_row(s: &mut State, model: &str, row_id: &str) {
+    s.selection_clock += 1;
+    s.selection_versions.insert((model.to_string(), row_id.to_string()), s.selection_clock);
+}
+
 pub fn row_free(s: &State, op: &Op) -> bool {
     !s.ops.values().any(|o| o.id != op.id && o.model == op.model && o.row_id == op.row_id && o.id < op.id && o.stage != Stage::Done)
 }
