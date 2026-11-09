@@ -485,17 +485,17 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn interrupt_all(&mut self, fx: &mut Effects<Outbox>) {
+    pub(super) fn interrupt_all(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
             let Some(stage) = self.stage_of(op_id) else { continue };
             let transfer_ids: Vec<_> = self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect()).unwrap_or_default();
-            if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Interrupted), fx); }
+            if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(fault.clone()), fx); }
             if stage == Stage::Sending {
                 let req_id = self.ops[&op_id].request_id;
                 if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id }))); }
             }
-            self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
+            self.answer_waiters(op_id, &OutboxAnswer::Err(fault.clone()), fx);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::Done;
                 operation.outcome = Some(OutboxOutcome::Interrupted);
@@ -556,9 +556,9 @@ impl OutboxState {
                     self.generation.insert(model, reset.generation);
                 }
             }
-            OutboxInput::EpochEnded(_) => self.interrupt_all(fx),
+            OutboxInput::EpochEnded(_) => self.interrupt_all(Fault::SessionEnded, fx),
             OutboxInput::Closing => {
-                self.interrupt_all(fx);
+                self.interrupt_all(Fault::Closed, fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }
