@@ -17,6 +17,6 @@ fn rejects_paths_that_socket_clients_would_rewrite() {
     for path in ["/a/../cable", "/a/./cable", "/a/%2e%2e/cable", "/a/%", "/a/é"] {
         let mut config = config();
         config.endpoints.cable = path.into();
-        assert!(config.validate().is_err(), "accepted {path}");
+        assert!(matches!(config.validate(), Err(TransportError::Decode(_))), "accepted {path}");
     }
 }

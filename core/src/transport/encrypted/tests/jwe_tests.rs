@@ -53,7 +53,7 @@ fn a_response_is_refused_when_key_header_or_ciphertext_do_not_match() {
         (response_ok(), "short"),
     ];
     for (token, response_key) in cases {
-        assert!(open_response(token, response_key).is_err(), "{token}");
+        assert!(matches!(open_response(token, response_key), Err(crate::transport::encrypted::jwe::JweError::Invalid(_))), "{token}");
     }
 }
 

@@ -69,7 +69,7 @@ fn ids(requests: &[Value]) -> Vec<Value> {
 async fn local_413_after_apq_miss_leaves_the_next_sequence_available() {
     let rig = Rig::signed_in().await;
     let transport = rig.transport();
-    assert!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await.is_err());
+    assert!(matches!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await, Err(TransportError::RequestTooLarge { .. })));
     assert_eq!(documents(&rig.graphql_requests()), [false]);
     assert_eq!(rig.pending_sequence(), None);
     transport.mutate(request(WRITE)).await.unwrap();

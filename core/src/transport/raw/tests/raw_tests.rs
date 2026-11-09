@@ -93,7 +93,7 @@ fn the_encrypted_call_joins_origin_and_path_and_refuses_a_path_that_leaves_the_o
     assert_eq!(call.headers.get("Content-Type").map(String::as_str), Some("application/jose"));
     assert_eq!(call.headers.get("Accept").map(String::as_str), Some(""));
     for path in ["//evil.test/x", "/a?x=1", "/a#f", "api/session", "/a/../b", "/a b"] {
-        assert!(encrypted_call("https://api.test", path, String::new(), (NetworkPurpose::Standard, crate::transport::WireIds::bootstrap()), HashMap::new()).is_err(), "{path}");
+        assert!(matches!(encrypted_call("https://api.test", path, String::new(), (NetworkPurpose::Standard, crate::transport::WireIds::bootstrap()), HashMap::new()), Err(TransportError::Decode(_))), "{path}");
     }
 }
 
@@ -101,6 +101,6 @@ fn the_encrypted_call_joins_origin_and_path_and_refuses_a_path_that_leaves_the_o
 fn the_graphql_endpoint_needs_an_http_scheme_and_a_host() {
     assert!(graphql_endpoint("https://api.test/graphql").is_ok());
     for endpoint in ["ftp://api.test", "https://", "https:///graphql", "api.test/graphql", "https://api test"] {
-        assert!(graphql_endpoint(endpoint).is_err(), "{endpoint}");
+        assert!(matches!(graphql_endpoint(endpoint), Err(TransportError::Decode(_))), "{endpoint}");
     }
 }

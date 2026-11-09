@@ -95,7 +95,8 @@ async fn feed_open_cable_close_orders() {
             cancel.cancel();
         }
         let outcome = within(&mut connecting).await;
-        assert!(outcome.is_err(), "{order}: the connection did not open");
+        let refused = if order == "peer ends the handshake" { matches!(outcome, Err(TransportError::Network(_))) } else { matches!(outcome, Err(TransportError::Interrupted(_))) };
+        assert!(refused, "{order}: the connection did not open with the cause of the order");
         assert_eq!(counts(&platform), (1, 0), "{order}: 1 close, 0 cancel");
     }
 }

@@ -92,7 +92,8 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
         match case {
             "missing" => { assert_eq!(call.unwrap(), None); }
             "valid" => { assert_eq!(call.unwrap(), Some(("/graphql".into(), json!({})))); }
-            _ => { assert!(call.is_err(), "{case}"); }
+            "corrupt" | "partial_owner" => { assert!(matches!(call, Err(TransportError::Decode(_))), "{case}"); }
+            _ => { assert!(matches!(call, Err(TransportError::Storage(_))), "{case}"); }
         }
     }
 }
@@ -130,6 +131,6 @@ fn cable_url_is_built_by_the_core() {
     let path = config().endpoints.cable;
     assert_eq!(at("https://api.example.com/").unwrap(), format!("wss://api.example.com{path}"));
     assert_eq!(at("http://localhost:3000").unwrap(), format!("ws://localhost:3000{path}"));
-    assert!(at("ftp://example.com").is_err(), "only an HTTP origin has a cable");
+    assert!(matches!(at("ftp://example.com"), Err(TransportError::Decode(_))), "only an HTTP origin has a cable");
 }
 

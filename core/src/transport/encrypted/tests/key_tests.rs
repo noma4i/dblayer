@@ -13,6 +13,6 @@ fn a_key_is_trusted_only_with_the_matching_pin_and_at_least_3072_bits() {
         ("AAAA", pin()),
     ];
     for (key, pin) in cases {
-        assert!(ServerKey::parse(key, pin).is_err(), "{key:.12} {pin:.12}");
+        assert!(matches!(ServerKey::parse(key, pin), Err(crate::transport::encrypted::key::KeyError::Untrusted(_))), "{key:.12} {pin:.12}");
     }
 }

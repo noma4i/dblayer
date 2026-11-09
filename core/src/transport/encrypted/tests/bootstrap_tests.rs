@@ -192,7 +192,7 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
     for version in ["", "1", "1.2.3.4", "1..2", "1.2-beta", "1.2 ", "\u{0661}.\u{0662}"] {
         assert!(matches!(fetch_with(&configuration(), AppPlatform::Ios, version, None, http.clone(), &clock).await, Err(TransportError::Config { code: ConfigCode::InvalidRequest, .. })), "{version}");
     }
-    assert!(fetch_with(&configuration(), AppPlatform::Ios, "1.2", Some(&"x".repeat(33)), http.clone(), &clock).await.is_err());
+    assert!(matches!(fetch_with(&configuration(), AppPlatform::Ios, "1.2", Some(&"x".repeat(33)), http.clone(), &clock).await, Err(TransportError::Config { code: ConfigCode::InvalidRequest, .. })));
     assert_eq!(http.calls.load(Ordering::SeqCst), 0);
     for platform in [AppPlatform::Ios, AppPlatform::Android] {
         assert!(fetch_with(&configuration(), platform, "1.2", None, http.clone(), &clock).await.is_ok());
