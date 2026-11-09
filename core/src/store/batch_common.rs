@@ -32,6 +32,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             if let Some(result) = writer.upsert(model, &joined, true, false)? { results.push(result); }
         }
         StoreOp::StaleFamilies { families } => results.push(writer.stale_families(families)?),
+        StoreOp::MarkStale { .. } => {}
         StoreOp::Numbers { model, row_id, writes } => {
             if let Some(result) = writer.numbers(model, row_id, writes)? { results.push(result); }
         }

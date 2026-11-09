@@ -112,3 +112,25 @@ fn window_key_carries_direction() {
     assert_eq!(window_key("inbox", PageDirection::Forward), "inbox:forward");
     assert_eq!(window_key("inbox", PageDirection::Backward), "inbox:backward");
 }
+
+#[test]
+fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::{StoreBatch, StoreOp};
+    let (store, _) = booted_store();
+    let (messages, items) = (key("messages", "thread", "1"), key("items", "list", "1"));
+    store.save_window(&window(&messages)).unwrap();
+    store.save_window(&window(&items)).unwrap();
+    let write = |models: Vec<String>, keys: Vec<String>| {
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys }] };
+        store.write_batch(&batch, store.files(), store.pointer_guards(), None).unwrap();
+    };
+    write(vec!["messages".into()], Vec::new());
+    assert_eq!(store.stale_window_keys().unwrap(), vec![messages.clone()], "a model marks the windows of its lists");
+    write(Vec::new(), vec![items.clone()]);
+    let mut stale = store.stale_window_keys().unwrap();
+    stale.sort();
+    let mut wanted = vec![messages, items];
+    wanted.sort();
+    assert_eq!(stale, wanted, "a key marks its own window");
+}

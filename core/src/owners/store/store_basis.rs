@@ -26,6 +26,7 @@ impl StoreBatch {
                     effect_models(&mut models, effects);
                 }
                 StoreOp::Planned { effects } => effect_models(&mut models, effects),
+                StoreOp::MarkStale { models: marked, .. } => models.extend(marked.iter().cloned()),
                 StoreOp::Upload { row, .. } => key_model(&mut models, &row.key),
                 StoreOp::RemoveUpload { key } | StoreOp::UploadRoundError { key, .. } | StoreOp::UploadShown { key, .. } | StoreOp::UploadStaged { key } | StoreOp::UploadOrphan { key, .. } => key_model(&mut models, key),
                 _ => {}
