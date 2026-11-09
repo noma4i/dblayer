@@ -20,7 +20,7 @@ use crate::server_contract::{Admission, Contract, Request};
 const STEP_SECS: u64 = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Reply { Ok, Temp, Refuse, NotFound }
+pub(super) enum Reply { Ok, Temp, Refuse }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind { Mutate = 0, Put = 1, Query = 2 }
@@ -79,8 +79,6 @@ impl Server {
     pub fn seen(&self) -> Vec<Seen> { self.state.lock().unwrap().seen.clone() }
     pub fn count(&self, operation: &str) -> usize { self.seen().iter().filter(|seen| seen.operation == operation).count() }
     pub fn mutations(&self) -> usize { self.seen().iter().filter(|seen| seen.kind == Kind::Mutate).count() }
-    pub fn cancelled(&self) -> usize { self.state.lock().unwrap().cancelled }
-    pub fn overlapped(&self) -> bool { self.state.lock().unwrap().overlap }
     pub fn held(&self, kind: Kind) -> usize {
         let mut state = self.state.lock().unwrap();
         state.held[kind as usize].retain(|(_, sender)| !sender.is_closed());
@@ -94,22 +92,6 @@ impl Server {
         let sender = sender.expect("no held request to answer").1;
         drop(state);
         crate::lock::effect(|| { let _ = sender.send(reply); });
-    }
-
-    pub fn answer_text(&self, text: &str, reply: Reply) {
-        let mut state = self.state.lock().unwrap();
-        let held = &mut state.held[Kind::Mutate as usize];
-        held.retain(|(_, sender)| !sender.is_closed());
-        let position = held.iter().position(|(held_text, _)| held_text == text).unwrap_or_else(|| panic!("no held request for {text}"));
-        let sender = held.remove(position).unwrap().1;
-        drop(state);
-        crate::lock::effect(|| { let _ = sender.send(reply); });
-    }
-
-    pub fn holds_text(&self, text: &str) -> bool {
-        let mut state = self.state.lock().unwrap();
-        state.held[Kind::Mutate as usize].retain(|(_, sender)| !sender.is_closed());
-        state.held[Kind::Mutate as usize].iter().any(|(held_text, _)| held_text == text)
     }
 
     /// Kind B: waits for the signal of the server, which it gives whenever a request arrives, is held or is dropped.
@@ -189,7 +171,6 @@ impl FakeTransport for Wire {
             Reply::Ok => Ok(answer_of(&request.operation_name, &variables, self.0.next()).to_string()),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
             Reply::Refuse => Err(DbError::Graphql { messages: vec!["refused".into()], extensions: None }),
-            Reply::NotFound => Err(DbError::Graphql { messages: vec!["gone".into()], extensions: None }),
         }
     }
     async fn put(&self, url: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
@@ -198,7 +179,6 @@ impl FakeTransport for Wire {
             Reply::Ok => Ok(PutReply { status: 200, etag: Some(format!("etag-{}", self.0.next())) }),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
             Reply::Refuse => Err(DbError::Http { status: 400, detail: "refused".into() }),
-            Reply::NotFound => Err(DbError::Http { status: 404, detail: "gone".into() }),
         }
     }
 }
@@ -236,7 +216,6 @@ impl FakeHttp for Wire {
                     Reply::Ok => answer_of(&name, &variables, self.0.next()),
                     Reply::Temp => return Err(DbError::Network { detail: "temporary".into() }),
                     Reply::Refuse => json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
-                    Reply::NotFound => json!({"errors": [{"message": "gone", "extensions": {"code": "NOT_FOUND"}}]}),
                 };
                 self.0.state.lock().unwrap().contract.settle(&contract_request, answer.clone());
                 answer
@@ -293,7 +272,7 @@ pub fn upload_operations() -> UploadOperations {
     }
 }
 
-pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock> }
+pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server> }
 
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -330,7 +309,7 @@ impl Rig {
         db.register_operations(OPERATIONS.into()).await.unwrap();
         db.set_online(true).unwrap();
         if !signed { within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap(); }
-        Rig { db, server, clock }
+        Rig { db, server }
     }
 
     pub fn epoch(&self) -> u64 { self.db.session_epoch() }
@@ -353,15 +332,6 @@ impl Rig {
     pub async fn row(&self, id: &str) -> Option<WireRow> { within(self.db.read_row(self.epoch(), "Moment".into(), id.into())).await.unwrap() }
 
     pub async fn outcome(&self, receipt: &WireOperationReceipt) -> WireOperationOutcome { within(self.db.outcome(receipt.clone())).await.unwrap() }
-
-    pub async fn pending(&self, receipt: &WireOperationReceipt) -> bool {
-        self.quiet().await;
-        tokio::select! {
-            biased;
-            _ = self.db.outcome(receipt.clone()) => false,
-            () = std::future::ready(()) => true,
-        }
-    }
 }
 
 /// The credential of a file database outlives its reopen, as the credential store of the app does.
@@ -391,15 +361,6 @@ impl Rig {
 struct Steps { count: AtomicU64, label: Mutex<String> }
 
 thread_local! { static STEPS: RefCell<Option<Arc<Steps>>> = const { RefCell::new(None) }; }
-
-pub fn step(label: &str) {
-    STEPS.with(|steps| {
-        if let Some(steps) = steps.borrow().as_ref() {
-            *steps.label.lock().unwrap() = label.to_string();
-            steps.count.fetch_add(1, Ordering::SeqCst);
-        }
-    });
-}
 
 pub fn bounded<Fut: std::future::Future<Output = ()>>(name: &'static str, make: impl FnOnce() -> Fut + Send + 'static) {
     let steps = Arc::new(Steps { count: AtomicU64::new(0), label: Mutex::new("start".into()) });

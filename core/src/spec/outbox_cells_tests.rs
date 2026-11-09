@@ -2,7 +2,7 @@
 //! the swap of a temporary id and the unsent `create` cancelled by a `destroy`. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox_cells::{Policy, Reason as RReason, St, Why as RWhy};
+use super::outbox_harness::{Policy, RReason, St, RWhy};
 use crate::owners::contract::{ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome};
 

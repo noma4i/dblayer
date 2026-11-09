@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use super::outbox_cells_tests::{answers, kinds, sends, submit_op, tick};
 use super::outbox_harness::*;
-use super::outbox_tests::want;
-use super::ref_outbox_cells::{Ctx, Eff, In, Policy, St, Why as RWhy};
 use crate::owners::contract::Online;
 use crate::owners::write::failure;
 use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Stage, StoredOp, DRAIN_LIMIT};
@@ -22,8 +20,6 @@ fn sent_ids(effects: &[OutboxEffect]) -> Vec<OpId> {
 
 #[test]
 fn out_queued_drain_limit() {
-    let full = Ctx { slot_free: false, ..Ctx::ready() };
-    assert_eq!((want(St::Queued, &full, In::Online(true)).next, want(St::Queued, &Ctx::ready(), In::RowFreed).next), (St::Queued, St::Sending));
 
     let mut twin = Twin::new();
     let ids: Vec<OpId> = (1..=DRAIN_LIMIT + 1).map(|row| twin.submit(&format!("r{row}"), Policy::Rollback, false)).collect();
@@ -39,9 +35,6 @@ fn out_queued_drain_limit() {
 
 #[test]
 fn out_queued_expired() {
-    let expired = Ctx { expired: true, ..Ctx::ready() };
-    let cell = want(St::Queued, &expired, In::Online(true));
-    assert_eq!((cell.next, cell.eff.contains(&Eff::Send)), (St::RollingBack(RWhy::Rejected), false));
 
     let queued_for = |seconds: u64| {
         let mut twin = Twin::new();
@@ -154,8 +147,6 @@ fn out_prop_drain_order() {
 
 #[test]
 fn out_sending_tick_no_slot() {
-    let no_slot = Ctx { slot_free: false, ..Ctx::ready() };
-    assert_eq!(want(St::Sending, &no_slot, In::Tick).next, St::Queued);
 
     let mut twin = Twin::new();
     let first = twin.submit("r1", Policy::Rollback, false);

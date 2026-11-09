@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use super::outbox_harness::Twin;
 use super::ref_outbox::{step, Batch, Input as RIn, Kind, LandFacts, OpSpec, OpOrigin, Phase, Resp, SendKind, State, SubmitFlags};
-use super::ref_outbox_cells::Policy;
+use super::outbox_harness::Policy;
 use crate::owners::write::outbox::OutboxInput;
 use crate::test_matrix::Matrix;
 

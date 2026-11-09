@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the local writes (the owner `LocalWrites`) and the properties of the marks and the discards. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox_cells::{Policy, St};
+use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{Committed, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::write::outbox::{CommitKind, Fault, LocalWriteKind, OutboxAnswer, OutboxInput, OutboxOutcome};
 use crate::runtime::{Cause, Time};
@@ -174,7 +174,7 @@ fn out_prop_marks_durable() {
     twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
     let attempt = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
     assert_eq!(super::outbox_harness::sends_of(&attempt), 0, "no Mutate before the attempt is written");
-    let refused = twin.rejected(id, super::ref_outbox_cells::Reason::Storage);
+    let refused = twin.rejected(id, super::outbox_harness::RReason::Storage);
     assert_eq!(super::outbox_harness::sends_of(&refused), 0, "a refused write of the attempt starts no request");
     let again = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
     assert_eq!(super::outbox_harness::sends_of(&again), 0);

@@ -1,5 +1,5 @@
 use super::outbox_harness::*;
-use super::ref_outbox_cells::{Policy, St};
+use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{ErrorClass, Online, RequestId};
 use crate::owners::session::{AuthorOutcome, SessionError};
 use crate::owners::write::outbox::{OpId, OutboxInput, StoredOp};
@@ -57,7 +57,7 @@ fn out_discard_pending_owner_crash() {
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     discard(&mut twin);
     assert!(twin.store_text.contains("ReleasePendingOwner { request_id: 41 }"), "a pair restored from the base is released by the rollback batch: {}", twin.store_text);
-    twin.rejected(7, super::ref_outbox_cells::Reason::Storage);
+    twin.rejected(7, super::outbox_harness::RReason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");
     assert_eq!(releases(&twin.session_text), 0, "no Release without the commit");
 }

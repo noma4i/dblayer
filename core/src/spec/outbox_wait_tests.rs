@@ -2,7 +2,7 @@
 
 
 use std::collections::BTreeMap;
-use super::ref_outbox_cells::{In, Out, Policy, Reason as RReason, St};
+use super::outbox_harness::{In, Out, Policy, RReason, St};
 use crate::owners::contract::{Committed, ModelsReset, Online, RejectReason, ReplyId};
 
 

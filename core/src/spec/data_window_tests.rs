@@ -110,7 +110,7 @@ async fn open_models_with_http(models: String, path: String, server: Arc<Server>
     db.register_operations(OPERATIONS.into()).await.unwrap();
     db.set_online(true).unwrap();
     if !signed { within(db.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
-    Rig { db, server, clock }
+    Rig { db, server }
 }
 
 async fn load(rig: &Rig, name: &str) {

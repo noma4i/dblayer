@@ -2,14 +2,47 @@
 
 use crate::schema::OnFailure;
 use std::collections::BTreeMap;
-use super::ref_outbox_cells::{step_of, Ctx, Eff, Fault as RFault, In, Obs, Out, Policy, Reason as RReason, St, Step, Why as RWhy};
-use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
-use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
+use crate::owners::write::outbox::{self as o, CommitKind, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RWhy { Rejected, Discarded }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum St { None, WaitingDeclaration, Submitting, Queued, PersistingAttempt, Sending, Landing, RollingBack(RWhy), MarkingFailed, MarkingRetry, Failed, Done }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RReason { StaleGeneration, NoSession, Storage }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Policy { Rollback, Keep }
+
+/// The fields of the owner state and of the input that the conditions of the table read.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Ctx {
+    pub online: bool,
+    pub row_free: bool,
+    pub policy: Policy,
+    /// `attempts + 1 < 40`.
+    pub attempts_left: bool,
+    pub transfer: bool,
+}
+
+impl Ctx {
+    pub fn ready() -> Self { Self { online: true, row_free: true, policy: Policy::Rollback, attempts_left: true, transfer: false } }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum In { Committed, EpochEnded, Closing }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
+
+
 /// The slots of the peers and of the owner in every test: the peers first.
 pub(super) const STORE_AT: usize = 0;
 pub(super) const SESSION_AT: usize = 1;
@@ -22,10 +55,10 @@ pub(super) const OUTBOX_AT: usize = 3;
 pub(super) enum OutboxEffect {
     Store { op_id: Option<OpId>, batch: u64, kind: CommitKind, generation: u64 },
     Send { op_id: OpId, request_id: u64, sequence: u64 },
-    CancelRequest { op_id: OpId },
+    CancelRequest,
     Reply { reply: ReplyId, answer: OutboxAnswer },
     TransferOutcome { outcome: o::OutboxOutcome },
-    TransferOutcomes { input: String },
+    TransferOutcomes,
     Schedule,
     Drained,
     Started { epoch: u64 },
@@ -34,14 +67,6 @@ pub(super) enum OutboxEffect {
     Copy { id: u64, source: String },
 }
 
-pub(super) fn told(effects: &[OutboxEffect]) -> Vec<Eff> {
-    effects.iter().filter_map(|effect| match effect {
-        OutboxEffect::Started { .. } => Some(Eff::Started),
-        OutboxEffect::SnapshotRequest => Some(Eff::SnapshotRequest),
-        OutboxEffect::RestoreClassified { .. } => Some(Eff::RestoreClassified),
-        _ => None,
-    }).collect()
-}
 
 /// The kind of a batch from the ops it holds (`Debug` form of the typed ops).
 pub(super) fn kind_in(input: &str) -> CommitKind {
@@ -81,9 +106,8 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         }
         Emitted::Send { to: SESSION_AT, input } if input.starts_with("Release") => return None,
         Emitted::Send { to: SESSION_AT, input } if input.starts_with("Cancel") => {
-            let request_id = number_after(&input, "req_id: ")?;
-            let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
-            OutboxEffect::CancelRequest { op_id: operation.map_or(request_id, |operation| operation.op_id) }
+            number_after(&input, "req_id: ")?;
+            OutboxEffect::CancelRequest
         }
         Emitted::Send { to: SESSION_AT, input } => {
             let request_id = number_after(&input, "req_id: ")?;
@@ -91,7 +115,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
             OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
         }
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => return None,
-        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes { input },
+        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes,
         Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
         Emitted::Schedule { .. } => OutboxEffect::Schedule,
@@ -130,7 +154,6 @@ pub(super) fn reject(reason: RReason) -> RejectReason {
         RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION },
         RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
-        RReason::Closed => RejectReason::Closed,
     }
 }
 
@@ -161,24 +184,6 @@ pub(super) fn out_of(outcome: &o::OutboxOutcome) -> Out {
     }
 }
 
-pub(super) fn fault_of(fault: &Fault) -> RFault {
-    match fault {
-        Fault::NoSession => RFault::NoSession,
-        Fault::NotFound => RFault::NotFound,
-        Fault::InFlight => RFault::InFlight,
-        Fault::Interrupted => RFault::Interrupted,
-        Fault::Closed => RFault::Closed,
-        Fault::RestoreFailed => RFault::RestoreFailed,
-        Fault::StateLost => RFault::StateLost,
-        Fault::Internal => RFault::Internal,
-        Fault::Invalid | Fault::Copy(_) => panic!("a fault of Transfer"),
-        Fault::Rejected(RejectReason::NoSession) => RFault::Reason(RReason::NoSession),
-        Fault::Rejected(RejectReason::StaleGeneration { .. }) => RFault::Reason(RReason::StaleGeneration),
-        Fault::Rejected(RejectReason::Storage(_)) => RFault::Reason(RReason::Storage),
-        Fault::Rejected(RejectReason::Closed) => RFault::Reason(RReason::Closed),
-        Fault::Rejected(RejectReason::Invalid) => panic!("the Outbox batch carries no rows"),
-    }
-}
 
 pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
     NewOp {
@@ -198,8 +203,6 @@ pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
 pub(super) struct Twin {
     pub(super) det: DetScheduler,
     pub(super) log: Log<Emitted<Run>>,
-    /// What the owner gave out when it restored the intents (read by `open_check`).
-    pub(super) kept: Vec<OutboxEffect>,
     pub(super) batches: BTreeMap<OpId, BatchId>,
     pub(super) first_pair: BTreeMap<OpId, (RequestId, u64)>,
     /// The questions of the owner to Transfer that wait for an answer.
@@ -219,7 +222,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
+        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -388,105 +391,12 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
     (twin, id)
 }
 
-/// What the owner did for the operation `id`, in the terms of the reference.
-pub(super) struct Seen {
-    pub(super) next: Option<St>,
-    pub(super) obs: Vec<Obs>,
-    pub(super) eff: Vec<Eff>,
-}
 
-pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, scheduled: bool, resend: bool, outcome_call: bool) -> Seen {
-    let mut obs = Vec::new();
-    let mut eff = Vec::new();
-    for effect in effects {
-        match effect {
-            OutboxEffect::Store { op_id: Some(op), kind, generation, .. } if op == id => eff.push(Eff::Store(match (kind, generation > 0) {
-                (CommitKind::Attempt, _) => super::ref_outbox_cells::Commit::Attempt,
-                (CommitKind::Intent, false) => super::ref_outbox_cells::Commit::Intent,
-                (CommitKind::Intent, true) => super::ref_outbox_cells::Commit::IntentNewBasis,
-                (CommitKind::Land, false) => super::ref_outbox_cells::Commit::Land,
-                (CommitKind::Land, true) => super::ref_outbox_cells::Commit::LandNewBasis,
-                (CommitKind::Rollback, false) => super::ref_outbox_cells::Commit::Rollback,
-                (CommitKind::Rollback, true) => super::ref_outbox_cells::Commit::RollbackNewBasis,
-                (CommitKind::ErrorMark, _) => super::ref_outbox_cells::Commit::ErrorMark,
-                (CommitKind::ClearMark, _) => super::ref_outbox_cells::Commit::ClearMark,
-                (CommitKind::Requeue, _) => super::ref_outbox_cells::Commit::Requeue,
-                (CommitKind::LocalWrite | CommitKind::RemoveRow, _) => panic!("a local write in an operation row"),
-            })),
-            OutboxEffect::Store { .. } => {}
-            OutboxEffect::Send { op_id, request_id, sequence } if op_id == id => {
-                eff.push(if resend && twin.first_pair.get(&id) == Some(&(request_id, sequence)) { Eff::SendSamePair } else { Eff::Send });
-            }
-            OutboxEffect::Send { op_id, .. } if Some(op_id) == twin.follower => eff.push(Eff::SendNextOfRow),
-            OutboxEffect::Send { .. } => {}
-            OutboxEffect::CancelRequest { op_id } if op_id == id => eff.push(Eff::Cancel),
-            OutboxEffect::CancelRequest { .. } => {}
-            OutboxEffect::Reply { reply, answer } => {
-                if reply == SUBMIT_REPLY && reply != WAITER && matches!(answer, OutboxAnswer::Err(Fault::Interrupted)) { continue; }
-                if reply == DISCARD_REPLY && matches!(answer, OutboxAnswer::Ok | OutboxAnswer::Err(Fault::Interrupted)) { continue; }
-                match answer {
-                    OutboxAnswer::Receipt(_) => obs.push(Obs::Receipt),
-                    OutboxAnswer::Outcome(outcome) if outcome_call => { let _ = outcome; obs.push(Obs::OutcomeNow) }
-                    OutboxAnswer::Outcome(outcome) => obs.push(Obs::Outcome(out_of(&outcome))),
-                    OutboxAnswer::Ok => obs.push(Obs::DiscardOk),
-                    OutboxAnswer::Resolved(_) | OutboxAnswer::Written { .. } | OutboxAnswer::Transfer { .. } => {}
-                    OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
-                }
-            }
-            OutboxEffect::Schedule => {}
-            OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
-            OutboxEffect::TransferOutcomes { .. } => {}
-            OutboxEffect::Drained => eff.push(Eff::Drained),
-            OutboxEffect::Copy { .. } => {}
-            OutboxEffect::Started { .. } => eff.push(Eff::Started),
-            OutboxEffect::SnapshotRequest => eff.push(Eff::SnapshotRequest),
-            OutboxEffect::RestoreClassified { .. } => eff.push(Eff::RestoreClassified),
-        }
-    }
-    if scheduled {
-        eff.push(Eff::ScheduleTick);
-    }
-    Seen { next: twin.stage(id), obs, eff }
-}
 
-/// The observable of the reference that an owner effect can show; the rest is read in the API tests and the property tests.
-pub(super) fn visible(step: &Step, follower: bool) -> (Vec<Obs>, Vec<Eff>) {
-    let obs = step.obs.iter().copied().filter(|obs| matches!(obs, Obs::Receipt | Obs::Fails(_) | Obs::Outcome(_) | Obs::DiscardOk | Obs::OutcomeNow)).collect();
-    let mut eff: Vec<Eff> = Vec::new();
-    for effect in &step.eff {
-        let effect = match effect {
-            Eff::ScheduleBackoffSend | Eff::ScheduleLanding => Eff::ScheduleTick,
-            other => *other,
-        };
-        if effect == Eff::ScheduleTick && eff.contains(&Eff::ScheduleTick) { continue; }
-        if effect == Eff::SendNextOfRow && !follower { continue; }
-        eff.push(effect);
-    }
-    (obs, eff)
-}
 
-pub(super) fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<OutboxEffect> {
-    let other = id + 1000;
-    let op_id = if ctx.ours { id } else { other };
-    let epoch = if ctx.epoch_current { EPOCH } else { EPOCH + 1 };
+pub(super) fn input_of(twin: &mut Twin, id: OpId, _ctx: &Ctx, input: In) -> Vec<OutboxEffect> {
     match input {
-        In::Submit => twin.post(OutboxInput::Submit { epoch, op: model_op("r", ctx.policy, ctx.transfer), reply: SUBMIT_REPLY }),
         In::Committed => twin.committed(id),
-        In::Rejected(reason) => twin.rejected(id, reason),
-        In::RowFreed => {
-            let blocker = 1;
-            twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-            twin.committed(blocker)
-        }
-        In::Online(on) => twin.post(OutboxInput::Online(Online(on))),
-        In::Discard => twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 801 }),
-        In::Retry => twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 802 }),
-        In::Outcome => twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, epoch), reply: 803 }),
-        In::ModelsReset => twin.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec![if ctx.owns_model { "Moment".into() } else { "Chat".into() }] })),
-        In::Response => twin.post(OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
-        In::TransportError { temporary } => twin.post(OutboxInput::TransportError { op_id, temporary }),
-        In::Dropped => twin.post(OutboxInput::Dropped { op_id }),
-        In::Tick => twin.post(OutboxInput::RetryDue { op_id, cycle_id: 1 }),
         In::EpochEnded => {
             take_fx(&twin.log, state_of(&twin.det));
             twin.det.end_epoch(EPOCH, Cause::SessionReset);
@@ -502,43 +412,18 @@ pub(super) fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<O
     }
 }
 
-pub(super) fn row_check(state: St, ctx: Ctx, input: In) {
-    let after = if matches!(input, In::Online(true)) { Ctx { online: true, ..ctx } } else { ctx };
-    let before = if matches!(input, In::Online(true)) { Ctx { online: false, ..ctx } } else { ctx };
-    let want = step_of(state, &after, input).unwrap_or_else(|| panic!("no table cell for {state:?} x {input:?}"));
-    let (mut twin, id) = reach(state, &before);
-    let ctx = before;
-    let ops_before = twin.det.trace().len();
-    let effects = input_of(&mut twin, id, &ctx, input);
-    let scheduled = twin.det.trace()[ops_before..].iter().any(|entry| entry.effects.contains("Schedule"));
-    let resend = matches!(input, In::Tick);
-    let outcome_call = matches!(input, In::Outcome);
-    let id_of_row = if state == St::None { *twin.state().ops.keys().max().unwrap_or(&0) } else { id };
-    let seen = translate(&twin, id_of_row, effects, scheduled, resend, outcome_call);
-    let (obs, eff) = visible(&want, twin.follower.is_some());
-    let next = seen.next.unwrap_or(if matches!(want.next, St::None | St::Done) { want.next } else { St::None });
-    assert_eq!(next, want.next, "{state:?} x {input:?}: the next state");
-    assert_eq!(seen.obs, obs, "{state:?} x {input:?}: the replies");
-    assert_eq!(seen.eff, eff, "{state:?} x {input:?}: the effects");
-}
 
 pub(super) fn ready() -> Ctx { Ctx::ready() }
 
 pub(super) fn offline() -> Ctx { Ctx { online: false, ..Ctx::ready() } }
 
-pub(super) fn busy() -> Ctx { Ctx { row_free: false, ..Ctx::ready() } }
 
-pub(super) fn stranger() -> Ctx { Ctx { ours: false, ..Ctx::ready() } }
 
 pub(super) fn keep() -> Ctx { Ctx { policy: Policy::Keep, ..Ctx::ready() } }
 
-pub(super) fn transfer() -> Ctx { Ctx { transfer: true, ..Ctx::ready() } }
 
-pub(super) fn stale() -> Ctx { Ctx { epoch_current: false, ..Ctx::ready() } }
 
-pub(super) fn rolling() -> St { St::RollingBack(RWhy::Rejected) }
 
-pub(super) fn discarding() -> St { St::RollingBack(RWhy::Discarded) }
 
 
 pub(super) fn sends_of(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }

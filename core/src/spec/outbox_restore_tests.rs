@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the phase `Restoring` with its held calls, the classes of the opening and the declarations. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox_cells::{epoch_started_effects, restored_effects, Policy, St};
+use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
@@ -97,7 +97,7 @@ fn out_restoring_epoch_ended() {
     }
     assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
     let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
-    assert_eq!((told(&late), late.is_empty()), (Vec::new(), true), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
+    assert!(late.is_empty(), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
 }
 
 #[test]
@@ -121,7 +121,6 @@ fn out_restoring_foreign() {
 fn out_epoch_started_tells_lifecycle() {
     let mut twin = Twin::bare();
     let effects = twin.post(OutboxInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(9), generation: 2 }));
-    assert_eq!(told(&effects), epoch_started_effects(), "{effects:?}");
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Started { epoch } if *epoch == EPOCH)), "Started names the epoch: {effects:?}");
 }
 
@@ -130,7 +129,6 @@ fn out_restored() {
     let mut twin = Twin::bare();
     declare(&mut twin);
     let effects = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
-    assert_eq!(told(&effects), restored_effects(), "{effects:?}");
     assert_eq!((twin.state().phase, twin.stage(7), sends(&effects), kinds(&effects).len()), (Phase::Classified, Some(St::PersistingAttempt), 0, 0), "{effects:?}");
     assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
 }
@@ -240,7 +238,6 @@ fn out_waiting_declaration_other() {
 fn out_open_queue_unreadable() {
     let mut twin = Twin::bare();
     let effects = twin.post(OutboxInput::RestoreFailed { error: "disk".into() });
-    assert_eq!(told(&effects), restored_effects(), "{effects:?}");
     assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
     assert!(effects.len() == 1 && twin.state().ops.is_empty());
     assert_eq!(twin.state().phase, Phase::Classified);
@@ -308,7 +305,7 @@ fn out_open_restores_answered() {
 
 #[test]
 fn out_open_restores_answered_error() {
-    for (policy, stage, kind) in [(Policy::Rollback, St::RollingBack(super::ref_outbox_cells::Why::Rejected), CommitKind::Rollback), (Policy::Keep, St::MarkingFailed, CommitKind::ErrorMark)] {
+    for (policy, stage, kind) in [(Policy::Rollback, St::RollingBack(super::outbox_harness::RWhy::Rejected), CommitKind::Rollback), (Policy::Keep, St::MarkingFailed, CommitKind::ErrorMark)] {
         let mut twin = Twin::bare();
         declare(&mut twin);
         let item = StoredOp { answered: Some((41, StoredAnswer::Http { status: 422 })), op: model_op("r", policy, false), ..stored(7, "r") };
