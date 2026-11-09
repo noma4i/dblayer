@@ -21,11 +21,18 @@ fn from_kind(kind: &AnswerKind) -> Verdict {
     }
 }
 
+/// wire.md answer kind table, column without `sequence`: the reader types session codes and 401, passes a GraphQL error through for the owner, and a passed code of the transient set (REPLAYED_REQUEST, the retryable list) is a Transient the owner retries by its policy (D-220).
+const TRANSIENT_CODES: [&str; 5] = ["REPLAYED_REQUEST", "INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
+
 fn from_reader(body: &Value) -> Verdict {
     match response_from_answer(Answer { sequence: None, body: body.clone() }) {
         Err(TransportError::Http { status: 401, .. }) => Verdict::Unauthenticated,
         Err(TransportError::Session { code, .. }) => Verdict::Session(code),
-        _ => Verdict::Answered,
+        Err(_) => Verdict::Permanent,
+        Ok(response) => match response.errors.first().and_then(|error| error.code()) {
+            Some(code) if TRANSIENT_CODES.contains(&code) => Verdict::Transient,
+            _ => Verdict::Answered,
+        },
     }
 }
 

@@ -40,7 +40,7 @@ fn kinds() -> Vec<Kind> {
         Kind { name: "transport failure without an answer", fault: || vec![Fault::Down], sequenced: Some("Ok|2"), plain: Some("Ok|2") },
         Kind { name: "UNAUTHENTICATED", fault: || vec![Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }], sequenced: Some("Err:Unauthorized|1"), plain: Some("Err:Unauthorized|1") },
         Kind { name: "HTTP 401", fault: || vec![Fault::Http(401)], sequenced: Some("Err:Unauthorized|1"), plain: Some("Err:Unauthorized|1") },
-        Kind { name: "REPLAYED_REQUEST", fault: || vec![Fault::Refuse { code: "REPLAYED_REQUEST", confirmed: true }], sequenced: Some("Ok|1"), plain: Some("Ok|2") },
+        Kind { name: "REPLAYED_REQUEST", fault: || vec![Fault::Refuse { code: "REPLAYED_REQUEST", confirmed: true }], sequenced: Some("Err:Session(ReplayedRequest)|1"), plain: Some("Ok|2") },
         Kind { name: "sequence and a session code", fault: || vec![Fault::Refuse { code: "RATE_LIMITED", confirmed: true }], sequenced: Some("Err:Session(RateLimited)|1"), plain: None },
         Kind { name: "sequence and a retryable errors code", fault: || vec![Fault::Answer(in_errors("INTERNAL_SERVER_ERROR"))], sequenced: Some("Err:Graphql(INTERNAL_SERVER_ERROR)|1"), plain: Some("Ok|2") },
         Kind { name: "other errors code", fault: || vec![Fault::Answer(in_errors("FORBIDDEN"))], sequenced: Some("Err:Graphql(FORBIDDEN)|1"), plain: Some("Err:Graphql(FORBIDDEN)|1") },
@@ -52,8 +52,8 @@ fn kinds() -> Vec<Kind> {
         Kind { name: "revoked field", fault: || vec![Fault::Answer(json!({"revoked": true}))], sequenced: Some("Err:*|1"), plain: Some("Err:*|1") },
         Kind { name: "SESSION_ENDED", fault: || vec![Fault::Answer(json!({"error": "SESSION_ENDED"}))], sequenced: Some("Err:*|1"), plain: Some("Err:*|1") },
         Kind { name: "SEQUENCE_CONFLICT", fault: || vec![Fault::Refuse { code: "SEQUENCE_CONFLICT", confirmed: false }], sequenced: Some("Err:*|1"), plain: None },
-        Kind { name: "PERSISTED_QUERY_NOT_FOUND for a hash", fault: || vec![Fault::Answer(in_errors("PERSISTED_QUERY_NOT_FOUND"))], sequenced: Some("Ok|2"), plain: Some("Ok|2") },
-        Kind { name: "PERSISTED_QUERY_NOT_FOUND for the full document", fault: || vec![Fault::Answer(in_errors("PERSISTED_QUERY_NOT_FOUND")), Fault::Answer(in_errors("PERSISTED_QUERY_NOT_FOUND"))], sequenced: Some("Err:Graphql(PERSISTED_QUERY_NOT_FOUND)|2"), plain: Some("Err:Graphql(PERSISTED_QUERY_NOT_FOUND)|2") },
+        Kind { name: "PERSISTED_QUERY_NOT_FOUND for a hash", fault: || vec![Fault::Refuse { code: "PERSISTED_QUERY_NOT_FOUND", confirmed: false }], sequenced: Some("Ok|2"), plain: Some("Ok|2") },
+        Kind { name: "PERSISTED_QUERY_NOT_FOUND for the full document", fault: || vec![Fault::Refuse { code: "PERSISTED_QUERY_NOT_FOUND", confirmed: false }, Fault::Refuse { code: "PERSISTED_QUERY_NOT_FOUND", confirmed: false }], sequenced: Some("Err:Graphql(PERSISTED_QUERY_NOT_FOUND)|2"), plain: Some("Err:Graphql(PERSISTED_QUERY_NOT_FOUND)|2") },
         Kind { name: "HTTP 400", fault: || vec![Fault::Http(400)], sequenced: Some("Err:Http(400)|1"), plain: Some("Err:Http(400)|1") },
     ]
 }
