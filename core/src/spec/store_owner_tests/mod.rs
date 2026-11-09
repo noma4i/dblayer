@@ -256,3 +256,24 @@ fn names(items: &[&str]) -> BTreeSet<String> { items.iter().map(|item| item.to_s
 
 mod store_owner_cells_tests;
 mod store_owner_trace_tests;
+
+#[test]
+fn matrix_owner_state_input_store() {
+    use crate::test_matrix::{state_input_pairs, Matrix};
+    let mut matrix = Matrix::new("S-store");
+    fn writing() -> Twin { let mut twin = Twin::live(); twin.feed(Request::Commit { id: 1, batch: Batch::rows(1, vec![("Moment".into(), "r".into())]) }); twin }
+    fn closed() -> Twin { let mut twin = Twin::live(); twin.feed(Request::Close); twin }
+    let commit = |id: u64, epoch: u64| Request::Commit { id, batch: Batch::rows(epoch, vec![("Moment".into(), "r".into())]) };
+    let alphabet: Vec<(&str, Request)> = vec![
+        ("Commit epoch 1", commit(2, 1)), ("Commit stale epoch", commit(3, 9)),
+        ("ClearAccount", Request::ClearAccount { epoch_old: 1, cause: RefCause::SessionReset, generation_new: 1, erase_id: 5 }), ("ClearAccount stale epoch", Request::ClearAccount { epoch_old: 9, cause: RefCause::SessionReset, generation_new: 1, erase_id: 6 }),
+        ("ClearModels", Request::ClearModels { epoch: 1, generation_new: 1, models: names(&["Moment"]), erase_id: 7 }),
+        ("Published active", Request::Published { publication_id: 50, epoch: 1, generation: 0, active: true }), ("Published new epoch", Request::Published { publication_id: 51, epoch: 2, generation: 0, active: true }),
+        ("EpochEnded", Request::EpochEnded { epoch: 1 }), ("ReadIntents", Request::ReadIntents { epoch: 1 }), ("Close", Request::Close),
+        ("Written ok", Request::Written { id: 1, result: Ok(1) }), ("Written failed", Request::Written { id: 1, result: Err(()) }), ("Written stray", Request::Written { id: 77, result: Ok(2) }),
+        ("Erased ok stray", Request::Erased { io_id: 99, result: Ok(1) }), ("Erased failed stray", Request::Erased { io_id: 99, result: Err(()) }),
+        ("ReadsClosed", Request::ReadsClosed(vec![1])), ("ReadFinished", Request::ReadFinished(1)),
+    ];
+    state_input_pairs(&mut matrix, "reference ref_store", vec![("fresh", Twin::new), ("live", Twin::live), ("writing a batch", writing), ("closed", closed)], alphabet, |twin: &mut Twin, request| { twin.feed(request); });
+    matrix.finish();
+}
