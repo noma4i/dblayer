@@ -117,10 +117,16 @@ impl Calls {
             Input::Dropped { call_id } if self.sending(call_id) => self.failed(call_id, Fail::Dropped, &mut out),
             Input::RetryDue { call_id, attempt } => self.retry(call_id, attempt, &mut out),
             Input::Deadline { call_id } => {
-                if let Some((_, error, _, _)) = self.retries.get(&call_id).cloned() { self.done(call_id, Err(error), &mut out); }
-                else if self.sending(call_id) { self.done(call_id, Err(Fail::Network), &mut out); }
+                if let Some(CallState::Sending { request_id, kind, .. }) = self.state(call_id) {
+                    let error = self.retries.get(&call_id).map_or(Fail::Network, |entry| entry.1.clone());
+                    out.effects.push(if kind == Kind::Query { Effect::Cancel { request_id, kind } } else { Effect::Release { request_id } });
+                    self.done(call_id, Err(error), &mut out);
+                }
             }
             Input::CallerCancel { reply } => {
+                if let Some((_, (CallState::Sending { request_id, kind, .. }, _))) = self.calls.iter().find(|(_, (_, found))| *found == reply) {
+                    out.effects.push(if *kind == Kind::Query { Effect::Cancel { request_id: *request_id, kind: *kind } } else { Effect::Release { request_id: *request_id } });
+                }
                 if let Some((_, (state, _))) = self.calls.iter_mut().find(|(_, (_, found))| *found == reply) { *state = CallState::Done; }
                 self.awaiting.retain(|(_, found)| *found != reply);
             }
