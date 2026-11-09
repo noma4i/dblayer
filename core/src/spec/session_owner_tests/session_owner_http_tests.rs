@@ -526,3 +526,58 @@ fn sess_closing() {
     }
 }
 
+#[test]
+fn sess_prop_answer_kinds_table() {
+    let mut answered = landing(1);
+    answered.feed(committed());
+    assert_eq!((answered.replies.clone(), answered.reference.credential.map(|credential| credential.sequence)), (vec![(1, Ok("{}".into()))], Some(1)), "answered: Ok, the client sequence is the server number");
+    assert!(matches!(answered.reference.state, RefState::Idle), "answered: the queue is not blocked");
+    let mut not_consumed = calling();
+    let input = Input::Response { request_id: not_consumed.rid(), attempt_id: not_consumed.aid(), body: "{}".into(), sequence: None, refusal: None };
+    not_consumed.feed_all([input, committed()]);
+    assert_eq!((not_consumed.replies.clone(), not_consumed.reference.credential.map(|credential| credential.sequence)), (vec![(1, Ok("{}".into()))], Some(0)), "not_consumed: the number is not spent");
+    assert!(matches!(not_consumed.reference.state, RefState::Idle));
+    for (code, fail) in [(SessionCode::RateLimited, Fail::Session(SessionCode::RateLimited)), (SessionCode::Unauthenticated, Fail::Unauthorized), (SessionCode::AccountUnavailable, Fail::Session(SessionCode::AccountUnavailable))] {
+        let mut twin = calling();
+        let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), sequence: Some(1), refusal: Some(code) };
+        twin.feed_all([input, committed()]);
+        assert_eq!((twin.replies.clone(), twin.reference.credential.map(|credential| credential.sequence)), (vec![(1, Err(fail))], Some(1)), "refused {code:?}: the confirmed refusal spends the number");
+        assert!(matches!(twin.reference.state, RefState::Idle), "refused {code:?}: not blocked");
+    }
+    let mut revoked = calling();
+    let input = Input::Revoked { request_id: revoked.rid(), attempt_id: revoked.aid(), body: "{}".into() };
+    revoked.feed_all([input, committed()]);
+    revoked.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
+    assert_eq!((revoked.replies.clone(), revoked.reference.credential.map(|credential| credential.sequence)), (vec![(1, Err(Fail::Revoked))], Some(0)), "revoked: no number spent");
+    let mut transport = calling();
+    let dropped = transport.dropped();
+    assert_eq!(transport.feed(dropped), vec![RefEffect::ScheduleTick { attempts: 1 }], "transport: the lost attempt retries the pair");
+    assert!(transport.in_phase(CallPhase::WaitingRetry) && transport.reference.credential.map(|credential| credential.sequence) == Some(0), "transport: the queue is not blocked and nothing is spent");
+    let mut conflict = calling();
+    let input = conflict.response(5);
+    conflict.feed(input);
+    assert_eq!(conflict.replies.last(), Some(&(1, Err(Fail::SequenceConflict))));
+    assert!(matches!(conflict.reference.state, RefState::Blocked { reason: Block::SequenceConflict, .. }), "a mismatched sequence is the only outcome that blocks the queue");
+    let mut login = generating();
+    let op = login.op();
+    login.feed(Input::CredentialGenerated { op, credential: 42 });
+    let op = login.op();
+    login.feed_all([Input::SecretStored { op, ok: true }, committed()]);
+    let input = login.response(1);
+    login.feed(input);
+    assert_eq!(login.feed(committed()), vec![RefEffect::CredentialCommitted(42)], "login answered: the credential commits at the server number");
+    assert_eq!(login.reference.credential, Some(RefCredential { digest: 42, sequence: 1 }));
+    let mut sessionless = Twin::new();
+    sessionless.feed(call_of("visit", 9));
+    finish_seal(&mut sessionless);
+    sessionless.feed(committed());
+    let input = Input::Response { request_id: sessionless.rid(), attempt_id: sessionless.aid(), body: "{}".into(), sequence: None, refusal: None };
+    sessionless.feed_all([input, committed()]);
+    assert_eq!((sessionless.replies.clone(), sessionless.reference.credential.map(|credential| credential.sequence)), (vec![(9, Ok("{}".into()))], Some(0)), "sessionless: Ok, the number is never spent");
+    let mut applied = calling_mutate();
+    let input = applied.response(1);
+    applied.feed(input);
+    assert_eq!(applied.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))], "an applied mutation is answered, not rolled back");
+    assert_eq!(applied.reference.credential.map(|credential| credential.sequence), Some(1), "the applied mutation spent the number");
+}
+
