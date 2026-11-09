@@ -125,6 +125,9 @@ impl Window {
                 return self.hold(input, vec![Effect::ReadWindow]);
             }
         }
+        if self.unread && self.state == State::Idle && input == Input::OfflineRefused {
+            return Vec::new();
+        }
         if let Input::Online(true) = input {
             self.online_seq += 1;
         }

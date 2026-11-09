@@ -346,6 +346,15 @@ fn win_idle_offline_refused() {
 }
 
 #[test]
+fn win_no_machine_offline_refused() {
+    let mut twin = Twin::new();
+    assert!(twin.step(Input::OfflineRefused).is_empty(), "a key without a machine ignores the refusal");
+    assert_eq!(twin.stage(), None, "no machine is created and no error is kept");
+    assert_eq!(twin.watch(), [Effect::Request { request: 1, attempt: 1, page: 1 }, Effect::WindowState], "the next interest opens the window as on a cold key");
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+}
+
+#[test]
 fn win_idle_models_reset() {
     let mut twin = fresh_watched();
     assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
