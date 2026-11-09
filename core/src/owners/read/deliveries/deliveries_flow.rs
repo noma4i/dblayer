@@ -45,7 +45,7 @@ impl Delivery {
 
     pub(super) fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<Emit>) {
         if read_id == self.read_id && self.view.kind == Kind::Blob {
-            self.upload_read(Err(error), fx);
+            self.upload_read(Err(error), revision, fx);
             return;
         }
         if read_id != self.read_id || !self.view.kind.reads_rows() {
@@ -222,8 +222,9 @@ impl Delivery {
         if changed_reason { fx.push(self.new_read(self.read_revision)); } else { self.show_status(fx); }
     }
 
-    pub(super) fn upload_read(&mut self, row: UploadRowRead, fx: &mut Vec<Emit>) {
+    pub(super) fn upload_read(&mut self, row: UploadRowRead, revision: i64, fx: &mut Vec<Emit>) {
         self.upload_row = Some(row);
+        self.status_revision = self.status_revision.max(revision);
         self.show_status(fx);
     }
 

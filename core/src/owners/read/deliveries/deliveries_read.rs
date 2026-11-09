@@ -193,7 +193,7 @@ impl Delivery {
 
     pub(super) fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<Emit>) {
         if read_id == self.read_id && self.view.kind == Kind::Blob {
-            if let ReadData::Upload { wait_reason, local_url, processing } = data { self.upload_read(Ok((wait_reason, local_url, processing)), fx); }
+            if let ReadData::Upload { wait_reason, local_url, processing } = data { self.upload_read(Ok((wait_reason, local_url, processing)), revision, fx); }
             return;
         }
         if read_id != self.read_id || !self.view.kind.reads_rows() {
