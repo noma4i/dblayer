@@ -1,6 +1,6 @@
 //! Matrix T: every public value type of the Swift wrapper and of the Kotlin wrapper (hand-written files, not the generated bindings): the same name, the same members, the same type of each member after the mapping of the platforms, the same nullability, the same cases of an enum. A type that one platform has and the other lacks is a red cell.
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::test_matrix::{crate_dir, Matrix};
 
@@ -190,5 +190,179 @@ fn matrix_value_platform() {
             (None, None) => {}
         }
     }
+    matrix.finish();
+}
+
+fn rust_files(directory: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "tests" || name == "selftest") { continue; }
+            rust_files(&path, found);
+        } else if path.extension().is_some_and(|extension| extension == "rs") && !path.to_string_lossy().ends_with("_tests.rs") {
+            found.push(path);
+        }
+    }
+}
+
+enum CoreShape {
+    Record(Vec<(String, String)>),
+    Enum(Vec<String>),
+}
+
+/// The text between the braces that follow `start`.
+fn block(text: &str, start: usize) -> Option<&str> {
+    let open = start + text[start..].find('{')?;
+    let mut depth = 0usize;
+    for (offset, character) in text[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 { return Some(&text[open + 1..open + offset]); }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_top(text: &str) -> Vec<String> {
+    let (mut parts, mut depth, mut current) = (Vec::new(), 0i32, String::new());
+    for character in text.chars() {
+        match character {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if character == ',' && depth == 0 { parts.push(std::mem::take(&mut current)); } else { current.push(character); }
+    }
+    parts.push(current);
+    parts.into_iter().map(|part| part.trim().to_string()).filter(|part| !part.is_empty()).collect()
+}
+
+fn without_comments(text: &str) -> String {
+    text.lines().filter(|line| { let line = line.trim_start(); !line.starts_with("//") && !line.starts_with("#[") }).collect::<Vec<_>>().join("\n")
+}
+
+fn core_shapes() -> Vec<(String, CoreShape)> {
+    let mut files = Vec::new();
+    rust_files(&crate_dir().join("src"), &mut files);
+    let mut shapes = Vec::new();
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let mut from = 0;
+        while let Some(found) = text[from..].find("uniffi::") {
+            let at = from + found;
+            from = at + 8;
+            let line_end = text[at..].find('\n').map_or(text.len(), |end| at + end);
+            let derive = &text[text[..at].rfind('\n').map_or(0, |start| start)..line_end];
+            let is_record = derive.contains("uniffi::Record");
+            let is_enum = derive.contains("uniffi::Enum") || derive.contains("uniffi::Error");
+            if !is_record && !is_enum { continue; }
+            let rest = &text[line_end..];
+            let Some(item) = rest.find("pub struct ").filter(|_| is_record).or_else(|| rest.find("pub enum ").filter(|_| is_enum)) else { continue };
+            if item > 400 { continue; }
+            let head = &rest[item..];
+            let name: String = head.split_whitespace().nth(2).unwrap_or("").chars().take_while(|character| character.is_alphanumeric() || *character == '_').collect();
+            let Some(body) = block(rest, item) else { continue };
+            let body = without_comments(body);
+            if is_record {
+                let fields = split_top(&body).into_iter().filter_map(|field| {
+                    let field = field.trim_start_matches("pub ").trim();
+                    let (field_name, field_type) = field.split_once(':')?;
+                    Some((field_name.trim().to_string(), field_type.trim().to_string()))
+                }).collect();
+                shapes.push((name, CoreShape::Record(fields)));
+            } else {
+                let variants = split_top(&body).into_iter().map(|variant| variant.chars().take_while(|character| character.is_alphanumeric() || *character == '_').collect::<String>()).filter(|variant| !variant.is_empty()).collect();
+                shapes.push((name, CoreShape::Enum(variants)));
+            }
+        }
+    }
+    shapes.sort_by(|left, right| left.0.cmp(&right.0));
+    shapes.dedup_by(|left, right| left.0 == right.0);
+    shapes
+}
+
+fn camel(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for character in name.chars() {
+        if character == '_' { upper = true; } else if upper { out.extend(character.to_uppercase()); upper = false; } else { out.push(character); }
+    }
+    out
+}
+
+fn last_segment(name: &str) -> &str { name.rsplit("::").next().unwrap_or(name) }
+
+fn mapped(rust: &str, swift: bool) -> Option<String> {
+    let rust = rust.trim();
+    let generic = |prefix: &str| rust.strip_prefix(prefix).and_then(|rest| rest.strip_suffix('>'));
+    if let Some(inner) = generic("Option<") { return Some(format!("{}?", mapped(inner, swift)?)); }
+    if let Some(inner) = generic("Arc<") { return mapped(inner, swift); }
+    if rust == "Vec<u8>" { return Some(if swift { "Data" } else { "kotlin.ByteArray" }.into()); }
+    if let Some(inner) = generic("Vec<") { let inner = mapped(inner, swift)?; return Some(if swift { format!("[{inner}]") } else { format!("List<{inner}>") }); }
+    if let Some(inner) = generic("HashMap<") {
+        let parts = split_top(inner);
+        let (key, value) = (mapped(parts.first()?, swift)?, mapped(parts.get(1)?, swift)?);
+        return Some(if swift { format!("[{key}: {value}]") } else { format!("Map<{key}, {value}>") });
+    }
+    let table: [(&str, &str, &str); 14] = [
+        ("u8", "UInt8", "kotlin.UByte"), ("u16", "UInt16", "kotlin.UShort"), ("u32", "UInt32", "kotlin.UInt"), ("u64", "UInt64", "kotlin.ULong"),
+        ("i8", "Int8", "kotlin.Byte"), ("i16", "Int16", "kotlin.Short"), ("i32", "Int32", "kotlin.Int"), ("i64", "Int64", "kotlin.Long"),
+        ("f32", "Float", "kotlin.Float"), ("f64", "Double", "kotlin.Double"), ("bool", "Bool", "kotlin.Boolean"), ("String", "String", "kotlin.String"),
+        ("Duration", "TimeInterval", "java.time.Duration"), ("usize", "UInt64", "kotlin.ULong"),
+    ];
+    if let Some((_, swift_name, kotlin_name)) = table.iter().find(|(name, _, _)| *name == rust) { return Some(if swift { *swift_name } else { *kotlin_name }.into()); }
+    (!rust.contains(['<', '(', '[', '&']) && !rust.is_empty()).then(|| last_segment(rust).to_string())
+}
+
+
+/// The records of the core that have a public wrapper type of the same name (without the `Wire` prefix) against that type, member by member, on both platforms.
+#[test]
+fn matrix_value_core_wrapper() {
+    let mut matrix = Matrix::new("T-value-core-wrapper");
+    let root = crate_dir().join("..");
+    let (mut swift_files, mut kotlin_files) = (Vec::new(), Vec::new());
+    files(&root.join("swift/Sources/DBlayer"), "swift", "dblayer.swift", &mut swift_files);
+    files(&root.join("kotlin/src/main/kotlin/com/noma4i/dblayer"), "kt", "dblayer.kt", &mut kotlin_files);
+    let (mut swift, mut kotlin) = (BTreeMap::new(), BTreeMap::new());
+    for file in &swift_files { swift.extend(swift_types(&std::fs::read_to_string(file).unwrap_or_default())); }
+    for file in &kotlin_files { kotlin.extend(kotlin_types(&std::fs::read_to_string(file).unwrap_or_default())); }
+    let shapes = core_shapes();
+    if shapes.len() < 20 { matrix.unclassified("core", "-", "-", &format!("the source scan found only {} bridge types", shapes.len())); }
+    let mut compared = 0;
+    for (name, shape) in &shapes {
+        let public = name.strip_prefix("Wire").unwrap_or(name);
+        let CoreShape::Record(fields) = shape else {
+            if let CoreShape::Enum(variants) = shape {
+                for (platform, found) in [("swift", swift.get(public)), ("kotlin", kotlin.get(public))] {
+                    let Some(found) = found.filter(|found| found.is_enum) else { continue };
+                    compared += 1;
+                    let (mut wanted, mut seen): (Vec<String>, Vec<String>) = (variants.iter().map(|variant| variant.to_lowercase()).collect(), found.cases.iter().map(|case| case.to_lowercase()).collect());
+                    wanted.sort();
+                    seen.sort();
+                    matrix.check(public, platform, "enum cases", &wanted.join(","), &seen.join(","));
+                }
+            }
+            continue;
+        };
+        for (platform, found, swift_side) in [("swift", swift.get(public), true), ("kotlin", kotlin.get(public), false)] {
+            let Some(found) = found else { continue };
+            compared += 1;
+            for (field, rust_type) in fields {
+                let wanted = mapped(rust_type, swift_side);
+                let seen = found.fields.iter().find(|(seen_name, _)| *seen_name == camel(field)).map(|(_, seen_type)| squash(seen_type));
+                match (wanted, seen) {
+                    (Some(wanted), Some(seen)) => matrix.check(&format!("{public}.{field}"), platform, rust_type, &squash(&wanted), &seen),
+                    (Some(wanted), None) => matrix.check(&format!("{public}.{field}"), platform, rust_type, &squash(&wanted), "member missing in the public type"),
+                    (None, _) => matrix.unclassified(&format!("{public}.{field}"), platform, rust_type, "no mapping rule for this core type"),
+                }
+            }
+        }
+    }
+    if compared == 0 { matrix.unclassified("core", "-", "-", "no core record has a public wrapper type of the same name"); }
     matrix.finish();
 }
