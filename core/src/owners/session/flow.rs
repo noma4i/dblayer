@@ -49,6 +49,12 @@ impl SessionState {
 
     pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
 
+    pub(super) fn admission(&self, epoch: Option<Epoch>) -> Option<SessionError> {
+        if self.published == PublishedState::Closing { return Some(SessionError::Closed); }
+        if epoch.is_some_and(|epoch| epoch != self.epoch) { return Some(SessionError::NoSession); }
+        None
+    }
+
     pub(super) fn def(&self, operation: &str) -> Option<SessionOperation> { self.operations.iter().find(|def| def.name == operation).cloned() }
 
     pub(super) fn refuse_queue(&mut self, fx: &mut Vec<SessionEffect>, error: SessionError) {
@@ -121,8 +127,8 @@ impl SessionState {
                 }
             }
             Queued::Mutate { author, owner, req_id, epoch, path, body, purpose } => {
-                if self.published == PublishedState::Closing || epoch != self.epoch || self.credential.is_none() {
-                    author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::NoSession);
+                if let Some(error) = self.admission(Some(epoch)).or_else(|| self.credential.is_none().then_some(SessionError::NoSession)) {
+                    author_error(fx, author, req_id, ErrorClass::Permanent, error);
                     return;
                 }
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);

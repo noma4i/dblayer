@@ -13,6 +13,21 @@ impl SessionState {
             }
             return;
         }
+        let admission = match &input {
+            SessionInput::Mutate { epoch, .. } => self.admission(Some(*epoch)),
+            SessionInput::SessionCall { .. } | SessionInput::SessionResume { .. } => self.admission(None),
+            _ => None,
+        };
+        if let Some(error) = admission {
+            self.phase = phase;
+            match input {
+                SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, error),
+                SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(error)),
+                SessionInput::SessionResume { reply: id } => fx.push(SessionEffect::ResumeReply { id, answer: Err(error) }),
+                _ => {}
+            }
+            return;
+        }
         if let SessionInput::HttpFailed { attempt_id } = &input {
             if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
                 self.phase = phase;
