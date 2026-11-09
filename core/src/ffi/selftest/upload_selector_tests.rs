@@ -46,7 +46,7 @@ async fn boundary_selector_without_action() {
     }
 }
 
-/// boundary_transfer_selector (P-BND-05): `retry` and `discard` with an action that names no operation of the row end `NotFound` in every order, and the upload of the row, which has another action, goes out untouched.
+/// boundary_transfer_selector (P-BND-05, xfer_accept_check_order): `retry` and `discard` with an undeclared action end `Invalid` before the row is read, a declared action with no transfer on the row ends `NotFound`, in every order, and the upload of the row, which has another action, goes out untouched.
 #[tokio::test(flavor = "multi_thread")]
 async fn boundary_transfer_selector() {
     for discard_first in [false, true] {
@@ -68,7 +68,14 @@ async fn boundary_transfer_selector() {
         let retry = || async { bound(rig.database.retry(epoch, "Chat".into(), "c1".into(), Some("no_such_action".into()), None)).await.map(drop) };
         let (first, second) = if discard_first { (discard().await, retry().await) } else { (retry().await, discard().await) };
         for refused in [first, second] {
-            assert!(matches!(refused, Err(DbError::NotFound { .. })), "discard_first {discard_first}: {refused:?}");
+            assert!(matches!(refused, Err(DbError::Invalid { .. })), "an undeclared action is Invalid before NotFound, discard_first {discard_first}: {refused:?}");
+        }
+
+        let declared_discard = || async { bound(rig.database.discard(epoch, "Chat".into(), "c2".into(), Some("update_photo".into()))).await };
+        let declared_retry = || async { bound(rig.database.retry(epoch, "Chat".into(), "c2".into(), Some("update_photo".into()), None)).await.map(drop) };
+        let (first, second) = if discard_first { (declared_discard().await, declared_retry().await) } else { (declared_retry().await, declared_discard().await) };
+        for refused in [first, second] {
+            assert!(matches!(refused, Err(DbError::NotFound { .. })), "a declared action with no transfer on the row is NotFound, discard_first {discard_first}: {refused:?}");
         }
 
         rig.database.set_online(true).unwrap();

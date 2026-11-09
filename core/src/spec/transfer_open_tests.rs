@@ -443,6 +443,20 @@ fn xfer_open_pending_step() {
 }
 
 #[test]
+fn xfer_open_pending_step_session_drives() {
+    let mut held = row(1, KEY);
+    held.pending_step = Some(55);
+    let (mut twin, out) = Twin::opened(vec![held], Default::default());
+    assert_eq!((twin.stage(1), out.steps().len(), out.releases().len()), (TransferStage::Ready, 0, 0), "the opening of a held pair asks for no step and releases nothing");
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((twin.stage(1), out.steps().len(), out.releases().len()), (TransferStage::Ready, 0, 0), "the Session drives the held pair: the Transfer starts no attempt and sends no step of its own");
+    let again = twin.online(true);
+    let repeated = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((again.steps().len(), repeated.steps().len(), twin.stage(1)), (0, 0, TransferStage::Ready), "no second request while the held pair is outstanding");
+}
+
+#[test]
 fn xfer_open_completing() {
     let mut found = row(1, KEY);
     found.confirmed_parts = 2;
