@@ -16,6 +16,20 @@ async fn open() -> Arc<Database> {
 
 async fn next(stream: &ReadStream) -> ReadValue { crate::test_wait::within(stream.pull_next()).await.expect("a value") }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_admission_precedes_query_and_relation_validation() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    let invalid = db.subscribe_values(epoch + 1, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Missing"}"#) });
+    assert!(matches!(next(&invalid).await, ReadValue::Ended { cause: ReadEnd::SessionEnded }));
+    let stream = db.subscribe_values(epoch + 1, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
+    assert!(matches!(stream.refresh().await, Err(super::DbError::NoSession { .. })));
+    assert!(matches!(stream.load_more().await, Err(super::DbError::NoSession { .. })));
+    db.close_database().await.unwrap();
+    assert!(matches!(stream.refresh().await, Err(super::DbError::Closed { .. })));
+    assert!(matches!(stream.load_more().await, Err(super::DbError::Closed { .. })));
+}
+
 fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_str()).collect() }
 
 #[tokio::test(flavor = "multi_thread")]
