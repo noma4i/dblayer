@@ -115,7 +115,8 @@ impl Calls {
                 self.done(call_id, answer, &mut out);
             }
             Input::TransportError { call_id, error } if self.sending(call_id) => self.failed(call_id, error, &mut out),
-            Input::Transient { call_id, reason } if self.sending(call_id) => self.failed(call_id, Fail::Graphql(vec![reason]), &mut out),
+            Input::Transient { call_id, reason } if matches!(self.state(call_id), Some(CallState::Sending { kind: Kind::Query, .. })) => self.failed(call_id, Fail::Graphql(vec![reason]), &mut out),
+            Input::Transient { call_id, .. } if self.sending(call_id) => self.done(call_id, Err(Fail::InvalidResponse), &mut out),
             Input::Dropped { call_id } if self.sending(call_id) => self.failed(call_id, Fail::Dropped, &mut out),
             Input::RetryDue { call_id, attempt } => self.retry(call_id, attempt, &mut out),
             Input::Deadline { call_id } => {
