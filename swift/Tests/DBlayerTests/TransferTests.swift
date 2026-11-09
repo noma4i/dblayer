@@ -73,6 +73,7 @@ private final class HoldSecondFile: ScriptedTransport, @unchecked Sendable {
 private func openStand(_ transport: HoldSecondFile, path: String, encrypted: EncryptedConfig, credential: TransferCredential, server: SealedServer, operations: String, onlineAtOpen: Bool) async throws {
   await DB.closeForCleanup()
   _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server, observers: onlineAtOpen ? nil : SilentPlatform())
+  try server.registerDocuments(operations)
   try await DB.database.registerOperations(defsJson: operations)
   if !onlineAtOpen { try DB.database.setOnline(online: true) }
 }

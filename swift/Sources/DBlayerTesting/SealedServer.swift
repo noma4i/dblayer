@@ -21,20 +21,17 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   private var parked: [CheckedContinuation<Void, Never>] = []
   private let arrivals = AsyncStream<Void>.makeStream()
   private let lostAnswers = AsyncStream<Void>.makeStream()
-  private let contract: ServerContract = {
-    let contract = ServerContract.adopting()
-    contract.cacheEverything()
-    return contract
-  }()
+  private let contract: ServerContract
   private var executed: [[String: Any]] = []
   private var lostFile: String?
   private var lost = false
-  private let answer: @Sendable (String, [String: Any]) -> [String: Any]
+  private let answer: @Sendable (String, [String: Any]) -> [String: Any]?
   private let bridge: (@Sendable (String, [String: Any]) async throws -> [String: Any])?
   @TaskLocal public static var purpose: NetworkPurpose = .standard
 
   /// The server contract decides repeats of a pair, a second body under one pair, a missing sequence number. `answer` maps the path and the request body of a signed-in request to the answer body.
-  public init(answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
+  public init(contract: ServerContract = ServerContract(), answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]?) throws {
+    self.contract = contract
     self.answer = answer
     self.bridge = nil
     var error: Unmanaged<CFError>?
@@ -43,12 +40,21 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   }
 
   /// A server whose answers come from an async closure, such as a mock transport behind the encrypted session.
-  public init(bridge: @escaping @Sendable (String, [String: Any]) async throws -> [String: Any]) throws {
-    self.answer = { _, _ in [:] }
+  public init(contract: ServerContract = ServerContract(), bridge: @escaping @Sendable (String, [String: Any]) async throws -> [String: Any]) throws {
+    self.contract = contract
+    self.answer = { _, _ in nil }
     self.bridge = bridge
     var error: Unmanaged<CFError>?
     let attributes: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPrivate]
     privateKey = SecKeyCreateWithData(Data(base64Encoded: Self.privateKeyBody)! as CFData, attributes as CFDictionary, &error)!
+  }
+
+  public func registerDocuments(_ operations: String) throws {
+    let entries = try JSONSerialization.jsonObject(with: Data(operations.utf8)) as? [[String: Any]] ?? []
+    for entry in entries {
+      guard let document = entry["document"] as? String else { continue }
+      contract.registerDocument(document: document)
+    }
   }
 
   public var requests: [(path: String, body: [String: Any])] { lock.withLock { received } }
@@ -103,15 +109,23 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     if lock.withLock({ refusing }) { return EncryptedReply(status: 500, body: "") }
     let wire = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
     if path.hasPrefix("/api/auth/"), request["sequence"] as? Int == 1 { contract.setLast(sequence: 0) }
-    switch try contract.admit(scope: "sealed", requestJson: wire) {
-    case .stored(let sealed): return EncryptedReply(status: 200, body: sealed)
+    let scope = request["credential"] as? String ?? ""
+    switch try contract.admit(scope: scope, requestJson: wire) {
+    case .stored(let body): return EncryptedReply(status: 200, body: try seal(request, try JSONSerialization.jsonObject(with: Data(body.utf8)) as! [String: Any]))
     case .twoBodies: throw DbError.Invalid(detail: "request ID reused with different content")
     case .refused(let refusal): return EncryptedReply(status: 200, body: try seal(request, try JSONSerialization.jsonObject(with: Data(refusal.utf8)) as! [String: Any], spending: false))
     case .fresh: break
     }
+    var resolved = sent
+    if let extensions = sent["extensions"] as? [String: Any], let persisted = extensions["persistedQuery"] as? [String: Any], let hash = persisted["sha256Hash"] as? String {
+      guard let document = contract.document(hash: hash) else { throw DbError.Invalid(detail: "document was not declared: \(hash)") }
+      if let sentDocument = sent["query"] as? String, sentDocument != document { throw DbError.Invalid(detail: "document does not match its hash") }
+      resolved["query"] = document
+    }
+    let bodyForAnswer = resolved
     let reply: [String: Any]
     if let bridge {
-      do { reply = try await Self.$purpose.withValue(purpose) { try await bridge(path, sent) } } catch let error as DbError {
+      do { reply = try await Self.$purpose.withValue(purpose) { try await bridge(path, bodyForAnswer) } } catch let error as DbError {
         switch error {
         case .Http(let status, _): return EncryptedReply(status: status, body: "")
         case .Session(let code, _): reply = ["error": Self.wireName(code)]
@@ -121,7 +135,8 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
         }
       }
     } else {
-      reply = answer(path, sent)
+      guard let scripted = answer(path, bodyForAnswer) else { throw DbError.Invalid(detail: "no response scripted for \(path)") }
+      reply = scripted
     }
     lock.withLock { executed.append(sent) }
     TestPulse.shared.pulse()
@@ -140,7 +155,8 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
       }
     }
     let sealed = try seal(request, reply)
-    try contract.settle(scope: "sealed", requestJson: wire, token: sealed)
+    let stored = String(decoding: try JSONSerialization.data(withJSONObject: reply, options: [.sortedKeys]), as: UTF8.self)
+    try contract.settle(scope: scope, requestJson: wire, token: stored)
     let lose = lock.withLock { () -> Bool in
       let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
       guard filename != nil && filename == lostFile else { return false }

@@ -59,7 +59,9 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.cable = EncryptedCablePeer(server: server)
     try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJSON), encrypted: encrypted, credentials: BridgeCredential(), http: server)
-    try await DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#)
+    let fixtureOperations = #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#
+    try server.registerDocuments(fixtureOperations)
+    try await DB.database.registerOperations(defsJson: fixtureOperations)
     return server
   }
 

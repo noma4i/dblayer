@@ -60,6 +60,7 @@ public func adopt(_ database: Database) async throws -> Database {
 public protocol WrapsMock { var base: MockTransport { get } }
 
 private final class HeldCredential: CredentialStore, @unchecked Sendable {
+  let contract = ServerContract()
   private let lock = NSLock()
   private var value: String?
   func get() throws -> String? { lock.withLock { value } }
@@ -144,9 +145,10 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
   guard let mock = transport as? any ScriptedTransport else {
     return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
   }
-  let server = try SealedServer(bridge: try bridgeToTransport(mock, operations: withUploadSteps(operations, models: modelsJson)))
-  (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
   let held = credential(of: config)
+  let server = try SealedServer(contract: held.contract, bridge: try bridgeToTransport(mock, operations: withUploadSteps(operations, models: modelsJson)))
+  try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
+  (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
   let restored = try held.get() != nil
   let database: Database
   if onlineAtOpen {
@@ -167,10 +169,11 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
 /// The same session stand on a clock that only `advance(by:)` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations.
 @MainActor @discardableResult
 public func openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil, onlineAtOpen: Bool = true) async throws -> TestClock {
-  let server = try SealedServer(bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
+  let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
+  let server = try SealedServer(contract: held.contract, bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
+  try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
-  let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let restored = try held.get() != nil
   let clock = try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJson), path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers ?? (onlineAtOpen ? nil : SilentPlatform()))
   try await DB.opener.opened().registerOperations(defsJson: withSessionProfile(operations))
