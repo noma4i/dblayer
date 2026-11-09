@@ -8,7 +8,7 @@ data class UploadRequest(
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
-    internal fun wire() = WireUploadRequest(path, name, mime, variables.jsonText())
+    internal fun wire() = WireUploadRequest(path?.let { WireSource.File(it, name, mime) } ?: WireSource.Pending, variables.jsonText())
     companion object {
         fun pending(variables: JsonObject = JsonObject(emptyMap())) = UploadRequest(null, variables = variables)
     }
@@ -24,7 +24,7 @@ data class UploadItem(
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
     constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables)
-    internal fun wire() = WireUploadItem(values.jsonText(), path, name, mime, variables.jsonText())
+    internal fun wire() = WireUploadItem(values.jsonText(), path?.let { WireSource.File(it, name, mime) } ?: WireSource.Pending, variables.jsonText())
 }
 
 data class UploadSource(

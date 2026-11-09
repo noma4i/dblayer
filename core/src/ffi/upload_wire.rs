@@ -5,19 +5,30 @@ use crate::owners::write::upload::{UploadBatchInput, UploadFile, UploadItem};
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadRequest {
-    pub path: Option<String>,
-    pub name: Option<String>,
-    pub mime: Option<String>,
+    pub source: WireSource,
     pub variables_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadItem {
     pub values_json: String,
-    pub path: Option<String>,
-    pub name: Option<String>,
-    pub mime: Option<String>,
+    pub source: WireSource,
     pub variables_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum WireSource {
+    File { path: String, name: Option<String>, mime: Option<String> },
+    Pending,
+}
+
+impl WireSource {
+    fn parts(self) -> (Option<String>, Option<String>, Option<String>) {
+        match self {
+            Self::File { path, name, mime } => (Some(path), name, mime),
+            Self::Pending => (None, None, None),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -45,19 +56,22 @@ pub(super) fn object(json: &str) -> Result<Map<String, Value>, DbError> {
 #[cfg(test)]
 impl WireUploadRequest {
     pub fn of(file: &UploadFile) -> Self {
-        Self { path: file.path.clone(), name: file.name.clone(), mime: file.mime.clone(), variables_json: Value::Object(file.variables.clone()).to_string() }
+        let source = file.path.clone().map(|path| WireSource::File { path, name: file.name.clone(), mime: file.mime.clone() }).unwrap_or(WireSource::Pending);
+        Self { source, variables_json: Value::Object(file.variables.clone()).to_string() }
     }
 }
 
 impl WireUploadRequest {
     pub fn into_file(self) -> Result<UploadFile, DbError> {
-        Ok(UploadFile { path: self.path, name: self.name, mime: self.mime, variables: object(&self.variables_json)? })
+        let (path, name, mime) = self.source.parts();
+        Ok(UploadFile { path, name, mime, variables: object(&self.variables_json)? })
     }
 }
 
 impl WireUploadItem {
     pub fn into_item(self) -> Result<UploadItem, DbError> {
-        Ok(UploadItem { values: object(&self.values_json)?, path: self.path, name: self.name, mime: self.mime, variables: object(&self.variables_json)? })
+        let (path, name, mime) = self.source.parts();
+        Ok(UploadItem { values: object(&self.values_json)?, path, name, mime, variables: object(&self.variables_json)? })
     }
 }
 

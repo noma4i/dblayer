@@ -117,7 +117,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "nodes" => database.nodes(epoch, model, "node".into(), vec![row]).await.map(|_| ()),
         "refresh" => database.refresh(epoch, model, Some("profile".into()), "{}".into()).await,
         "edge_values" => database.edge_values(epoch, model, Some("profile".into()), "{}".into(), vec![row]).await.map(|_| ()),
-        "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { path: Some(args.source_path.clone()), name: None, mime: None, variables_json: "{}".into() }).await.map(|_| ()),
+        "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: args.source_path.clone(), name: None, mime: None }, variables_json: "{}".into() }).await.map(|_| ()),
         "supply_source" => database.supply_source(epoch, model, row, args.action.clone(), WireUploadSource { path: args.source_path.clone(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() }).await.map(|_| ()),
         "fail_source" => database.fail_source(epoch, model, row, args.action.clone(), "preparation".into()).await,
         _ => return None,
@@ -260,7 +260,7 @@ async fn matrix_upload_missing_row_leaves_the_database_open() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
-    let request = || WireUploadRequest { path: Some(source.to_string_lossy().into_owned()), name: None, mime: None, variables_json: "{}".into() };
+    let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() };
     let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
     matrix.check("upload(missing row)", "first call", "missing_row", "NotFound", observed(&first.map(|_| ())));
     let next = database.peek_row(epoch, "Moment".into(), row.clone());

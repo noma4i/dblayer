@@ -12,7 +12,7 @@ async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
     let epoch = database.session_epoch();
     let items = (0..3).map(|index| WireUploadItem {
         values_json: json!({"chatId":"c1", "kind":"TEXT", "clientKey":format!("key-{index}"), "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z", "mediaGroup":{"id":"album", "position":index, "size":3}}).to_string(),
-        path: None, name: None, mime: None, variables_json: "{}".into(),
+        source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into(),
     }).collect();
     let query = crate::ffi::QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let stream = database.subscribe_values(epoch, ReadRequest::List { query });
@@ -72,7 +72,7 @@ async fn consumer_chat_album_pending_source_restart_and_reset() {
     let epoch = stand.database.session_epoch();
     let items = (0..2).map(|index| WireUploadItem {
         values_json: json!({"chatId":"c1", "kind":"TEXT", "clientKey":format!("key-{index}"), "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(),
-        path: None, name: None, mime: None, variables_json: "{}".into(),
+        source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into(),
     }).collect();
     let receipt = bound(stand.database.upload_create_batch(epoch, "Message".into(), items, WireUploadBatch { operation: "send_files".into(), variables_json: r#"{"chatId":"c1"}"#.into() })).await.unwrap();
     let ids: Vec<_> = receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect();

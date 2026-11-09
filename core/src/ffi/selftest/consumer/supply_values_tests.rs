@@ -25,11 +25,11 @@ async fn consumer_supplied_values_reach_the_row_before_the_blob_transfer() {
         stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
         stand.hold(&["CreateBlob"]);
         let id = if mode == "single" {
-            let request = WireUploadRequest { path: None, name: None, mime: None, variables_json: r#"{"chatId":"c1","kind":"VIDEO"}"#.into() };
+            let request = WireUploadRequest { source: crate::ffi::upload_wire::WireSource::Pending, variables_json: r#"{"chatId":"c1","kind":"VIDEO"}"#.into() };
             let command = CommandRequest { epoch, model: "Message".into(), values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":"k1","media":{"kind":"VIDEO"}}).to_string(), args_json: "{}".into(), upload: Some(CommandUpload { action: "send_file".into(), request }) };
             bound(database.send(command)).await.unwrap().optimistic_value.expect("the optimistic row").id
         } else {
-            let items = (0..2).map(|index| WireUploadItem { values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":format!("k{index}"),"mediaGroup":{"id":"album","position":index,"size":2},"media":{"kind":"VIDEO"}}).to_string(), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+            let items = (0..2).map(|index| WireUploadItem { values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":format!("k{index}"),"mediaGroup":{"id":"album","position":index,"size":2},"media":{"kind":"VIDEO"}}).to_string(), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
             bound(database.upload_create_batch(epoch, "Message".into(), items, WireUploadBatch { operation: "send_files".into(), variables_json: r#"{"chatId":"c1"}"#.into() })).await.unwrap().items[0].optimistic_value.id.clone()
         };
         let action = if mode == "single" { "send_file" } else { "send_files" };

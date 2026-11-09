@@ -11,7 +11,7 @@ async fn xfer_prop_pending_no_io() {
     let reads = database.db.files().source_reads();
     let rounds = database.life.rounds_needed_count();
     let requests = stand.script.names().len();
-    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
     let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
     let stream = database.subscribe_values(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Asset"}"#) });
     let snapshot = bound(stream.pull_next()).await.unwrap();
@@ -42,7 +42,7 @@ async fn xfer_prop_pending_no_io() {
 async fn pending_source_rejects_unknown_row_fields() {
     let stand = Stand::new();
     let database = stand.open(None, &OPERATIONS).await;
-    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
     let epoch = database.session_epoch();
     let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -61,7 +61,7 @@ async fn transfers_use_the_row_id_when_batches_share_a_correlation_key() {
     let database = stand.open(None, &OPERATIONS).await;
     database.set_online(false).unwrap();
     let epoch = database.session_epoch();
-    let items = || (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+    let items = || (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
     let batch = || WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() };
     let first = bound(database.upload_create_batch(epoch, "Asset".into(), items(), batch())).await.unwrap();
     let second = bound(database.upload_create_batch(epoch, "Asset".into(), items(), batch())).await.unwrap();
@@ -88,7 +88,7 @@ async fn transfers_use_the_row_id_when_batches_share_a_correlation_key() {
 async fn pending_source_values_reach_the_row_and_rollback() {
     let stand = Stand::new();
     let database = stand.open(None, &OPERATIONS).await;
-    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
     let epoch = database.session_epoch();
     let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -118,7 +118,7 @@ async fn xfer_prop_pending_terminates() {
             std::fs::write(&path, format!("image-{index}")).unwrap();
             path
         }).collect();
-        let items = (0..3).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), path: None, name: None, mime: None, variables_json: "{}".into() }).collect();
+        let items = (0..3).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
         let epoch = database.session_epoch();
         let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
         for index in order {

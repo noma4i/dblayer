@@ -17,7 +17,7 @@ public struct UploadRequest: Sendable {
   public static func pending(variables: [String: JSONValue] = [:]) -> Self { Self(variables: variables) }
 
   var wire: WireUploadRequest {
-    get throws { WireUploadRequest(path: path, name: name, mime: mime, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadRequest(source: path.map { .file(path: $0, name: name, mime: mime) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 
@@ -37,7 +37,7 @@ public struct UploadItem: Sendable {
   }
 
   var wire: WireUploadItem {
-    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, path: path, name: name, mime: mime, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, source: path.map { .file(path: $0, name: name, mime: mime) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 
