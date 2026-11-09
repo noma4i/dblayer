@@ -474,7 +474,7 @@ impl TransferState {
                 self.orphans.insert(upload_id, key);
                 self.send_orphans(false, fx);
             }
-            if matches!(rejected.reason, RejectReason::Storage(_)) {
+            if !matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession) {
                 self.owe_minted(&pending, fx);
             }
             return;
