@@ -248,25 +248,41 @@ fn feed_io_broken_next_drops() {
     assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
 }
 
+fn two_channel_rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
+    let runtime = runtime();
+    let batches = Batches::default();
+    let (_, rest) = collector();
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1), Arc::new(|| 0));
+    let mut det = DetScheduler::new(1);
+    let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
+    let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
+    let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0), ("Room".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()]), ("Room".to_string(), vec!["2".to_string()])].into()), io);
+    det.start_epoch(EPOCH);
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Room".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
+    (det, feed, batches, runtime)
+}
+
 #[test]
 fn feed_io_graphql_errors_drop() {
-    let cases = [
+    for (name, result, errored) in [
         ("errors_only", json!({"errors":[{"message":"denied"}]}), true),
         ("data_with_errors", json!({"data":{"model":"Chat", "payload":"p"}, "errors":[{"message":"denied"}]}), true),
         ("data", json!({"data":{"model":"Chat", "payload":"p"}}), false),
-    ];
-    for (name, result, drops) in cases {
+    ] {
         let (first, peer) = line();
         let (second, _other) = line();
-        let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
+        let (mut det, feed, batches, _runtime) = two_channel_rig(vec![first, second]);
         pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
         peer.frames.send(confirmed(1)).unwrap();
         peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
-        if drops {
-            pump(&mut det, |det| saw_input(det, "ProtocolError") == 1);
-            det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
-            pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
-            assert!(saw_input(&det, "ProtocolError") == 1, "{name}: the error frame is an explicit protocol error");
+        if errored {
+            pump(&mut det, |det| saw_input(det, "FrameOpened") >= 2 || saw_input(det, "ProtocolError") >= 1);
+            assert_eq!(saw_input(&det, "ProtocolError"), 0, "{name}: a next with errors ends only its channel, not the connection");
+            assert_eq!(det.state(feed).map(|state| state.active_connection()), Some(Some(1)), "{name}: the connection and the other channel stay");
             assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
         } else {
             let seen = batches.clone();
