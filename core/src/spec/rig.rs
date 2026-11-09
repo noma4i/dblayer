@@ -15,6 +15,7 @@ use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, sea
 use crate::transport::CredentialSlot;
 use super::harness_life::Held;
 use crate::value::ScalarKind;
+use crate::server_contract::{Admission, Contract, Request};
 
 const STEP_SECS: u64 = 25;
 
@@ -27,9 +28,6 @@ pub(super) enum Kind { Mutate = 0, Put = 1, Query = 2 }
 #[derive(Clone, Debug)]
 pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: Value }
 
-pub(super) type Pair = (String, String, Option<i64>);
-
-#[derive(Default)]
 struct State {
     seen: Vec<Seen>,
     held: [VecDeque<(String, oneshot::Sender<Reply>)>; 3],
@@ -41,7 +39,15 @@ struct State {
     next: u64,
     in_flight: HashMap<String, usize>,
     overlap: bool,
-    settled: HashMap<Pair, Value>,
+    contract: Contract<Value>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let mut contract = Contract::adopting();
+        contract.cache_everything();
+        State { seen: Vec::new(), held: Default::default(), hold: [false; 3], hold_ops: Vec::new(), auto: Default::default(), script: HashMap::new(), cancelled: 0, next: 0, in_flight: HashMap::new(), overlap: false, contract }
+    }
 }
 
 pub(super) struct Server { state: Mutex<State>, signal: tokio::sync::Notify }
@@ -144,11 +150,6 @@ impl Server {
         reply
     }
 
-    /// The server answers a repeated pair `(operation, request id, sequence)` with the answer it gave first. A temporary failure settles nothing.
-    pub(super) fn known(&self, pair: &Pair) -> Option<Value> { self.state.lock().unwrap().settled.get(pair).cloned() }
-
-    pub(super) fn settle(&self, pair: Pair, answer: Value) -> Value { self.state.lock().unwrap().settled.entry(pair).or_insert(answer).clone() }
-
     fn next(&self) -> u64 {
         let mut state = self.state.lock().unwrap();
         state.next += 1;
@@ -212,20 +213,33 @@ impl FakeHttp for Wire {
             return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, json!({"data":{"moments":[]}})) });
         }
         let answer = match path.as_str() {
-            "/api/auth/login_link" => json!({"sessionId": request["body"]["account"]}),
-            "/api/logout" => json!({"revoked": true}),
+            "/api/auth/login_link" => {
+                if let Some(sequence) = sequence { self.0.state.lock().unwrap().contract.set_last(sequence); }
+                json!({"sessionId": request["body"]["account"]})
+            }
+            "/api/logout" => {
+                if let Some(sequence) = sequence { self.0.state.lock().unwrap().contract.set_last(sequence); }
+                json!({"revoked": true})
+            }
             _ => {
                 let name = request["body"]["operationName"].as_str().unwrap_or_default().to_string();
                 let variables = request["body"]["variables"].clone();
-                let pair = (name.clone(), request["requestId"].as_str().unwrap_or_default().to_string(), sequence);
-                if let Some(known) = self.0.known(&pair) { return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, known) }); }
+                let contract_request = Request::from_wire("rig", &request);
+                let admission = self.0.state.lock().unwrap().contract.admit(&contract_request);
+                match admission {
+                    Admission::Stored(known) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, known) }),
+                    Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
+                    Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
+                    Admission::Fresh => {}
+                }
                 let answer = match self.0.decide(Kind::Mutate, &name, variables.clone()).await {
                     Reply::Ok => answer_of(&name, &variables, self.0.next()),
                     Reply::Temp => return Err(DbError::Network { detail: "temporary".into() }),
                     Reply::Refuse => json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
                     Reply::NotFound => json!({"errors": [{"message": "gone", "extensions": {"code": "NOT_FOUND"}}]}),
                 };
-                self.0.settle(pair, answer)
+                self.0.state.lock().unwrap().contract.settle(&contract_request, answer.clone());
+                answer
             }
         };
         Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, answer) })
