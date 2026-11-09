@@ -7,7 +7,7 @@ use super::rig_tests::{bound, Rig, World};
 use super::rig_held::Held;
 use super::flow_fixtures::{add_chat, chat_row};
 use crate::ffi::tape::Rows;
-use crate::ffi::ReadEnd;
+use crate::ffi::EndCause;
 use crate::test_wait::settled;
 
 fn first_named(rows: &Rows, name: &str) -> Option<i64> {
@@ -54,7 +54,7 @@ async fn flow_account_switch_clean() {
 
     bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
     rig.database.session_reset().await.unwrap();
-    settled(&rig, "both streams of the old account ended", || chats.ended() == vec![ReadEnd::SessionEnded] && thread.ended() == vec![ReadEnd::SessionEnded]).await;
+    settled(&rig, "both streams of the old account ended", || chats.ended() == vec![EndCause::SessionEnded] && thread.ended() == vec![EndCause::SessionEnded]).await;
 
     bound(rig.database.session_call("login_link".into(), json!({"account": "B"}).to_string())).await.unwrap();
     let fresh = Arc::new(Rows::default());

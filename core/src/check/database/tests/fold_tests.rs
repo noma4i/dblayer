@@ -1,5 +1,5 @@
 use super::super::fold::{fold, Folded};
-use crate::ffi::{ReadEnd, ReadPhase, ReadState, ReadValue, RowEdit, WireRow, WireSync, WireSyncState};
+use crate::ffi::{EndCause, ReadPhase, ReadState, ReadValue, RowEdit, WireRow, WireSync, WireSyncState};
 
 fn state(loaded: i64) -> ReadState {
     ReadState { phase: ReadPhase::Loaded, error: None, loaded: Some(loaded), has_more: false, settled: true, total: None }
@@ -28,7 +28,7 @@ fn folded(base: i64, revision: i64, rows: &[&str], removed: &[&str]) -> Folded {
 #[test]
 fn the_unread_journal_folds_by_the_last_wins() {
     let snapshot = |revision| ReadValue::Snapshot { revision, rows: vec![row("a")], edits: Vec::new(), state: state(revision) };
-    let ended = ReadValue::Ended { cause: ReadEnd::Closed };
+    let ended = ReadValue::Ended { cause: EndCause::Closed };
     let table: Vec<(&str, Vec<ReadValue>, Vec<Folded>)> = vec![
         ("a chain of deltas", vec![delta(2, 3, vec![insert("a")]), delta(3, 4, vec![rewrite("a"), insert("b")])], vec![folded(2, 4, &["a", "b"], &[])]),
         ("a removed row leaves the rows", vec![delta(2, 3, vec![insert("a")]), delta(3, 4, vec![remove("a"), remove("c")])], vec![folded(2, 4, &[], &["a", "c"])]),

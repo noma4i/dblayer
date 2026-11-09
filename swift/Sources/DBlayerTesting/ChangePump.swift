@@ -17,7 +17,7 @@ public enum ChangePump {
         continue
       }
       let reader = database.subscribeValues(epoch: epoch, request: .changes)
-      var cause: ReadEnd?
+      var cause: EndCause?
       let claim: UInt64
       do {
         claim = try await reader.claimReader()

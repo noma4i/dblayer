@@ -7,7 +7,7 @@ sealed interface CableCloseItem {
     data object Ready : CableCloseItem
     class Close(val position: ULong, val event: CableClose) : CableCloseItem
     class Lost(val first: ULong, val last: ULong) : CableCloseItem
-    class Ended(val cause: ReadEnd) : CableCloseItem
+    class Ended(val cause: EndCause) : CableCloseItem
 }
 
 fun DBlayer.cableCloses(): Flow<CableCloseItem> = flow {

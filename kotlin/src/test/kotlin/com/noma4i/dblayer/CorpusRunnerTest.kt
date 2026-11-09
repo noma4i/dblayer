@@ -99,13 +99,14 @@ private fun phaseName(phase: ReadPhase): String = when (phase) {
     ReadPhase.FAILED -> "failed"
 }
 
-private fun causeName(end: ReadEnd): String = when (end) {
-    ReadEnd.SessionEnded -> "session_ended"
-    ReadEnd.Closed -> "closed"
-    ReadEnd.Cancelled -> "cancelled"
-    ReadEnd.Invalid -> "invalid"
-    is ReadEnd.Storage -> "storage"
-    is ReadEnd.Internal -> "internal"
+private fun causeName(end: EndCause): String = when (end) {
+    EndCause.SessionEnded -> "session_ended"
+    EndCause.Closed -> "closed"
+    EndCause.Cancelled -> "cancelled"
+    EndCause.Discarded -> "discarded"
+    is EndCause.Invalid -> "invalid"
+    is EndCause.Storage -> "storage"
+    is EndCause.Internal -> "internal"
 }
 
 private fun fetchOf(name: String?): ReadFetch? = when (name) {

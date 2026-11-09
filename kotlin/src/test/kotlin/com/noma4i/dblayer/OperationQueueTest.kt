@@ -111,7 +111,7 @@ class OperationQueueTest {
 
         closeForCleanup()
 
-        assertEquals(ReadEnd.Closed, (withTimeout(5000) { queue.await() }.last() as OperationQueueItem.Ended).cause)
-        assertEquals(ReadEnd.Closed, (withTimeout(5000) { status.await() }.last() as TransferItem.Ended).cause)
+        assertEquals(EndCause.Closed, (withTimeout(5000) { queue.await() }.last() as OperationQueueItem.Ended).cause)
+        assertEquals(EndCause.Closed, (withTimeout(5000) { status.await() }.last() as TransferItem.Ended).cause)
     }
 }

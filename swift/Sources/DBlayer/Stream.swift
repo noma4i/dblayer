@@ -38,8 +38,8 @@ final class ReaderLease: @unchecked Sendable {
     if case .unclaimed = claim {
       do { claim = .held(try await reader.claimReader()) } catch {
         claim = .over
-        guard case .Invalid? = error as? DbError else { return .ended(cause: .closed) }
-        return .ended(cause: .invalid)
+        guard case let .Invalid(detail)? = error as? DbError else { return .ended(cause: .closed) }
+        return .ended(cause: .invalid(detail: detail))
       }
     }
     guard case let .held(id) = claim else { return nil }
@@ -63,7 +63,7 @@ public enum ListDelivery<Model: DBModel>: Sendable {
   case snapshot(revision: Int64, rows: [Model], edits: [ListEdit<Model>], state: ReadState)
   case delta(base: Int64, revision: Int64, edits: [ListEdit<Model>], state: ReadState)
   case state(revision: Int64, state: ReadState)
-  case ended(ReadEnd)
+  case ended(EndCause)
 
   /// Decodes the rows of a value of a stream of rows. `nil` for a value that carries no list. Throws when a row cannot be decoded: the reader then calls `ReadStream.resync()`.
   public init?(_ value: ReadValue) throws {
@@ -93,7 +93,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public private(set) var revision: Int64?
   /// The revision the last delta continues from.
   public private(set) var base: Int64?
-  public private(set) var ended: ReadEnd?
+  public private(set) var ended: EndCause?
   /// The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike.
   public private(set) var lastEdits: [ListEdit<Model>] = []
   public init() {}
@@ -184,7 +184,7 @@ public final class ProjectedCount {
   public private(set) var revision: Int64?
   public private(set) var state: ReadState?
   /// Why the stream ended by itself.
-  public private(set) var ended: ReadEnd?
+  public private(set) var ended: EndCause?
   public var error: DbError? { state?.error }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
@@ -245,7 +245,7 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
 public enum ChangeItem: Sendable, Equatable {
   case ready
   case changed(revision: Int64, rows: [ChangedRow])
-  case ended(ReadEnd)
+  case ended(EndCause)
 }
 
 public struct ChangeStream: AsyncSequence, Sendable {
@@ -285,7 +285,7 @@ public struct TransferProgress: Sendable, Equatable {
 /// One item of the status of a transfer: a change, or the end of the stream with the cause of the core.
 public enum TransferItem: Sendable, Equatable {
   case progress(TransferProgress)
-  case ended(ReadEnd)
+  case ended(EndCause)
 }
 
 /// The status of a transfer while it runs, by the key `model:row:action`. The last item is `.ended`.
@@ -314,7 +314,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
 /// One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core.
 public enum OperationQueueItem: Sendable {
   case queue(revision: Int64, items: [OperationInfo])
-  case ended(ReadEnd)
+  case ended(EndCause)
 }
 
 /// The queue of operations of the account: the whole queue at open and after every change, then `.ended`. Each `OperationInfo` names the arguments of `retry(model:id:action:)` and `discard(model:id:action:)`.

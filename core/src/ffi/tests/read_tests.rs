@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::{Config, Database, ReadEnd, ReadPhase, ReadRequest, ReadStream, ReadValue, RowEdit, TestClock};
+use super::{Config, Database, EndCause, ReadPhase, ReadRequest, ReadStream, ReadValue, RowEdit, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 
@@ -21,7 +21,7 @@ async fn stream_admission_precedes_query_and_relation_validation() {
     let db = open().await;
     let epoch = db.session_epoch();
     let invalid = db.subscribe_values(epoch + 1, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Missing"}"#) });
-    assert!(matches!(next(&invalid).await, ReadValue::Ended { cause: ReadEnd::SessionEnded }));
+    assert!(matches!(next(&invalid).await, ReadValue::Ended { cause: EndCause::SessionEnded }));
     let stream = db.subscribe_values(epoch + 1, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     assert!(matches!(stream.refresh().await, Err(super::DbError::NoSession { .. })));
     assert!(matches!(stream.load_more().await, Err(super::DbError::NoSession { .. })));
@@ -40,7 +40,7 @@ async fn dropping_a_pending_pull_cancels_the_stream() {
     let mut pending = Box::pin(stream.pull_next());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
     drop(pending);
-    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: EndCause::Cancelled })));
     assert!(crate::test_wait::within(stream.pull_next()).await.is_none());
     crate::test_wait::within(db.close_database()).await.unwrap();
 }
@@ -126,7 +126,7 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     assert_eq!((edits.len(), ids(&RowEdit::carried(&edits))), (1, vec!["n2"]), "only the new row travels");
     assert!(matches!(edits[0], RowEdit::Insert { index: 1, .. }), "with its place in the list: {edits:?}");
     stream.cancel().await;
-    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Cancelled }));
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: EndCause::Cancelled }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -168,7 +168,7 @@ async fn a_row_that_enters_the_middle_of_the_list_arrives_with_its_index() {
 async fn a_request_that_cannot_be_read_ends_as_invalid() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
-    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }));
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: EndCause::Invalid { .. } }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -197,7 +197,7 @@ async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     db.close_database().await.unwrap();
-    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: EndCause::Closed }));
     assert!(crate::test_wait::within(stream.pull_next()).await.is_none());
 }
 
@@ -232,7 +232,7 @@ async fn data_query_limit_offset() {
     assert_eq!(ids(&rows), ["n5", "n2"]);
     assert!(matches!(next(&count).await, ReadValue::Count { count: 5, .. }));
     let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note","limit":0}"#) });
-    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }), "a zero limit");
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: EndCause::Invalid { .. } }), "a zero limit");
     crate::test_wait::within(db.close_database()).await.unwrap();
 }
 

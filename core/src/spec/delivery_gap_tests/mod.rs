@@ -104,7 +104,8 @@ fn val_of(value: &d::Value) -> Val {
             d::EndCause::SessionEnded => Cause::SessionEnded,
             d::EndCause::Closed => Cause::Closed,
             d::EndCause::Cancelled => Cause::Cancelled,
-            d::EndCause::Invalid => Cause::Invalid,
+            d::EndCause::Invalid { .. } => Cause::Invalid,
+            d::EndCause::Discarded | d::EndCause::Internal { .. } => panic!("unexpected delivery cause"),
             d::EndCause::Storage { .. } => Cause::Storage,
         }),
     }

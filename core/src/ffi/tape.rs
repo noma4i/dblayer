@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
+use super::read::{EndCause, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 use super::wire::{WireRow, WireSync, WireSyncState};
 use super::{Database, DbError};
 
@@ -34,7 +34,7 @@ pub(crate) struct Seen {
     pub(crate) count: Option<u64>,
 }
 
-fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<ReadEnd>> {
+fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<EndCause>> {
     let blank = |revision: i64, state: ReadState, size: u32| Seen { rows: Vec::new(), size, revision, seq, removed: Vec::new(), phase: Some(state.phase), error: state.error, loaded: state.loaded, count: None };
     Ok(match value {
         ReadValue::Snapshot { revision, rows, state, .. } => {
@@ -65,7 +65,7 @@ fn apply(rows: &mut Vec<WireRow>, value: &ReadValue) {
 
 /// The rows a stream holds after every value in protocol order (`.0`), every value as `Seen` (`.1`), and how it ended (`.2`).
 #[derive(Default)]
-pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen>>, pub(crate) Mutex<Vec<ReadEnd>>, Mutex<(u32, Vec<ReadValue>)>, crate::test_wait::Flag);
+pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen>>, pub(crate) Mutex<Vec<EndCause>>, Mutex<(u32, Vec<ReadValue>)>, crate::test_wait::Flag);
 
 impl Reader for Rows {
     fn delivered(&self, delivery: StreamDelivery) {
@@ -87,7 +87,7 @@ impl Rows {
 
     pub(crate) fn last(&self) -> Option<Seen> { self.1.lock().unwrap().last().cloned() }
 
-    pub(crate) fn ended(&self) -> Vec<ReadEnd> { self.2.lock().unwrap().clone() }
+    pub(crate) fn ended(&self) -> Vec<EndCause> { self.2.lock().unwrap().clone() }
 
     pub(crate) fn len(&self) -> usize { self.0.lock().unwrap().len() }
 
@@ -179,7 +179,7 @@ fn settled_by(value: &ReadValue, seq: u64) -> Option<Result<u64, DbError>> {
             ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Storage { detail: String::new() }))),
             ReadPhase::Idle | ReadPhase::Loading => None,
         },
-        ReadValue::Ended { cause: ReadEnd::Invalid } => Some(Err(DbError::Invalid { detail: "the stream could not open".into() })),
+        ReadValue::Ended { cause: EndCause::Invalid { detail } } => Some(Err(DbError::Invalid { detail: detail.clone() })),
         ReadValue::Ended { .. } => Some(Err(DbError::Interrupted { detail: "the stream ended before its rows were shown".into() })),
         _ => None,
     }

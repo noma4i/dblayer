@@ -125,11 +125,12 @@ private func phaseName(_ phase: ReadPhase) -> String {
   }
 }
 
-private func causeName(_ end: ReadEnd) -> String {
+private func causeName(_ end: EndCause) -> String {
   switch end {
   case .sessionEnded: return "session_ended"
   case .closed: return "closed"
   case .cancelled: return "cancelled"
+  case .discarded: return "discarded"
   case .invalid: return "invalid"
   case .storage: return "storage"
   case .internal: return "internal"

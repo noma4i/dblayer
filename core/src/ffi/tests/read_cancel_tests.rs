@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{Config, Database, ReadEnd, ReadRequest, ReadValue, TestClock};
+use super::{Config, Database, EndCause, ReadRequest, ReadValue, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::within;
 use crate::value::ScalarKind;
@@ -26,7 +26,7 @@ async fn a_cancel_from_another_task_ends_the_pull_that_waits() {
         async move { stream.cancel().await }
     });
 
-    assert!(matches!(within(pending).await, Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
+    assert!(matches!(within(pending).await, Some(ReadValue::Ended { cause: EndCause::Cancelled })));
     within(canceller).await.unwrap();
     assert!(within(stream.pull_next()).await.is_none());
     within(db.close_database()).await.unwrap();

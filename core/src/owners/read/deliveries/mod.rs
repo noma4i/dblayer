@@ -111,13 +111,15 @@ impl StreamRow {
     pub fn new(id: &str, stamp: i64) -> Self { Self { id: id.to_string(), stamp, row: None } }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum EndCause {
     SessionEnded,
     Closed,
     Cancelled,
-    Invalid,
+    Discarded,
+    Invalid { detail: String },
     Storage { error: String },
+    Internal { detail: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -498,7 +500,7 @@ impl StateOwner for Deliveries {
                 let machine = if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
                     Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
                 } else if !valid {
-                    Delivery::ended(view, epoch, EndCause::Invalid, &mut fx)
+                    Delivery::ended(view, epoch, EndCause::Invalid { detail: "the stream request is invalid".into() }, &mut fx)
                 } else {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };

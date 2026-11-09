@@ -5,7 +5,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, Switchable, World};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
-use crate::ffi::{Database, DbError, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadValue, WireOperationOutcome};
+use crate::ffi::{Database, DbError, EndCause, ReadFetch, ReadPhase, ReadRequest, ReadValue, WireOperationOutcome};
 use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
@@ -222,7 +222,7 @@ async fn a_held_entity_ends_its_load_wait_after_session_reset() {
             changed.await;
         }
     }).await;
-    assert_eq!(reader.ended(), vec![ReadEnd::SessionEnded]);
+    assert_eq!(reader.ended(), vec![EndCause::SessionEnded]);
     assert!(matches!(bound(rig.database.loaded(stream)).await, Err(DbError::Interrupted { .. })));
     rig.database.close_now();
 }
@@ -448,7 +448,7 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
         let reader = Reader::open();
         let stream = rig.database.subscribe_reading(epoch, request.clone(), reader.clone());
         settled(&rig, "the failed stream ended", || !reader.ended().is_empty()).await;
-        assert_eq!(reader.ended(), vec![ReadEnd::Invalid], "{request:?} ended with more or less than one outcome");
+        assert!(matches!(reader.ended().as_slice(), [EndCause::Invalid { .. }]), "{request:?} ended with more or less than one outcome");
         settled(&rig, "the failed stream left the table", || rig.database.stream_census().open == 0).await;
         let loaded = bound(rig.database.loaded(stream)).await;
         assert!(matches!(loaded, Err(DbError::Invalid { .. })), "{request:?} reported a first load: {loaded:?}");

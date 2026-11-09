@@ -25,10 +25,10 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
         val claim = try {
             reader.claimReader()
         } catch (refused: DbException.Invalid) {
-            emit(ReadValue.Ended(ReadEnd.Invalid))
+            emit(ReadValue.Ended(EndCause.Invalid(refused.detail)))
             return@flow
         } catch (failed: DbException) {
-            emit(ReadValue.Ended(ReadEnd.Closed))
+            emit(ReadValue.Ended(EndCause.Closed))
             return@flow
         }
         try {
@@ -67,7 +67,7 @@ sealed interface ListDelivery<out Model> {
     class Snapshot<Model>(val revision: Long, val rows: List<Model>, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
     class Delta<Model>(val base: Long, val revision: Long, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
     class State(val revision: Long, val state: ReadState) : ListDelivery<Nothing>
-    class Ended(val cause: ReadEnd) : ListDelivery<Nothing>
+    class Ended(val cause: EndCause) : ListDelivery<Nothing>
 }
 
 /** Decodes the rows of a value of a stream of rows. `null` for a value that carries no list. Throws when a row cannot be decoded: the reader then asks the core for a snapshot. */
@@ -93,7 +93,7 @@ class ListProjection<Model : DBModel> private constructor(
     val revision: Long?,
     /** The revision the last delta continues from. */
     val base: Long?,
-    val ended: ReadEnd?,
+    val ended: EndCause?,
     /** The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike. */
     val lastEdits: List<ListEdit<Model>>,
 ) {
@@ -151,7 +151,7 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 }
 
 /** What a screen shows of a count stream: the count, its revision and its state are one value of one delivery. */
-class CountProjection(val count: ULong?, val revision: Long?, val state: ReadState?, val ended: ReadEnd?) {
+class CountProjection(val count: ULong?, val revision: Long?, val state: ReadState?, val ended: EndCause?) {
     val error: DbException? get() = state?.error
 
     internal fun apply(value: ReadValue): CountProjection = when (value) {
@@ -198,7 +198,7 @@ sealed interface ChangeItem {
 
     class Changed(val revision: Long, val rows: List<ChangedRow>) : ChangeItem
 
-    class Ended(val cause: ReadEnd) : ChangeItem
+    class Ended(val cause: EndCause) : ChangeItem
 }
 
 internal fun ValueStream.changeItems(): Flow<ChangeItem> = flow {
@@ -218,7 +218,7 @@ data class TransferProgress(val revision: Long, val state: String, val waitReaso
 /** One item of the status of a transfer: a change, or the end of the stream with the cause of the core. */
 sealed interface TransferItem {
     class Progress(val progress: TransferProgress) : TransferItem
-    class Ended(val cause: ReadEnd) : TransferItem
+    class Ended(val cause: EndCause) : TransferItem
 }
 
 /** The status of a transfer while it runs, by the key `model:row:action`. The last item is [TransferItem.Ended]. */
@@ -236,7 +236,7 @@ val ValueStream.uploadStatus: Flow<TransferItem>
 /** One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core. */
 sealed interface OperationQueueItem {
     class Queue(val revision: Long, val items: List<OperationInfo>) : OperationQueueItem
-    class Ended(val cause: ReadEnd) : OperationQueueItem
+    class Ended(val cause: EndCause) : OperationQueueItem
 }
 
 /** The queue of operations of the account: the whole queue at open and after every change, then [OperationQueueItem.Ended]. Each [OperationInfo] names the arguments of [AccountScope.retry] and [AccountScope.discard]. */

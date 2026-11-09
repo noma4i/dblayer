@@ -2,7 +2,7 @@ public enum CableCloseItem: Sendable {
   case ready
   case close(position: UInt64, event: CableClose)
   case lost(first: UInt64, last: UInt64)
-  case ended(ReadEnd)
+  case ended(EndCause)
 }
 
 public struct CableCloseStream: AsyncSequence, Sendable {

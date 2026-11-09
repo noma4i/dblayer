@@ -264,7 +264,7 @@ async fn life_closed_stream_releases_store() {
     db.close_database().await.unwrap();
     assert!(matches!(crate::test_wait::within(stream.refresh()).await, Err(DbError::Closed { .. })));
     assert!(matches!(crate::test_wait::within(stream.load_more()).await, Err(DbError::Closed { .. })));
-    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: super::ReadEnd::Closed })));
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: super::EndCause::Closed })));
     let (database, store) = (Arc::downgrade(&db), Arc::downgrade(&db.db));
     let owners = db.life.owners_handle();
     drop(db);

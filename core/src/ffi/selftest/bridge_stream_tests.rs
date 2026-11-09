@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tests::lifecycle_tests::named;
-use crate::ffi::{Database, DbError, ReadEnd, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
+use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
 use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
@@ -75,7 +75,7 @@ async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_the
     assert_eq!(kept + lost, 400, "kept events and lost positions add up to the events sent");
     assert!(lost > 0, "a reader that pulled nothing lost the oldest events");
     database.close_now();
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close");
+    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ended { cause: EndCause::Closed })), "the stream ends once at the close");
     assert!(bound(stream.pull_next()).await.is_none());
 }
 
@@ -233,7 +233,7 @@ async fn the_session_reset_ends_every_stream_with_one_outcome_and_no_account_val
     settle(&rig).await;
 
     for log in [&profile_log, &users_log] {
-        assert_eq!(log.ended(), vec![ReadEnd::SessionEnded], "exactly one outcome");
+        assert_eq!(log.ended(), vec![EndCause::SessionEnded], "exactly one outcome");
         assert!(matches!(log.deliveries().last().unwrap().value, ReadValue::Ended { .. }), "nothing follows the outcome");
     }
     assert_eq!(rig.database.stream_census().open, 0);
@@ -274,7 +274,7 @@ async fn an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b() {
     assert!(!second_profile.ever_showed("A") && !second_users.ever_showed("A"), "a value of A reached the projections of B");
     assert!(!first_profile.ever_showed("B") && !first_users.ever_showed("B"), "a value of B reached the projections of A");
     assert!(second_profile.deliveries().iter().all(|delivery| delivery.epoch == epoch_b));
-    assert_eq!(first_profile.ended(), vec![ReadEnd::SessionEnded]);
+    assert_eq!(first_profile.ended(), vec![EndCause::SessionEnded]);
     rig.database.close_now();
 }
 

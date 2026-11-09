@@ -208,7 +208,7 @@ impl Delivery {
 
     pub(super) fn model_invalid(&mut self, fx: &mut Vec<Emit>) {
         if self.events_open() {
-            self.finish(EndCause::Invalid, false, fx);
+            self.finish(EndCause::Invalid { detail: "the stream request is invalid".into() }, false, fx);
         }
     }
 

@@ -99,7 +99,7 @@ suspend fun <M : DBModel> Projected<M>.until(what: String, condition: (ListProje
 /** Returns when the projection shows a settled state, throws the failed state's error or `Interrupted` when the stream ended. Bounded by the hang guard. */
 suspend fun <M : DBModel> Projected<M>.loaded() {
     val shown = awaitWithin("the projection shows a settled state") { projection.first { it.state?.settled == true || it.ended != null } }
-    if (shown.ended != null && shown.ended != ReadEnd.Invalid) throw DbException.Interrupted("the stream ended before its rows were shown")
+    if (shown.ended != null && shown.ended !is EndCause.Invalid) throw DbException.Interrupted("the stream ended before its rows were shown")
     val state = shown.state
     if (state?.settled == true) {
         val error = state.error ?: return

@@ -267,7 +267,7 @@ extension BridgeProbeTests {
     let database = try DB.database
     let reader = database.subscribeValues(epoch: database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never))
     let lease = ReaderLease(reader)
-    let ended: [ReadEnd] = try await drained("the stream that cannot connect to end", lease: lease, reader).compactMap {
+    let ended: [EndCause] = try await drained("the stream that cannot connect to end", lease: lease, reader).compactMap {
       if case let .ended(cause) = $0 { return cause }
       return nil
     }

@@ -154,5 +154,5 @@ sealed interface ModelEventItem<out Model : DBModel> {
     data object Gap : ModelEventItem<Nothing>
 
     /** The stream ended: the core reports why. Nothing follows. */
-    class Ended(val cause: ReadEnd) : ModelEventItem<Nothing>
+    class Ended(val cause: EndCause) : ModelEventItem<Nothing>
 }

@@ -9,7 +9,7 @@ use super::mock::{Credentials, Mock};
 use super::model::Sut;
 use super::value::{Input, Observation};
 use crate::ffi::{
-    CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, QuerySpec, TestClock,
+    CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, EndCause, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, QuerySpec, TestClock,
     WireOperationOutcome, WireOperationReceipt, WireRow,
 };
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -90,14 +90,15 @@ fn phase_name(phase: ReadPhase) -> &'static str {
     }
 }
 
-fn cause_name(end: &ReadEnd) -> &'static str {
+fn cause_name(end: &EndCause) -> &'static str {
     match end {
-        ReadEnd::SessionEnded => "session_ended",
-        ReadEnd::Closed => "closed",
-        ReadEnd::Cancelled => "cancelled",
-        ReadEnd::Invalid => "invalid",
-        ReadEnd::Storage { .. } => "storage",
-        ReadEnd::Internal { .. } => "internal",
+        EndCause::SessionEnded => "session_ended",
+        EndCause::Closed => "closed",
+        EndCause::Cancelled => "cancelled",
+        EndCause::Invalid { .. } => "invalid",
+        EndCause::Discarded => "discarded",
+        EndCause::Storage { .. } => "storage",
+        EndCause::Internal { .. } => "internal",
     }
 }
 

@@ -5,7 +5,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Rig};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
-use crate::ffi::{CommandRequest, ReadEnd, ReadRequest, ReadValue, RowEdit, WireOperationOutcome, WireRow};
+use crate::ffi::{CommandRequest, EndCause, ReadRequest, ReadValue, RowEdit, WireOperationOutcome, WireRow};
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
 #[derive(Default)]
@@ -57,7 +57,7 @@ impl Reader {
             _ => false,
         })
     }
-    pub(super) fn ended(&self) -> Vec<ReadEnd> {
+    pub(super) fn ended(&self) -> Vec<EndCause> {
         self.deliveries().into_iter().filter_map(|delivery| if let ReadValue::Ended { cause } = delivery.value { Some(cause) } else { None }).collect()
     }
     pub(super) fn texts(&self) -> Vec<String> {

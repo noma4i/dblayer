@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{Config, Database, DbError, ReadEnd, ReadRequest, ReadValue, TestClock};
+use super::{Config, Database, DbError, EndCause, ReadRequest, ReadValue, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::within;
 use crate::value::ScalarKind;
@@ -38,7 +38,7 @@ async fn boundary_reader_early_exit() {
     let reader = within(stream.claim_reader()).await.unwrap();
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Snapshot { .. })));
     stream.release_reader(reader);
-    assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: ReadEnd::Closed })));
+    assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { cause: EndCause::Closed })));
     assert!(within(stream.pull(reader)).await.is_none());
     let again = within(stream.claim_reader()).await.expect("a stream that is gone accepts a claim");
     assert!(within(stream.pull(again)).await.is_none());
@@ -50,7 +50,7 @@ async fn boundary_reader_orders_a_pull_of_another_reader_is_invalid_and_leaves_t
     let db = open().await;
     let stream = notes(&db);
     let first = within(stream.claim_reader()).await.unwrap();
-    assert!(matches!(within(stream.pull(first + 1)).await, Some(ReadValue::Ended { cause: ReadEnd::Invalid })));
+    assert!(matches!(within(stream.pull(first + 1)).await, Some(ReadValue::Ended { cause: EndCause::Invalid { .. } })));
     assert!(matches!(within(stream.pull(first)).await, Some(ReadValue::Snapshot { .. })));
     within(db.close_database()).await.unwrap();
 }

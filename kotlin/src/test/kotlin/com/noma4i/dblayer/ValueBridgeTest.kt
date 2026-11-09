@@ -116,7 +116,7 @@ class ValueBridgeTest {
             profile.until("the stream shows A") { it.rows.firstOrNull()?.name == "A" }
 
             DBlayer.sessionReset()
-            profile.until("the stream ended") { it.ended == ReadEnd.SessionEnded }
+            profile.until("the stream ended") { it.ended == EndCause.SessionEnded }
 
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
             assertEquals("A", profile.value?.name)
@@ -147,7 +147,7 @@ class ValueBridgeTest {
             projectionB.until("B shows") { it.rows.firstOrNull()?.name == "B" }
 
             assertEquals("A", projectionA.value?.name)
-            assertEquals(ReadEnd.SessionEnded, projectionA.projection.value.ended)
+            assertEquals(EndCause.SessionEnded, projectionA.projection.value.ended)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -253,7 +253,7 @@ class ValueBridgeTest {
             val reading = screen.launch { held.values.collect { firstValue.complete(Unit) } }
             awaitWithin("the first value of the first reader") { firstValue.await() }
             val refused = held.values.first()
-            assertTrue("a second reader must end with Invalid: $refused", refused is ReadValue.Ended && refused.cause == ReadEnd.Invalid)
+            assertTrue("a second reader must end with Invalid: $refused", refused is ReadValue.Ended && refused.cause is EndCause.Invalid)
             assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
             reading.cancel()
             reading.join()
@@ -327,13 +327,13 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
             val reader = DBlayer.database.subscribeValues(DBlayer.database.sessionEpoch(), ReadRequest.Entity("Nope", "x", ReadFetch.NEVER))
-            val ended = ArrayList<ReadEnd>()
+            val ended = ArrayList<EndCause>()
             val claim = reader.claimReader()
             while (true) {
                 val value = reader.pull(claim) ?: break
                 if (value is ReadValue.Ended) ended.add(value.cause)
             }
-            assertEquals(listOf(ReadEnd.Invalid), ended)
+            assertTrue(ended.size == 1 && ended.single() is EndCause.Invalid)
             assertEquals("a stream that ended gives nothing more", null, reader.pull(claim))
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
@@ -381,7 +381,7 @@ class ValueBridgeTest {
             assertTrue(applied.rows.size == 1 && applied.error == null)
 
             val first = DBlayer.database.openValueStream(scope.epoch, ReadRequest.Events("Nope")).events(User).first()
-            assertTrue("the events stream did not end with the invalid cause: $first", first is ModelEventItem.Ended && first.cause == ReadEnd.Invalid)
+            assertTrue("the events stream did not end with the invalid cause: $first", first is ModelEventItem.Ended && first.cause is EndCause.Invalid)
         } finally {
             screen.cancel()
             closeForCleanup()

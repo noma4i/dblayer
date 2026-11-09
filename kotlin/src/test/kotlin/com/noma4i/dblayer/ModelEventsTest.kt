@@ -155,7 +155,7 @@ class ModelEventsTest {
 
             DBlayer.sessionReset()
             val last = awaitWithin("the end of the old stream") { first.receive() }
-            assertTrue("the old stream did not report the end of its session: $last", last is ModelEventItem.Ended && last.cause == ReadEnd.SessionEnded)
+            assertTrue("the old stream did not report the end of its session: $last", last is ModelEventItem.Ended && last.cause == EndCause.SessionEnded)
             assertEquals("the old stream delivered an item after its end", Ended, awaitWithin("the close of the old stream") { first.receive() })
         } finally {
             screen.cancel()

@@ -170,6 +170,6 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
         let ended = bound(wait).await.unwrap();
         assert!(matches!(ended, Err(DbError::Interrupted { .. })), "a wait for the initial load outlived the close: {ended:?}");
     }
-    assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::ReadEnd::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
+    assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::EndCause::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();
 }

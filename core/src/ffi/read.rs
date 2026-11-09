@@ -11,7 +11,8 @@ use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
-use crate::owners::read::deliveries::{EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
+pub use crate::owners::read::deliveries::EndCause;
+use crate::owners::read::deliveries::{Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
 use crate::owners::read::windows::WindowKey;
 use crate::runtime::Outcome;
 
@@ -35,16 +36,6 @@ pub struct ReadState {
     pub settled: bool,
     /// The rows of the membership at the revision of the value, for a list.
     pub total: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
-pub enum ReadEnd {
-    SessionEnded,
-    Closed,
-    Cancelled,
-    Invalid,
-    Storage { error: String },
-    Internal { detail: String },
 }
 
 /// One step on the list of the reader: an index is a place in the list as it stands after the steps before.
@@ -77,7 +68,7 @@ pub enum ReadValue {
     Status { revision: i64, state: String, wait_reason: Option<String>, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
     Retry { attempts: u32, phase: String },
     /// The last value of a stream, exactly one.
-    Ended { cause: ReadEnd },
+    Ended { cause: EndCause },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -123,16 +114,6 @@ fn state_of(state: WindowState) -> ReadState {
         has_more: state.has_more,
         settled: state.settled,
         total: state.total,
-    }
-}
-
-fn end_of(cause: EndCause) -> ReadEnd {
-    match cause {
-        EndCause::SessionEnded => ReadEnd::SessionEnded,
-        EndCause::Closed => ReadEnd::Closed,
-        EndCause::Cancelled => ReadEnd::Cancelled,
-        EndCause::Invalid => ReadEnd::Invalid,
-        EndCause::Storage { error } => ReadEnd::Storage { error },
     }
 }
 
@@ -191,7 +172,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::Gap => ReadValue::Gap,
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
         Value::Retry(retry) => ReadValue::Retry { attempts: retry.attempts, phase: retry.phase },
-        Value::Ended(cause) => ReadValue::Ended { cause: end_of(cause) },
+        Value::Ended(cause) => ReadValue::Ended { cause },
     })
 }
 
@@ -228,7 +209,7 @@ impl ReadStream {
         self.load.as_ref().ok_or_else(|| DbError::Invalid { detail: "the stream has no relation to load".into() })
     }
 
-    fn finished(&self, cause: ReadEnd) -> Option<ReadValue> {
+    fn finished(&self, cause: EndCause) -> Option<ReadValue> {
         (!self.ended.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(ReadValue::Ended { cause })
     }
 }
@@ -254,7 +235,7 @@ impl ReadStream {
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
     pub async fn pull(&self, reader: u64) -> Option<ReadValue> {
-        let Some(life) = self.life() else { return self.finished(ReadEnd::Closed) };
+        let Some(life) = self.life() else { return self.finished(EndCause::Closed) };
         let waiter = life.pull(self.stream, reader);
         let mut waiting = PullWait { life, stream: self.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
@@ -267,14 +248,14 @@ impl ReadStream {
                 }
                 match read_value(value, self.wire.as_deref()) {
                     Ok(value) => Some(value),
-                    Err(error) => self.finished(ReadEnd::Internal { detail: error.to_string() }),
+                    Err(error) => self.finished(EndCause::Internal { detail: error.to_string() }),
                 }
             }
-            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(ReadEnd::Closed),
-            Outcome::EpochEnded(_) => self.finished(ReadEnd::SessionEnded),
-            Outcome::Internal => self.finished(ReadEnd::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: ReadEnd::Invalid }),
-            Outcome::Value(PullAnswer::Interrupted) => self.finished(ReadEnd::Cancelled),
+            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(EndCause::Closed),
+            Outcome::EpochEnded(_) => self.finished(EndCause::SessionEnded),
+            Outcome::Internal => self.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
+            Outcome::Value(PullAnswer::Invalid) => Some(ReadValue::Ended { cause: EndCause::Invalid { detail: "the stream could not open".into() } }),
+            Outcome::Value(PullAnswer::Interrupted) => self.finished(EndCause::Cancelled),
         }
     }
 

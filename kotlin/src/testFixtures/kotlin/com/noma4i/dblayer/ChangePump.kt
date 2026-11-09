@@ -24,7 +24,7 @@ object ChangePump {
                 TestPulse.next(TestPulse.current)
                 continue
             }
-            var cause: ReadEnd? = null
+            var cause: EndCause? = null
             database.openValueStream(epoch, ReadRequest.Changes).values.collect { value ->
                 if (value is ReadValue.Ended) cause = value.cause
                 opened.complete(Unit)
@@ -32,7 +32,7 @@ object ChangePump {
             }
             opened.complete(Unit)
             ended = epoch
-            if (cause == ReadEnd.Closed) return
+            if (cause == EndCause.Closed) return
         }
     }
 }

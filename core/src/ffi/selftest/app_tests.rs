@@ -243,7 +243,7 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
     let waited = bound(pending).await.unwrap();
     assert!(waited.is_ok() || matches!(waited, Err(DbError::Interrupted { .. })), "the wait of a list of the anonymous epoch ended as {waited:?}");
     settled(&rig, "the list of the anonymous epoch ended", || !early.ended().is_empty()).await;
-    assert_eq!(early.ended(), vec![crate::ffi::ReadEnd::SessionEnded], "the login ends a list that no account owned, with one outcome");
+    assert_eq!(early.ended(), vec![crate::ffi::EndCause::SessionEnded], "the login ends a list that no account owned, with one outcome");
     let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
     let fresh = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, rows.clone());
     bound(fresh.wait_for_initial_load()).await.unwrap();

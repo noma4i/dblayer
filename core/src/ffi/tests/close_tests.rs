@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::open_slot::OpenSlot;
 use super::tape::Rows;
-use super::{Config, Database, DbError, ReadEnd, ReadRequest, ReadValue};
+use super::{Config, Database, DbError, EndCause, ReadRequest, ReadValue};
 use crate::runtime::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::settled;
@@ -40,11 +40,11 @@ async fn closing_the_database_ends_every_open_stream_with_closed_and_a_late_stre
     settled(&database, "the first snapshot of a local list", || rows.last().is_some()).await;
     database.close_now();
     settled(&database, "the list ended", || !rows.ended().is_empty()).await;
-    assert_eq!(rows.ended(), vec![ReadEnd::Closed]);
+    assert_eq!(rows.ended(), vec![EndCause::Closed]);
     let late = Arc::new(Rows::default());
     database.watch_query(r#"{"model":"Note"}"#, late.clone());
     settled(&database, "a stream opened after the close ended", || !late.ended().is_empty()).await;
-    assert_eq!(late.ended(), vec![ReadEnd::Closed]);
+    assert_eq!(late.ended(), vec![EndCause::Closed]);
     assert_eq!(database.stream_census().open, 0);
 }
 
@@ -93,5 +93,5 @@ async fn life_closed_stream_releases_store() {
     assert!(matches!(stream.load_more().await, Err(DbError::Closed { .. })));
     let mut last = None;
     while let Some(value) = stream.pull_next().await { last = Some(value); }
-    assert!(matches!(last, Some(ReadValue::Ended { cause: ReadEnd::Closed })));
+    assert!(matches!(last, Some(ReadValue::Ended { cause: EndCause::Closed })));
 }
