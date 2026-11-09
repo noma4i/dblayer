@@ -421,3 +421,76 @@ fn win_prop_reconnect_gap_one_reload() {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+struct WindowView {
+    stage: Option<WindowStage>,
+    interest: Vec<u64>,
+    waiters: Vec<u64>,
+    commit: String,
+    outcomes: Vec<(u32, Result3)>,
+    load: Option<crate::owners::contract::WindowState>,
+}
+
+fn view(twin: &Twin) -> WindowView {
+    let mut interest = twin.state().interest(&key());
+    interest.sort_unstable();
+    WindowView {
+        stage: twin.stage(),
+        interest,
+        waiters: twin.state().waiters(&key()),
+        commit: twin.commit.clone(),
+        outcomes: twin.outcomes.clone(),
+        load: twin.state().load_state(&key()),
+    }
+}
+
+fn opening_watched() -> Twin {
+    let mut twin = super::window_fresh_tests::opening_twin();
+    twin.watch();
+    twin
+}
+
+/// P-WIN-30: a stray input of a key leaves the addressed window's state, effects and journal unchanged; the window is the same as on the trace without the stray.
+#[test]
+fn win_prop_stray_input_ignored() {
+    type Build = fn() -> Twin;
+    let cases: Vec<(&str, Build, Vec<Input>)> = vec![
+        ("opening", opening_watched, vec![Input::Read(Read::Stray)]),
+        ("waiting", waiting, vec![
+            Input::Response { request: 1, attempt: 1, cursor: None, rows: true },
+            Input::TransportError { request: 1, attempt: 1, failure: Failure::Network },
+            Input::Dropped { request: 1, attempt: 1 },
+            Input::Retry { request: 1 },
+            Input::Committed { request: 1, revision: 5 },
+            Input::Rejected { request: 1, reason: Reject::Storage },
+        ]),
+        ("loading", loading, vec![
+            Input::Response { request: 9, attempt: 1, cursor: None, rows: true },
+            Input::Response { request: 1, attempt: 9, cursor: None, rows: true },
+            Input::TransportError { request: 1, attempt: 9, failure: Failure::Network },
+            Input::Dropped { request: 9, attempt: 1 },
+            Input::Retry { request: 9 },
+            Input::Retry { request: 1 },
+            Input::Committed { request: 1, revision: 50 },
+            Input::Rejected { request: 1, reason: Reject::Storage },
+        ]),
+        ("idle", fresh, vec![
+            Input::Response { request: 9, attempt: 9, cursor: None, rows: true },
+            Input::TransportError { request: 9, attempt: 9, failure: Failure::Network },
+            Input::Dropped { request: 9, attempt: 9 },
+            Input::Retry { request: 9 },
+            Input::Committed { request: 9, revision: 99 },
+            Input::Rejected { request: 9, reason: Reject::Storage },
+        ]),
+    ];
+    for (name, build, strays) in cases {
+        let baseline = view(&build());
+        for stray in strays {
+            let mut twin = build();
+            let effects = twin.step(stray.clone());
+            assert!(effects.is_empty(), "{name}: stray {stray:?} emitted {effects:?}");
+            assert_eq!(view(&twin), baseline, "{name}: stray {stray:?} changed the window");
+        }
+    }
+}
