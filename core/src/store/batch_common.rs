@@ -64,6 +64,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             }
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
+        StoreOp::IntentOrigin { op_id, origin } => super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?,
         StoreOp::Show { .. } => {}
         StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin, attempts, cycle_id } => {
             results.push(super::intent_write::intent(writer, *op_id, (model, row_id, action), payload, effects, false)?);
@@ -99,6 +100,12 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         StoreOp::Upload { row, .. } => {
             super::upload_ops::apply_upload(writer.connection, op)?;
             results.push(writer.touch_upload(&row.key)?);
+        }
+        StoreOp::RemoveUploadByTransferId { transfer_id } => {
+            let id = i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+            let key: String = writer.connection.query_row(include_str!("sql/batch_common/upload_key_by_transfer_id.sql"), [id], |row| row.get(0))?;
+            super::upload_ops::remove_upload(writer.connection, &key)?;
+            results.push(writer.touch_upload(&key)?);
         }
         StoreOp::RemoveUpload { key } | StoreOp::UploadRoundError { key, .. } | StoreOp::UploadShown { key, .. } | StoreOp::UploadStaged { key } => {
             super::upload_ops::apply_upload(writer.connection, op)?;

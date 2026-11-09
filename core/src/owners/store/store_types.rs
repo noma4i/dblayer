@@ -147,6 +147,7 @@ pub enum StoreOp {
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.
     Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin, attempts: u32, cycle_id: u64 },
+    IntentOrigin { op_id: u64, origin: IntentOrigin },
     Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
     TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
@@ -188,6 +189,7 @@ pub enum StoreOp {
     ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    RemoveUploadByTransferId { transfer_id: u64 },
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
     UploadShown { key: String, shown: crate::owners::write::transfer::Shown, sent: u32, total: u32, attempts: u32, error: Option<String> },

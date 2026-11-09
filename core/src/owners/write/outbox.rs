@@ -27,6 +27,16 @@ pub(super) struct LocalCall {
 pub(super) enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
     Write { reply: ReplyId, call: Box<LocalCall>, expire: Option<Time> },
+    Member { op_id: OpId },
+}
+
+#[derive(Debug)]
+pub(super) struct MemberRemoval {
+    pub(super) member: TransferMember,
+    pub(super) in_flight: bool,
+    pub(super) storage_failures: u8,
+    pub(super) land_after_storage: bool,
+    pub(super) deferred: Vec<OutboxInput>,
 }
 
 #[derive(Debug)]
@@ -45,6 +55,7 @@ pub struct OutboxState {
     pub(super) next_sequence: u64,
     pub(super) next_schedule: u64,
     pub(super) batches: BTreeMap<BatchId, Batch>,
+    pub(super) member_removals: BTreeMap<OpId, MemberRemoval>,
     pub(super) cancelled_commits: BTreeMap<OpId, i64>,
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
@@ -95,6 +106,7 @@ impl OutboxState {
             next_sequence: 1,
             next_schedule: 1,
             batches: BTreeMap::new(),
+            member_removals: BTreeMap::new(),
             cancelled_commits: BTreeMap::new(),
             submit_replies: BTreeMap::new(),
             retry_waiters: Vec::new(),
@@ -272,6 +284,15 @@ impl OutboxState {
             CommitKind::ErrorMark => Some(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) }),
             _ => None,
         };
+        if kind == CommitKind::Rollback && operation.stage == Stage::RollingBack(Why::Discarded) {
+            if let OpSource::TransferGroup { members, .. } = &operation.op.origin { if let [member] = members.as_slice() { ops.push(StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }); } }
+        }
+        if kind == CommitKind::Land {
+            if let Some(pending) = self.member_removals.get(&op_id).filter(|pending| pending.land_after_storage) {
+                ops.push(StoreOp::RemoveUploadByTransferId { transfer_id: pending.member.transfer_id });
+                ops.push(StoreOp::TransferOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded });
+            }
+        }
         if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
             ops.extend(Self::transfer_outcomes(operation, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
         }
@@ -543,6 +564,24 @@ impl OutboxState {
     }
 
     pub(super) fn handle(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
+        let answered = match &input {
+            OutboxInput::Response { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
+            OutboxInput::Answered { req_id, .. } => self.ops.values().find(|operation| operation.request_id == *req_id).map(|operation| operation.op_id),
+            _ => None,
+        };
+        let targeted = answered.or_else(|| match &input {
+            OutboxInput::RetryDue { op_id, .. } => Some(*op_id),
+            OutboxInput::Retry { model, row_id, action, .. } | OutboxInput::Discard { model, row_id, action, .. } => self.open_on_row(model, row_id, action.as_deref()),
+            OutboxInput::Outcome { receipt, .. } => Some(receipt.op_id),
+            _ => None,
+        });
+        if let Some(op_id) = targeted { if self.member_removals.get(&op_id).is_some_and(|pending| !pending.in_flight && !pending.land_after_storage) { self.store_member(op_id, fx); } }
+        if let Some(op_id) = answered {
+            if self.member_removals.get(&op_id).is_some_and(|pending| pending.in_flight) {
+                if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.deferred.push(input); }
+                return;
+            }
+        }
         if let (Some(error), OutboxInput::ReserveOp { target, .. }) = (&self.queue_error, &input) {
             return self.opened(fx, *target, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
@@ -607,7 +646,7 @@ impl OutboxState {
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
             OutboxInput::RowsGone { ops } => self.rows_gone(ops, fx),
-            OutboxInput::RowRemoved { model, row_id, .. } => self.row_removed(&model, &row_id, fx),
+            OutboxInput::RowRemoved { model, row_id, revision } => self.row_removed(&model, &row_id, revision, fx),
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
             OutboxInput::Tick(_) => {}

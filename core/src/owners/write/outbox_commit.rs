@@ -16,6 +16,7 @@ impl OutboxState {
     pub(super) fn committed(&mut self, committed: Committed, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
+            Batch::Member { op_id } => self.member_committed(op_id, fx),
             Batch::Write { reply, call, expire } => {
                 Self::reply(fx, reply, OutboxAnswer::Written { revision: committed.revision, shown: committed.shown.into_iter().last().flatten(), files_removed: committed.files_removed });
                 if let Some(due) = expire {
@@ -82,6 +83,9 @@ impl OutboxState {
                 }
             }
             (CommitKind::Land, Stage::Landing) => {
+                if let Some(pending) = self.member_removals.remove(&op_id) {
+                    if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, outcome: OutboxOutcome::Discarded }))); }
+                }
                 for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
                     self.swap_row(op_id, &temp, &real);
                 }
@@ -199,6 +203,7 @@ impl OutboxState {
             }
         }
         match batch {
+            Batch::Member { op_id } => self.member_rejected(op_id, rejected.reason, fx),
             Batch::Write { reply, call, expire } => {
                 if matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
                     let generation = self.generation_of(&call.model);

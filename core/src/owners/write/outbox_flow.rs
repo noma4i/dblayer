@@ -1,7 +1,7 @@
 //! Owner `Outbox`: the rows of the table for the network, the retry timers, `retry`, `discard`, `outcome`, `Submit` and `Online`.
 
 
-use super::outbox::{Outbox, OutboxState};
+use super::outbox::{Batch, MemberRemoval, Outbox, OutboxState};
 use super::outbox_types::*;
 use crate::owners::contract::RequestId;
 
@@ -212,13 +212,73 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn row_removed(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
-        let ids: Vec<_> = self.ops.values().filter(|operation| operation.stage != Stage::Done && operation.op.model == model && operation.op.row_id == row).map(|operation| operation.op_id).collect();
+    pub(super) fn row_removed(&mut self, model: &str, row: &str, revision: u64, fx: &mut Effects<Outbox>) {
+        let ids: Vec<_> = self.ops.values().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, model, row)).map(|operation| operation.op_id).collect();
         for op_id in ids {
+            if let OpSource::TransferGroup { members, .. } = &self.ops[&op_id].op.origin {
+                if let Some(member) = members.iter().find(|member| member.row_id == row).cloned() {
+                    if let Some(pending) = self.member_removals.get_mut(&op_id) {
+                        if pending.member.transfer_id != member.transfer_id { pending.deferred.push(OutboxInput::RowRemoved { model: model.into(), row_id: row.into(), revision }); }
+                        continue;
+                    }
+                    if members.len() > 1 {
+                        self.member_removals.entry(op_id).or_insert(MemberRemoval { member, in_flight: false, storage_failures: 0, land_after_storage: false, deferred: Vec::new() });
+                        self.store_member(op_id, fx);
+                    } else {
+                        if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
+                        self.store(op_id, CommitKind::Rollback, fx);
+                    }
+                    continue;
+                }
+            }
             self.removed.insert(op_id);
             self.waiting.remove(&op_id);
             self.remove_row_operation(op_id, fx);
         }
+    }
+
+    pub(super) fn store_member(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let Some(pending) = self.member_removals.get_mut(&op_id).filter(|pending| !pending.in_flight) else { return };
+        pending.in_flight = true;
+        let member = pending.member.clone();
+        let Some(operation) = self.ops.get(&op_id) else { return };
+        let OpSource::TransferGroup { batch_id, members } = &operation.op.origin else { return };
+        let origin = crate::owners::store::IntentOrigin::TransferGroup { batch_id: *batch_id, transfer_ids: members.iter().filter(|other| other.transfer_id != member.transfer_id).map(|other| other.transfer_id).collect() };
+        let basis = std::collections::BTreeMap::from([(operation.op.model.clone(), self.generation_of(&operation.op.model))]);
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        self.batches.insert(batch, Batch::Member { op_id });
+        self.commit(batch, basis, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::TransferOutcome { transfer_id: member.transfer_id, cycle_id: member.cycle_id, outcome: OutboxOutcome::Discarded }], 0, fx);
+    }
+
+    pub(super) fn member_committed(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let Some(pending) = self.member_removals.remove(&op_id) else { return };
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
+        }
+        if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, outcome: OutboxOutcome::Discarded }))); }
+        for input in pending.deferred { self.handle(input, fx); }
+    }
+
+    pub(super) fn member_rejected(&mut self, op_id: OpId, reason: crate::owners::contract::RejectReason, fx: &mut Effects<Outbox>) {
+        if matches!(reason, crate::owners::contract::RejectReason::StaleGeneration { .. }) {
+            if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
+            return self.store_member(op_id, fx);
+        }
+        if matches!(reason, crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) {
+            self.member_removals.remove(&op_id);
+            return self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+        }
+        if let Some(pending) = self.member_removals.get_mut(&op_id) {
+            if matches!(reason, crate::owners::contract::RejectReason::Storage(_)) { pending.storage_failures = pending.storage_failures.saturating_add(1); }
+            if pending.storage_failures >= 2 && !pending.deferred.is_empty() {
+                pending.land_after_storage = true;
+                if let Some(operation) = self.ops.get_mut(&op_id) { if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); } }
+            }
+        }
+        if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
+        let deferred = self.member_removals.get_mut(&op_id).map(|pending| std::mem::take(&mut pending.deferred)).unwrap_or_default();
+        for input in deferred { self.handle(input, fx); }
     }
 
     pub(super) fn remove_row_operation(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
