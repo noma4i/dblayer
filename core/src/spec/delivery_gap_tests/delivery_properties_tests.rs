@@ -499,3 +499,35 @@ fn store_prop_read_epoch() {
         assert!(effects.is_empty() && values.iter().all(|value| matches!(value, Val::Ended(_))), "revision {revision}: the read of the ended epoch was delivered: {effects:?} {values:?}");
     }
 }
+
+/// P-DLV-30 (every_public_end_has_its_cause): every source of a stream end carries a cause of one type, no bare Interrupted and no second Ended.
+#[test]
+fn every_public_end_has_its_cause() {
+    let mut session = Twin::new();
+    session.step(Input::OpenNoSession);
+    assert_eq!(session.read_all(), [Val::Ended(Cause::SessionEnded)], "an open with no session ends as SessionEnded");
+    let mut invalid = Twin::new();
+    invalid.step(Input::OpenInvalid);
+    assert_eq!(invalid.read_all(), [Val::Ended(Cause::Invalid)], "an invalid open ends as Invalid");
+    let mut epoch = live_rows();
+    epoch.step(Input::EpochEnded { own: true });
+    assert_eq!(epoch.read_all(), [Val::Ended(Cause::SessionEnded)], "an ended epoch ends live streams as SessionEnded");
+    let mut closed = live_rows();
+    closed.step(Input::EpochClosed);
+    assert_eq!(closed.read_all(), [Val::Ended(Cause::Closed)], "a close ends live streams as Closed");
+    let mut cancelled = live_rows();
+    cancelled.step(Input::Cancel { reply: 1 });
+    assert!(cancelled.step(Input::Pull).is_empty(), "the cancelled reader waits for SinkClosed");
+    assert_eq!(cancelled.step(Input::SinkClosed), [Effect::Cancelled(1), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "an explicit cancel ends as Cancelled");
+}
+
+/// P-DLV-31 (dlv_prop_stray_input_ignored): the pairs with this basis in the delivery.md "Pair, Basis" table (Live x SinkClosed) leave the stream unchanged: its state, its effects and its observable.
+#[test]
+fn dlv_prop_stray_input_ignored() {
+    let mut twin = live_rows();
+    let before = twin.state().stage(STREAM);
+    let effects = twin.step(Input::SinkClosed);
+    assert!(effects.is_empty(), "SinkClosed in Live changes nothing: {effects:?}");
+    assert_eq!(twin.state().stage(STREAM), before, "the stage is unchanged");
+    assert!(twin.read_all().is_empty(), "no value reaches the reader");
+}
