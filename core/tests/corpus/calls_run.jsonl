@@ -4,6 +4,7 @@
 {"args":{"operation":"MomentsFeed","variables":{"first":1}},"in":"run","out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
 {"args":{"id":"r1","json":{"data":{"feed":{"nodes":[],"pageInfo":{"endCursor":null,"hasNextPage":false}}}}},"in":"answer","out":[{"o":"ran","v":{"answer":{"nodes":[],"pageInfo":{"endCursor":null,"hasNextPage":false}},"operation":"MomentsFeed"}}]}
 {"args":{"operation":"CreateMoment","variables":{"text":"x"}},"in":"run","out":[{"o":"request","v":{"id":"r2","kind":"mutation","purpose":"standard"}}]}
-{"args":{"id":"r2","kind":"temporary"},"in":"error","out":[{"o":"error","v":{"kind":"network"}}]}
-{"args":{"ms":60000},"in":"tick","out":[]}
+{"args":{"id":"r2","kind":"temporary"},"in":"error","out":[]}
+{"args":{"ms":60000},"in":"tick","out":[{"o":"request","v":{"id":"r3","kind":"mutation","purpose":"standard"}}]}
+{"args":{"id":"r3","json":{"data":{"createMoment":{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"m1","likedByMe":false,"media":{},"text":"x","uuid":"um1"}}}},"in":"answer","out":[{"o":"ran","v":{"answer":{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"m1","likedByMe":false,"media":{},"text":"x","uuid":"um1"},"operation":"CreateMoment"}}]}
 {"in":"close","out":[{"o":"closed"}]}
