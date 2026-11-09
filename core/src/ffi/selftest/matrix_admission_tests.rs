@@ -167,22 +167,7 @@ async fn admission_group(group: usize) {
     let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
     let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
     let _ = closed_files.close_database().await;
-    let stand = Stand::new();
-    let uploads = stand.open(None, &[CREATE_MOMENT]).await;
-    let uploads_epoch = uploads.session_epoch();
-    let upload_row = bound(uploads.send(plain("Moment", r#"{"text":"intro"}"#, uploads_epoch))).await.unwrap().optimistic_value.unwrap().id;
-    let closed_stand = Stand::new();
-    let closed_uploads = closed_stand.open(None, &[CREATE_MOMENT]).await;
-    let closed_uploads_epoch = closed_uploads.session_epoch();
-    let closed_upload_row = bound(closed_uploads.send(plain("Moment", r#"{"text":"intro"}"#, closed_uploads_epoch))).await.unwrap().optimistic_value.unwrap().id;
-    let _ = closed_uploads.close_database().await;
-    let source = directory.path().join("clip.mp4");
-    std::fs::write(&source, b"video").unwrap();
     let target = |name: &str, closed: bool| -> (Arc<Database>, Args) {
-        if UPLOAD_CALLS.contains(&name) {
-            let (database, epoch, row) = if closed { (closed_uploads.clone(), closed_uploads_epoch, closed_upload_row.clone()) } else { (uploads.clone(), uploads_epoch, upload_row.clone()) };
-            return (database, Args { epoch, model: "Moment".into(), row, field: String::new(), local_path: String::new(), local_value: String::new(), values: String::new(), action: "upload_clip".into(), source_path: source.to_string_lossy().into_owned() });
-        }
         let (database, epoch, row) = match (FILE_CALLS.contains(&name), closed) {
             (true, false) => (files.clone(), files_epoch, files_row.clone()),
             (true, true) => (closed_files.clone(), closed_files_epoch, closed_files_row.clone()),
@@ -195,7 +180,7 @@ async fn admission_group(group: usize) {
         (database, args)
     };
     for name in &calls {
-        if WITHOUT_ROW.contains(&name.as_str()) { continue; }
+        if WITHOUT_ROW.contains(&name.as_str()) || UPLOAD_CALLS.contains(&name.as_str()) { continue; }
         for mask in 0u8..8 {
             if name == "create" && mask & 4 != 0 { continue; }
             let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0 && name != "create");
@@ -229,3 +214,35 @@ async fn matrix_call_admission_2() { admission_group(2).await; }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn matrix_call_admission_3() { admission_group(3).await; }
+
+/// The upload calls run on the stand of uploads: a process keeps one open database, so the stand is closed for the last row.
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_uploads() {
+    let mut matrix = Matrix::new("E-call-admission-uploads");
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"video").unwrap();
+    let args = |epoch: u64| Args { epoch, model: "Moment".into(), row: row.clone(), field: String::new(), local_path: String::new(), local_value: String::new(), values: String::new(), action: "upload_clip".into(), source_path: source.to_string_lossy().into_owned() };
+    for name in UPLOAD_CALLS {
+        for mask in 0u8..8 {
+            let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
+            let mut call = args(epoch);
+            if stale { call.epoch += 1000; }
+            if invalid { call.model = "NoSuchModel".into(); }
+            if missing { call.row = "absent-row".into(); }
+            let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
+            let result = invoke_bounded(name, &database, &call).await.expect("an upload call");
+            matrix.check(name, "open", &input, expected(false, stale, invalid, missing), observed(&result));
+        }
+    }
+    let _ = database.close_database().await;
+    for name in UPLOAD_CALLS {
+        let result = invoke_bounded(name, &database, &args(epoch)).await.expect("an upload call");
+        matrix.check(name, "closed", "valid arguments", "Closed", observed(&result));
+    }
+    matrix.finish();
+}
