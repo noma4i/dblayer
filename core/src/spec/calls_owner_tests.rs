@@ -285,6 +285,7 @@ impl Twin {
             Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
             Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, kind_of(kind))).collect())),
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, data: None, errors: errors.into_iter().map(|message| crate::transport::GraphQLError { message, path: None, extensions: None }).collect(), kind: crate::transport::AnswerKind::Answered { sequence: None } }),
+            Input::Transient { call_id, reason } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body: None, data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Transient { reason } }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
             Input::RetryDue { call_id, attempt } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::RetryDue { call_id, attempt }),
@@ -312,8 +313,8 @@ impl Twin {
             CallsEffect::Reply { id, answer } => Some((*id, answer.clone().map_err(|error| error_of(&error)))),
             _ => None,
         }).collect();
-        assert_eq!(effects, want.effects, "the same effects");
-        assert_eq!(replies, want.replies, "the same replies");
+        assert_eq!(effects, want.effects, "the same effects: owner {effects:?} reference {:?}", want.effects);
+        assert_eq!(replies, want.replies, "the same replies: owner {replies:?} reference {:?}", want.replies);
         let state = self.det.state(self.addr).expect("state");
         for call in 1..=4 {
             let got = state.phase(call).map(|phase| match phase {
@@ -673,7 +674,7 @@ fn matrix_owner_state_input_calls() {
         ("Declare other", Input::Declare(vec![("Other".into(), Kind::Query)])), ("Declare none", Input::Declare(vec![])),
         ("Response body", response(1)), ("Response without body", Input::Response { call_id: 1, body: None, errors: vec![] }), ("Response errors", Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }), ("Response stray call", response(9)),
         ("TransportError network", Input::TransportError { call_id: 1, error: Fail::Network }), ("TransportError http", Input::TransportError { call_id: 1, error: Fail::Http }), ("TransportError stray", Input::TransportError { call_id: 9, error: Fail::Network }),
-        ("Dropped", Input::Dropped { call_id: 1 }), ("RetryDue", Input::RetryDue { call_id: 1, attempt: 1 }), ("Deadline", Input::Deadline { call_id: 1 }), ("CallerCancel", Input::CallerCancel { reply: 10 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
+        ("Dropped", Input::Dropped { call_id: 1 }), ("Transient", Input::Transient { call_id: 1, reason: "temporary".into() }), ("RetryDue", Input::RetryDue { call_id: 1, attempt: 1 }), ("Deadline", Input::Deadline { call_id: 1 }), ("CallerCancel", Input::CallerCancel { reply: 10 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
         ("EpochEnded", Input::EpochEnded), ("Closing", Input::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });

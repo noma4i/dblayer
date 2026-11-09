@@ -32,6 +32,7 @@ pub enum Input {
     Run { epoch: u64, operation: String, reply: ReplyId },
     Declare(Vec<(String, Kind)>),
     Response { call_id: CallId, body: Option<String>, errors: Vec<String> },
+    Transient { call_id: CallId, reason: String },
     TransportError { call_id: CallId, error: Fail },
     Dropped { call_id: CallId },
     RetryDue { call_id: CallId, attempt: u32 },
@@ -114,6 +115,7 @@ impl Calls {
                 self.done(call_id, answer, &mut out);
             }
             Input::TransportError { call_id, error } if self.sending(call_id) => self.failed(call_id, error, &mut out),
+            Input::Transient { call_id, reason } if self.sending(call_id) => self.failed(call_id, Fail::Graphql(vec![reason]), &mut out),
             Input::Dropped { call_id } if self.sending(call_id) => self.failed(call_id, Fail::Dropped, &mut out),
             Input::RetryDue { call_id, attempt } => self.retry(call_id, attempt, &mut out),
             Input::Deadline { call_id } => {
@@ -130,7 +132,7 @@ impl Calls {
                 if let Some((_, (state, _))) = self.calls.iter_mut().find(|(_, (_, found))| *found == reply) { *state = CallState::Done; }
                 self.awaiting.retain(|(_, found)| *found != reply);
             }
-            Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
+            Input::Response { .. } | Input::Transient { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
             Input::Online(online) if self.online.is_some() => {
                 self.online = Some(online);
                 if online {
@@ -187,8 +189,8 @@ impl Calls {
     fn failed(&mut self, call_id: CallId, error: Fail, out: &mut Out) {
         let Some((attempt, _, _, operation)) = self.retries.get(&call_id).cloned() else { return };
         let Some(CallState::Sending { request_id, kind, .. }) = self.state(call_id) else { return };
-        let limit = if kind == Kind::Query { 3 } else { 40 };
-        if !matches!(error, Fail::Network | Fail::Dropped) || attempt >= limit {
+        let limit = if kind == Kind::Mutate { 40 } else if matches!(error, Fail::Graphql(_)) { 2 } else { 3 };
+        if !matches!(error, Fail::Network | Fail::Dropped | Fail::Graphql(_)) || attempt >= limit {
             if kind == Kind::Mutate && error == Fail::Dropped { out.effects.push(Effect::Release { request_id }); }
             self.done(call_id, Err(error), out);
         } else {
