@@ -162,7 +162,10 @@ impl TransferState {
                         match transfer.removal {
                             Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
                             Some(Removal::Confirmed { .. }) => {}
-                            _ => ops.extend([StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }]),
+                            _ => {
+                                if transfer.has_operation { ops.push(StoreOp::RollBack { op_id }); }
+                                ops.push(StoreOp::RemoveIntent { op_id });
+                            }
                         }
                     }
                 } else {

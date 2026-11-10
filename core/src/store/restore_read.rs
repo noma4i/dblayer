@@ -124,6 +124,7 @@ impl Store {
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
+        let operation_ids: std::collections::BTreeSet<i64> = entries.iter().map(|entry| entry.operation.id.0).chain(effects_only.iter().copied()).collect();
         let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
         let ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes));
         let intent_ids: std::collections::BTreeSet<u64> = origins.valid.values().flat_map(|origin| match origin {
@@ -134,6 +135,7 @@ impl Store {
         let transfers = self.stored_transfers(uploads).map(|mut rows| {
             for row in &mut rows {
                 row.has_intent = intent_ids.contains(&row.transfer_id);
+                row.has_operation = row.op_id.is_some_and(|id| i64::try_from(id).ok().is_some_and(|id| operation_ids.contains(&id)));
                 if origins.invalid_transfers.contains(&row.transfer_id) || row.batch.is_some_and(|group| origins.invalid_groups.contains(&group)) { row.restore_failed = Some("invalid intent origin".into()); }
             }
             rows

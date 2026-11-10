@@ -114,6 +114,7 @@ pub struct StoredTransfer {
     pub sha256: String,
     pub cycle_id: CycleId,
     pub has_intent: bool,
+    pub has_operation: bool,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
     /// The row was dropped by the layout move or cannot be read.
@@ -452,6 +453,7 @@ pub struct Transfer {
     /// The final mutation left for Outbox: Outbox owns the operation, a removal does not roll it back.
     pub submitted: bool,
     pub intent_live: bool,
+    pub has_operation: bool,
     pub waits_outbox: bool,
     /// The file is already on the server: the cache of blobs gave its `signed_id` (the steps are skipped).
     pub from_cache: bool,

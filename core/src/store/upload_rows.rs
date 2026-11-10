@@ -157,6 +157,7 @@ impl Store {
             sha256: raw.sha256,
             cycle_id: raw.cycle_id.map_or(Ok(1), |value| unsigned(value, "cycle_id"))?,
             has_intent: false,
+            has_operation: false,
             mutation: NewOp {
                 model: model.clone(),
                 row_id: id.clone(),

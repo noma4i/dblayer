@@ -283,7 +283,7 @@ impl TransferState {
             return self.start_in_order(fx);
         }
         self.set(id, TransferStage::Mutating);
-        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = true; }
+        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = true; transfer.has_operation = true; }
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.submit_mutation(id, fx);
         self.start_in_order(fx);
@@ -333,7 +333,7 @@ impl TransferState {
             OutboxOutcome::Failed { .. } if waiting && !failed_waiting => {}
             _ if failed_waiting => {}
             OutboxOutcome::Rejected { error } => {
-                if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
+                if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; transfer.has_operation = false; }
                 self.begin_failure(id, error, false, fx);
             }
             OutboxOutcome::Failed { error } => self.begin_failure(id, error, false, fx),

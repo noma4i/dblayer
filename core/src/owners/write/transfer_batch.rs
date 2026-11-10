@@ -145,7 +145,7 @@ impl TransferState {
         let Some(&first) = ids.first() else { return };
         let Some(group) = self.group_entry(first) else {
             self.set(first, TransferStage::Mutating);
-            if let Some(transfer) = self.transfers.get_mut(&first) { transfer.intent_live = true; }
+            if let Some(transfer) = self.transfers.get_mut(&first) { transfer.intent_live = true; transfer.has_operation = true; }
             self.show(first, Shown::Uploading { progress: 100 }, fx);
             self.submit_mutation(first, fx);
             return self.start_in_order(fx);
@@ -156,7 +156,7 @@ impl TransferState {
         let Some((op_id, op)) = op_id.zip(entry.pending_op.take()) else { return };
         for &id in ids {
             self.set(id, TransferStage::Mutating);
-            if let Some(transfer) = self.transfers.get_mut(&id) { transfer.submitted = !joint; transfer.intent_live = true; }
+            if let Some(transfer) = self.transfers.get_mut(&id) { transfer.submitted = !joint; transfer.intent_live = true; if !joint { transfer.has_operation = true; } }
             self.show(id, Shown::Uploading { progress: 100 }, fx);
         }
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op })));

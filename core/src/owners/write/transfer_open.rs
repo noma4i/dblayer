@@ -34,6 +34,7 @@ impl TransferState {
             transfer.op_id = row.op_id;
             transfer.submitted = row.completed && !row.batch.and_then(|group| self.groups.get(&group)).is_some_and(|group| group.phase == BatchPhase::Mutating);
             transfer.intent_live = row.has_intent;
+            transfer.has_operation = row.has_operation;
             transfer.place = Some(row.place);
             transfer.size = row.size;
             transfer.sha256 = row.sha256.clone();

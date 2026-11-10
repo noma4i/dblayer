@@ -94,6 +94,7 @@ impl TransferState {
             op_id: None,
             submitted: false,
             intent_live: false,
+            has_operation: false,
             waits_outbox: false,
             from_cache: false,
             cache_stale: false,
@@ -209,6 +210,7 @@ impl TransferState {
     /// `Accepting x Committed`: the copy starts, the round is asked for.
     pub(super) fn accepting_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
         for &id in ids {
+            if let Some(transfer) = self.transfers.get_mut(&id) { transfer.has_operation = !transfer.mutation.effects.is_empty(); }
             if self.transfers.get(&id).is_some_and(|transfer| transfer.closing) {
                 self.interrupt(id, crate::ffi::EndCause::Closed, fx);
                 continue;
@@ -410,6 +412,7 @@ impl TransferState {
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let supplied = transfer.supply_back.take();
+            if supplied.is_some() { transfer.has_operation = true; }
             if supplied == Some(TransferStage::Failed) { transfer.cycle_id += 1; }
             if supplied.is_none() { accepted.push(id); }
             let supply_reply = transfer.supply_reply.take();
@@ -428,6 +431,7 @@ impl TransferState {
             transfer.etags.clear();
             let cached = transfer.from_cache;
             let batch = transfer.batch_id;
+            if cached && batch.is_none() { transfer.has_operation = true; }
             transfer.stage = if cached && batch.is_some() { TransferStage::BatchReady } else if cached { TransferStage::Mutating } else { TransferStage::Ready };
             transfer.intent_live = cached && batch.is_none();
             receipts.push(self.receipt(id));
