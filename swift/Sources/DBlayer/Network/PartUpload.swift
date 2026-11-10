@@ -6,6 +6,7 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
 
   private let file: PutFile
   private let pumps = Pumps()
+  private let failures = DispatchQueue(label: "dblayer.part-upload.failures")
   private var readerError: Error?
 
   init(file: PutFile, progress: ByteProgress, limit: UInt64) {
@@ -24,12 +25,17 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
       throw error
     }
     await pumps.idle()
-    if let readerError { throw readerError }
+    if let error = failures.sync(execute: { readerError }) { throw error }
     return answer
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
     completionHandler(open())
+  }
+
+  /// Every reader of the call reports here: the first failure is the one of the call.
+  private func record(_ error: Error) {
+    failures.sync { if readerError == nil { readerError = error } }
   }
 
   private func open() -> InputStream? {
@@ -43,7 +49,7 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
     Thread.detachNewThread { [weak self] in
       let error = feed.pump(path: path, offset: offset, length: length)
       if let error {
-        self?.readerError = error
+        self?.record(error)
         self?.fail(error)
       }
       pumps.end()
