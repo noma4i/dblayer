@@ -636,3 +636,29 @@ fn xfer_expired_failed_reopen_in_every_order() {
         assert_eq!(aborts, ["u1".to_string()], "{order:?}: the saved multipart is aborted once");
     }
 }
+
+#[test]
+fn xfer_held_step_reopen_in_every_order() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Online, Restored, RestoreReady, Register }
+    use Event::*;
+    let orders: Vec<_> = permutations(&[Online, Restored, RestoreReady, Register]).into_iter().filter(|order| order.iter().position(|event| *event == Restored) < order.iter().position(|event| *event == RestoreReady)).collect();
+    assert_eq!(orders.len(), 12);
+    for order in orders {
+        let mut twin = Twin::bare(1);
+        let mut row = partly(1, KEY);
+        row.pending_step = Some(55);
+        for event in &order {
+            let out = match event {
+                Online => twin.online(true),
+                Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
+                RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+            };
+            assert!(out.steps().is_empty() && out.releases().is_empty(), "{order:?} at {event:?}: Session owns the saved pair");
+        }
+        let answered = twin.post(TransferInput::StepAnswer { request_id: 55, outcome: crate::owners::session::AuthorOutcome::Dropped });
+        assert!(answered.steps().is_empty(), "{order:?}: the attempt is saved first");
+        assert_eq!(twin.commit().steps().len(), 1, "{order:?}: one physical retry");
+    }
+}
