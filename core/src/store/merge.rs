@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::params;
 use serde_json::{Map, Value};
 
-use crate::store::plan::{Prior, PriorRow};
+use crate::store::plan::PriorRow;
 use crate::schema::{AssociationSpec, ModelSpec};
 use crate::value::read_id;
 
@@ -15,17 +15,21 @@ pub(crate) struct Admission {
     pub closing: Option<i64>,
 }
 
-pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
+pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, ids: &[String]) -> Result<HashMap<String, HashSet<String>>, StoreError> {
+    if ids.is_empty() { return Ok(HashMap::new()); }
     let sql = format!(include_str!("sql/merge/unconfirmed_fields.sql"), crate::store::operation::OPEN_STATUSES);
-    let mut statement = reader.connection().prepare_cached(&sql)?;
-    let sequences = statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
-    let mut fields = HashSet::new();
-    for seq in sequences.into_iter().filter(|seq| Some(*seq) != closing) {
-        let prior = crate::store::plan::op_effect::read_prior(reader.connection(), seq)?.map(Prior::decode).transpose()?;
-        for row in prior.into_iter().flat_map(|prior| prior.rows) {
-            if let PriorRow::Edited { model: owner, id: row_id, owned, .. } = row {
-                if owner == model && row_id == id { fields.extend(owned.into_keys()); }
-            }
+    let ids_json = serde_json::to_string(ids)?;
+    let sequences = reader.connection().prepare_cached(&sql)?.query_map(params![model, ids_json], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let sequences: Vec<i64> = sequences.into_iter().filter(|seq| Some(*seq) != closing).collect();
+    if sequences.is_empty() { return Ok(HashMap::new()); }
+    let sequence_json = serde_json::to_string(&sequences)?;
+    let values = crate::store::nodes::read_trees(reader.connection(), "op_effect_value", &["seq", "position"], "seq IN (SELECT value FROM json_each(?1))", &[rusqlite::types::Value::Text(sequence_json)])?;
+    let mut fields = HashMap::<String, HashSet<String>>::new();
+    for (_, value) in values {
+        let prior: PriorRow = serde_json::from_value(value)?;
+        crate::identity::RowId::new(prior.id()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        if let PriorRow::Edited { model: owner, id, owned, .. } = prior {
+            if owner == model { fields.entry(id).or_default().extend(owned.into_keys()); }
         }
     }
     Ok(fields)
@@ -50,6 +54,10 @@ pub(crate) enum RowKind {
 }
 
 pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
+    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None)
+}
+
+pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let decoded = decode_nested(spec, patch)?;
@@ -65,10 +73,12 @@ pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission,
         UpsertAdmission::Row { row, .. } => row,
         UpsertAdmission::DropExistence => { return Ok(stored.map(|stored| stored.row)); }
     };
-    for field in unconfirmed_fields(reader, admission.closing, model, id.as_str())? {
-        match stored.as_ref().and_then(|stored| stored.row.get(&field)) {
+    let loaded;
+    let fields = match fields { Some(fields) => fields, None => { loaded = unconfirmed_fields(reader, admission.closing, model, &[id.as_str().to_string()])?; &loaded } };
+    for field in fields.get(id.as_str()).into_iter().flatten() {
+        match stored.as_ref().and_then(|stored| stored.row.get(field)) {
             Some(value) => row.insert(field.clone(), value.clone()),
-            None => row.remove(&field),
+            None => row.remove(field),
         };
     }
     let Some(mut row) = spec.merged(stored.as_ref().map(|stored| &stored.row), &row) else { return Ok(None) };
