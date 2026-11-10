@@ -27,6 +27,7 @@ async fn operation_after_reopen_does_not_take_removed_rows_answer() {
     stand.received(received + 1).await;
     assert_eq!(stand.requests("ChatPin"), 1);
     let old_id: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();
+    let old_pair: (String, i64) = rusqlite::Connection::open(&path).unwrap().query_row("SELECT request_id, sequence FROM encrypted_pending", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
     stand.push(&token, json!({"area":"CHAT", "kind":"DELETED", "entityId":"c1", "chat":null}));
     assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { .. })));
     stand.settle().await;
@@ -44,7 +45,18 @@ async fn operation_after_reopen_does_not_take_removed_rows_answer() {
     let rows = reopened.entity("Chat", "c2", ReadFetch::Stale);
     crate::test_wait::settled(&reopened, "second chat loaded", || reopened.text_of(&rows, "Chat", "c2", "name").as_deref() == Some("second")).await;
     reopened.answer("ChatPin", json!({"chatPin": {"chat": chat("c2", "new answer")}}));
+    reopened.settle().await;
+    let received = reopened.asked().len();
+    reopened.hold(&["ChatPin"]);
     let receipt = bound(reopened.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pin":true}).to_string())).await.unwrap();
+    reopened.received(received + 1).await;
+    assert_eq!(reopened.requests("ChatPin"), 1);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let new_id: i64 = connection.query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();
+    let new_pair: (String, i64) = connection.query_row("SELECT request_id, sequence FROM encrypted_pending", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(new_id, old_id, "the new operation reuses the old operation id");
+    assert_ne!(new_pair, old_pair, "different bodies do not reuse the network idempotency pair");
+    reopened.release(&["ChatPin"]);
     let result = bound(reopened.database.confirmed(receipt, false)).await.unwrap();
     assert!(matches!(result.value, Some(row) if row.id == "c2"));
     assert_eq!(reopened.requests("ChatPin"), 1, "the new operation reaches the server");
