@@ -85,8 +85,7 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
                 } else {
                     assert_eq!(error, TransportError::Session { code, detail: json!({ "error": wire }).to_string() }, "{case}: the detail is the unchanged body (wire.md:10)");
                 }
-                let kept = if code == SessionCode::SessionEnded { None } else { credential.clone() };
-                assert_eq!((rig.credentials.value(), pending(&rig.db)), (kept, false), "{case}: a revoked answer erases the session, every other refusal keeps it");
+                assert_eq!((rig.credentials.value(), pending(&rig.db)), (credential.clone(), false), "{case}: the transport clears the pending request and keeps the credential, the session end is the owner's (D-276)");
             }
         }
     }
