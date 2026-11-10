@@ -30,24 +30,20 @@ pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is c
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no create operation and no declared upload action for this command") } }
 
 impl Database {
-    /// Runs the work in the epoch of the caller: it starts only while that epoch is current, and a result read after the epoch moved is not returned.
+    /// Runs work admitted in the caller's epoch.
     pub(super) async fn in_epoch<T>(&self, epoch: u64, _target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         self.account_call(epoch)?;
-        let result = work.await;
-        if let Some(cause) = self.admission_end(epoch) { return Err(super::cause_error(&cause)); }
-        result
+        work.await
     }
 
-    /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.
+    /// Reads the local database after admission in the caller's epoch.
     pub(super) async fn read_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, read: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let kept = crate::runtime::hold_until_woken(self.life.launch());
         let this = self.clone();
-        let answer = this.clone();
         let work = async move { super::database::blocking(move || read(&this)).await };
         let value = self.in_epoch(epoch, target, work).await;
         crate::runtime::release_holds();
         drop(kept);
-        if let Some(cause) = answer.admission_end(epoch) { return Err(super::cause_error(&cause)); }
         value
     }
 

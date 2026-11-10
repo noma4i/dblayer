@@ -83,7 +83,6 @@ struct LoadArgs {
 }
 
 struct LoadCall {
-    epoch: u64,
     waiter: crate::runtime::Waiter<LifeReply>,
     leave: LeaveLoad,
 }
@@ -258,7 +257,7 @@ impl Database {
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
         let (id, waiter) = (slot.id, slot.waiter.take().ok_or_else(super::database::foreign_reply)?);
         self.life.load(epoch, id, key.clone(), (goal, force), self.db.revision_seq()?, no_wait);
-        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
+        Ok(LoadCall { waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 
     async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
@@ -267,7 +266,6 @@ impl Database {
         let LifeReply::Window(outcome) = reply? else { return Err(super::database::foreign_reply()) };
         match *outcome {
             WindowOutcome::Loaded { has_more, fetched, .. } => {
-                if let Some(cause) = self.admission_end(call.epoch) { return Err(super::cause_error(&cause)); }
                 Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore })
             }
             WindowOutcome::Failed { failure } => Err(failure),
