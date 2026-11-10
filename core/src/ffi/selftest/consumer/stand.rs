@@ -264,6 +264,7 @@ impl Stand {
     /// The server pushes one entry of `viewerChanges.changes` on the open subscription.
     pub(super) fn push(&self, token: &str, mut entry: Value) {
         for field in ["parentId", "chat", "message"] { entry.as_object_mut().unwrap().entry(field).or_insert(Value::Null); }
+        if let Some(chat) = entry["chat"].as_object_mut() { chat.entry("shareUrl").or_insert(Value::Null); chat.entry("isPublic").or_insert(json!(false)); chat.entry("history").or_insert(json!("VISIBLE")); }
         if let Some(message) = entry["message"].as_object_mut() { message.entry("clientKey").or_insert(Value::Null); }
         assert!(self.cable.peer.event(token, json!({"data": {"viewerChanges": {"changes": [entry]}}})), "the subscription is open");
     }
