@@ -80,6 +80,20 @@ async fn consumer_thread_event_adds_after_three_pages() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_refresh_removes_deleted_head_row() {
+    let (stand, history, _stream) = three_pages().await;
+    let mut answer = page(41, 65, true);
+    answer["node"]["messages"]["nodes"].as_array_mut().unwrap().retain(|row| row["id"] != "m50");
+    stand.answer("chatThread", answer);
+    bound(stand.database.refresh(stand.database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    stand.settle().await;
+    let rows = ids(&history);
+    assert_eq!(rows, (1..=65).filter(|n| *n != 50).map(|n| format!("m{n}")).collect::<Vec<_>>(), "refresh after deletion retained {} rows: {rows:?}", rows.len());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    assert_eq!(stand.requests("chatThread"), 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_thread_three_pages_keep_all_rows() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
