@@ -32,11 +32,14 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>) -> ru
             rows
         }
     };
+    let operations = read_operations(connection, &sequences)?;
+    let updates: Vec<i64> = operations.iter().filter_map(|(seq, operation)| operation.as_ref().filter(|operation| Operation::split_action_key(&operation.action_key).is_some_and(|(_, action)| action == "update")).map(|_| *seq)).collect();
+    let mut update_fields = read_fields(connection, &updates)?;
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
-    for (seq, operation) in read_operations(connection, &sequences)? {
+    for (seq, operation) in operations {
         let Some(operation) = operation else { continue };
         let Some((_, action)) = Operation::split_action_key(&operation.action_key) else { continue };
-        let fields = if action == "update" { read_fields(connection, seq)? } else { Vec::new() };
+        let fields = update_fields.remove(&seq).unwrap_or_default();
         let entry = SyncEntry {
             action,
             status: operation.status,

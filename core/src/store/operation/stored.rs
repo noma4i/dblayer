@@ -164,10 +164,16 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
     Ok(found)
 }
 
-pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<String>> {
+pub(crate) fn read_fields(connection: &Connection, sequences: &[i64]) -> Result<HashMap<i64, Vec<String>>> {
+    if sequences.is_empty() { return Ok(HashMap::new()); }
+    let ids = serde_json::to_string(sequences).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_fields.sql"))?;
-    let fields = statement.query_map([seq], |row| row.get(0))?.collect();
-    fields
+    let mut fields = HashMap::<i64, Vec<String>>::new();
+    for item in statement.query_map([ids], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
+        let (seq, field) = item?;
+        fields.entry(seq).or_default().push(field);
+    }
+    Ok(fields)
 }
 
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
