@@ -42,6 +42,7 @@ let agent = userAgent(application: "Example/3")
 ```kotlin
 val agent = userAgent("Example/3")
 ```
+
 An omitted endpoint and transport opens a local database when `encrypted` is absent.
 With `encrypted`, the default HTTP uses its origin. The default transport uses `endpoint`, or that origin when endpoint is absent.
 `http` is the last optional argument and accepts custom encrypted HTTP replies.
@@ -75,11 +76,11 @@ No HTTP call of the library follows a redirect: a `3xx` answer to a query, an en
 
 A server that takes only encrypted requests (JWE over HTTPS) needs no signing code in the app. The core builds and opens every request. The app gives it three things:
 
-| Piece | What it is |
-| ----- | ---------- |
-| `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below |
-| Executor | `send` runs the POST that the core built for `origin + path` with `application/jose` and returns the raw outcome. One class does it with the HTTP and WebSocket calls: `UrlSessionTransport` (Swift) and `OkHttpTransport` (Kotlin). `DB.open` and `DBlayer.open` pass it to the core, which picks it for the transport and for the encrypted HTTP |
-| `CredentialStore` | `get`, `set` and `clear` keep one string. The library ships no store: your app implements it over the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite. The examples call that app code `AppCredentials` |
+| Piece             | What it is                                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below                                                                                      |
+| Executor          | `send` runs the POST that the core built for `origin + path` with `application/jose` and returns the raw outcome. One class does it with the HTTP and WebSocket calls: `UrlSessionTransport` (Swift) and `OkHttpTransport` (Kotlin). `DB.open` and `DBlayer.open` pass it to the core, which picks it for the transport and for the encrypted HTTP |
+| `CredentialStore` | `get`, `set` and `clear` keep one string. The library ships no store: your app implements it over the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite. The examples call that app code `AppCredentials`                                              |
 
 The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
 The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
@@ -122,47 +123,63 @@ It omits `credential` and `sequence`, stores no pending request, and does not ac
 Errors return to the caller. The application decides whether to repeat the call.
 Bootstrap keeps its separate envelope and shares only the JWE encryption primitive.
 
-| Operation | Body | Answer |
-| --------- | ---- | ------ |
-| `otp` | `phone` | `nextStep` |
-| `support` | `name`, `contact`, `message`, `step`, `device`, `os`, `appVersion`, `country` | |
-| `confirm` | `code` | `nextStep` |
-| `social` | the Apple or Google sign-in fields of the server API: the source name (`apple` or `google`), `idToken`, optional `authCode` and `name` | `nextStep` |
-| `logout` | `{}` | `revoked`. The core then deletes the credential and the session state |
+| Operation | Body                                                                                                                                   | Answer                                                                |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `otp`     | `phone`                                                                                                                                | `nextStep`                                                            |
+| `support` | `name`, `contact`, `message`, `step`, `device`, `os`, `appVersion`, `country`                                                          |                                                                       |
+| `confirm` | `code`                                                                                                                                 | `nextStep`                                                            |
+| `social`  | the Apple or Google sign-in fields of the server API: the source name (`apple` or `google`), `idToken`, optional `authCode` and `name` | `nextStep`                                                            |
+| `logout`  | `{}`                                                                                                                                   | `revoked`. The core then deletes the credential and the session state |
 
-| Session code | Meaning | Credential and state |
-| ------------ | ------- | -------------------- |
-| `invalidCode`, `invalidPhone`, `invalidProvider`, `providerRejected`, `alreadyAuthenticated` | the server refused the step | kept, the sequence is confirmed |
-| `rateLimited`, `accountUnavailable` | too many codes or a disabled account | kept, the sequence is confirmed |
-| `sequenceConflict`, `unauthenticated`, `sessionEnded` | the server holds another request for this sequence or no session | kept, the pending request stays |
-| `replayedRequest` | a read arrived twice. The core already repeated it once with a new request id | kept |
-| `serverKeyMismatch` | the session key differs from the pinned key | kept |
-| `stateLost` | a stored credential has no matching sequence state, final without automatic retry | kept, recovery belongs to the application |
-| `other` | any other `error` value, the text is in `detail` | kept |
+| Session code                                                                                 | Meaning                                                                           | Credential and state                      |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------- |
+| `invalidCode`, `invalidPhone`, `invalidProvider`, `providerRejected`, `alreadyAuthenticated` | the server refused the step                                                       | kept, the sequence is confirmed           |
+| `rateLimited`, `accountUnavailable`                                                          | too many codes or a disabled account                                              | kept, the sequence is confirmed           |
+| `sequenceConflict`, `unauthenticated`, `sessionEnded`                                        | the server holds another request for this sequence or no session                  | kept, the pending request stays           |
+| `replayedRequest`                                                                            | a read arrived twice. The core already repeated it once with a new request id     | kept                                      |
+| `serverKeyMismatch`                                                                          | the session key differs from the pinned key                                       | kept                                      |
+| `stateLost`                                                                                  | a stored credential has no matching sequence state, final without automatic retry | kept, recovery belongs to the application |
+| `other`                                                                                      | any other `error` value, the text is in `detail`                                  | kept                                      |
 
 ### Ending a session
 
-| Event | What the app sees | Credential and data |
-| ----- | ----------------- | ------------------- |
-| `sessionReset()` | Returns after the clearing. Old-session calls end with `NoSession`; streams and receipts end with `SessionEnded` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
-| The `logout` session operation, answer `revoked` | `sessionCall("logout", ...)` returns the answer. The session ends as after `sessionReset()` | The stored state is cleared first, the credential second |
-| Any other call, answer `revoked` | The session ends and the call fails with `NoSession` | Cleared as above |
-| HTTP 401 or 403 on a call | The call fails with `Unauthorized`. The session stays | Kept |
+| Event                                            | What the app sees                                                                                                | Credential and data                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `sessionReset()`                                 | Returns after the clearing. Old-session calls end with `NoSession`; streams and receipts end with `SessionEnded` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
+| The `logout` session operation, answer `revoked` | `sessionCall("logout", ...)` returns the answer. The session ends as after `sessionReset()`                      | The stored state is cleared first, the credential second                                                      |
+| Any other call, answer `revoked`                 | The session ends and the call fails with `NoSession`                                                             | Cleared as above                                                                                              |
+| HTTP 401 or 403 on a call                        | The call fails with `Unauthorized`. The session stays                                                            | Kept                                                                                                          |
 
 `Unauthorized` means the server refused this request. `Revoked` means the server ended the session. After a revoked answer the app signs in again with a new `AccountScope`.
 Call `sessionReset()` for every sign-out of the app. The library clears the data itself.
 If `CredentialStore.clear` fails during a revoked logout, the logout still succeeds and the next open clears the credential that has no stored state.
 
+### Reading the session
+
+`sessionStatus()` returns the session now without network or storage access: `epoch`, `identity` and `phase`. `phase` is `none` without a session, `active` for a signed-in one (also while it resets or its storage failed) and `ending` while it ends. `identity` is the digest of the credential and is set for `active` and `ending`. Equal identities in two readings mean the same session. It is not the server session id. The call throws `NotOpen` before `open` and `Closed` after `close`.
+
+The app keeps no sign-in flag of its own. Read the state after a stream ends with `SessionEnded` and after `sessionCall` or `sessionReset`.
+
+```swift
+let state = try DB.sessionStatus()
+if state.phase == .active { showMain() } else { showSignIn() }
+```
+
+```kotlin
+val state = DBlayer.sessionStatus()
+if (state.phase == SessionStanding.ACTIVE) showMain() else showSignIn()
+```
+
 ### Session errors in loads and mutations
 
 A sealed answer of the encrypted session that carries an `error` field with a session code throws `DbError.Session(code:detail:)` (`DbException.Session` with `code` and `detail` in Kotlin). It is the same case that `sessionCall` throws, with the same `SessionCode`. No `Graphql` error and no text is parsed. `detail` holds the code text of the server.
 
-| Where | Result |
-| ----- | -------------- |
-| `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
-| `DB.call(_:variables:)` and generated `Operations.*` calls (`DBlayer.call` in Kotlin) | the call got the sealed refusal |
-| Mutation receipt `confirmed()` | the queued mutation got the sealed refusal. `Rejected` carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
-| streams (`scope.stream`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
+| Where                                                                                         | Result                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal                                                                                                                              |
+| `DB.call(_:variables:)` and generated `Operations.*` calls (`DBlayer.call` in Kotlin)         | the call got the sealed refusal                                                                                                                                             |
+| Mutation receipt `confirmed()`                                                                | the queued mutation got the sealed refusal. `Rejected` carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
+| streams (`scope.stream`)                                                                      | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it                                                  |
 
 `retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `revoked` answer. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
@@ -172,14 +189,14 @@ The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensio
 
 Recovery depends on the response and whether it confirms the sequence:
 
-| The refusal | The request | Do |
-| ----------- | ----------- | -- |
-| confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
-| did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
-| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | Fix the cause before sending again |
-| lost connection, timeout, HTTP 408, 429 or 5xx | pending | the durable owner repeats the saved request under the [retry policy](#retries) |
-| any other HTTP error status | pending | fix the cause, then `retry` |
-| stored request whose path is now declared sessionless | removed without sending or advancing the sequence | nothing to do |
+| The refusal                                                                                 | The request                                                                               | Do                                                                             |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code)            | spent, nothing is pending                                                                 | fix the cause, then `retry`. The core sends the mutation as a new request      |
+| did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too                                  | `sessionReset()`, sign in again, then `retry`                                  |
+| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer                                | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | Fix the cause before sending again                                             |
+| lost connection, timeout, HTTP 408, 429 or 5xx                                              | pending                                                                                   | the durable owner repeats the saved request under the [retry policy](#retries) |
+| any other HTTP error status                                                                 | pending                                                                                   | fix the cause, then `retry`                                                    |
+| stored request whose path is now declared sessionless                                       | removed without sending or advancing the sequence                                         | nothing to do                                                                  |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
@@ -189,7 +206,6 @@ Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
 Opening the database with a session sends the stored request. The application calls nothing.
 
 The library closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
-
 
 For mutations with `clientMutationId` in the SDL input type, the generator sets `client_mutation_id` in the action spec.
 The model needs no field declaration. Without SDL, automatic key passing is off.
@@ -294,32 +310,32 @@ requestDigest is lowercase SHA-256 of the request JSON without issuedAt, with to
 Body retains the order platform, version, build. See `fixtures/bootstrap-config/bootstrap_kat.json`.
 The client checks the response key, algorithms, requestId and requestDigest before reading config fields.
 
-| Field | Meaning |
-| ----- | ------- |
-| `configVersion` | required structure version, currently 1 |
-| `protocolVersion`, `minAppVersion` | protocol and minimum application versions |
-| `updateRequired` | a successful result requesting an app update |
-| `country`, `countryDisabled` | nullable country code and phone sign-in restriction |
-| `countries` | name, code, flag, phoneCode, phoneMask, phoneFormatter, enabled, phoneAuthEnabled |
-| `trackingPromptEnabled` | whether the app shows the tracking prompt |
-| `storeUrl` | nullable store link for the requested platform |
-| `flagsJson` | flags object encoded as JSON, including future values |
+| Field                              | Meaning                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------- |
+| `configVersion`                    | required structure version, currently 1                                           |
+| `protocolVersion`, `minAppVersion` | protocol and minimum application versions                                         |
+| `updateRequired`                   | a successful result requesting an app update                                      |
+| `country`, `countryDisabled`       | nullable country code and phone sign-in restriction                               |
+| `countries`                        | name, code, flag, phoneCode, phoneMask, phoneFormatter, enabled, phoneAuthEnabled |
+| `trackingPromptEnabled`            | whether the app shows the tracking prompt                                         |
+| `storeUrl`                         | nullable store link for the requested platform                                    |
+| `flagsJson`                        | flags object encoded as JSON, including future values                             |
 
 Country phoneFormatter maps strings to strings. Required booleans and lists never default from missing or null values.
 Unknown fields are accepted. Unsupported configVersion and wrong field types have distinct typed config errors.
 
-| Result | Swift / Kotlin outcome |
-| ------ | ---------------------- |
-| Offline or timeout | waits and retries until success or cancellation |
-| Task or coroutine cancellation | Swift CancellationError or Kotlin CancellationException |
-| HTTP 408, 429 or 5xx | waits and retries until success or cancellation |
-| Other HTTP errors | Http, without an automatic retry |
-| Wrong bundled pin | Security with ServerKeyMismatch, 0 HTTP |
-| Invalid JWE, key, requestId or digest | Security with ResponseAuthentication |
-| TLS trust failure | Security with TlsTrust |
-| Sealed INVALID_REQUEST or invalid local arguments | Config with InvalidRequest |
-| Invalid config fields | Config with InvalidFormat |
-| Unknown configVersion | Config with UnsupportedVersion |
+| Result                                            | Swift / Kotlin outcome                                  |
+| ------------------------------------------------- | ------------------------------------------------------- |
+| Offline or timeout                                | waits and retries until success or cancellation         |
+| Task or coroutine cancellation                    | Swift CancellationError or Kotlin CancellationException |
+| HTTP 408, 429 or 5xx                              | waits and retries until success or cancellation         |
+| Other HTTP errors                                 | Http, without an automatic retry                        |
+| Wrong bundled pin                                 | Security with ServerKeyMismatch, 0 HTTP                 |
+| Invalid JWE, key, requestId or digest             | Security with ResponseAuthentication                    |
+| TLS trust failure                                 | Security with TlsTrust                                  |
+| Sealed INVALID_REQUEST or invalid local arguments | Config with InvalidRequest                              |
+| Invalid config fields                             | Config with InvalidFormat                               |
+| Unknown configVersion                             | Config with UnsupportedVersion                          |
 
 The classifiers preserve typed errors. Config failures do not clear credentials, reset sessions or enable entry from cached data.
 
@@ -327,13 +343,13 @@ The classifiers preserve typed errors. Config failures do not clear credentials,
 
 Each request has one retry owner. Core `RetryPolicy` defines the common delay calculation and the budgets below.
 
-| Request | Retry owner | Budget |
-| --- | --- | --- |
-| Encrypted read, bootstrap, standalone mutation, session call, logout | Encrypted HTTP | Unlimited until success, terminal refusal or cancellation |
-| Plain load | Query executor | 3 retries for network failures, 2 for temporary server failures |
-| Queued mutation, including encrypted and final upload mutations | Durable outbox | 40 undelivered attempts, then Failed with the edit and Pending owner preserved |
-| Upload transfer step or multipart part | Durable upload step | 50 retries per step or part |
-| Logical subscription and shared socket reconnect | Each connection independently | Unlimited while needed |
+| Request                                                              | Retry owner                   | Budget                                                                         |
+| -------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
+| Encrypted read, bootstrap, standalone mutation, session call, logout | Encrypted HTTP                | Unlimited until success, terminal refusal or cancellation                      |
+| Plain load                                                           | Query executor                | 3 retries for network failures, 2 for temporary server failures                |
+| Queued mutation, including encrypted and final upload mutations      | Durable outbox                | 40 undelivered attempts, then Failed with the edit and Pending owner preserved |
+| Upload transfer step or multipart part                               | Durable upload step           | 50 retries per step or part                                                    |
+| Logical subscription and shared socket reconnect                     | Each connection independently | Unlimited while needed                                                         |
 
 Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
 The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
@@ -456,11 +472,11 @@ A transfer step retries network errors and the temporary GraphQL codes listed ab
 
 The core sends a GraphQL read as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field.
 
-| Server answer | Core |
-| ------------- | ---- |
-| result | returns it |
+| Server answer                                                      | Core                                                                         |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| result                                                             | returns it                                                                   |
 | `PERSISTED_QUERY_NOT_FOUND` (HTTP 200, `errors[].extensions.code`) | sends the call once more with the document and the hash, returns that answer |
-| `INVALID_INPUT` or any other error | returns it, no second send |
+| `INVALID_INPUT` or any other error                                 | returns it, no second send                                                   |
 
 The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations behave as before and return the answer of the last send.
 
@@ -474,14 +490,14 @@ The server registry fills itself. The first read of a document after the app is 
 
 Every response, whether from a query, a mutation or a subscription event, goes through the same rules:
 
-| Rule | Behavior |
-| ---- | -------- |
-| Identity | the objects of a relation are rows of its model and need an `id`. A relation parameter can supply a missing id. Other objects without one are dropped |
-| Nesting | objects found at the `from:` path of an association (its name by default) become rows of the target model. `belongs_to` keeps the key (`userId`) on the outer row, `has_many` and `has_one` rows get the outer id, `references` keeps the ids |
-| Lists and pages | lists and `edges { node }` with `pageInfo` are recognized from the document and keep server order |
-| Partial responses | fields a query did not select are never erased, each field is updated on its own and the newer revision wins |
-| Unknown fields | ignored |
-| One commit | a whole response lands in one commit |
+| Rule              | Behavior                                                                                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity          | the objects of a relation are rows of its model and need an `id`. A relation parameter can supply a missing id. Other objects without one are dropped                                                                                         |
+| Nesting           | objects found at the `from:` path of an association (its name by default) become rows of the target model. `belongs_to` keeps the key (`userId`) on the outer row, `has_many` and `has_one` rows get the outer id, `references` keeps the ids |
+| Lists and pages   | lists and `edges { node }` with `pageInfo` are recognized from the document and keep server order                                                                                                                                             |
+| Partial responses | fields a query did not select are never erased, each field is updated on its own and the newer revision wins                                                                                                                                  |
+| Unknown fields    | ignored                                                                                                                                                                                                                                       |
+| One commit        | a whole response lands in one commit                                                                                                                                                                                                          |
 
 ## Loading
 
@@ -644,6 +660,7 @@ try {
     show(error.messages)
 }
 ```
+
 - Do not use it for a row of a model. The row is written by `create`, `update` or a model `operation`, which keep the queue, the retries and the rollback.
 
 An operation that reads lists, objects and JSON from the answer:
@@ -804,6 +821,7 @@ model ChatActivity, storage: :memory, expires_in: 8.seconds do
   end
 end
 ```
+
 - An event changes only the attributes it carries. Attributes it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
 - Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
@@ -865,15 +883,15 @@ The core starts these subscriptions when a session credential is committed (a se
 
 ## Automatic refetching
 
-| Event | Result |
-| ----- | ------ |
-| Successful `create` or `destroy` of a model | scopes of that model become stale and are refetched at once if someone is reading them. After a `create`, a scope with `insert_on: [:event, :response]` is not refetched: the answer of the mutation already placed the row |
-| Successful mutation with `refetch` | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit. A load that began before the commit does not settle the refetch, whatever it lands. The call that sent the mutation returns with its own answer and never waits for the refetch, and the next mutation is sent meanwhile. A session change drops a refetch the old session owed |
-| `freshness` expired | checked on the next read or network return. Expiration alone sends no request |
-| App returns to the foreground | an online idle window with a reader reloads when its scope declares `refresh_on_foreground: true`, whether fresh or stale. An offline foreground does nothing |
-| Network returns after offline | stale windows with readers reload in small groups, events that coincide share one run, close cancels the run. Stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. Waiting changes and uploads resume |
-| Network is back | the queue is sent and stale relations are refetched |
-| Subscription reconnects after lost events | watched relations of the affected models are refetched once |
+| Event                                       | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Successful `create` or `destroy` of a model | scopes of that model become stale and are refetched at once if someone is reading them. After a `create`, a scope with `insert_on: [:event, :response]` is not refetched: the answer of the mutation already placed the row                                                                                                                                                                                                                                                        |
+| Successful mutation with `refetch`          | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit. A load that began before the commit does not settle the refetch, whatever it lands. The call that sent the mutation returns with its own answer and never waits for the refetch, and the next mutation is sent meanwhile. A session change drops a refetch the old session owed  |
+| `freshness` expired                         | checked on the next read or network return. Expiration alone sends no request                                                                                                                                                                                                                                                                                                                                                                                                      |
+| App returns to the foreground               | an online idle window with a reader reloads when its scope declares `refresh_on_foreground: true`, whether fresh or stale. An offline foreground does nothing                                                                                                                                                                                                                                                                                                                      |
+| Network returns after offline               | stale windows with readers reload in small groups, events that coincide share one run, close cancels the run. Stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. Waiting changes and uploads resume |
+| Network is back                             | the queue is sent and stale relations are refetched                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Subscription reconnects after lost events   | watched relations of the affected models are refetched once                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 You never write "if the mutation worked, reload the list".
 

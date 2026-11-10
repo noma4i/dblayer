@@ -51,6 +51,11 @@ public enum DB {
     try await database.sessionReset()
   }
 
+  /// The session now: epoch, identity of its credential and phase. Read it again after a stream ends with the session or after `sessionCall` and `sessionReset`.
+  public static func sessionStatus() throws -> SessionStatus {
+    try database.sessionStatus()
+  }
+
   private static func sessionBodyText<Body: Encodable>(_ body: Body) throws -> String {
     String(decoding: try JSONEncoder().encode(body), as: UTF8.self)
   }

@@ -397,11 +397,41 @@ impl Database {
     }
 }
 
+/// What the session is: no session, a signed-in one, or one that is ending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum SessionStanding {
+    None,
+    Active,
+    Ending,
+}
+
+/// The session of the database: its epoch, the identity of its credential (equal readings mean the same session, not a server id) and its phase.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct SessionStatus {
+    pub epoch: u64,
+    pub identity: Option<u64>,
+    pub phase: SessionStanding,
+}
+
 #[uniffi::export]
 impl Database {
     pub fn cable_closes(&self) -> Arc<ReadStream> { self.subscribe_values(self.session_epoch(), ReadRequest::CableCloses) }
     /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
     pub fn session_epoch(&self) -> u64 { self.life.published().epoch }
+
+    /// The session of the database now, read from the published value: no network and no storage.
+    pub fn session_status(&self) -> Result<SessionStatus, DbError> {
+        use crate::owners::contract::PublishedState as State;
+        let published = self.life.published();
+        let (phase, identity) = match published.state {
+            _ if published.closed => return Err(super::command::closed()),
+            State::Closing => return Err(super::command::closed()),
+            State::NoSession => (SessionStanding::None, None),
+            State::Session | State::Resetting | State::StorageFailed => (SessionStanding::Active, published.identity),
+            State::Ending | State::EndingFailed => (SessionStanding::Ending, published.identity),
+        };
+        Ok(SessionStatus { epoch: published.epoch, identity, phase })
+    }
 
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();

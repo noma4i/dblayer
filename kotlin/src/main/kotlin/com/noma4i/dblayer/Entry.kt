@@ -23,6 +23,9 @@ object DBlayer {
         offCaller { database.sessionReset() }
     }
 
+    /** The session now: epoch, identity of its credential and phase. Read it again after a stream ends with the session or after `sessionCall` and `sessionReset`. */
+    fun sessionStatus(): SessionStatus = database.sessionStatus()
+
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core. */
     suspend fun close() {
         val database = this.database

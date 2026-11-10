@@ -5,6 +5,7 @@
 ### Added
 
 - Wait for a receipt with `confirmed`, which returns the value or throws `Rejected`.
+- Read the session with `sessionStatus`: epoch, identity and phase.
 
 ### Changed
 
@@ -410,18 +411,20 @@
 - `Connectivity` of `serverConfig`: the core takes the platform observer.
 - `DbError.Sync` is removed: an upload without declared operations fails with `Invalid`.
 
-
 ## 6.16.1 - 2026-11-03
 
 ### Fixed
+
 - `resetForTesting` returns the database to a fresh open and ends old work before `settleForTesting`.
 
 ## 6.16.0 - 2026-11-03
 
 ### Added
+
 - `openTesting` takes the encrypted session parameters of `open`.
 
 ### Fixed
+
 - Signing in again after a logout loads held entities and queries.
 - `settleForTesting` returns after a logout.
 - Queued changes and model events of a closed account never reach the next one.
@@ -439,30 +442,36 @@
 ## 6.15.3 - 2026-11-03
 
 ### Fixed
+
 - Held reads wait after logout and reload when the next session commits.
 
 ## 6.15.2 - 2026-11-03
 
 ### Fixed
+
 - Held entities and live queries load again after a data reset.
 - Server subscriptions reopen after a data reset.
 
 ## 6.15.1 - 2026-11-03
 
 ### Fixed
+
 - The tagged Swift package includes the generated bindings of its release.
 
 ## 6.15.0 - 2026-11-03
 
 ### Added
+
 - Reset and settle testing databases without reopening them.
 
 ### Fixed
+
 - Tasks woken by a landed load response run after the landing lock is released.
 
 ## 6.14.1 - 2026-11-02
 
 ### Fixed
+
 - Reading the database generation no longer waits for a write.
 - Cancelling a live query no longer deadlocks with a delivered change.
 - Entity listeners can retain, release, reset or close entities from inside `changed`.
@@ -481,9 +490,11 @@
 ## 6.14.0 - 2026-11-02
 
 ### Added
+
 - Membership rules match row fields against literal sets, literals and scope parameters.
 
 ### Fixed
+
 - Settled returns the refusal of an action that was rolled back.
 
 ## 6.13.1 - 2026-10-31
@@ -494,6 +505,7 @@
 - Release tags are lightweight tags.
 
 ### Fixed
+
 - Held entities receive the closed phase as soon as the database closes.
 - Live windows compute their row ids off the main actor.
 - Builds print no compiler warnings and no future-incompatibility notice.
@@ -501,9 +513,11 @@
 ## 6.13.0 - 2026-10-29
 
 ### Added
+
 - Report lost session state as the typed session code StateLost.
 
 ### Fixed
+
 - Preserve exact large-integer ordering in merges, sequence selection, and sorted lists.
 - Preserve original parameter values during cross binding and distinguish typed scope keys.
 - Reject duration counts whose converted milliseconds overflow.
@@ -515,11 +529,13 @@
 - Reject malformed cloud cursors, upload headers, and unsupported top-level operation options.
 
 ### Removed
+
 - Release attachments no longer include the macOS dylib.
 
 ## 6.12.0 - 2026-10-27
 
 ### Added
+
 - Ship Intel macOS and Intel simulator slices and a universal JVM library.
 - Apply full event rows with `changed_by payload` on Swift and Kotlin.
 - Declare `server_revision` to reject older server rows before changing data or list membership.
@@ -548,6 +564,7 @@
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
 
 ### Fixed
+
 - Preserve nullable list membership when a column changes to null and back.
 - Reset cached server data after membership rules or node insertion rules change.
 - Share node requests while preserving insertion requested by an event.
@@ -563,6 +580,7 @@
 ## 6.11.0 - 2026-10-27
 
 ### Added
+
 - `openTesting(listening: false)` holds model subscriptions until `setListening(true)`.
 - Upload actions return the declared fields of the final mutation.
 
@@ -574,6 +592,7 @@
 ## 6.10.2 - 2026-10-27
 
 ### Added
+
 - `Entity.waitForInitialLoad()` waits for the read the entity started and sends no request.
 - `open(listening: false)` and `DB.setListening(_:)` / `DBlayer.setListening(allowed)` hold the model subscriptions that a committed credential starts until the app allows them.
 
@@ -585,6 +604,7 @@
 ## 6.10.1 - 2026-10-27
 
 ### Added
+
 - `LiveList`, `Live`, `LiveView` and `rememberLiveList` take a `RelatedQuery` and load its source scope like a `Query`.
 
 ### Changed
@@ -593,11 +613,13 @@
 - An upload that waits for the network reports `waiting` with `waitReason` `offline`, and its record stays `pending`.
 
 ### Fixed
+
 - A model with several node relations generates one `entity(id, fetch:)`.
 
 ## 6.10.0 - 2026-10-27
 
 ### Added
+
 - Kotlin `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope of a live list in Compose.
 - `Model.entity(id, fetch: .force|.stale|.none)` reads the node when a reader appears, and `refreshError` shows a failed read.
 - `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.
@@ -628,14 +650,17 @@
 - A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
 
 ### Fixed
+
 - A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.
 
 ### Removed
+
 - `DB.listen()`, `DB.unlisten()`, `DBlayer.listen()` and `DBlayer.unlisten()`.
 
 ## 6.9.2 - 2026-10-26
 
 ### Added
+
 - An optimistic keyed element carries the nested object of the local row its declared `ref:` and `id:` name.
 
 ### Changed
@@ -644,17 +669,20 @@
 - `expires_in` of a memory model counts from the last write, and a write of equal values renews it.
 
 ### Fixed
+
 - `entity(id)` of a record whose reader was freed no longer calls the core again while its value or absence is retained.
 - `confirmed` returns the server id to a waiter that the closing commit of a create wakes.
 
 ## 6.9.1 - 2026-10-26
 
 ### Fixed
+
 - A live read opened while a server reply replaces a temporary row returns the rows before or after the swap, never an empty set.
 
 ## 6.9.0 - 2026-10-26
 
 ### Added
+
 - `preload` parameter on `DB.openTesting` and `DBlayer.openTesting`, default false, keeps scope preloads quiet in tests.
 
 ### Changed
@@ -663,6 +691,7 @@
 - `preload` scopes wait while the device saves power and never load on a low-RAM Android device.
 
 ### Fixed
+
 - An action that declares a result reads its answer when the payload row is null.
 - `changed_by` accepts one change area on several models, each model rereads its own read.
 - Local writes check nested objects and lists against their declared type.
@@ -671,6 +700,7 @@
 ## 6.8.0 - 2026-10-26
 
 ### Added
+
 - `DB.sessionCall` and `DBlayer.sessionCall` send a declared session operation and decode the answer.
 - `sessionResume`, `sessionReset` and `retryAll` on `DB` and `DBlayer`.
 - `Model.retry(id:action:)` and Kotlin `ModelDecoder.retry(id, action)` retry a record by id.
@@ -731,6 +761,7 @@
 - A live query on a remote relation delivers its first snapshot without waiting.
 
 ### Fixed
+
 - An expiring memory row written again before its removal commits stays alive.
 - A batch of server events keeps both rows that touch the same parent.
 - The answer of an action is ready when its operation turns committed.
@@ -765,6 +796,7 @@
 - `flush` reports a failure while removing expired uploads and retries at the next start.
 
 ### Removed
+
 - The `liveHasMany` bridge call; use `Query.related`.
 - `readEdgeValues` and generated `read<Scope>Edge`; use `edgeValues` and `<scope>Edge`.
 - `createBlob` and `multipart` from `UploadRequest` and `UploadBatchRequest`.
@@ -776,6 +808,7 @@
 ## 6.7.0 - 2026-10-24
 
 ### Added
+
 - Entities expose opening, present, absent, failed and closed phases.
 - `CableLease` and `SubscriptionSink` receive the transport token through `opened`.
 - `loadMore` reports loaded pages, exhausted pagination and concurrent loading.
@@ -793,6 +826,7 @@
 - Android uses JNA 5.19.1.
 
 ### Fixed
+
 - A Kotlin process no longer aborts on a corrupted foreign future result.
 - A stored operation with an invalid id fails instead of losing the id.
 - Waiting for a record matches its model as well as its id.
@@ -809,12 +843,14 @@
 - Concurrent initialization with another UniFFI library avoids a JNA lock inversion.
 
 ### Removed
+
 - Separate query loading-state streams.
 - Swift `UrlSessionTransport` initializer that takes a headers dictionary.
 
 ## 6.6.0 - 2026-10-23
 
 ### Added
+
 - `DatabaseNotOpen` error for calls on a closed or unopened database.
 - `generate_kotlin_bindings.sh` generates Kotlin bindings from explicit paths.
 - `MockTransport` mode `networkError` answers an unqueued call with a network error.
@@ -836,6 +872,7 @@
 - `MockTransport` records an unknown unsubscribe token on both platforms without throwing.
 
 ### Fixed
+
 - `logout` returns after held entities received their removal.
 - Switching lists no longer opens a second viewer changes subscription.
 - A Kotlin process no longer aborts when an async transport callback completes early.
@@ -852,12 +889,14 @@
 - Mock transports record unsubscribe tokens they never issued, the Kotlin mock throws.
 
 ### Fixed
+
 - A panic while handling one observed group no longer stops other groups.
 - Sync, uploads and cloud share one network state per database.
 
 ## 6.4.0 - 2026-10-23
 
 ### Added
+
 - `DBlayer.close()` and `DB.close()` close the database for tests and process end.
 - `Entity.isClosed` marks an entity whose database closed.
 - `entityCensus()` and `entityLeaseFailures()` count entity reads, skips and failed leases.
@@ -871,15 +910,18 @@
 - A returning network reloads observed windows whose load failed offline, once.
 
 ### Removed
+
 - Public `Database.open` and `Database.openWithClock`.
 
 ### Fixed
+
 - An entity receives its row when the first read for it failed.
 - A load after reopening the database is no longer discarded.
 
 ## 6.3.0 - 2026-10-22
 
 ### Added
+
 - Local models and `local: true` attributes sync across devices of one account.
 - `cloud` in a model lists the attributes that sync.
 - `connectCloudKit(container:)` syncs through the CloudKit private database on iOS.
@@ -896,21 +938,25 @@
 - Associations and storage join the model fingerprint, which rebuilds the cache once.
 
 ### Fixed
+
 - Cancelling one caller of a shared load no longer fails the other callers.
 - A cancelled load no longer leaves its relation in the loading state.
 
 ## 6.2.0 - 2026-10-22
 
 ### Added
+
 - A scope with parameters opens one live subscription per parameter set.
 - Generation with `--schema` checks subscription arguments against the server schema.
 
 ### Fixed
+
 - Scope subscriptions send the read parameters as subscription variables.
 
 ## 6.1.0 - 2026-10-22
 
 ### Added
+
 - `.dbl` declares fields with `attribute` and scope arguments with `parameter`.
 - `query`, `response from:`, `paginate size:`, `freshness` and `subscribe` describe the server side of a scope.
 - `upsert`, `match_by`, `insert_on` and `stable_order` name response, correlation and list rules.
@@ -927,6 +973,7 @@
 - The cache format changed. The cache is rebuilt on the first open.
 
 ### Removed
+
 - The previous `.dbl` words: `field`, `fetch`, `root`, `lands`, `correlate`, `joins`, `listen`, `updates` and others.
 - `local_effect` and its `reason`.
 - Untyped `:object` and `:array` fields. Use `:json` or a named type.
@@ -935,6 +982,7 @@
 ## 6.0.0 - 2026-10-22
 
 ### Added
+
 - `parse: :json` on a `raw` field stores a JSON text string as a JSON value.
 - `Query.changes` collapses an overflowing queue into one `replaced` change with a full snapshot.
 - `retry()` and `retryAll()` return the number of retried operations and throw errors.
@@ -956,23 +1004,27 @@
 - The database format changed. The cache is rebuilt on the first open.
 
 ### Fixed
+
 - Several rows written in one transaction no longer get the same list position.
 - A batch rollback restores the parent row values.
 - A dropped upload item removes all its saved state.
 - Cancelling a native HTTP request stops the response body read.
 
 ### Removed
+
 - The second platform transport: Swift `DatabaseTransport`, `GraphQLTransport`, payload signing and Kotlin `Crypto`.
 - Equality of callback objects in `open`.
 
 ## 5.2.0 - 2026-10-21
 
 ### Added
+
 - `renumber` in a batch declaration rewrites position and size of the remaining rows after `discard` or `cancelUpload`.
 
 ## 5.1.0 - 2026-10-21
 
 ### Added
+
 - `uploadCreate` with a list of `UploadItem` creates 2 to 10 rows with uploads.
 - `batch` in an upload operation declares one content mutation with an items list.
 - Batch rows are replaced by the answer through their `correlate` key without duplicates.
@@ -981,21 +1033,25 @@
 ## 5.0.3 - 2026-10-21
 
 ### Fixed
+
 - A new row from an operation response with `lands` joins loaded `joins: :events` lists.
 
 ## 5.0.2 - 2026-10-21
 
 ### Fixed
+
 - A repeated open with equal credentials, transport and HTTP values reuses the database.
 
 ## 5.0.1 - 2026-10-21
 
 ### Fixed
+
 - A `loadMore` refused with `INVALID_CURSOR` replaces the list window with the first page.
 
 ## 5.0.0 - 2026-10-21
 
 ### Added
+
 - `Query.changes` delivers inserted, updated, moved and removed rows of a live query in Swift and Kotlin.
 - `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries.
 - `Database.setRetryListener` installs or removes the listener. `serverConfig` takes `retryListener`.
@@ -1020,18 +1076,21 @@
 - Build scripts read the core count with `nproc` and fall back to `sysctl`.
 
 ### Removed
+
 - The x86_64 simulator slice is no longer in the default iOS build.
 - The default Android build no longer includes x86 and x86_64. `--abis` builds all four ABIs.
 
 ## 4.1.0 - 2026-10-21
 
 ### Added
+
 - `typed: [afterSequence: :int, pinned: :bool]` declares scope params that are sent as a JSON integer or boolean. Each value has its own window.
 - Swift and Kotlin take the typed params as `Int` and `Bool` (`Long` and `Boolean` in Kotlin).
 
 ## 4.0.0 - 2026-10-20
 
 ### Added
+
 - `EncryptedSessionOperation` marks a session operation as sessionless in `sessionOperations`.
 
 ### Changed
@@ -1045,11 +1104,13 @@
 - `sessionResume()` returns `nil` or `null` for a dropped request instead of throwing.
 
 ### Fixed
+
 - A stored pending request of a sessionless operation no longer blocks every app start.
 
 ## 3.0.0 - 2026-10-20
 
 ### Added
+
 - `node` and `nodes` read entities by id, with freshness windows and `force`.
 - Interface and union lists, input lists and `oneOf` inputs in operation arguments.
 - Enum lists and enum scope params with defaults.
@@ -1078,17 +1139,20 @@
 - Bootstrap config is fetched before the database opens.
 
 ### Fixed
+
 - A cable that closed after `hello` no longer reconnects every second.
 - Upload status checks and offline cancellation no longer block.
 - An explicit null resets a `belongs_to` key.
 
 ### Removed
+
 - Window membership snapshots.
 - Built-in server paths, channel names and change subscription.
 
 ## 2.0.0 - 2026-10-17
 
 ### Added
+
 - Typed enums in Swift and Kotlin, with an `unknown` case that keeps the server text.
 - `scalar :Name, as: :kind` maps a custom scalar to a generated type.
 - Union fields declared with `on` blocks become a Swift enum and a Kotlin sealed class.
@@ -1103,11 +1167,13 @@
 - A custom scalar without a mapping fails generation.
 
 ### Removed
+
 - The string form of enum values in generated code.
 
 ## 1.2.0 - 2026-10-17
 
 ### Added
+
 - `Query.window(tail:)` and `LiveWindow` keep only the last rows of an ordered query live.
 - Window snapshots carry `hasBefore`, `hasAfter` and `total`; `expand(before:)` grows the window.
 - Windows work over sorted relations with a parameter column and joins.
@@ -1125,6 +1191,7 @@
 ## 1.1.0 - 2026-10-16
 
 ### Added
+
 - `Snapshot.edits` and `LiveList.takeEdits()` give ordered row steps, joined across missed deliveries.
 - `replay` applies the steps to a mirror of the rows.
 
@@ -1136,11 +1203,13 @@
 ## 1.0.1 - 2026-10-16
 
 ### Fixed
+
 - The `dblayer-gen` crate builds against the core version.
 
 ## 1.0.0 - 2026-10-16
 
 ### Added
+
 - Normalized SQLite storage: typed columns, child tables for lists, objects and arrays, node rows for free-shaped values.
 - Redesigned model declarations in `.dbl`.
 - Nested value types generated from model declarations.
@@ -1164,6 +1233,7 @@
 - An operation whose root field is a list returns a list.
 
 ### Fixed
+
 - Parent fields omitted by a child update are preserved.
 - Entities are seeded from cached rows, which carry stored revisions.
 - Background synchronization stops when its owners leave.
@@ -1172,11 +1242,13 @@
 - Live lists await forced initial loads.
 
 ### Removed
+
 - Multi-row inserts, which made upsert slower.
 
 ## 0.3.0 - 2026-10-13
 
 ### Added
+
 - Entity registry shared by Swift and Kotlin, with a singleton entity.
 - List deliveries carry changed rows with positions and apply to the array.
 - `Query.load` loads a stale relation without a subscription.
@@ -1200,6 +1272,7 @@
 - Unused write policy, admission, pacing and sync code removed.
 
 ### Fixed
+
 - Confirmed list members survive stale responses.
 - A sent temp row is replaced by the server row that lands first.
 - A param-less remote list takes the rows this device creates.
@@ -1210,6 +1283,7 @@
 ## 0.2.0 - 2026-10-11
 
 ### Added
+
 - One multiplexed cable channel for all subscriptions of a connection.
 - `resume` on the DB entry.
 - Format version derived from a hash of the core table DDL.
@@ -1232,6 +1306,7 @@
 - A wipe of an incompatible database keeps `row_sync`; missing core tables are created at open.
 
 ### Fixed
+
 - A failed subscription ends its live stream.
 - A frame without data fails as internal.
 - A refusal is kept until settled reads it.
@@ -1243,6 +1318,7 @@
 ## 0.1.0 - 2026-10-09
 
 ### Added
+
 - Rust core with SQLite storage.
 - Swift package and Kotlin module over a UniFFI bridge.
 - `.dbl` parser and code generation for Swift, Kotlin and the core spec.
