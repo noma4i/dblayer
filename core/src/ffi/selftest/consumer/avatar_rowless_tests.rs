@@ -319,6 +319,29 @@ async fn consumer_rowless_failed_expiry_removes_copy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_accept_order() {
+    let stand = Stand::open().await;
+    let directory = tempfile::tempdir().unwrap();
+    let epoch = stand.database.session_epoch();
+    stand.database.set_online(false).unwrap();
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(receipt.optimistic_value.is_none());
+    let refused = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await;
+    assert!(matches!(refused, Err(DbError::InFlight { .. })), "{refused:?}");
+    let invalid = || WireUploadRequest::of(&UploadFile::new(""));
+    let refused = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), invalid())).await;
+    assert!(matches!(refused, Err(DbError::Invalid { .. })), "{refused:?}");
+    assert_eq!(operations(&stand).await.len(), 1);
+    assert_eq!((stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate")), (0, 0, 0));
+    bound(stand.database.session_reset()).await.unwrap();
+    let refused = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), invalid())).await;
+    assert!(matches!(refused, Err(DbError::NoSession { .. })), "{refused:?}");
+    stand.database.close_now();
+    let refused = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), invalid())).await;
+    assert!(matches!(refused, Err(DbError::Closed { .. })), "{refused:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn direct_mutation_reports_the_end_cause() {
     for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
         let stand = Stand::open().await;
