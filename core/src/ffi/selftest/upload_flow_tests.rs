@@ -72,6 +72,28 @@ async fn xfer_put_response_limit() {
     rig.database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_confirmed_old_failed_cycle_does_not_discard_retry() {
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    settled(&rig, "the chat is visible", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    rig.world.fail_next("PUT", Fault::Http(400));
+    let first = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    settled(&rig, "the first cycle failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    let copy = local_url(&chat, "c1", "update_photo").unwrap();
+    let held = rig.world.hold_next("PUT");
+    let retry = bound(rig.database.retry(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()), None)).await.unwrap();
+    held.entered().await;
+    assert!(matches!(bound(rig.database.confirmed(first, true)).await, Err(crate::ffi::DbError::Rejected { kept: true, .. })));
+    assert!(std::path::Path::new(copy.strip_prefix("file://").unwrap()).exists());
+    assert!(local_url(&chat, "c1", "update_photo").is_some());
+    held.release();
+    assert!(bound(rig.database.confirmed(retry, false)).await.is_ok());
+    rig.database.close_now();
+}
+
 /// P-APP-08: the photo of a group goes through the steps of the project, the chat shows `uploads["update_photo"]` from the commit that queued it until the commit that ends it, and the logo of the answer after it.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_photo_upload() {
