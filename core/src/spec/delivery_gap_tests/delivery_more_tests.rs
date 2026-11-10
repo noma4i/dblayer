@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn dlv_deferred_alias_after_log_evicted() {
+    use crate::identity::RowId;
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    let mut twin = Twin::new();
+    let resolved = Arc::new(AtomicBool::new(false));
+    let ready = resolved.clone();
+    let mut temporary = view(Kind::Entity(Fetch::Stale));
+    temporary.subject = "temp-1".into();
+    let mut real = temporary.clone();
+    real.subject = "real-1".into();
+    real.window.name = "real-node".into();
+    temporary.remote = false;
+    let deferred = d::Deferred { temps: vec!["temp-1".into()], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| real.clone())) };
+    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    let read_id = twin.read_id();
+    take(&twin.log);
+    let log = crate::store::replaced_log::ReplacedLog::default();
+    let pairs = (0..4097).map(|i| (RowId::new(if i == 0 { "temp-1".to_string() } else { format!("temp-{i}") }).unwrap(), RowId::new(format!("real-{i}")).unwrap()));
+    log.log_replaced(1, pairs);
+    let replaced = log.replaced_between(0, 1).into_iter().map(|(from, to)| (from.as_str().to_string(), to.as_str().to_string())).collect();
+    resolved.store(true, Ordering::SeqCst);
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, data: d::ReadData::Rows { rows: vec![d::StreamRow::new("real-1", 1)], replaced, total: None } });
+    let effects = take(&twin.log);
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") && input.contains("real-node"))).count(), 1, "the evicted alias still opens the real window: {effects:?}");
+}
+
+#[test]
 fn dlv_count_temp_swap() {
     use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
