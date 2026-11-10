@@ -1,1 +1,2 @@
 # file<TAB>count<TAB>line text<TAB>owner<TAB>reason.
+Network/BoundedExchange.swift	1	continuation?.resume(throwing: URLError(.badServerResponse))	coordinator	URLSession ends a task with an error or with a response, the branch closes the type
