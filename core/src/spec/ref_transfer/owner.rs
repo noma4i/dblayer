@@ -125,13 +125,16 @@ pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &m
         s.g.held.push(Held { call: None, now, item: Some(item), batch: None, epoch, reply: r });
         return;
     }
-    let fails = (find_open(s, &item.key).is_some() as u8) + (invalid_item(&item) as u8);
+    let existing = find_open(s, &item.key);
+    let busy = existing.is_some_and(|id| s.transfers.get(&id).is_some_and(|t| t.st != St::Failed || t.batch.is_some()));
+    let fails = (busy as u8) + (invalid_item(&item) as u8);
     if fails > 1 { row(e, "xfer_accept_check_order"); }
     if invalid_item(&item) { row(e, "xfer_accept_invalid"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
-    if find_open(s, &item.key).is_some() { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
+    if busy { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if odd_key(&item.key) { row(e, "xfer_key_path_chars"); }
     let has_effects = item.check.has_effects;
     let mut t = new_transfer(&mut s.g, item.key.clone(), item.source.clone(), epoch, now, None, 0, has_effects, item.values.clone());
+    if let Some(old) = existing { row(e, "xfer_accept_replaces_failed"); s.g.replacements.insert(t.id, old); }
     t.replies.accept = Some(r);
     e.push(Effect::Outbox(OutboxEffect::ReserveOp { epoch, target: Target::Transfer { transfer_id: t.id } }));
     row(e, if has_effects { "xfer_accept_reserve_op" } else { "xfer_accept" });
@@ -149,7 +152,7 @@ pub fn accept_batch(s: &mut State, epoch: u64, now: u64, minimum: usize, maximum
     }
     if items.len() < minimum || items.len() > maximum { row(e, "xfer_accept_batch_length"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
     if items.iter().any(invalid_item) { row(e, "xfer_accept_batch_invalid"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
-    if items.iter().any(|it| find_open(s, &it.key).is_some()) { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
+    if items.iter().any(|it| find_open(s, &it.key).and_then(|id| s.transfers.get(&id)).is_some_and(|t| t.st != St::Failed || t.batch.is_some())) { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if items.iter().any(|it| odd_key(&it.key)) { row(e, "xfer_key_path_chars"); }
     row(e, "xfer_accept_batch");
     let gid = s.g.next_group;
@@ -158,7 +161,9 @@ pub fn accept_batch(s: &mut State, epoch: u64, now: u64, minimum: usize, maximum
     let mut need = BTreeSet::new();
     need.insert("g".to_string());
     for (n, it) in items.iter().enumerate() {
+        let old = find_open(s, &it.key);
         let t = new_transfer(&mut s.g, it.key.clone(), it.source.clone(), epoch, now, Some(gid), n as u32, it.check.has_effects, it.values.clone());
+        if let Some(old) = old { row(e, "xfer_accept_replaces_failed"); s.g.replacements.insert(t.id, old); }
         need.insert(format!("t{}", t.id));
         ids.push(t.id);
         e.push(Effect::Outbox(OutboxEffect::ReserveOp { epoch, target: Target::Transfer { transfer_id: t.id } }));

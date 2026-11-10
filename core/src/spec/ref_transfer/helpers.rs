@@ -132,7 +132,40 @@ pub fn step(s: &State, i: &Input) -> (State, Vec<Effect>) {
     let mut e = Vec::new();
     owner(&mut s, i, &mut e);
     settle_post(&mut s, &mut e);
+    replace_failed_in_acceptance(&mut s, &mut e);
     (s, e)
+}
+
+fn replace_failed_in_acceptance(s: &mut State, effects: &mut [Effect]) {
+    for effect in effects {
+        let Effect::Store { batch, ops, .. } = effect else { continue };
+        let Some(BatchKind::Own { ids, .. }) = s.g.batches.get(batch) else { continue };
+        let replacements: Vec<_> = ids.iter().filter_map(|id| s.g.replacements.get(id).copied().map(|old| (*id, old))).collect();
+        if replacements.is_empty() { continue; }
+        let mut removed = Vec::new();
+        let mut prefix = Vec::new();
+        for (new, old) in replacements {
+            let Some(t) = s.transfers.get_mut(&old) else { continue };
+            if t.st != St::Failed { continue; }
+            let orphan = t.upload_id.clone().filter(|_| !t.aborted);
+            prefix.push(Op::RemoveUpload { transfer_id: old });
+            prefix.extend(rollback_op(t));
+            if t.intent_live || t.has_effects { prefix.push(Op::RemoveIntent); }
+            if let Some(upload_id) = &orphan { prefix.push(Op::UploadOrphan { upload_id: upload_id.clone(), key: t.key.clone() }); }
+            prefix.push(Op::DiscardedOutcome { transfer_id: old, cycle_id: t.cycle_id });
+            t.st = St::Removing { why: Why::Discarded, prior: Box::new(St::Failed), orphan };
+            removed.push(old);
+            s.g.replacements.remove(&new);
+        }
+        if removed.is_empty() { continue; }
+        prefix.append(ops);
+        *ops = prefix;
+        if let Some(BatchKind::Own { ids, ops: saved }) = s.g.batches.get_mut(batch) {
+            removed.append(ids);
+            *ids = removed;
+            *saved = ops.clone();
+        }
+    }
 }
 
 pub fn after(s: &mut State, t: Transfer) {
@@ -176,4 +209,6 @@ pub fn shown_committed(s: &mut State, batch: StoreBatch, res: &Result<u64, Reaso
     true
 }
 
-pub fn find_open(s: &State, key: &TransferKey) -> Option<TransferId> { s.transfers.values().find(|t| t.key == *key).map(|t| t.id) }
+pub fn find_open(s: &State, key: &TransferKey) -> Option<TransferId> {
+    s.transfers.values().find(|t| t.key == *key && t.st != St::Failed).or_else(|| s.transfers.values().find(|t| t.key == *key)).map(|t| t.id)
+}

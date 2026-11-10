@@ -158,6 +158,7 @@ pub enum Op {
     UploadId { upload_id: String },
     RoundError(Option<String>),
     RemoveUpload { transfer_id: TransferId },
+    DiscardedOutcome { transfer_id: TransferId, cycle_id: u64 },
     UploadShown { shown: Shown },
     RemoveIntent,
     UploadOrphan { upload_id: String, key: TransferKey },
@@ -299,6 +300,7 @@ pub struct G {
     pub subs: BTreeMap<TransferId, BTreeSet<StreamId>>, pub key_subs: BTreeMap<TransferKey, BTreeSet<StreamId>>,
     pub deferred: Vec<(String, Vec<TransferId>, Vec<Op>)>, pub post: Vec<Post>, pub round_needed: Vec<TransferId>, pub slots_used: u32, pub drained: bool, pub quiet: bool, pub saved_outcomes: BTreeMap<TransferId, BTreeMap<u64, Outcome>>,
     pub selecting: BTreeMap<ReplyId, (TransferId, bool)>,
+    pub replacements: BTreeMap<TransferId, TransferId>,
 }
 
 #[derive(Clone, Debug)]
@@ -313,7 +315,7 @@ impl State {
                 next_transfer: 1, next_attempt: 1, next_batch: 1, next_group: 1, next_seq: 1, batches: BTreeMap::new(), shown_batches: BTreeMap::new(),
                 file_slots, multipart_threshold, part_size, subs: BTreeMap::new(), key_subs: BTreeMap::new(),
                 deferred: Vec::new(), post: Vec::new(), round_needed: Vec::new(), slots_used: 0, drained: false, quiet: false, saved_outcomes: BTreeMap::new(),
-                selecting: BTreeMap::new(),
+                selecting: BTreeMap::new(), replacements: BTreeMap::new(),
             },
             transfers: BTreeMap::new(),
         }
