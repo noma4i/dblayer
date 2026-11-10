@@ -17,7 +17,7 @@ fn viewer() -> Value {
 }
 
 fn good() -> Value {
-    json!({"userPhotoUpdate": {"moment": {"id": "m1"}, "userPhoto": {"reason": null, "status": "GOOD", "media": {"thumbUrl": "https://t/1"}}, "viewer": viewer()}})
+    document_answer()
 }
 
 fn document_answer() -> Value {
@@ -34,8 +34,10 @@ async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
     first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     first.answer("UserPhotoUpdate", good());
     first.script_put(200, Some("etag"));
-    let receipt = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    bound(first.database.confirmed(receipt, false)).await.unwrap();
+    let _receipt = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    arrived(&first, "UserPhotoUpdate").await;
+    first.settle().await;
+    assert!(operations(&first).await.is_empty());
     bound(first.database.close_database()).await.unwrap();
 
     let reopened = Stand::prepare_on(Some(path), credentials).await;
@@ -133,7 +135,8 @@ async fn consumer_avatar_document_response_lands_row() {
     let directory = tempfile::tempdir().unwrap();
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     let answer = bound(stand.database.confirmed(receipt, false)).await.unwrap();
-    assert!(matches!(answer.value, Some(ref row) if row.id == "u1"), "the document response landed the row: {:?}", answer.value);
+    assert!(answer.value.is_none(), "the incomplete target row is not created: {:?}", answer.value);
+    assert!(bound(stand.database.read_row(epoch, "User".into(), "u1".into())).await.unwrap().is_some(), "the nested user is written");
     stand.database.close_now();
 }
 
@@ -165,7 +168,7 @@ async fn consumer_avatar_rowless_upload() {
     stand.answer("UserPhotoUpdate", good());
     stand.script_put(200, Some("etag"));
     stand.hold(&["CreateBlob", "UserPhotoUpdate"]);
-    let rows = stand.entity("CurrentUser", "u1", ReadFetch::Never);
+    let rows = stand.entity("User", "u1", ReadFetch::Never);
     let (me, landed) = (crate::identity::RowId::new("me").unwrap(), crate::identity::RowId::new("u1").unwrap());
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none() && stand.database.db.find("CurrentUser", &me).unwrap().is_none(), "no CurrentUser row before the upload");
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
@@ -184,10 +187,10 @@ async fn consumer_avatar_rowless_upload() {
     let confirmed = bound(stand.database.confirmed(receipt, false)).await.unwrap();
     let answer: Value = serde_json::from_str(&confirmed.answer_json.expect("the typed answer")).unwrap();
     assert_eq!((answer["moment"]["id"].as_str(), answer["userPhoto"]["status"].as_str(), answer["userPhoto"]["media"]["thumbUrl"].as_str()), (Some("m1"), Some("GOOD"), Some("https://t/1")), "the answer of the final mutation reaches the app by name");
-    assert!(matches!(confirmed.value, Some(ref row) if row.id == "u1"), "the answer landed the row: {:?}", confirmed.value);
+    assert!(confirmed.value.is_none(), "the incomplete target row is not created: {:?}", confirmed.value);
     stand.settle().await;
-    assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_some(), "the row of the answer is in the base");
-    assert_eq!(stand.text_of(&rows, "CurrentUser", "u1", "fullName").as_deref(), Some("Ann"), "the row of the answer is shown");
+    assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none(), "the incomplete target is absent");
+    assert_eq!(stand.text_of(&rows, "User", "u1", "fullName").as_deref(), Some("Ann"), "the nested user is shown");
     assert!(operations(&stand).await.is_empty());
     let sent = stand.asked().into_iter().find(|(operation, _)| operation == "UserPhotoUpdate").unwrap().1;
     assert_eq!((sent["input"]["signedId"].as_str(), sent["input"]["createInitialMoment"].as_bool()), (Some("signed-avatar"), Some(true)), "the signed id of the file goes into the input: {sent}");
@@ -248,8 +251,8 @@ async fn consumer_rowless_retry_after_refusal() {
     let retried = bound(stand.database.retry(epoch, "CurrentUser".into(), "me".into(), Some("update_photo".into()), None)).await.unwrap();
     assert!(retried.optimistic_value.is_none());
     let confirmed = bound(stand.database.confirmed(retried, false)).await.unwrap();
-    assert!(matches!(confirmed.value, Some(ref row) if row.id == "u1"));
-    assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "u1".into())).await.unwrap().is_some());
+    assert!(confirmed.value.is_none());
+    assert!(bound(stand.database.read_row(epoch, "User".into(), "u1".into())).await.unwrap().is_some());
     assert_eq!(stand.requests("UserPhotoUpdate"), 2);
     assert!(operations(&stand).await.is_empty());
     stand.database.close_now();
@@ -311,8 +314,8 @@ async fn xfer_rowless_status_and_discover() {
     reopened.settle().await;
     assert_eq!(reopened.requests("UserPhotoUpdate"), 1, "the restored upload completes its mutation");
     assert!(operations(&reopened).await.is_empty(), "the completed upload leaves the queue");
-    let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "CurrentUser".into(), "u1".into())).await.unwrap();
-    assert!(row.is_some(), "the restored upload lands the server row");
+    let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "User".into(), "u1".into())).await.unwrap();
+    assert!(row.is_some(), "the restored upload lands the nested user");
     reopened.database.close_now();
 }
 
