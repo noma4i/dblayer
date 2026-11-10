@@ -461,3 +461,85 @@ async fn direct_mutation_reports_the_end_cause() {
         stand.database.close_now();
     }
 }
+
+fn second_photo(directory: &tempfile::TempDir) -> WireUploadRequest {
+    let path = directory.path().join("second.jpg");
+    std::fs::write(&path, b"second-jpeg-bytes").unwrap();
+    let mut file = UploadFile::new(path.to_str().unwrap());
+    file.variables = json!({"createInitialMoment": true}).as_object().unwrap().clone();
+    WireUploadRequest::of(&file)
+}
+
+fn photo_answer(name: &str) -> Value {
+    let mut result = good();
+    result["userPhotoUpdate"]["viewer"]["user"]["fullName"] = json!(name);
+    result
+}
+
+async fn send_photo(stand: &Stand, request: WireUploadRequest) -> Result<crate::ffi::WireOperationReceipt, DbError> {
+    bound(stand.database.upload(stand.database.session_epoch(), "CurrentUser".into(), "me".into(), "update_photo".into(), request)).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_second_upload_after_confirmed() {
+    let stand = Stand::open().await;
+    let directory = tempfile::tempdir().unwrap();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer_next("UserPhotoUpdate", json!({"data": photo_answer("First")}));
+    stand.answer("UserPhotoUpdate", photo_answer("Second"));
+    stand.script_put(200, Some("first"));
+    stand.script_put(200, Some("second"));
+    let first = send_photo(&stand, photo(&directory)).await.unwrap();
+    let first_result = bound(stand.database.confirmed(first, false)).await.unwrap();
+    assert!(first_result.value.is_some());
+    let second = send_photo(&stand, second_photo(&directory)).await.unwrap();
+    let second_result = bound(stand.database.confirmed(second, false)).await.unwrap();
+    assert!(second_result.value.is_some());
+    assert_eq!((stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate")), (2, 2, 2));
+    let row = bound(stand.database.read_row(stand.database.session_epoch(), "CurrentUser".into(), "u1".into())).await.unwrap().unwrap();
+    assert!(row.uploads.iter().all(|upload| upload.action != "update_photo"), "confirmed upload must be removed: {:?}", row.uploads);
+    assert!(operations(&stand).await.is_empty());
+    stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_second_upload_while_put_held() {
+    let stand = Stand::open().await;
+    let directory = tempfile::tempdir().unwrap();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer("UserPhotoUpdate", good());
+    stand.script_put(200, Some("first"));
+    stand.hold_put();
+    let first = send_photo(&stand, photo(&directory)).await.unwrap();
+    stand.put_started().await;
+    let blocked = send_photo(&stand, second_photo(&directory)).await;
+    assert!(matches!(blocked, Err(DbError::InFlight { .. })), "the active upload occupies the key: {blocked:?}");
+    stand.release_put();
+    assert!(bound(stand.database.confirmed(first, false)).await.is_ok());
+    assert_eq!((stand.puts(), stand.requests("UserPhotoUpdate")), (1, 1));
+    stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_second_upload_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite").to_string_lossy().into_owned();
+    let credentials = Arc::new(WatchedHeld::default());
+    let stand = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    stand.sign_in().await;
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer("UserPhotoUpdate", photo_answer("First"));
+    stand.script_put(200, Some("first"));
+    let first = send_photo(&stand, photo(&directory)).await.unwrap();
+    assert!(bound(stand.database.confirmed(first, false)).await.is_ok());
+    bound(stand.database.close_database()).await.unwrap();
+    let reopened = Stand::prepare_on(Some(path), credentials).await;
+    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    reopened.answer("UserPhotoUpdate", photo_answer("Second"));
+    reopened.script_put(200, Some("second"));
+    let second = send_photo(&reopened, second_photo(&directory)).await.unwrap();
+    assert!(bound(reopened.database.confirmed(second, false)).await.is_ok());
+    assert_eq!((reopened.requests("CreateBlob"), reopened.puts(), reopened.requests("UserPhotoUpdate")), (1, 1, 1));
+    assert!(operations(&reopened).await.is_empty());
+    reopened.database.close_now();
+}
