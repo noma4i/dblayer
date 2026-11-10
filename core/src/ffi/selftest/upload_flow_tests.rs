@@ -136,13 +136,13 @@ async fn xfer_confirmed_discard_exact_op() {
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
-    let other = bound(rig.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
     let upload = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    let other = bound(rig.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
     let held = rig.world.hold_next("ChatPin");
     rig.world.fail_next("PUT", Fault::Http(400));
     rig.database.set_online(true).unwrap();
-    held.entered().await;
     settled(&rig, "the upload fails while the other operation is held", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    held.entered().await;
     let copy = local_url(&chat, "c1", "update_photo").unwrap();
     let before = bound(rig.database.read_row(epoch, "Chat".into(), "c1".into())).await.unwrap().unwrap();
     assert!(matches!(bound(rig.database.confirmed(upload, true)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
