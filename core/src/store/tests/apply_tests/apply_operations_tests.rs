@@ -65,13 +65,13 @@ fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     let row = || text(&store, "SELECT status || ':' || attempts FROM op").unwrap_or_default();
     let refused = |transition| transitions(&store, vec![transition]).unknown_operation_acks;
     assert_eq!(refused(OperationTransition::Retry { seq }), 1);
-    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1, cause: None }), 0);
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1 }), 0);
     assert_eq!(row(), "sending:1");
-    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 2, cycle_id: 1, cause: None }), 0);
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 2, cycle_id: 1 }), 0);
     assert_eq!(row(), "sending:2");
     assert_eq!(refused(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: rejected() }), 0);
     assert_eq!(row(), "failed:2");
-    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 3, cycle_id: 1, cause: None }), 0);
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 3, cycle_id: 1 }), 0);
     assert_eq!(row(), "failed:2");
     assert_eq!(refused(OperationTransition::Retry { seq }), 0);
     assert_eq!(row(), "pending:0");
@@ -222,7 +222,7 @@ fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_r
     let (store, _) = booted_store();
     let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1, cause: None }]);
+    transitions(&store, vec![OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1 }]);
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
     assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("failed:1".into()), 1));
