@@ -182,3 +182,31 @@ async fn rowless_upload_session_reset_clears_pending_work() {
     assert!(operations(&stand).await.is_empty(), "the old upload is removed after reset");
     stand.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_mutation_reports_the_end_cause() {
+    for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
+        let stand = Stand::open().await;
+        let epoch = stand.database.session_epoch();
+        stand.answer("UserPhotoUpdate", good());
+        stand.hold(&["UserPhotoUpdate"]);
+        let running = if in_flight {
+            let database = stand.database.clone();
+            let running = tokio::spawn(async move { database.call(epoch, "UserPhotoUpdate".into(), "{}".into()).await });
+            arrived(&stand, "UserPhotoUpdate").await;
+            Some(running)
+        } else { None };
+        if close { stand.database.close_now(); } else { bound(stand.database.session_reset()).await.unwrap(); }
+        let answer = match running {
+            Some(running) => { stand.release(&["UserPhotoUpdate"]); bound(running).await.unwrap() }
+            None => bound(stand.database.call(epoch, "UserPhotoUpdate".into(), "{}".into())).await,
+        };
+        if close {
+            assert!(matches!(answer, Err(DbError::Closed { .. })), "close={close}, in_flight={in_flight}: {answer:?}");
+        } else {
+            assert!(matches!(answer, Err(DbError::NoSession { .. })), "close={close}, in_flight={in_flight}: {answer:?}");
+        }
+        assert_eq!(stand.requests("UserPhotoUpdate"), usize::from(in_flight));
+        stand.database.close_now();
+    }
+}
