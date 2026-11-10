@@ -578,6 +578,8 @@ pub struct TransferState {
     pub closing: bool,
     pub(super) ended: bool,
     pub(super) queue_error: Option<String>,
+    /// The held calls replay: a start waits until all of them are classified.
+    pub starts_held: bool,
     pub examined: std::sync::atomic::AtomicU64,
 }
 
@@ -621,6 +623,7 @@ impl TransferState {
             closing: false,
             ended: false,
             queue_error: None,
+            starts_held: false,
         }
     }
 

@@ -680,9 +680,14 @@ impl TransferState {
     }
 
     pub(super) fn replay_held(&mut self, fx: &mut Fx) {
-        for input in std::mem::take(&mut self.held) {
+        let held = std::mem::take(&mut self.held);
+        let any = !held.is_empty();
+        self.starts_held = true;
+        for input in held {
             self.handle(input, fx);
         }
+        self.starts_held = false;
+        if any { self.start_in_order(fx); }
     }
 
     /// Every held call gets exactly one answer.

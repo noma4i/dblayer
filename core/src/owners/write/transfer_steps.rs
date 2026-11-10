@@ -38,6 +38,7 @@ impl TransferState {
 
     /// Ready transfers start by `(seq, position)` while a slot is free, the network is up and `saving` allows. A due retry competes in the same order.
     pub(super) fn start_in_order(&mut self, fx: &mut Fx) {
+        if self.starts_held { return; }
         while self.online == Some(true) && self.active() < self.slots {
             let next = self.scan().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
