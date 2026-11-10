@@ -132,7 +132,7 @@ extension BridgeProbeTests {
 
     let sent = try await Record.create(containerId: "c", authorId: "u1", text: "hi", in: DB.account())
     #expect(sent.optimisticValue?.attachment == nil)
-    let confirmed = try await sent.confirmed()
+    let confirmed = try await sent.confirmed(discardOnFailure: false)
     #expect(try await Record.find(#require(confirmed.value).id).current()?.attachment == .moment(MomentAttachment(momentId: "m9", caption: "look")))
   }
 }

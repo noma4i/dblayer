@@ -142,7 +142,7 @@ extension BridgeProbeTests {
     #expect(server.operationRequests("CreateMoment") == 0)
 
     try DB.database.setOnline(online: true)
-    #expect(try await sent.confirmed().value?.id == "m1")
+    #expect(try await sent.confirmed(discardOnFailure: false).value?.id == "m1")
     await eventually("the thread shows the confirmed message") { thread.rows.first?.id == "m1" }
 
     #expect(thread.rows.count == 1, "one message, not a temporary row and a confirmed row")

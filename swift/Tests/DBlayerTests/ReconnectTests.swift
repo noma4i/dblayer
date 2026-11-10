@@ -73,7 +73,7 @@ extension BridgeProbeTests {
 
     try DB.database.setOnline(online: false)
     try DB.database.setOnline(online: true)
-    #expect(try await sent.confirmed().value?.id == "m77")
+    #expect(try await sent.confirmed(discardOnFailure: false).value?.id == "m77")
     #expect(attempts() == 2)
   }
 }
