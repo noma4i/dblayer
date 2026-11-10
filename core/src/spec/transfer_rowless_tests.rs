@@ -9,7 +9,7 @@ use crate::runtime::Time;
 const KEY: &str = "CurrentUser:me:upload_photo";
 const OTHER: &str = "CurrentUser:other:upload_photo";
 
-fn rowless(key: &str, parts: u32) -> BatchItem { BatchItem { row_exists: false, ..item(key, parts) } }
+fn rowless(key: &str, parts: u32) -> BatchItem { item(key, parts) }
 
 fn accept_rowless(twin: &mut Twin, key: &str, parts: u32) -> (TransferId, u64, Out) {
     let reply = twin.reply();

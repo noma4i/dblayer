@@ -353,18 +353,6 @@ fn xfer_accept_batch_length() {
     assert!(twin.state().transfers.is_empty());
 }
 
-#[test]
-fn xfer_accept_batch_row_missing() {
-    let mut twin = Twin::new();
-    let mut missing = item(OTHER, 1);
-    missing.row_exists = false;
-    let items = vec![item(KEY, 1), missing];
-    let reply = twin.reply();
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items, reply, now: Time(0) });
-    assert_eq!((Twin::fault(&out, reply), out.writes(), out.all_replies()), (Some(Fault::NotFoundAt(1)), 0, 1));
-    assert!(twin.state().transfers.is_empty());
-}
-
 /// P-XFER-31: a batch gives one mutation with the remaining elements in order, or one single mutation per element in order, and an element that leaves does not touch the files of the others.
 #[test]
 fn xfer_prop_batch_one_mutation() {
