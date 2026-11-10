@@ -132,7 +132,7 @@ async fn consumer_moment_create_then_stale_entity_reads_node() {
     stand.answer("MomentCreateFile", json!({"momentCreate":{"moment":media_row(moment("77", 0), "PROGRESSING", 40)}}));
     stand.answer("MomentNode", json!({"node":media_row(moment("77", 0), "PROGRESSING", 40)}));
     database.set_online(true).unwrap();
-    bound(database.confirmed(receipt)).await.unwrap();
+    bound(database.confirmed(receipt, false)).await.unwrap();
     assert_eq!(stand.requests_with("MomentNode", "momentId", "77"), 0);
     let rows = stand.entity("Moment", "77", ReadFetch::Stale);
     settled(&stand, "the stale entity reads its node", || stand.requests_with("MomentNode", "momentId", "77") == 1).await;
