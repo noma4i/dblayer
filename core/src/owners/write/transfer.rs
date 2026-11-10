@@ -656,7 +656,7 @@ impl TransferState {
     /// `Restoring`: the calls on the keys of the base wait for `Restored`, the rest of the table works as in the other phases.
     fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
         match input {
-            TransferInput::Restored { uploads, outcomes, orphans, batches } if !self.ended => {
+            TransferInput::Restored { uploads, outcomes, orphans, batches, .. } if !self.ended => {
                 let owned: std::collections::BTreeSet<&String> = uploads.iter().filter_map(|row| row.upload_id.as_ref()).collect();
                 let (live, orphans): (Vec<_>, Vec<_>) = orphans.into_iter().partition(|(upload_id, _)| owned.contains(upload_id));
                 self.commit_ops(live.into_iter().map(|(upload_id, _)| StoreOp::RemoveOrphan { upload_id }).collect(), fx);

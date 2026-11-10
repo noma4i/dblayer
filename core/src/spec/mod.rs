@@ -73,6 +73,7 @@ mod transfer_progress_orders_tests;
 mod transfer_mutating_tests;
 mod transfer_end_tests;
 mod transfer_orphan_tests;
+mod transfer_held_orphan_tests;
 mod transfer_batch_restore_tests;
 mod transfer_open_tests;
 mod transfer_release_tests;

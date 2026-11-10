@@ -21,7 +21,7 @@ pub fn owner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
         }
         Input::Accept { epoch, now, item, reply: r } => accept(s, *epoch, *now, item.clone(), *r, e),
         Input::AcceptBatch { epoch, now, minimum, maximum, items, reply: r } => accept_batch(s, *epoch, *now, *minimum, *maximum, items.clone(), *r, e),
-        Input::Restored { epoch, now, orphans, uploads, transfer_outcomes, .. } => { s.g.now = *now; restored(s, *epoch, orphans, uploads, transfer_outcomes, e) }
+        Input::Restored { epoch, now, orphans, uploads, transfer_outcomes, held_orphan, .. } => { s.g.now = *now; restored(s, *epoch, orphans, uploads, transfer_outcomes, held_orphan, e) }
         Input::RestoreReady { epoch } => {
             if *epoch == s.g.epoch && s.g.phase == Phase::Classified {
                 row(e, "xfer_restore_ready");
@@ -179,12 +179,13 @@ pub fn settle(s: &mut State, id: TransferId) {
     }
 }
 
-pub fn restored(s: &mut State, epoch: u64, orphans: &Vec<(String, TransferKey)>, uploads: &Vec<RestoreItem>, outs: &BTreeMap<TransferId, BTreeMap<u64, Outcome>>, e: &mut Vec<Effect>) {
+pub fn restored(s: &mut State, epoch: u64, orphans: &Vec<(String, TransferKey)>, uploads: &Vec<RestoreItem>, outs: &BTreeMap<TransferId, BTreeMap<u64, Outcome>>, held_orphan: &Option<String>, e: &mut Vec<Effect>) {
     if s.g.phase != Phase::Restoring || epoch != s.g.epoch { row(e, "r2_restored_stray"); return; }
     row(e, "xfer_restored");
     s.g.phase = Phase::Classified;
     s.g.saved_outcomes = outs.clone();
     for (u, k) in orphans { s.g.orphans.insert(u.clone(), k.clone()); }
+    if let Some(u) = held_orphan { if s.g.orphans.contains_key(u) { row(e, "xfer_restored_held_orphan_flight"); s.g.orphan_flight.insert(u.clone()); } else { row(e, "xfer_restored_held_orphan_without_record"); } }
     let mut idx: Vec<usize> = (0..uploads.len()).collect();
     idx.sort_by_key(|&k| match &uploads[k] {
         RestoreItem::Failed { seq, pos, .. } => (0u8, *seq, *pos),

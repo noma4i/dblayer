@@ -103,7 +103,7 @@ pub enum Input {
     AcceptBatch { epoch: u64, now: u64, minimum: usize, maximum: usize, items: Vec<Item>, reply: ReplyId },
     SupplySource { epoch: u64, key: TransferKey, source: Supplied, reply: ReplyId },
     SourceFailed { epoch: u64, key: TransferKey, message: String, reply: ReplyId },
-    Restored { epoch: u64, revision: u64, now: u64, orphans: Vec<(String, TransferKey)>, uploads: Vec<RestoreItem>, transfer_outcomes: BTreeMap<TransferId, BTreeMap<u64, Outcome>> },
+    Restored { epoch: u64, revision: u64, now: u64, orphans: Vec<(String, TransferKey)>, uploads: Vec<RestoreItem>, transfer_outcomes: BTreeMap<TransferId, BTreeMap<u64, Outcome>>, held_orphan: Option<String> },
     RegisterOperations { declarations: BTreeSet<(String, String)> },
     OpReserved { target: Target, result: Result<OpId, Fault> },
     RestoreReady { epoch: u64 },

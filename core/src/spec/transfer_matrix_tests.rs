@@ -14,7 +14,7 @@ const KEY: &str = "Moment:r1:upload";
 fn generation_twin() -> Twin {
     let mut twin = Twin::bare(1);
     twin.post(TransferInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     twin.post(TransferInput::Online(Online(true)));
     twin

@@ -164,7 +164,7 @@ fn xfer_orphan_remove_committed() {
     use crate::owners::write::transfer::TransferInput;
     let mut twin = Twin::bare(1);
     twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default(), held_orphan: None });
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
     let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Ok(()) });
@@ -182,7 +182,7 @@ fn xfer_orphan_abort_refused_keeps_debt() {
     for (status, temporary) in [(Some(403u16), false), (Some(503u16), true), (None, true)] {
         let mut twin = Twin::bare(1);
         twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
+        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default(), held_orphan: None });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
         let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(AbortFault { temporary, status }.into()) });
@@ -295,7 +295,7 @@ impl RefRun {
         let mut run = Self { state: State::new(1, 100, 10), pending: Vec::new(), reply: 100, replies: Vec::new() };
         run.feed(RefInput::RegisterOperations { declarations: [("Moment".to_string(), "upload".to_string())].into_iter().collect() });
         run.feed(RefInput::EpochStarted { epoch: 1, generation: 0 });
-        run.feed(RefInput::Restored { epoch: 1, revision: 0, now: 0, orphans: Vec::new(), uploads: Vec::new(), transfer_outcomes: Default::default() });
+        run.feed(RefInput::Restored { epoch: 1, revision: 0, now: 0, orphans: Vec::new(), uploads: Vec::new(), transfer_outcomes: Default::default(), held_orphan: None });
         run.feed(RefInput::RestoreReady { epoch: 1 });
         run.feed(RefInput::Online(true));
         run

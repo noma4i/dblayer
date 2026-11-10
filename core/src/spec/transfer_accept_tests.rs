@@ -39,7 +39,7 @@ fn xfer_accept_while_restoring() {
     let reply = twin.reply();
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
     assert!(Twin::quiet(&out), "the call waits for the rows of the base: {out:?}");
-    let out = twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    let out = twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     assert_eq!((out.writes(), out.classified(), out.all_replies()), (0, 1, 0));
     assert_eq!(out.outbox.len(), 1);
 }

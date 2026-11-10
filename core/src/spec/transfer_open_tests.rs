@@ -100,7 +100,7 @@ async fn xfer_prop_cancelled_outcome_reopens_sqlite() {
 /// The owner after `Restored` of `rows` with no declaration: every row waits for it.
 fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
     let mut twin = Twin::bare(1);
-    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     (twin, out)
 }
 
@@ -122,7 +122,7 @@ fn xfer_restoring_register() {
     let mut twin = Twin::bare(1);
     let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     assert!(Twin::quiet(&out), "{out:?}");
-    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     assert_eq!(twin.stage(1), TransferStage::Ready, "the declaration of the Restoring phase counts");
 }
 
@@ -134,7 +134,7 @@ fn xfer_calls_held_while_restoring() {
     let reply = twin.reply();
     let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
     assert!(Twin::quiet(&held), "a call is held during Restoring: {held:?}");
-    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     assert!(restored.removed().is_empty(), "the held call waits for RestoreReady, not classification: {restored:?}");
     let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(ready.removed(), vec![KEY.to_string()], "on RestoreReady the held cancel replays against the classified transfer");
@@ -154,7 +154,7 @@ fn xfer_prop_online_before_declaration() {
             let out = match event {
                 Online => twin.online(true),
                 Offline => twin.online(false),
-                Restored => twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() }),
+                Restored => twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                 RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
                 Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
             };
@@ -358,7 +358,7 @@ fn xfer_restore_ready_other() {
     restoring.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     restoring.online(true);
     assert!(Twin::quiet(&restoring.post(TransferInput::RestoreReady { epoch: EPOCH })), "no rows have been read yet");
-    let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     assert_eq!(out.steps().len(), 0, "the early RestoreReady did not open the start");
 }
 
@@ -550,7 +550,7 @@ fn xfer_calls_held_cancel_wins() {
     let reply = twin.reply();
     let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
     assert!(Twin::quiet(&held), "a call during Restoring is held: {held:?}");
-    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     twin.online(true);
     let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(

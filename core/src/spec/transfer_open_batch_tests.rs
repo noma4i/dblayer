@@ -28,7 +28,7 @@ fn restored_groups(rows: Vec<StoredTransfer>, batches: std::collections::BTreeMa
     let mut twin = Twin::bare(1);
     let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
     twin.post(TransferInput::RegisterOperations { declarations });
-    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default(), orphans: Vec::new(), batches });
+    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default(), orphans: Vec::new(), batches, held_orphan: None });
     (twin, out)
 }
 

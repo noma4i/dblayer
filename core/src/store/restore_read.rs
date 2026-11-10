@@ -73,6 +73,8 @@ pub(crate) struct Restore {
     /// The saved answers that no operation of the queue owns.
     pub orphan_answers: Vec<u64>,
     pub transfer_pending_orphan: bool,
+    /// The `upload_id` of the abort pair Session restores: the saved pending whose owner is `Orphan`.
+    pub held_orphan: Option<String>,
 }
 
 /// The answer Session saved for the step this row would send next, found by the id the step carries.
@@ -174,7 +176,8 @@ impl Store {
             rows
         });
         orphan_answers.retain(|id| !claimed.contains(id));
-        Ok(Restore { aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
+        let held_orphan = pending.as_ref().and_then(|held| match &held.owner { Some(crate::transport::RequestOwner::Orphan { upload_id }) => Some(upload_id.clone()), _ => None });
+        Ok(Restore { aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan, held_orphan })
     }
 
     fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, CoreError> {
