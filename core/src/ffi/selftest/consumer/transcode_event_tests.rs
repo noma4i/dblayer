@@ -7,7 +7,7 @@ use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
 fn media_row(mut row: Value, status: &str, progress: i64) -> Value {
-    row["media"] = json!({"transcodeStatus": status, "transcodeProgress": progress});
+    row["media"] = json!({"blobId": null, "blurHash": null, "coverUrl": null, "createdAt": null, "duration": null, "fileUrl": null, "gifUrl": null, "height": null, "kind": "VIDEO", "thumbUrl": null, "transcoded": status == "COMPLETED", "transcodeStatus": status, "transcodeProgress": progress, "transcodeError": null, "updatedAt": null, "width": null});
     row
 }
 
