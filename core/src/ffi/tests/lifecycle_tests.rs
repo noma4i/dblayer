@@ -19,6 +19,15 @@ struct Server {
 struct Pause {
     entered: tokio::sync::Notify,
     release: tokio::sync::Semaphore,
+    dropped: std::sync::atomic::AtomicBool,
+}
+
+struct PauseDropped(Arc<Pause>);
+impl Drop for PauseDropped {
+    fn drop(&mut self) {
+        self.0.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.entered.notify_one();
+    }
 }
 
 #[derive(Default)]
@@ -36,7 +45,7 @@ impl Server {
     fn hits(&self) -> usize { self.state.lock().unwrap().hits }
     fn fail_with(&self, status: Option<u16>) { self.state.lock().unwrap().status = status; }
     fn pause_next(&self) -> Arc<Pause> {
-        let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) });
+        let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0), dropped: false.into() });
         *self.pause.lock().unwrap() = Some(pause.clone());
         pause
     }
@@ -79,12 +88,18 @@ impl FakeHttp for Server {
                     "UserNode" => json!({"data":{"node":row}}),
                     "MyProfile" => json!({"data":{"me":row}}),
                     "Users" => json!({"data":{"users":[row]}}),
+                    "PagedUsers" => {
+                        let after = request["body"]["variables"]["after"].as_str();
+                        let suffix = if after.is_some() { "tail" } else { "head" };
+                        json!({"data":{"pagedUsers":{"nodes":[{"id":format!("{}-{suffix}", state.account),"name":state.account}],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}})
+                    },
                     _ => panic!("unexpected operation {operation}"),
                 }
             }
         };
         let pause = self.pause.lock().unwrap().take();
         if let Some(pause) = pause {
+            let _dropped = PauseDropped(pause.clone());
             pause.entered.notify_one();
             pause.release.acquire().await.unwrap().forget();
         }
@@ -114,15 +129,18 @@ pub(in super::super) fn models() -> String {
     serde_json::to_string(&vec![user]).unwrap()
 }
 
-async fn open(server: Arc<Server>) -> Arc<Database> {
+async fn open(server: Arc<Server>) -> Arc<Database> { open_models(server, models()).await }
+
+async fn open_models(server: Arc<Server>, model_text: String) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(models()), crate::ffi::OpenPorts { transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(model_text), crate::ffi::OpenPorts { transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(json!([
         {"name":"MyProfile","document":"query MyProfile { me { id name } }"},
         {"name":"UserNode","document":"query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"},
         {"name":"Users","document":"query Users { users { id name } }"},
+        {"name":"PagedUsers","document":"query PagedUsers($after: String) { pagedUsers(after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } } }","rootPath":"pagedUsers"},
         {"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}
     ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
@@ -144,7 +162,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         let server = Arc::new(Server::default());
         let database = open(server.clone()).await;
         sign_in(&database, "A").await;
-        let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) });
+        let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0), dropped: false.into() });
         *server.pause.lock().unwrap() = Some(pause.clone());
         let caller = database.clone();
         let work = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move {
@@ -282,3 +300,47 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     database.close_now();
 }
 
+
+#[tokio::test(flavor = "multi_thread")]
+async fn window_old_page_cancelled_before_new_session_window() {
+    use crate::schema::{Coverage, PageDirection};
+    let mut specs: Vec<ModelSpec> = serde_json::from_str(&models()).unwrap();
+    let user = specs.iter_mut().find(|model| model.key.as_str() == "User").unwrap();
+    let relation = user.relations.iter_mut().find(|relation| relation.name == "all").unwrap();
+    let remote = relation.remote.as_mut().unwrap();
+    remote.operation = "PagedUsers".into();
+    remote.shape = RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None };
+    remote.selects_page_info = true;
+    let server = Arc::new(Server::default());
+    let database = open_models(server.clone(), serde_json::to_string(&specs).unwrap()).await;
+    sign_in(&database, "A").await;
+    let old_epoch = database.session_epoch();
+    within(database.load(old_epoch, "User".into(), "all".into(), "{}".into())).await.unwrap();
+    let model = database.db.spec("User").unwrap();
+    let relation = model.relations.iter().find(|relation| relation.name == "all").unwrap();
+    let (_, key) = crate::store::window_identity(&model, "User", "all", relation.remote.as_ref().unwrap(), &Default::default()).unwrap();
+    let pause = server.pause_next();
+    let caller = database.clone();
+    let old_page = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move {
+        caller.load_more(old_epoch, "User".into(), Some("all".into()), "{}".into()).await
+    }));
+    within(pause.entered.notified()).await;
+    let old_issued = database.db.window(&key).unwrap().unwrap().issued;
+    within(database.session_reset()).await.unwrap();
+    crate::test_wait::signalled(&pause.entered, "the old page transport is cancelled", || pause.dropped.load(std::sync::atomic::Ordering::SeqCst)).await;
+    sign_in(&database, "B").await;
+    let new_epoch = database.session_epoch();
+    assert_ne!(old_epoch, new_epoch);
+    within(database.load(new_epoch, "User".into(), "all".into(), "{}".into())).await.unwrap();
+    let new_issued = database.db.window(&key).unwrap().unwrap().issued;
+    let query = crate::ffi::QuerySpec::json(r#"{"model":"User","relation":"all","params":{}}"#);
+    let before = within(database.read_query(new_epoch, query.clone())).await.unwrap();
+    assert_eq!(before.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["B-head"]);
+    pause.release.add_permits(1);
+    let outcome = within(old_page).await.unwrap();
+    assert!(outcome.is_err(), "old request survived the epoch: {outcome:?}");
+    within(crate::ffi::settled(&database)).await.unwrap();
+    let after = within(database.read_query(new_epoch, query)).await.unwrap();
+    assert_eq!(after.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["B-head"], "old issued={old_issued}, new issued={new_issued}");
+    database.close_now();
+}
