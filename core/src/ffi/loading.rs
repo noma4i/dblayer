@@ -150,10 +150,15 @@ impl Database {
 
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         self.account_call(epoch)?;
-        let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let id = self.resolved(epoch, &model, id).await?;
         let wire = self.wire(&model)?.clone();
+        if id.is_temp() {
+            let row = self.read_in_epoch(epoch, "node", move |database| Ok(database.db.find(&model, &id)?)).await?;
+            return Ok(row.map(|row| wire.row(&row)));
+        }
+        let params = Map::from_iter([(NODE_PARAM.to_string(), json!(id.as_str()))]);
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await?;
         self.finish_load(call).await?;
         let row = self.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
@@ -164,9 +169,15 @@ impl Database {
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         self.admit_now(epoch)?;
         self.node_relation(&model, &relation, NodeRead::Many)?;
-        let ids = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
+        let asked = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
+        let mut ids = Vec::with_capacity(asked.len());
+        for id in asked {
+            let id = self.resolved(epoch, &model, id).await?;
+            if !id.is_temp() { ids.push(id); }
+        }
+        if ids.is_empty() { return Ok(Vec::new()); }
         let wire = self.wire(&model)?.clone();
-        let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
+        let key = WindowKey::nodes(&model, &ids.iter().map(RowId::as_str).collect::<Vec<_>>());
         let name = key.name.clone();
         let call = self.start_window(epoch, self.reserve_load(epoch), key, (Goal::First, true), None)?;
         self.finish_load(call).await?;
