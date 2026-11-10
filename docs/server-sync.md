@@ -372,15 +372,15 @@ Swift Task and Kotlin coroutine cancellation also stop bootstrap and `sessionCal
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
 It is optional. All `RetryProgress` instances read the same process-wide source.
 `RetryProgress.changes` in Swift (an `AsyncSequence` that you iterate with `for await`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot` with a `waiting` list.
-Each entry identifies the owner, retry policy, schedule ID, attempt and delay in milliseconds.
+Each `RetryEntry` contains `owner`, retry policy `kind`, schedule `id`, `attempt` and `delayMs` in milliseconds.
 A reader gets the current snapshot first, then the newest one. A slow reader sees the newest snapshot and delays no request.
 Cancelling a read ends only that reader. The calls and the other readers go on.
 An entry appears when a retry is scheduled and leaves when its timer fires or is cancelled.
 `waiting` is empty when no retry is waiting, even when requests are in flight.
 There is no timer. The snapshot only follows the retry loops that `RetryPolicy` already runs.
 `attempt` starts at 1 for each call. `delayMs` is the actual jittered delay until the next attempt.
-`reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
-Retries cover encrypted HTTP only. Durable outbox and upload owners expose their saved attempts through operation state.
+The entry contains no request payload. Owners include bootstrap, session, window, calls, outbox, transfer and feed.
+Durable outbox and upload owners also expose their saved attempts through operation state.
 
 The core puts the timeouts in every `HttpRequest`: connect 10 seconds, request 30 seconds. Kotlin applies them to the call. Swift applies the request timeout to the request, including when given a custom session.
 URLSession does not expose an independent connect timeout, so Swift has no separate 10-second connect setting.
