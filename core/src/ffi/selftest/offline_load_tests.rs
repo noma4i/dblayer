@@ -37,6 +37,7 @@ async fn profile_refresh_failure_keeps_value_without_extra_requests() {
     let reader = rig.database.watch(ReadRequest::List { query: QuerySpec::json(r#"{"model":"User","relation":"profile","params":{}}"#) }, rows.clone());
     bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     settled(&rig, "the profile is shown", || rows.len() == 1).await;
+    assert_eq!(profile_requests(&rig), 1, "first load: {:?}", rig.world.log());
     let initial = rows.0.lock().unwrap()[0].clone();
     rig.world.fail_next("MyProfile", Fault::Down);
     rig.world.fail_next("MyProfile", Fault::Http(400));
