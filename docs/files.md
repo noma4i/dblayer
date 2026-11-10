@@ -82,6 +82,7 @@ Waiting files are ordered by operation sequence and item position. A transfer re
 
 Upload progress does not reload the outgoing queue. Cleanup of inline bytes after a finished or cancelled run, and file removal after a confirmed destroy or a server destroy event, run off the caller thread.
 Discarding an upload (or any removal of its operation) that holds a multipart `uploadId` records the abort in the same commit, with or without confirmed parts, and never sends `complete`. The abort is sent when the app is online: at the first send after start and when the network returns, and the row is removed only after the server answers. A failed upload older than 7 days, counted from its failure, is removed by the same rollback at those two events, and one of exactly 7 days stays. No timer runs for this.
+An unconfirmed multipart abort remains pending across session end, database close and restart. The library retries it when network access is available. A multipart abort is identified by its `uploadId`; retries keep the same request identity regardless of the former transfer key.
 Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
 The database format changes with these tables. Opening a database of another format keeps queued uploads when the layout of their tables is unchanged and clears them otherwise.

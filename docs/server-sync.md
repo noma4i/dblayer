@@ -197,14 +197,15 @@ SQLite gives each new operation a random 128-bit key and stores it in the column
 The key survives restart, `retry` and a retry of the final upload mutation.
 A new encrypted request gets the old key of the operation. A new operation gets a new key.
 An app value in `input.clientMutationId` takes priority, including an explicit `null`.
-The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
+Upload steps keep their saved request. A multipart abort uses its `uploadId` for request identity without the former transfer key.
 
 A refusal with `on_failure: :keep`, for example the server codes `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY`, leaves the row in `failed`. A manual `retry` repeats the same key.
 The library does not declare success without a server row. It does not try to find the row through an incomplete list.
 The app sets the keys `messageAlbumSend.items[].clientKey`. The library does not change them.
 
-Uploads also own their saved requests, including blob creation, multipart signing, completion, abort and the final mutation.
-After reopening the database, the library passes the answer to the same upload step and continues its remaining work.
+Uploads own their saved requests, including blob creation, multipart signing, completion and the final mutation.
+After reopening the database, the library restores upload steps and unfinished multipart aborts. An abort remains owned by its upload ID after the transfer is removed.
+The library passes an upload step's answer to that step and continues its remaining work.
 The saved request identifies the exact part numbers when an upload URL needs renewal.
 Upload failures retain their typed `SessionCode` in Swift and Kotlin.
 
