@@ -1,3 +1,4 @@
 [extra-inputs]
 dblayer = ["../fixtures/**", "../swift/Sources/**", "../kotlin/src/main/**", "../scripts/zoo_allowlist.txt", "tests/corpus/**", "src/**/*.tsv", "src/**/*.inc", "src/**/*.json","src/**/*.sql"]
 dblayer-gen = ["../fixtures/**", "../docs/**"]
+dblayer-bindgen = ["src/**/*.inc"]

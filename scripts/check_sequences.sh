@@ -6,7 +6,6 @@
 set -uo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export LC_ALL=C
 fail() { printf 'sequences: %s\n' "$*" >&2; exit 1; }
 [ "$#" -ge 1 ] || fail 'usage: check_sequences.sh <stage> [--manifest <file>] [--lane <lane>]...'
@@ -70,9 +69,14 @@ run_id="${RELEASE_RUN_ID:-standalone}"
 record() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$source_sha" "$run_id" >> "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'; }
 
 lane_core() {
-  local log="$logs/core.log" filters=() name
-  while IFS= read -r name; do filters+=("$name"); done < "$tmp/core.tests"
-  bounded "${SEQ_CORE_LIMIT:-900}" sequences-core cargo test --manifest-path "$root/Cargo.toml" -p dblayer --lib -- "${filters[@]}" > "$log" 2>&1
+  local log="$logs/core.log" name
+  : > "$log"
+  (
+    cd -- "$root" || exit 1
+    while IFS= read -r name; do
+      bounded "${SEQ_CORE_LIMIT:-900}" sequences-core cargo test -p dblayer --lib "$name" >> "$log" 2>&1 || exit $?
+    done < "$tmp/core.tests"
+  )
 }
 
 lane_swift() {

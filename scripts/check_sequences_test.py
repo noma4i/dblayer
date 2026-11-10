@@ -15,10 +15,10 @@ ROWS = (
 )
 CARGO = """#!/bin/bash
 mode=${STUB_CORE:-green}
-shift_to_names=0
+after_lib=0
 for arg in "$@"; do
-  if [ "$shift_to_names" = 1 ] && [ "$mode" != skip ]; then echo "test ffi::selftest::$arg ... ok"; fi
-  [ "$arg" = -- ] && shift_to_names=1
+  if [ "$after_lib" = 1 ] && [ "$mode" != skip ]; then echo "test ffi::selftest::$arg ... ok"; fi
+  [ "$arg" = --lib ] && after_lib=1
 done
 [ "$mode" = red ] && exit 1
 exit 0

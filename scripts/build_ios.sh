@@ -18,6 +18,7 @@ if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
+host_path="$PATH"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
@@ -36,7 +37,7 @@ target_args=()
 for target in "${targets[@]}"; do target_args+=(--target "$target"); done
 cargo build --release --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
 
-bash "$root/scripts/build_bindgen.sh"
+PATH="$host_path" bash "$root/scripts/build_bindgen.sh"
 /bin/rm -rf "$build" "$bridge/DBlayerFFI.xcframework"
 mkdir -p "$build/headers" "$bridge/Sources/DBlayer"
 

@@ -25,6 +25,7 @@ if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
+host_path="$PATH"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 if [ "$part" != --host ] && [ "$part" != --jvm ]; then
@@ -68,10 +69,10 @@ if [ "$part" = --jvm ]; then
 fi
 
 if [ "$part" = --host ]; then
-  cargo build --manifest-path "$root/core/Cargo.toml"
+  (cd -- "$root" && PATH="$host_path" cargo build -p dblayer)
   library="$root/target/debug/libdblayer.dylib"
 fi
-bash "$root/scripts/build_bindgen.sh"
+PATH="$host_path" bash "$root/scripts/build_bindgen.sh"
 
 if [ "$part" != --host ]; then
   ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
