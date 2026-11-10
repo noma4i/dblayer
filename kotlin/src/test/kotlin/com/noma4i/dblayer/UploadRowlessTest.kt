@@ -12,6 +12,44 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UploadRowlessTest {
+    @Test
+    fun aPartialUploadAnswerMergesOnlyAnExistingRow() = bounded {
+        for (existing in listOf(false, true)) {
+            val source = Files.createTempFile("intro", ".mp4").toFile().apply { writeText("video") }
+            try {
+                val transport = MockTransport()
+                val definitions = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"""
+                openSigned(Config(null, null), modelsJSON, transport, operations = definitions)
+                if (existing) {
+                    transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"original","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+                    val seeded = Moment.create(text = "intro", account = AccountScope.current())
+                    assertEquals("m77", seeded.confirmed().value?.id)
+                }
+                transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+                transport.enqueuePut("https://storage.test/video")
+                transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","likedByMe":true}}}""")
+                val sent = Moment.uploadClip(AccountScope.current(), id = "m77", source = source.path)
+                val confirmed = sent.confirmed()
+                val rows = Moment.ids(listOf("m77")).read()
+                if (existing) {
+                    assertEquals("m77", confirmed.value?.id)
+                    assertEquals(true, confirmed.value?.likedByMe)
+                    assertEquals("original", confirmed.value?.uuid)
+                    assertEquals(1, rows.size)
+                    assertEquals(true, rows.single().likedByMe)
+                    assertEquals("original", rows.single().uuid)
+                } else {
+                    assertNull(confirmed.value)
+                    assertTrue(rows.isEmpty())
+                }
+                assertTrue(transport.unscripted.isEmpty())
+            } finally {
+                closeForCleanup()
+                source.delete()
+            }
+        }
+    }
+
     /** D-287: the call on the type uploads to a row that does not exist: the receipt shows no optimistic value, the queue shows the transfer by its key, and the answer of the final mutation lands the row and reaches `confirmed()`. */
     @Test
     fun uploadToAMissingRowThroughTheCallOnTheType() = bounded {
