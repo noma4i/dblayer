@@ -1,6 +1,6 @@
 [package]
 name = "dblayer"
-version = "6.21.0"
+version = "6.22.0"
 edition = "2021"
 
 [lib]
