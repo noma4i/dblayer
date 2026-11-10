@@ -23,6 +23,8 @@ pub fn owner_addressed(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
         }
         Input::Cancel { epoch, key, reply: r } | Input::Discard { epoch, key, reply: r } | Input::Retry { epoch, key, reply: r, .. } => {
             if *epoch != s.g.epoch { row(e, "r4b_no_session"); reply(e, *r, Answer::Err(Fault::NoSession)); return; }
+            let replacing = s.g.replacements.iter().any(|(_, old)| s.transfers.get(old).is_some_and(|t| t.key == *key)) || s.transfers.values().any(|t| t.key == *key && matches!(&t.st, St::Removing { why: Why::Discarded, prior, .. } if **prior == St::Failed));
+            if replacing { row(e, "xfer_replace_interval_refuses"); reply(e, *r, Answer::Err(Fault::InFlight)); return; }
             match find_open(s, key) { Some(id) => run_on(s, id, i, e), None => { row(e, "xfer_done"); row(e, "boundary_transfer_selector"); reply(e, *r, Answer::Err(Fault::NotFound)); } }
         }
         Input::SelectRow { epoch, model, row_id, retry, source: _, outbox_min, reply: r, version } => {

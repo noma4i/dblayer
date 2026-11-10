@@ -107,7 +107,8 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
                 e.push(Effect::Rounds(RoundsIn::Idle { epoch: t.epoch, transfer_id: t.id }));
             }
         }
-        St::Removing { prior, .. } => {
+        St::Removing { prior, why, .. } => {
+            if why == Why::Discarded && *prior == St::Failed && *reason == Reason::Storage { row(e, "xfer_replace_rejected_keeps_failed"); }
             if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); reply_none(); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_removing_rejected");
