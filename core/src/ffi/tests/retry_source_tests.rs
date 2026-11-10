@@ -21,9 +21,15 @@ async fn open(path: &Path, rig: &Rig) -> Arc<Database> {
     database
 }
 
-async fn uploads(database: &Database) -> Vec<crate::ffi::OperationInfo> {
+async fn failed_uploads(database: &Database) -> Vec<crate::ffi::OperationInfo> {
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Operations);
-    match within(stream.pull_next()).await { Some(ReadValue::Operations { items, .. }) => items, other => panic!("operations: {other:?}") }
+    loop {
+        match within(stream.pull_next()).await {
+            Some(ReadValue::Operations { items, .. }) if items.iter().any(|item| item.upload.as_ref().is_some_and(|upload| upload.status == WireUploadStatus::Failed)) => return items,
+            Some(ReadValue::Operations { .. }) => {}
+            other => panic!("operations: {other:?}"),
+        }
+    }
 }
 
 fn names(path: &Path) -> Vec<PathBuf> {
@@ -53,7 +59,7 @@ async fn xfer_retry_source_swap_reopen() {
     let source = WireSource::File { path: original.to_string_lossy().into_owned(), name: None, mime: None };
     let receipt = within(database.upload(epoch, "Moment".into(), "r1".into(), "upload".into(), WireUploadRequest { source, variables_json: "{}".into() })).await.unwrap();
     assert!(matches!(within(database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
-    let failed = uploads(&database).await;
+    let failed = failed_uploads(&database).await;
     assert_eq!(failed.len(), 1);
     let upload = failed[0].upload.as_ref().unwrap();
     assert_eq!(upload.status, WireUploadStatus::Failed);
@@ -69,7 +75,7 @@ async fn xfer_retry_source_swap_reopen() {
     within(database.close_database()).await.unwrap();
     drop(database);
     let reopened = open(&path, &rig).await;
-    let restored = uploads(&reopened).await;
+    let restored = failed_uploads(&reopened).await;
     assert_eq!(restored.len(), 1);
     let upload = restored[0].upload.as_ref().unwrap();
     assert_eq!(upload.status, WireUploadStatus::Failed);
