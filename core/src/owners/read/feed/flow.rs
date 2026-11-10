@@ -36,8 +36,8 @@ impl FeedState {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || !self.confirmed.insert(channel.clone()) {
             return;
         }
-        let regapped: Vec<String> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.model_is_ready(model) && self.gapped.remove(model)).collect();
-        for model in &regapped {
+        let regapped: Vec<(String, u64)> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.model_is_ready(model)).filter_map(|model| self.gapped.remove(&model).map(|seq| (model, seq))).collect();
+        for (model, _) in &regapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
         self.stale_gap(&regapped, fx);
@@ -54,7 +54,7 @@ impl FeedState {
         self.confirmed.remove(&channel);
         if error.is_none_or(|error| error.retryable) {
             for model in models.into_iter().filter(|model| self.announced.contains(model)) {
-                self.gapped.insert(model);
+                self.gapped.insert(model, self.online_seq);
             }
             let slot = self.channel_slot(&channel);
             let attempt = self.channel_attempts.entry(channel.clone()).or_insert(0);
@@ -132,6 +132,7 @@ impl FeedState {
                 self.flush_pending(fx);
                 let lost = self.lose_held(None, fx);
                 self.active = None;
+                self.gap_seq = Some(self.online_seq);
                 self.mode = Mode::Opening { gap: true };
                 self.attempts = 0;
                 self.open_connection(fx);
@@ -155,6 +156,7 @@ impl FeedState {
             self.flush_pending(fx);
             let lost = self.lose_held(None, fx);
             self.active = None;
+            self.gap_seq = Some(self.online_seq);
             self.mode = Mode::Draining { connection, then: Resume::Reopen };
             Self::stale_all(&lost, fx);
             return;
@@ -377,6 +379,7 @@ impl FeedState {
 
     /// A live feed leaves `Live` for `Off{gap}`: the established connection drains first.
     pub(super) fn drain_live(&mut self, gap: bool, fx: &mut Vec<Fx>) {
+        if gap { self.gap_seq = Some(self.online_seq); }
         let draining = self.active.as_ref().filter(|active| active.goodbye()).map(|active| active.id);
         self.close_all(draining.is_some(), fx);
         self.mode = draining.map_or(Mode::Off { gap }, |connection| Mode::Draining { connection, then: Resume::Off { gap } });

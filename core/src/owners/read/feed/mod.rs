@@ -323,7 +323,8 @@ pub struct FeedState {
     /// Readers that joined a model whose channels were not all confirmed: each owes one `ModelReady` at the next readiness of its model.
     waiting: BTreeSet<SubscriptionId>,
     /// Models that owe a `ModelGap` at their next readiness: a break came before their channels were confirmed.
-    gapped: BTreeSet<String>,
+    gapped: BTreeMap<String, u64>,
+    gap_seq: Option<u64>,
     channel_attempts: BTreeMap<Channel, u32>,
     slots: BTreeMap<Channel, u64>,
     generation: BTreeMap<String, u64>,

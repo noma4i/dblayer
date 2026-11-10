@@ -26,7 +26,8 @@ impl FeedState {
             confirmed: BTreeSet::new(),
             announced: BTreeSet::new(),
             waiting: BTreeSet::new(),
-            gapped: BTreeSet::new(),
+            gapped: BTreeMap::new(),
+            gap_seq: None,
             channel_attempts: BTreeMap::new(),
             slots: BTreeMap::new(),
             generation: BTreeMap::new(),
@@ -228,9 +229,10 @@ impl FeedState {
         }
     }
 
-    pub(super) fn stale_gap(&self, models: &[String], fx: &mut Vec<Fx>) {
-        for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause: StaleCause::Gap { online_seq: self.online_seq } });
+    pub(super) fn stale_gap(&self, models: &[(String, u64)], fx: &mut Vec<Fx>) {
+        for (model, gap_seq) in models {
+            let cause = if self.online_seq > *gap_seq { StaleCause::Gap { online_seq: self.online_seq } } else { StaleCause::Lost };
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause });
         }
     }
 
@@ -337,7 +339,8 @@ impl FeedState {
         self.waiting.clear();
         self.subscribed.clear();
         self.channel_attempts.clear();
-        self.gapped = if gap { self.want.keys().cloned().collect() } else { BTreeSet::new() };
+        self.gapped = if gap { self.want.keys().cloned().map(|model| (model, self.gap_seq.unwrap_or(self.online_seq))).collect() } else { BTreeMap::new() };
+        self.gap_seq = None;
         self.subscribe_missing(fx);
         self.announce_ready(fx);
     }
@@ -377,8 +380,8 @@ impl FeedState {
         if ready.is_empty() {
             return;
         }
-        let gapped: Vec<String> = ready.iter().filter(|model| self.gapped.remove(*model)).cloned().collect();
-        for model in &gapped {
+        let gapped: Vec<(String, u64)> = ready.iter().filter_map(|model| self.gapped.remove(model).map(|seq| (model.clone(), seq))).collect();
+        for (model, _) in &gapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
         self.stale_gap(&gapped, fx);
