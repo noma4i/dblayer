@@ -3,6 +3,28 @@ import Testing
 @testable import DBlayer
 
 struct UrlSessionCableTests {
+  @Test(arguments: [false, true])
+  func cable_inbound_frame_limit_c9(binary: Bool) async throws {
+    let limit = Int(cableFrameLimit())
+    let allowed = Data(repeating: 97, count: limit)
+    let oversized = Data(repeating: 97, count: limit + 1)
+    let socket = Socket()
+    socket.incoming = binary
+      ? [.success(.data(allowed)), .success(.data(oversized))]
+      : [.success(.string(String(decoding: allowed, as: UTF8.self))), .success(.string(String(decoding: oversized, as: UTF8.self)))]
+    let events = RecordingEvents()
+    let cable = UrlSessionCable { _ in socket }
+    guard case let .open(connection) = await cable.open(url: "wss://example.com/api/cable", headers: [:], connectMs: 10_000, events: events) else {
+      Issue.record("the cable did not open")
+      return
+    }
+    let frame = await events.next()
+    if binary { #expect(frame == .binary(allowed)) }
+    else { #expect(frame == .frame(String(decoding: allowed, as: UTF8.self))) }
+    guard case let .ended(_, _, failure)? = await events.next() else { Issue.record("oversized frame reached the core"); return }
+    #expect((failure?.domain, failure?.code) == ("DBlayer.ResponseLimit", 1))
+    connection.cancel()
+  }
   @Test
   func anAddressThatIsNoUrlFailsWithoutASocket() async throws {
     let cable = UrlSessionCable { _ in
