@@ -31,6 +31,7 @@ mod edge_enum_tests;
 mod enum_walk_tests;
 mod enum_schema_conflict_tests;
 mod upload_batch_tests;
+mod upload_nested_returns_tests;
 mod raw_json_tests;
 mod patch_tests;
 mod file_field_tests;
