@@ -6,7 +6,7 @@ use crate::identity::{ModelKey, RowId};
 use crate::owners::store::StoreOp;
 use crate::schema::FieldKind;
 
-use super::{ModelInfo, Reader, StoreError};
+use super::{ModelInfo, StoreError};
 
 pub(super) struct PreparedFile {
     pub index: usize,
@@ -36,7 +36,7 @@ pub(super) fn prepare_files(files: &FileDirectories, ops: &[StoreOp], now: i64) 
     Ok(prepared)
 }
 
-pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, record: &FileRecord) -> Result<(), StoreError> {
+pub(super) fn attach(current: Option<serde_json::Map<String, serde_json::Value>>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, record: &FileRecord) -> Result<(), StoreError> {
     let info = models.get(&record.model).ok_or_else(|| StoreError::UnknownModel(record.model.clone()))?;
     if !info.spec.field(&record.field).is_some_and(|field| field.kind == FieldKind::File) {
         return Err(StoreError::Constraint(format!("{} is not a file field", record.field)));
@@ -50,7 +50,7 @@ pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, 
     if let Some(row) = row {
         row.insert(record.field.clone(), record.descriptor.to_value());
     } else {
-        let mut row = reader.point(&record.model, &record.row_id)?.ok_or_else(|| StoreError::Constraint(format!("row {} does not exist", record.row_id)))?;
+        let mut row = current.ok_or_else(|| StoreError::Constraint(format!("row {} does not exist", record.row_id)))?;
         row.insert(record.field.clone(), record.descriptor.to_value());
         envelope.entity_ops.push(EntityOp::Upsert { model, id, row });
     }
@@ -58,7 +58,7 @@ pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, 
     Ok(())
 }
 
-pub(super) fn detach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, model: &str, row_id: &str, field: &str) -> Result<(), StoreError> {
+pub(super) fn detach(current: Option<serde_json::Map<String, serde_json::Value>>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, model: &str, row_id: &str, field: &str) -> Result<(), StoreError> {
     let info = models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
     let spec = info.spec.field(field).filter(|spec| spec.kind == FieldKind::File).ok_or_else(|| StoreError::Constraint(format!("{field} is not a file field")))?;
     let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
@@ -67,7 +67,7 @@ pub(super) fn detach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, 
         EntityOp::Upsert { model: current, id: current_id, row } if current == &key && current_id == &id => Some(row),
         _ => None,
     });
-    let mut fetched = if existing.is_none() { reader.point(model, row_id)? } else { None };
+    let mut fetched = if existing.is_none() { current } else { None };
     let row = existing.or(fetched.as_mut()).ok_or_else(|| StoreError::Constraint(format!("row {row_id} does not exist")))?;
     if spec.nullable { row.insert(field.to_string(), serde_json::Value::Null); } else { row.remove(field); }
     if let Some(row) = fetched { envelope.entity_ops.push(EntityOp::Upsert { model: key.clone(), id: id.clone(), row }); }

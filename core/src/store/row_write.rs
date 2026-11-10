@@ -131,16 +131,16 @@ impl RowWrite<'_> {
     }
 
     pub fn attach(&mut self, record: &crate::store::files::FileRecord) -> Result<CommitResult, StoreError> {
-        let reader = Reader::new(self.connection, self.models);
+        let current = self.stored(&record.model, &record.row_id)?.map(|stored| stored.row);
         let mut envelope = BatchPlan::new(self.generation);
-        super::file_write::attach(&reader, self.models, &mut envelope, record)?;
+        super::file_write::attach(current, self.models, &mut envelope, record)?;
         self.apply(&envelope)
     }
 
     pub fn detach(&mut self, model: &str, id: &str, field: &str) -> Result<CommitResult, StoreError> {
-        let reader = Reader::new(self.connection, self.models);
+        let current = self.stored(model, id)?.map(|stored| stored.row);
         let mut envelope = BatchPlan::new(self.generation);
-        super::file_write::detach(&reader, self.models, &mut envelope, model, id, field)?;
+        super::file_write::detach(current, self.models, &mut envelope, model, id, field)?;
         self.apply(&envelope)
     }
 
