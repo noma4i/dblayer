@@ -1,10 +1,19 @@
 # Changelog
 
-## Unreleased
+## 6.24.0 - 2026-11-10
 
 ### Added
 
-- Discard failed operations when waiting for their confirmation.
+- Discard a refused operation with `confirmed(discardOnFailure: true)`: it removes exactly the operation of the receipt.
+
+### Changed
+
+- Read nested references of a list with one query per target model.
+- Build the operations queue with work linear in its size.
+
+### Fixed
+
+- A cursor page of a scope with a declared order keeps the rows of earlier pages.
 
 ## 6.23.2 - 2026-11-10
 
