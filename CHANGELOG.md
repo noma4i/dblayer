@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Send the owed multipart abort after a session reset, logout or revoke.
+
 ## 6.25.0 - 2026-11-11
 
 ### Added

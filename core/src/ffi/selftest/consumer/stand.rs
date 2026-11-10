@@ -180,6 +180,13 @@ impl Stand {
     /// The server answers the operation with `data` from now on.
     pub(super) fn answer(&self, operation: &str, data: Value) { self.server.answers.lock().unwrap().insert(operation.into(), json!({"data": data})); }
 
+    pub(super) fn answer_multipart(&self) {
+        self.answer("MultipartUploadInit", json!({"multipartUploadInit":{"multipartUpload":{"key":"key-1","uploadId":"upload-1","signedId":"signed","blobId":"b1"}}}));
+        self.answer("MultipartUploadPresignParts", json!({"multipartUploadPresign":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}));
+        self.answer("MultipartUploadComplete", json!({"multipartUploadComplete":{"signedId":"signed","blobId":"b1"}}));
+        self.answer("MultipartUploadAbort", json!({"multipartUploadAbort":{"aborted":true}}));
+    }
+
     /// The next request of the operation gets `answer` (the whole body, `data` or `errors`) once, then the standing answer again.
     pub(super) fn answer_next(&self, operation: &str, answer: Value) { self.server.next_answers.lock().unwrap().entry(operation.into()).or_default().push_back(answer); }
 
