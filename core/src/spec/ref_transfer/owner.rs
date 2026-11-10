@@ -134,7 +134,11 @@ pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &m
     if odd_key(&item.key) { row(e, "xfer_key_path_chars"); }
     let has_effects = item.check.has_effects;
     let mut t = new_transfer(&mut s.g, item.key.clone(), item.source.clone(), epoch, now, None, 0, has_effects, item.values.clone());
-    if let Some(old) = existing { row(e, "xfer_accept_replaces_failed"); s.g.replacements.insert(t.id, old); }
+    if let Some(old) = existing {
+        row(e, "xfer_accept_replaces_failed");
+        s.g.replacements.insert(t.id, old);
+        if let Some(previous) = s.transfers.get_mut(&old) { previous.st = St::Removing { why: Why::Discarded, prior: Box::new(St::Failed), orphan: previous.upload_id.clone().filter(|_| !previous.aborted) }; }
+    }
     t.replies.accept = Some(r);
     e.push(Effect::Outbox(OutboxEffect::ReserveOp { epoch, target: Target::Transfer { transfer_id: t.id } }));
     row(e, if has_effects { "xfer_accept_reserve_op" } else { "xfer_accept" });
@@ -163,7 +167,11 @@ pub fn accept_batch(s: &mut State, epoch: u64, now: u64, minimum: usize, maximum
     for (n, it) in items.iter().enumerate() {
         let old = find_open(s, &it.key);
         let t = new_transfer(&mut s.g, it.key.clone(), it.source.clone(), epoch, now, Some(gid), n as u32, it.check.has_effects, it.values.clone());
-        if let Some(old) = old { row(e, "xfer_accept_replaces_failed"); s.g.replacements.insert(t.id, old); }
+        if let Some(old) = old {
+            row(e, "xfer_accept_replaces_failed");
+            s.g.replacements.insert(t.id, old);
+            if let Some(previous) = s.transfers.get_mut(&old) { previous.st = St::Removing { why: Why::Discarded, prior: Box::new(St::Failed), orphan: previous.upload_id.clone().filter(|_| !previous.aborted) }; }
+        }
         need.insert(format!("t{}", t.id));
         ids.push(t.id);
         e.push(Effect::Outbox(OutboxEffect::ReserveOp { epoch, target: Target::Transfer { transfer_id: t.id } }));

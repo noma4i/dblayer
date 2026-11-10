@@ -137,6 +137,11 @@ pub fn step(s: &State, i: &Input) -> (State, Vec<Effect>) {
 }
 
 fn replace_failed_in_acceptance(s: &mut State, effects: &mut [Effect]) {
+    let abandoned: Vec<_> = s.g.replacements.iter().filter(|(new, _)| !s.transfers.contains_key(new)).map(|(new, old)| (*new, *old)).collect();
+    for (new, old) in abandoned {
+        s.g.replacements.remove(&new);
+        if let Some(transfer) = s.transfers.get_mut(&old) { transfer.st = St::Failed; }
+    }
     for effect in effects {
         let Effect::Store { batch, ops, .. } = effect else { continue };
         let Some(BatchKind::Own { ids, .. }) = s.g.batches.get(batch) else { continue };
@@ -146,14 +151,13 @@ fn replace_failed_in_acceptance(s: &mut State, effects: &mut [Effect]) {
         let mut prefix = Vec::new();
         for (new, old) in replacements {
             let Some(t) = s.transfers.get_mut(&old) else { continue };
-            if t.st != St::Failed { continue; }
+            if !matches!(&t.st, St::Removing { why: Why::Discarded, prior, .. } if **prior == St::Failed) { continue; }
             let orphan = t.upload_id.clone().filter(|_| !t.aborted);
             prefix.push(Op::RemoveUpload { transfer_id: old });
             prefix.extend(rollback_op(t));
             if t.intent_live || t.has_effects { prefix.push(Op::RemoveIntent); }
             if let Some(upload_id) = &orphan { prefix.push(Op::UploadOrphan { upload_id: upload_id.clone(), key: t.key.clone() }); }
             prefix.push(Op::DiscardedOutcome { transfer_id: old, cycle_id: t.cycle_id });
-            t.st = St::Removing { why: Why::Discarded, prior: Box::new(St::Failed), orphan };
             removed.push(old);
             s.g.replacements.remove(&new);
         }
