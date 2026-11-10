@@ -49,7 +49,7 @@ extension BridgeProbeTests {
     }
     let after = Cursor(try DB.account().operations())
     guard case let .queue(_, remaining)? = await after.next("the queue after the refusal") else { throw WaitFailure.unexpectedOutcome }
-    #expect(remaining.isEmpty == discard, "requests: \(transport.calls.map(\\.operationName))")
+    #expect(remaining.isEmpty == discard, "requests: \(transport.calls.map(\.operationName))")
     if discard {
       #expect(!FileManager.default.fileExists(atPath: localURL.path))
       transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}"#)
@@ -65,7 +65,7 @@ extension BridgeProbeTests {
       } catch DbError.InFlight {}
       try await DB.account().discard(model: "Moment", id: "absent", action: "upload_clip")
     }
-    #expect(transport.unscripted.isEmpty, "requests: \(transport.calls.map(\\.operationName))")
+    #expect(transport.unscripted.isEmpty, "requests: \(transport.calls.map(\.operationName))")
     await DB.closeForCleanup()
   }
 }
