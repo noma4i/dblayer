@@ -77,7 +77,7 @@ async fn xfer_reopen_discarded_batch_replays_in_every_open_order() {
         let database = stand.open(Some(&path), &OPERATIONS).await;
         stand.script.data("CreateBlob", &blob(0));
         let held = std::sync::Arc::new(super::upload_stand::Hold::default());
-        stand.script.enqueue("CreateBlob", super::upload_stand::Answer::Held(held.clone(), Box::new(super::upload_stand::Answer::Lost)));
+        stand.script.enqueue("CreateBlob", super::upload_stand::Answer::Held(held.clone(), Box::new(super::upload_stand::Answer::Data(blob(1)))));
         let epoch = database.session_epoch();
         let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items(directory.path()), WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
         held.entered().await;
@@ -86,7 +86,6 @@ async fn xfer_reopen_discarded_batch_replays_in_every_open_order() {
         held.release();
         held.dropped().await;
         bound(database.close_database()).await.unwrap();
-        stand.script.data("CreateBlob", &blob(1));
         stand.script.data("CreateBlob", &blob(2));
         stand.script.data("CreateAssets", ASSETS);
         let reopened = stand.open_ordered(Some(&path), &OPERATIONS, None, order).await;
