@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::stand::{message, Stand};
+use super::stand::{chat, message, Stand};
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::upload_wire::{WireUploadRequest, WireUploadSource};
@@ -14,9 +14,8 @@ async fn xfer_scripted_put_failure() {
     let database = &stand.database;
     let epoch = database.session_epoch();
     stand.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
-    let mut sent = message("m0", "c1", "");
-    sent["clientKey"] = json!("k1");
-    stand.answer("MessageSendFile", json!({"messageSend":{"message": sent}}));
+    let sent = message("m0", "c1", "");
+    stand.answer("MessageSendFile", json!({"messageSend":{"message": sent, "chat": chat("c1", "group")}}));
     let request = WireUploadRequest { source: crate::ffi::upload_wire::WireSource::Pending, variables_json: r#"{"chatId":"c1","kind":"VIDEO"}"#.into() };
     let command = CommandRequest { epoch, model: "Message".into(), values_json: json!({"chatId":"c1","kind":"VIDEO","clientKey":"k1","media":{"kind":"VIDEO"}}).to_string(), args_json: "{}".into(), upload: Some(CommandUpload { action: "send_file".into(), request }) };
     let receipt = bound(database.send(command)).await.unwrap();
