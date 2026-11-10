@@ -115,7 +115,8 @@ impl std::fmt::Debug for Rebind {
 /// The read of a stream whose request names temporary ids that have no server id yet: no window and no request exist until a swap gives them.
 #[derive(Clone, Debug)]
 pub struct Deferred {
-    pub temps: Vec<String>,
+    /// The temporary ids the request names, each with the model of the row.
+    pub temps: Vec<(String, String)>,
     pub rebind: Rebind,
 }
 
@@ -413,8 +414,10 @@ pub struct DeliveriesState {
     streams: BTreeMap<StreamId, Delivery>,
     by_table: BTreeMap<String, BTreeSet<StreamId>>,
     by_row: BTreeMap<String, BTreeMap<String, BTreeSet<StreamId>>>,
-    /// The streams that wait for the swap of a temporary id, by that id: a swap of the row wakes them whatever tables the batch wrote.
-    by_temp: BTreeMap<String, BTreeSet<StreamId>>,
+    /// The streams that wait for the swap of a temporary id, by `(temp id, table of its model)`: a swap of the row wakes them whatever tables the batch wrote.
+    by_temp: BTreeMap<(String, String), BTreeSet<StreamId>>,
+    /// The keys of `by_temp` each stream is in, so the stream leaves them without a walk of the index.
+    waits: BTreeMap<StreamId, Vec<(String, String)>>,
     watchers: BTreeSet<StreamId>,
     examined: u64,
     peers: DeliveryPeers,
@@ -424,7 +427,7 @@ pub struct DeliveriesState {
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), by_temp: BTreeMap::new(), watchers: BTreeSet::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), by_temp: BTreeMap::new(), waits: BTreeMap::new(), watchers: BTreeSet::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -443,9 +446,11 @@ impl DeliveriesState {
             self.watchers.insert(stream);
         }
         let Some(machine) = self.streams.get(&stream).filter(|machine| (machine.view.kind.reads_rows() || machine.view.kind == Kind::Blob) && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
-        for temp in machine.deferred.iter().flat_map(|deferred| &deferred.temps) {
-            self.by_temp.entry(temp.clone()).or_default().insert(stream);
+        let keys: Vec<(String, String)> = machine.deferred.iter().flat_map(|deferred| deferred.temps.iter().map(|(model, temp)| (temp.clone(), crate::store::ddl::table_name(model)))).collect();
+        for key in &keys {
+            self.by_temp.entry(key.clone()).or_default().insert(stream);
         }
+        if !keys.is_empty() { self.waits.insert(stream, keys); }
         let own = entity_row(&machine.view);
         for table in &machine.view.tables {
             match &own {
@@ -499,18 +504,20 @@ impl DeliveriesState {
         }
     }
 
-    /// The streams that wait for the swap of a row this commit changed.
+    /// The streams that wait for the swap of a row this commit changed: the changed row `(table, id)` is the key `(model, temp)`.
     fn swap_woken(&self, committed: &Committed) -> BTreeSet<StreamId> {
         let Some(rows) = &committed.rows else { return BTreeSet::new() };
-        rows.iter().filter_map(|(_, row)| self.by_temp.get(row)).flatten().copied().collect()
+        rows.iter().filter_map(|(table, row)| self.by_temp.get(&(row.clone(), table.clone()))).flatten().copied().collect()
     }
 
-    fn forget_unblocked(&mut self) {
-        let streams = &self.streams;
-        self.by_temp.retain(|_, waiting| {
-            waiting.retain(|stream| streams.get(stream).is_some_and(|machine| machine.deferred.is_some()));
-            !waiting.is_empty()
-        });
+    /// The stream stops waiting for swaps: it leaves the keys it was indexed under.
+    fn forget_waits(&mut self, stream: StreamId) {
+        for key in self.waits.remove(&stream).unwrap_or_default() {
+            if let Some(streams) = self.by_temp.get_mut(&key) {
+                streams.remove(&stream);
+                if streams.is_empty() { self.by_temp.remove(&key); }
+            }
+        }
     }
 
     fn affected(&self, committed: &Committed) -> BTreeSet<StreamId> {
@@ -633,7 +640,6 @@ impl StateOwner for Deliveries {
                     state.examined += 1;
                     on(state, stream, &mut out, |machine, fx| machine.committed(&committed, fx));
                 }
-                if !woken.is_empty() { state.forget_unblocked(); }
                 let watchers: Vec<StreamId> = state.watchers.iter().copied().collect();
                 for stream in watchers {
                     on(state, stream, &mut out, |machine, fx| machine.changed(&committed, fx));
@@ -673,6 +679,9 @@ fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliverie
     lower(peers, state.revision, stream, machine, fx, out);
     if state.streams.get(&stream).is_some_and(|machine| machine.view.subject != subject) {
         state.rebind(stream, &subject);
+    }
+    if state.streams.get(&stream).is_none_or(|machine| machine.deferred.is_none() || !matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) {
+        state.forget_waits(stream);
     }
     state.settle(stream);
 }

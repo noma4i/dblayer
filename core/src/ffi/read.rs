@@ -337,14 +337,14 @@ impl Database {
     }
 
     /// The stream waits for the swap of `waiting`: `rebind` builds its view again from the same request.
-    fn deferred_of(&self, request: &ReadRequest, waiting: Vec<String>) -> Option<crate::owners::read::deliveries::Deferred> {
+    fn deferred_of(&self, request: &ReadRequest, waiting: Vec<(String, String)>) -> Option<crate::owners::read::deliveries::Deferred> {
         if waiting.is_empty() { return None; }
         let (me, request) = (self.me.clone(), request.clone());
         Some(crate::owners::read::deliveries::Deferred { temps: waiting, rebind: crate::owners::read::deliveries::Rebind::new(move || me.upgrade()?.row_view(&request).ok().filter(|(_, waiting)| waiting.is_empty()).map(|(view, _)| view)) })
     }
 
     /// The view of a read of rows and the temporary ids of its request that have no server id yet. Every id passes `resolve` first: a request with such an id opens no window and sends no request, the stream reads the local rows and opens its window when a swap gives the server ids (`Deferred`).
-    pub(super) fn row_view(&self, request: &ReadRequest) -> Result<(View, Vec<String>), DbError> {
+    pub(super) fn row_view(&self, request: &ReadRequest) -> Result<(View, Vec<(String, String)>), DbError> {
         match request {
             ReadRequest::List { query: asked } | ReadRequest::Count { query: asked } => {
                 let mut asked = asked.clone();
@@ -390,7 +390,7 @@ impl Database {
                     Some(relation) if remote => crate::owners::read::scoped_channels(spec, &relation.name, &params).into(),
                     _ => Default::default(),
                 };
-                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), query: None }, if waits { vec![id.to_string()] } else { Vec::new() }))
+                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), query: None }, if waits { vec![(model.clone(), id.to_string())] } else { Vec::new() }))
             }
             _ => Err(DbError::Internal { detail: "a stream of this kind reads no rows".into() }),
         }
