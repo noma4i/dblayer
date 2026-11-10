@@ -414,8 +414,8 @@ extension MutationReceipt {
   }
 
   func answer<Answer: Decodable>(as _: Answer.Type) async throws -> Answer {
-    guard case let .confirmed(_, answerJSON?) = try await settled() else { throw WaitFailure.unexpectedOutcome }
-    return try JSONDecoder().decode(Answer.self, from: Data(answerJSON.utf8))
+    guard case let .confirmed(_, answerJson?) = try await settled() else { throw WaitFailure.unexpectedOutcome }
+    return try JSONDecoder().decode(Answer.self, from: Data(answerJson.utf8))
   }
 
   func refusal() async throws -> WireFailure {

@@ -16,7 +16,7 @@ extension MutationReceipt {
   func settled() async throws -> Settled<Model> {
     do {
       let confirmed = try await confirmed()
-      return .confirmed(confirmed.value, confirmed.answerJSON)
+      return .confirmed(confirmed.value, confirmed.answerJson)
     } catch let DbError.Rejected(failure, kept) {
       return .rejected(failure, kept: kept)
     } catch DbError.NoSession {
