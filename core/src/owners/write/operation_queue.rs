@@ -48,12 +48,12 @@ fn opened(operation: &Operation) -> Result<Option<QueuedOperation>, String> {
 /// The open operations in `seq` order. A row of the table that the queue cannot show is an error of the read.
 pub(crate) fn queue_of(operations: &[Operation]) -> Result<Vec<QueuedOperation>, String> {
     let mut open = operations.iter().filter_map(|operation| opened(operation).transpose()).collect::<Result<Vec<_>, _>>()?;
-    let blocked: Vec<Option<i64>> = open.iter().map(|item| open.iter().filter(|earlier| {
+    let mut failed = std::collections::HashMap::new();
+    for item in &mut open {
         #[cfg(test)] COMPARISONS.with(|count| count.set(count.get() + 1));
-        earlier.seq < item.seq && earlier.status == QueueStatus::Failed && earlier.model == item.model && earlier.row_id == item.row_id
-    }).map(|earlier| earlier.seq).max()).collect();
-    for (item, blocked_by) in open.iter_mut().zip(blocked) {
-        item.blocked_by = blocked_by;
+        let key = (item.model.clone(), item.row_id.clone());
+        item.blocked_by = failed.get(&key).copied();
+        if item.status == QueueStatus::Failed { failed.insert(key, item.seq); }
     }
     Ok(open)
 }
