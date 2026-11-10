@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::schema::{AssociationKind, PageDirection, RemoteShape};
 use crate::value::{fractional_between, read_id};
 
-use super::merge::{admitted, Admission, RowKind};
+use super::merge::{admitted_with_fields, unconfirmed_fields, Admission, RowKind};
 use super::row_write::RowWrite;
 use super::{Reader, StoreError};
 
@@ -67,7 +67,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     let reader = Reader::new(writer.connection, writer.models);
     let mut envelope = BatchPlan::from_server(writer.generation);
     if op == "delete" {
-        let owner = RowRef::new(ModelKey::new(model), id);
+        let owner = RowRef::new(ModelKey::new(model), id.clone());
         let mut children = Vec::new();
         super::follow_cascade::descendants(writer.models, &reader, &owner, &mut HashSet::from([owner.clone()]), &mut children)?;
         envelope.entity_ops = crate::owners::write::plan_cascade::cascade_destroys(&owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
@@ -79,8 +79,13 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
         let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, model, patch, spec, guards)? else { return Ok(None) };
-        let old = reader.point(model, id.as_str())?;
+        let key = (model.to_string(), id.to_string());
+        let mut stored = BTreeMap::new();
+        if let Some(Some(row)) = writer.current.get(&key) { stored.insert(id.to_string(), row.clone()); }
+        let fields = writer.feed_fields.get(model);
+        let tombstones = writer.feed_tombstones.get(model);
+        let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, model, patch, spec, guards, fields, tombstones, Some(&stored))? else { return Ok(None) };
+        let old = writer.current.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone());
         let owner = RowRef::new(ModelKey::new(model), id.clone());
         let rows: Vec<_> = std::iter::once(&row).chain(old.as_ref()).collect();
         envelope.entity_ops = touch_parents(writer, &reader, &owner, &rows)?;
@@ -89,7 +94,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
             let spec = &writer.models.get(related_model).ok_or_else(|| StoreError::UnknownModel(related_model.to_string()))?.spec;
             let guards = writer.guards.get(related_model).map(Vec::as_slice).unwrap_or_default();
-            let Some(row) = admitted(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, related_model, patch, spec, guards)? else { continue };
+            let Some(row) = super::merge::admitted(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, related_model, patch, spec, guards)? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
         let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
@@ -111,30 +116,51 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     envelope.entity_ops.retain(|op| seen.insert(op.row_ref()));
     envelope.entity_ops.reverse();
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals)).map(Some)
+    let hidden = writer.feed_hidden.as_ref().cloned().unwrap_or_default();
+    let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), Some((&mut writer.current, &hidden)))?;
+    if op == "delete" { writer.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), writer.revision); }
+    if !envelope.operation_transitions.is_empty() {
+        writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);
+        let reader = Reader::new(writer.connection, writer.models);
+        let mut ids = BTreeMap::<String, Vec<String>>::new();
+        for (model, id) in writer.current.keys() { ids.entry(model.clone()).or_default().push(id.clone()); }
+        for (model, ids) in ids { writer.feed_fields.insert(model.clone(), unconfirmed_fields(&reader, None, &model, &ids)?); }
+    }
+    Ok(Some(result))
 }
 
 pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overlay: &mut OverlayWrites, results: &mut Vec<CommitResult>) -> Result<Vec<String>, StoreError> {
     let parsed = events.iter().map(|(model, text)| Ok((model, serde_json::from_str::<Value>(text)?))).collect::<Result<Vec<_>, StoreError>>()?;
     let reader = Reader::new(writer.connection, writer.models);
-    let mut before = EventRows::new();
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
     for (model, payload) in &parsed {
-        if payload.get("observe") != Some(&Value::Bool(true)) { continue; }
-        let Some(id) = payload.get("id").and_then(Value::as_str) else { continue };
-        let key = ((*model).clone(), id.to_string());
-        if let std::collections::btree_map::Entry::Vacant(e) = before.entry(key) { e.insert(reader.point(model, id)?); }
+        if let Some(id) = payload.get("id").and_then(Value::as_str) { wanted.entry((*model).clone()).or_default().push(id.to_string()); }
     }
+    let mut before = EventRows::new();
+    for (model, ids) in wanted {
+        let mut rows = reader.stored_rows_with_revisions(&model, &ids)?;
+        writer.feed_tombstones.insert(model.clone(), reader.tombstones(&model, &ids)?);
+        writer.feed_fields.insert(model.clone(), unconfirmed_fields(&reader, None, &model, &ids)?);
+        for id in ids {
+            let key = (model.clone(), id.clone());
+            if writer.current.contains_key(&key) { continue; }
+            let row = rows.remove(&id);
+            before.insert(key.clone(), row.as_ref().map(|row| row.row.clone()));
+            if let Ok(row_id) = RowId::new(&id) { writer.originals.entry(RowRef::new(ModelKey::new(&model), row_id)).or_insert_with(|| row.as_ref().map(|row| row.row.clone())); }
+            writer.current.insert(key, row);
+        }
+    }
+    writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);
     for (model, payload) in &parsed {
         if let Some(result) = landing(writer, model, payload, overlay)? { results.push(result); }
     }
-    let reader = Reader::new(writer.connection, writer.models);
     let mut observed = Vec::with_capacity(parsed.len());
     for (model, mut payload) in parsed {
         if let Some(object) = payload.as_object_mut() {
             if object.get("observe") == Some(&Value::Bool(true)) {
                 if let Some(id) = object.get("id").and_then(Value::as_str).map(str::to_string) {
                     object.insert("before".into(), before.get(&(model.clone(), id.clone())).cloned().flatten().map_or(Value::Null, Value::Object));
-                    object.insert("after".into(), reader.point(model, &id)?.map_or(Value::Null, Value::Object));
+                    object.insert("after".into(), writer.current.get(&(model.clone(), id.clone())).and_then(|row| row.as_ref()).map_or(Value::Null, |row| Value::Object(row.row.clone())));
                 }
             }
         }

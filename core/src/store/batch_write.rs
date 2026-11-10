@@ -84,7 +84,7 @@ impl Store {
         let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0 };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None };
         let mut overlay = Vec::new();
         let observed = if batch.author == BatchAuthor::Feed {
             super::feed_write::land(&mut writer, &batch.rows, &mut overlay, &mut results)?

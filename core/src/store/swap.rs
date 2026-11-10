@@ -107,5 +107,5 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
     }
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None)
 }

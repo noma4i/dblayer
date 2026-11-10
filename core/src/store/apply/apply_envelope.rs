@@ -7,7 +7,7 @@ pub(crate) fn apply_envelope(
     now_ms: i64,
 ) -> Result<CommitResult, StoreError> {
     let revision = Reader::new(connection, models).revision_seq()? + 1;
-    apply_envelope_at(connection, models, envelope, now_ms, revision, None)
+    apply_envelope_at(connection, models, envelope, now_ms, revision, None, None)
 }
 
 pub(in super::super) fn apply_envelope_at(
@@ -17,6 +17,7 @@ pub(in super::super) fn apply_envelope_at(
     now_ms: i64,
     revision: i64,
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
+    mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
 ) -> Result<CommitResult, StoreError> {
     let mut followed = planned.clone();
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
@@ -50,8 +51,16 @@ pub(in super::super) fn apply_envelope_at(
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
-    let hidden = if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
-    let mut prefetched = prefetch_stored(connection, models, &envelope.entity_ops, &hidden)?;
+    let hidden = if let Some((_, hidden)) = &feed_cache { (*hidden).clone() } else if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
+    let mut prefetched = if let Some((current, _)) = &mut feed_cache {
+        let mut found = std::mem::take(*current);
+        let missing: Vec<_> = envelope.entity_ops.iter().filter(|op| {
+            let row = op.row_ref();
+            !found.contains_key(&(row.model.to_string(), row.id.to_string()))
+        }).cloned().collect();
+        found.extend(prefetch_stored(connection, models, &missing, &hidden)?);
+        found
+    } else { prefetch_stored(connection, models, &envelope.entity_ops, &hidden)? };
     let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, &prefetched)?;
 
     for operation in &envelope.entity_ops {
@@ -65,12 +74,14 @@ pub(in super::super) fn apply_envelope_at(
                 let touched = connection
                     .execute(&format!(include_str!("../sql/apply_envelope/apply_envelope_at_update.sql"), info.table), params![revision, id.as_str()])?;
                 if touched > 0 {
+                    if let Some(Some(row)) = prefetched.get_mut(&(model.to_string(), id.to_string())) { row.revision = revision; }
                     changes.push(model, id.as_str(), RowChangeKind::Touched, BTreeSet::new());
                 }
             }
             EntityOp::Destroy { model, id, reason } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
                 let removed = remove_row(connection, info, id.as_str())?;
+                prefetched.insert((model.to_string(), id.to_string()), None);
                 if reason.writes_tombstone() {
                     write_tombstone(connection, model.as_str(), id.as_str(), revision, now_ms)?;
                     tombstoned = true;
@@ -87,6 +98,7 @@ pub(in super::super) fn apply_envelope_at(
         }
     }
 
+    if let Some((current, _)) = &mut feed_cache { **current = prefetched; }
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;

@@ -29,6 +29,10 @@ pub(super) struct RowWrite<'a> {
     pub originals: &'a mut BTreeMap<RowRef, Option<Map<String, Value>>>,
     pub closing: Option<i64>,
     pub candidates: usize,
+    pub current: super::apply::Prefetched,
+    pub feed_fields: BTreeMap<String, std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    pub feed_tombstones: BTreeMap<String, BTreeMap<String, i64>>,
+    pub feed_hidden: Option<super::apply::HiddenRows>,
 }
 
 impl RowWrite<'_> {
@@ -46,7 +50,7 @@ impl RowWrite<'_> {
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         envelope.validate(self.generation)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals)).map(Some)
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None).map(Some)
     }
 
     pub fn remove(&mut self, model: &str, id: &str) -> Result<CommitResult, StoreError> {
@@ -61,7 +65,7 @@ impl RowWrite<'_> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id, reason });
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn touch_upload(&mut self, key: &str) -> Result<CommitResult, StoreError> {
@@ -70,7 +74,7 @@ impl RowWrite<'_> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(model), id });
-        let mut result = super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))?;
+        let mut result = super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)?;
         result.uploads_changed = true;
         Ok(result)
     }
@@ -79,14 +83,14 @@ impl RowWrite<'_> {
         let reader = Reader::new(self.connection, self.models);
         let mut envelope = BatchPlan::new(self.generation);
         super::file_write::attach(&reader, self.models, &mut envelope, record)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn detach(&mut self, model: &str, id: &str, field: &str) -> Result<CommitResult, StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let mut envelope = BatchPlan::new(self.generation);
         super::file_write::detach(&reader, self.models, &mut envelope, model, id, field)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn local_pending(&mut self, model: &str, rows: &[RowValue]) -> Result<CommitResult, StoreError> {
@@ -97,20 +101,20 @@ impl RowWrite<'_> {
             let value = value.get("value").cloned().ok_or_else(|| StoreError::Constraint("pending value has no value".into()))?;
             envelope.pending_locals.push(PendingLocal { model: model.to_string(), row_id: row.row_id.clone(), path: path.to_string(), value });
         }
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn transitions(&mut self, transitions: Vec<OperationTransition>) -> Result<CommitResult, StoreError> {
         let mut envelope = BatchPlan::new(self.generation);
         envelope.operation_transitions = transitions;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn stale_families(&mut self, families: &[(String, String)]) -> Result<CommitResult, StoreError> {
         let since = super::windows::max_sequence(self.connection)? + 1;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.window_debts.extend(families.iter().map(|(model, relation)| WindowDebt { model: model.clone(), relation: relation.clone(), since }));
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
     }
 
     pub fn numbers(&mut self, model: &str, row_id: &str, writes: &[(String, i64)]) -> Result<Option<CommitResult>, StoreError> {
@@ -120,6 +124,6 @@ impl RowWrite<'_> {
         let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals)).map(Some)
+        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None).map(Some)
     }
 }

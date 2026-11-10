@@ -78,7 +78,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row }); }
         }
         envelope.scope_ops = answered_scope_ops(writer, page.key, &roots)?;
-        return super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals));
+        return super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None);
     };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| StoreError::Constraint(format!("{model} has no relation {relation}")))?;
@@ -135,7 +135,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(writer.now),
     });
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None)
 }
 
 /// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.

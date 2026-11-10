@@ -15,10 +15,10 @@ pub(super) fn diff_fields(old: &Map<String, Value>, new: &Map<String, Value>) ->
     changed
 }
 
-pub(super) type HiddenRows = HashSet<(String, String)>;
+pub(crate) type HiddenRows = HashSet<(String, String)>;
 pub(super) type OpenDestroy = (i64, String);
 
-pub(super) fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> Result<HiddenRows, StoreError> {
+pub(crate) fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> Result<HiddenRows, StoreError> {
     let mut released: HashSet<i64> = HashSet::new();
     let mut rewritten: HashMap<i64, &OperationRecord> = HashMap::new();
     for transition in transitions {
@@ -109,7 +109,7 @@ pub(super) fn without_nulls(info: &ModelInfo, row: &Map<String, Value>) -> Map<S
     row.iter().filter(|(key, value)| !value.is_null() || info.spec.field(key).is_some_and(|field| field.nullable && field.default.is_some())).map(|(key, value)| (key.clone(), value.clone())).collect()
 }
 
-pub(super) type Prefetched = HashMap<(String, String), Option<StoredRow>>;
+pub(crate) type Prefetched = HashMap<(String, String), Option<StoredRow>>;
 
 pub(super) fn prefetch_stored(connection: &Connection, models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], hidden: &HiddenRows) -> Result<Prefetched, StoreError> {
     let mut wanted: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -183,6 +183,7 @@ pub(super) fn apply_upsert(
                 if let Ok(row_id) = crate::identity::RowId::new(&id) {
                     result.renewed.push(RowRef::new(model.clone(), row_id));
                 }
+                prefetched.insert((model.to_string(), id.clone()), existing.clone());
                 return Ok(());
             }
             (stored.born_rev, stored.field_rev.clone(), changed, RowChangeKind::Updated)
@@ -200,6 +201,8 @@ pub(super) fn apply_upsert(
     if let Some(old) = old_row {
         membership_moves(info, model, &id, old, row, moves, heads);
     }
+    let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+    prefetched.insert((model.to_string(), id.clone()), Some(StoredRow { id: row_id, revision, born_rev, field_rev, row: row.clone() }));
     result.push(model, &id, kind, changed);
     Ok(())
 }
