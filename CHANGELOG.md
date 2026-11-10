@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Batch row reads while landing events, references and write batches.
+
 ### Fixed
 
 - Reread the node when a change event declared with a node and a payload arrives without the payload.
