@@ -115,16 +115,16 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             rig.server.refuse_next(wire, confirmed);
             let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
 
-            let outcome = database.outcome(receipt).await.unwrap();
+            let outcome = database.confirmed(receipt, false).await;
             let case = format!("{wire} confirmed={confirmed}");
             if code == SessionCode::SessionEnded {
-                assert!(matches!(outcome, super::WireOperationOutcome::Ended { cause: crate::owners::read::deliveries::EndCause::SessionEnded }), "{case}: a revoked answer ends the operation with the session, got {outcome:?}");
+                assert!(matches!(outcome, Err(super::DbError::NoSession { .. })), "{case}: a revoked answer ends the operation with the session, got {outcome:?}");
                 let life = database.life_handle();
                 crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
                 assert_eq!(rig.credentials.inner.value(), None, "{case}: the published server end erases the session");
                 continue;
             }
-            let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
+            let Err(super::DbError::Rejected { failure, kept: true }) = outcome else { panic!("expected rejection: {outcome:?}") };
 
             let refusal = serde_json::from_str::<serde_json::Value>(&failure.message).ok().and_then(|body| body["error"].as_str().map(str::to_string));
             assert_eq!((failure.session_code, refusal.as_deref()), (Some(code), Some(wire)), "{case}: the failure carries the refusal body unchanged, got {:?}", failure.message);
@@ -146,8 +146,8 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
         let row = receipt.optimistic_value.clone().unwrap();
 
-        let outcome = database.outcome(receipt).await.unwrap();
-        let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
+        let outcome = database.confirmed(receipt, false).await;
+        let Err(super::DbError::Rejected { failure, kept: true }) = outcome else { panic!("expected rejection: {outcome:?}") };
 
         assert_eq!(failure.session_code, Some(code), "{wire}");
         let stored = database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
@@ -157,7 +157,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let before = graphql_posts(&rig);
 
         let retried = database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None, None).await.unwrap();
-        let _ = database.outcome(retried).await;
+        let _ = database.confirmed(retried, false).await;
 
         assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");
     }
@@ -171,7 +171,7 @@ async fn any_other_session_refusal_follows_the_same_keep_declaration() {
     let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
     let row = receipt.optimistic_value.clone().unwrap();
 
-    assert!(matches!(database.outcome(receipt).await.unwrap(), super::WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(database.confirmed(receipt, false).await, Err(super::DbError::Rejected { kept: true, .. })));
 
     assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_some());
 }

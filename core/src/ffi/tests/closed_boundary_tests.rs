@@ -50,7 +50,7 @@ async fn call_refusal_order_table() {
     changed.epoch += 1;
     database.close_database().await.unwrap();
     for receipt in [receipt, changed] {
-        assert!(matches!(database.outcome(receipt).await, Err(DbError::Closed { .. })));
+        assert!(matches!(database.confirmed(receipt, false).await, Err(DbError::Closed { .. })));
     }
 }
 
