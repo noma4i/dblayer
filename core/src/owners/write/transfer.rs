@@ -149,7 +149,7 @@ impl TransferState {
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
-                    if matches!(transfer.removal, Some(Removal::Cancel | Removal::Discarded)) {
+                    if matches!(transfer.removal, Some(Removal::Cancel)) && !transfer.outcomes.contains_key(&transfer.cycle_id) {
                         ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: OutboxOutcome::Discarded });
                     }
                     if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
