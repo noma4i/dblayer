@@ -279,6 +279,8 @@ fn core_table_columns_match_spec() {
         "dedupe_key",
         "client_mutation_id",
         "attempts",
+        "cause_kind",
+        "cause_limit",
         "cycle_id",
         "since",
         "error_kind",
