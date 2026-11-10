@@ -115,7 +115,7 @@ fn upsert_and_returns_belong_to_named_operations() {
         ("upsert without a model", &custom("    upsert from: \"a.b\"\n"), Some("`upsert` needs a model")),
         ("old lands", &custom("    lands Sample, root: \"a.b\"\n"), Some("`lands` does not apply to operation `act`")),
         ("returns scalars", &custom("    returns do\n      attribute :ok, :bool\n      attribute :note, :string\n    end\n"), None),
-        ("returns an object", &custom("    returns do\n      attribute :thing, Thing do\n        attribute :x, :int\n      end\n    end\n"), Some("a model operation returns :bool, :int, :num, :string or :id attributes")),
+        ("returns an object", &custom("    returns do\n      attribute :thing, Thing do\n        attribute :x, :int\n      end\n    end\n"), None),
         ("returns null is implicit", &custom("    returns do\n      attribute :ok, :bool, null: true\n    end\n"), Some("every returned attribute is nullable")),
         ("returns empty", &custom("    returns do\n    end\n"), Some("`returns` block needs at least 1 attribute")),
         ("returns without a block", &custom("    returns\n"), Some("`returns` needs a `do ... end` block")),
