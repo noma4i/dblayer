@@ -223,6 +223,54 @@ async fn rowless_upload_session_reset_clears_pending_work() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_end_during_upload() {
+    for stage in 0..4 {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("app.sqlite");
+        let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+        stand.sign_in().await;
+        let epoch = stand.database.session_epoch();
+        stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+        stand.answer("UserPhotoUpdate", good());
+        stand.script_put(200, Some("etag"));
+        match stage {
+            0 => stand.database.set_online(false).unwrap(),
+            1 => stand.hold(&["CreateBlob"]),
+            2 => stand.hold_put(),
+            3 => stand.hold(&["UserPhotoUpdate"]),
+            _ => unreachable!(),
+        }
+        let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+        assert!(receipt.optimistic_value.is_none());
+        let items = operations(&stand).await;
+        assert_eq!(items.len(), 1, "stage {stage}");
+        let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+        let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+        assert!(copy.exists(), "stage {stage}");
+        match stage {
+            0 => assert_eq!(stand.requests("CreateBlob"), 0),
+            1 => arrived(&stand, "CreateBlob").await,
+            2 => stand.put_started().await,
+            3 => arrived(&stand, "UserPhotoUpdate").await,
+            _ => unreachable!(),
+        }
+        let before = (stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate"));
+        bound(stand.database.session_reset()).await.unwrap();
+        stand.release(&["CreateBlob", "UserPhotoUpdate"]);
+        stand.release_put();
+        stand.settle().await;
+        assert!(!copy.exists(), "stage {stage}: copy remains after reset");
+        assert_eq!((stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate")), before, "stage {stage}: request after reset");
+        stand.database.set_online(true).unwrap();
+        stand.sign_in().await;
+        stand.settle().await;
+        assert!(operations(&stand).await.is_empty(), "stage {stage}: queue survives reset");
+        assert_eq!((stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate")), before, "stage {stage}: request in next session");
+        stand.database.close_now();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn direct_mutation_reports_the_end_cause() {
     for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
         let stand = Stand::open().await;
