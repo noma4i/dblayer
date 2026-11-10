@@ -10,6 +10,41 @@ use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dlv_deferred_parent_swap_wakes() {
+    let rig = Rig::encrypted_edited(false, false, false, |models| {
+        let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+        let parent = crate::schema::AssociationSpec::new("parent", crate::schema::AssociationKind::BelongsTo, "Group", "chatId");
+        message["associations"].as_array_mut().unwrap().push(serde_json::to_value(parent).unwrap());
+        let relation = message["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "thread").unwrap().clone();
+        let mut count_relation = relation;
+        count_relation["name"] = json!("thread_count");
+        message["relations"].as_array_mut().unwrap().push(count_relation);
+    }).await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("CreateGroup");
+    let (values, args) = group("temporary");
+    let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let temporary = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    gate.entered().await;
+    let query = |relation: &str| crate::ffi::QuerySpec::json(json!({"model":"Message", "relation":relation, "params":{"chatId":temporary}}).to_string());
+    let list = rig.database.subscribe_values(epoch, ReadRequest::List { query: query("thread") });
+    let count = rig.database.subscribe_values(epoch, ReadRequest::Count { query: query("thread_count") });
+    assert!(matches!(bound(list.pull_next()).await, Some(ReadValue::Snapshot { .. })));
+    assert!(matches!(bound(count.pull_next()).await, Some(ReadValue::Count { .. })));
+    let before = rig.world.count("Thread");
+    assert_eq!(before, 0);
+    rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+    gate.release();
+    let real = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
+    settled(&rig, "both windows request the real parent", || rig.world.count("Thread") == before + 2).await;
+    let requests: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "Thread").collect();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|entry| entry.body.contains(&real) && !entry.body.contains(&temporary)));
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn win_node_temp_alias_permutations() {
     use crate::schema::{Coverage, NodeRead, RelationSpec, RemoteShape};
 
