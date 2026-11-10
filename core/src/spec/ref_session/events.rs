@@ -114,9 +114,16 @@ impl Session {
                 }
                 self.on_epoch_ended(state, epoch, cause, out);
             }
-            Input::Revoked { request_id, author_ref: Some(_), .. } => {
+            Input::Revoked { request_id, author_ref: Some(author), .. } => {
                 let batch = self.batch();
-                out.effects.push(Effect::CommitLanding { batch, epoch: self.epoch, digest: None, sequence: None, answer: Some((request_id, Err(Fail::Revoked))), erase_session: true });
+                out.effects.push(Effect::CommitLanding { batch, epoch: self.epoch, digest: None, sequence: None, answer: None, erase_session: true });
+                self.revoked_waiting = Some((batch, author, request_id, self.epoch));
+                self.state = state;
+            }
+            Input::Committed(committed) if self.revoked_waiting.is_some_and(|(batch, ..)| batch == committed) => {
+                let (_, author, req_id, epoch) = self.revoked_waiting.take().unwrap();
+                out.effects.push(Effect::Answer { author, req_id, outcome: Outcome::Error(Kind::Permanent, Fail::Revoked, false) });
+                out.effects.push(Effect::ServerEnded { epoch });
                 self.state = state;
             }
             input => self.by_state(state, input, out),
