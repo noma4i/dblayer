@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "dblayer"
-version = "6.25.3"
+version = "6.25.4"
 dependencies = [
  "aes-gcm",
  "arc-swap",

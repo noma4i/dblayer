@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.25.4 - 2026-11-11
+
 ### Changed
 
 - Replace failed uploads when a new upload starts for the same action.
@@ -10,6 +12,7 @@
 ### Fixed
 
 - Reread the node when a change event declared with a node and a payload arrives without the payload.
+- Keep the operation of a failed upload after the database reopens.
 
 ## 6.25.3 - 2026-11-11
 
