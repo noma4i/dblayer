@@ -6,6 +6,15 @@
 
 - Declare response roots for multipart upload steps.
 
+### Changed
+
+- Batch page and reference reads with fixed query counts within 500-row batches.
+
+### Fixed
+
+- Keep ordered pages and the history end when refreshing the first page.
+- Reread watched selections once after a subscription breaks without a network change.
+
 ## 6.24.0 - 2026-11-10
 
 ### Added

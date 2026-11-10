@@ -873,7 +873,7 @@ subscribe "RecordSignal", from: "recordSignal", id: "recordId", apply: { effect:
 Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
 Observers receive 1 change for the removal.
 Observing a model opens the shared subscription. The last cancel releases it.
-After a reconnect that lost events, the watched reads of the affected models are reread once, fresh or not. A load that ran after the network returned covers the loss.
+After a reconnect that lost events, the watched reads of the affected models are reread once, fresh or not. A load after the network returns covers gaps that began before that return. A connection break without a network change triggers a reread.
 Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
 A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving.
 The library reloads every `preload` scope when the window of the scope is stale. There is no call to reload all scopes at once.
