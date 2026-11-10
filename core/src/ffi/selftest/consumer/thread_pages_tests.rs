@@ -21,7 +21,7 @@ impl Reader for History {
 }
 
 fn page(first: i32, last: i32, more: bool) -> Value {
-    let nodes: Vec<Value> = (first..=last).map(|n| json!({"id":format!("m{n}"),"chatId":"c1","body":format!("message {n}"),"kind":"TEXT","status":"SENT","sequenceNumber":n,"createdAt":"2026-10-27T00:00:00Z","updatedAt":"2026-10-27T00:00:00Z"})).collect();
+    let nodes: Vec<Value> = (first..=last).map(|n| json!({"id":format!("m{n}"),"chatId":"c1","body":format!("message {n}"),"kind":"TEXT","status":"SENT","oneTime":false,"expired":false,"isSystem":false,"isForwarded":false,"isReply":false,"unread":false,"sequenceNumber":n,"createdAt":"2026-10-27T00:00:00Z","updatedAt":"2026-10-27T00:00:00Z"})).collect();
     let edges: Vec<_> = nodes.into_iter().map(|node| json!({"node":node})).collect();
     json!({"node":{"messages":{"edges":edges,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
 }
