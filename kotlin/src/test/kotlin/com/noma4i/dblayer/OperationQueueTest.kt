@@ -51,6 +51,59 @@ private class QueueReader(scope: kotlinx.coroutines.CoroutineScope, queue: kotli
 /** The queue of operations through its public API: `operations()` shows each write with its status, and `retry` takes the fields of an `OperationInfo`. */
 class OperationQueueTest {
     @Test
+    fun bridge_discard_same_action_parity_c9() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", QUEUE_FEED)
+        transport.enqueue("UpdateMoment", """{"errors":[{"message":"refused","extensions":{"code":"FORBIDDEN"}}]}""")
+        val held = transport.hold("UpdateMoment", QUEUE_UPDATED.replace("edited", "second"))
+        try {
+            openSigned(Config(null, null), specs(momentsKeepingUpdates()), transport)
+            registerStandOperations(DBlayer.database, QUEUE_DEFS)
+            Moment.feed.load()
+            val moment = awaitWithin("the loaded moment") { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
+            val scope = AccountScope.current()
+            val queue = QueueReader(this, scope.operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items })
+            val first = moment.update(text = GraphQLNullable.Value("first"))
+            val rejected = first.rejection()
+            assertTrue(rejected.kept)
+            DBlayer.database.setOnline(false)
+            val second = moment.update(text = GraphQLNullable.Value("second"))
+            awaitWithin("both updates are present") { queue.until { it.size == 2 && it.any { op -> op.status == OperationQueueStatus.FAILED } } }
+            moment.discard("update", scope)
+            val remaining = awaitWithin("the failed update is gone") { queue.until { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
+            assertEquals("update", remaining.single().action)
+            assertEquals("second", Moment.find(moment.id).current()?.text)
+            DBlayer.database.setOnline(true)
+            awaitWithin("the second update reaches the transport") { held.entered() }
+            held.release()
+            assertEquals("second", awaitWithin("the second update is confirmed") { second.confirmed() }.value?.text)
+            assertEquals("second", Moment.find(moment.id).current()?.text)
+            assertEquals(emptyList<OperationInfo>(), awaitWithin("the queue is empty") { queue.until { it.isEmpty() } })
+            queue.close()
+        } finally { held.release(); closeForCleanup() }
+    }
+
+    @Test
+    fun bridge_discard_without_failed_parity_c9() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", QUEUE_FEED)
+        transport.enqueue("UpdateMoment", QUEUE_UPDATED)
+        try {
+            openSigned(Config(null, null), specs(momentsKeepingUpdates()), transport)
+            registerStandOperations(DBlayer.database, QUEUE_DEFS)
+            Moment.feed.load()
+            val moment = awaitWithin("the loaded moment") { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
+            DBlayer.database.setOnline(false)
+            val waiting = moment.update(text = GraphQLNullable.Value("edited"))
+            val error = runCatching { moment.discard("update", AccountScope.current()) }.exceptionOrNull()
+            assertTrue("discard without a failed operation: $error", error is DbException.NotFound)
+            assertEquals("edited", Moment.find(moment.id).current()?.text)
+            DBlayer.database.setOnline(true)
+            awaitWithin("the waiting update is confirmed") { waiting.confirmed() }
+        } finally { closeForCleanup() }
+    }
+
+    @Test
     fun anOfflineUpdateShowsInTheQueueAndLeavesItWhenTheNetworkReturns() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", QUEUE_FEED)
