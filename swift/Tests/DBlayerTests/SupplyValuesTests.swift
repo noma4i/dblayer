@@ -6,7 +6,8 @@ import Testing
 private let singleOperations = #"[{"name":"CreateBlob","document":"mutation CreateBlob($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) { createBlob(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#
 private let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"#
 
-extension BridgeProbeTests {
+@Suite(.serialized)
+struct SupplyValuesTests {
   /// The app order: a pending batch element, the file supplied while the server holds the blob request. The call returns and the row shows the supplied values at once.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
