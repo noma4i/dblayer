@@ -119,6 +119,7 @@ async fn consumer_group_after_failed_group_reopen() {
 async fn partially_uploaded_group(failed: bool) {
     use crate::ffi::upload_wire::WireUploadSource;
     use crate::ffi::wire::WireUploadStatus;
+    use crate::ffi::{DbError, ReadRequest, ReadValue};
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("partial.sqlite").to_string_lossy().into_owned();
     let credentials = Arc::new(WatchedHeld::default());
@@ -141,17 +142,36 @@ async fn partially_uploaded_group(failed: bool) {
     bound(first.database.supply_source(epoch, "Message".into(), ids[1].clone(), "send_files".into(), source(1))).await.unwrap();
     first.puts_started(if failed { 1 } else { 2 }).await;
     assert_eq!(first.requests("MessageAlbumSend"), 0);
+    let stream = first.database.subscribe_values(epoch, ReadRequest::Operations);
+    let Some(ReadValue::Operations { items, .. }) = bound(stream.pull_next()).await else { panic!("operations unavailable") };
+    assert!(!items.is_empty(), "group missing from operations: {items:?}");
+    let row = first.database.peek_row(epoch, "Message".into(), ids[0].clone()).unwrap().unwrap();
+    let upload = &row.uploads.iter().find(|upload| upload.action == "send_files").expect("first transfer status missing").upload;
+    if failed {
+        assert_eq!(upload.status, WireUploadStatus::Failed);
+        assert!(matches!(bound(first.database.confirmed(batch.items[0].receipt.clone(), false)).await, Err(DbError::Rejected { kept: true, .. })));
+    } else {
+        assert_eq!(upload.status, WireUploadStatus::Sending);
+        assert_eq!(upload.stage, "mutation");
+    }
+    let other = first.database.peek_row(epoch, "Message".into(), ids[1].clone()).unwrap().unwrap();
+    assert!(other.uploads.iter().any(|upload| upload.action == "send_files"));
     first.database.close_now();
     drop(first);
     let reopened = Stand::prepare_online(Some(path), credentials, None, false).await;
     answers(&reopened, "partial");
     reopened.database.set_online(true).unwrap();
+    for item in &batch.items {
+        let old = bound(reopened.database.confirmed(item.receipt.clone(), false)).await;
+        assert!(matches!(old, Err(DbError::Invalid { .. })), "old receipt: {old:?}");
+    }
+    let mut retry_receipt = None;
     if failed {
         reopened.settle().await;
         let row = reopened.database.peek_row(reopened.database.session_epoch(), "Message".into(), ids[0].clone()).unwrap().unwrap();
         assert_eq!(row.uploads[0].upload.status, WireUploadStatus::Failed);
         assert_eq!(reopened.requests("MessageAlbumSend"), 0);
-        bound(reopened.database.retry(reopened.database.session_epoch(), "Message".into(), ids[0].clone(), Some("send_files".into()), Some(source(0)))).await.unwrap();
+        retry_receipt = Some(bound(reopened.database.retry(reopened.database.session_epoch(), "Message".into(), ids[0].clone(), Some("send_files".into()), Some(source(0)))).await.unwrap());
     }
     crate::test_wait::settled(&reopened, "album mutation after reopen", || reopened.requests("MessageAlbumSend") == 1).await;
     for index in 0..2 {
@@ -159,6 +179,13 @@ async fn partially_uploaded_group(failed: bool) {
         assert!(row.is_some(), "album row {index} is missing: {:?}", reopened.asked());
     }
     assert_eq!(reopened.requests("MessageAlbumSend"), 1);
+    if let Some(receipt) = retry_receipt {
+        let outcome = bound(reopened.database.confirmed(receipt, false)).await.unwrap();
+        assert_eq!(outcome.value.unwrap().id, "partial-server-0");
+    }
+    let stream = reopened.database.subscribe_values(reopened.database.session_epoch(), ReadRequest::Operations);
+    let Some(ReadValue::Operations { items, .. }) = bound(stream.pull_next()).await else { panic!("operations unavailable") };
+    assert!(!items.iter().any(|item| item.action == "send_files" && (ids.contains(&item.row_id) || item.row_id.starts_with("partial-server-"))), "finished transfers remain: {items:?}");
     reopened.database.close_now();
 }
 
