@@ -607,7 +607,9 @@ private final class DatabaseRunner {
 }
 
 private func corpusFiles() throws -> [URL] {
-  try FileManager.default.contentsOfDirectory(at: corpusDirectory(), includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+  let files = try FileManager.default.contentsOfDirectory(at: corpusDirectory(), includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+  precondition(!files.isEmpty)
+  return files
 }
 
 private struct CorpusStepInvalid: Error {}
@@ -636,11 +638,9 @@ private func runCorpus(_ file: URL) async throws -> String? {
 
 @Suite
 struct CorpusRunnerTests {
-  @Test(.timeLimit(.minutes(1)))
-  func bridge_prop_one_history_theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {
-    let files = try corpusFiles()
-    #expect(!files.isEmpty)
-    let mismatches = try await parallel(files, limit: 6) { try await runCorpus($0) }.compactMap { $0 }
-    #expect(mismatches.isEmpty, "\(mismatches)")
+  @Test(.timeLimit(.minutes(1)), arguments: try! corpusFiles())
+  func bridge_prop_one_history_theSharedCorpusIsGreenThroughTheSwiftWrapper(file: URL) async throws {
+    let mismatch = try await runCorpus(file)
+    #expect(mismatch == nil, "\(mismatch ?? "")")
   }
 }

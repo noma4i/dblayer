@@ -8,8 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -522,13 +520,21 @@ private suspend fun runCorpus(file: java.io.File): String? {
     return red
 }
 
-class CorpusRunnerTest {
+@org.junit.runner.RunWith(org.junit.runners.Parameterized::class)
+class CorpusRunnerTest(private val file: File) {
+    companion object {
+        @JvmStatic
+        @org.junit.runners.Parameterized.Parameters(name = "{0}")
+        fun traces(): List<Array<File>> {
+            val files = corpusDirectory.listFiles { file -> file.extension == "jsonl" }!!.sortedBy { it.name }
+            require(files.isNotEmpty())
+            return files.map { arrayOf(it) }
+        }
+    }
+
     @Test
     fun bridge_prop_one_history_theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded {
-        val files = corpusDirectory.listFiles { file -> file.extension == "jsonl" }!!.sortedBy { it.name }
-        assertTrue(files.isNotEmpty())
-        val gate = kotlinx.coroutines.sync.Semaphore(6)
-        val red = files.map { file -> async(kotlinx.coroutines.Dispatchers.Default) { gate.withPermit { runCorpus(file) } } }.awaitAll().filterNotNull()
-        assertTrue("red traces:\n" + red.joinToString("\n"), red.isEmpty())
+        val red = runCorpus(file)
+        assertTrue(red ?: "", red == null)
     }
 }
