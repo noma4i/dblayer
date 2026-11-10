@@ -9,7 +9,7 @@ The owner chooses each version and authorizes publication. Use a minor version f
 3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Keep the tree clean.
 4. Run `make release VERSION=X.Y.Z` for a dry run. It builds the four release files, stages Maven artifacts, runs the sequence suites (and, when the release needs them, the app suites), writes `RECEIPT.json` into the stage, prints the generated `Package.swift`, and checks that manifest in a temporary copy. The stage `target/release-X.Y.Z` belongs to one source commit (`SOURCE` inside it): a run from another commit moves the old stage aside and builds the files again.
 5. After the owner agrees, run `make release-publish VERSION=X.Y.Z`. It runs the same checks, writes `Package.swift`, adds the generated `dblayer.swift`, and commits both as `Package release X.Y.Z` after the `Release` commit.
-6. The release script tags the packaging commit, pushes the verified packaging commit as `master` and as the tag, publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the four release files.
+6. The release script tags the packaging commit and checks the tagged `dblayer.swift`. It then commits `Stop tracking the generated Swift binding`, which removes the file from the index and leaves it on disk, ignored. It pushes that commit as `master` and the packaging commit as the tag, publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the four release files.
 
 The root `Package.swift` pins the tag URL and the checksum of `DBlayerFFI.xcframework.zip`. Keep `swift/Package.swift` and `scripts/build_ios.sh` for local development.
 
@@ -17,7 +17,7 @@ Android coordinates are `com.noma4i:dblayer:X.Y.Z`. The Maven branch contains `c
 
 The packaging commit carries the staged `dblayer.swift`, and the script fails if the tag differs from the asset.
 
-The release script checks for exactly one `Release X.Y.Z` commit since the previous tag. The additional `Package release X.Y.Z` commit follows it. A rerun after removing the tag reuses the packaging commit and existing Maven version.
+The release script checks for exactly one `Release X.Y.Z` commit since the previous tag. The additional `Package release X.Y.Z` commit follows it. A rerun after removing the tag reuses the packaging commit and existing Maven version. It accepts three states: no packaging commit, the packaging commit on HEAD, and the untracking commit on HEAD above the packaging commit. The tree is clean after a release.
 
 ## Checks before the tag
 
