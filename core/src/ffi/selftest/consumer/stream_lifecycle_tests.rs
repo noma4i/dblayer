@@ -121,3 +121,22 @@ async fn stream_lifecycle_events() { lifecycle("Events").await }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stream_lifecycle_blob() { lifecycle("Blob").await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_stream_release_reopen() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let received = stand.asked().len();
+    stand.hold(&["MomentNode"]);
+    stand.answer("MomentNode", serde_json::json!({"node":super::stand::moment("m1", 7)}));
+    let first = stand.database.subscribe_values(epoch, ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: ReadFetch::Stale });
+    let value = bound(first.pull(0)).await;
+    assert!(matches!(value, Some(ReadValue::Snapshot { .. })), "{value:?}");
+    stand.received(received + 1).await;
+    first.release_reader(0);
+    let rows = stand.entity("Moment", "m1", ReadFetch::Stale);
+    stand.release(&["MomentNode"]);
+    crate::test_wait::settled(&stand, "the new reader sees the server row", || rows.0.lock().unwrap().iter().any(|row| row.id == "m1")).await;
+    let ended = bound(first.pull(0)).await;
+    assert!(matches!(ended, Some(ReadValue::Ended { cause: crate::ffi::EndCause::Closed })), "{ended:?}");
+}
