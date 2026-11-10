@@ -358,12 +358,14 @@ impl OutboxState {
     }
 
     /// `ReserveOp`: the next `op_id` of the sequence, nothing is written. A reserved `op_id` that is not used is not given again.
-    pub(super) fn reserve_op(&mut self, epoch: Epoch, target: ReserveTarget, fx: &mut Effects<Outbox>) {
-        let result = if epoch == self.epoch {
+    pub(super) fn reserve_op(&mut self, epoch: Epoch, target: ReserveTarget, row: Option<(String, String)>, fx: &mut Effects<Outbox>) {
+        let result = if epoch != self.epoch {
+            Err(Fault::NoSession)
+        } else if row.as_ref().is_some_and(|(model, row)| self.blocks_row(model, row, None, false)) {
+            Err(Fault::InFlight)
+        } else {
             self.next_op += 1;
             Ok(self.next_op - 1)
-        } else {
-            Err(Fault::NoSession)
         };
         self.opened(fx, target, result);
     }

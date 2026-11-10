@@ -276,8 +276,8 @@ impl TransferState {
         for &id in ids {
             let Some(removal) = self.transfers.get_mut(&id).and_then(|transfer| transfer.removal.take()) else { continue };
             self.removal_replies(id, &removal, fx);
-            if let (Removal::Cancel, Some(transfer)) = (&removal, self.transfers.get(&id)) {
-                if let Some(upload_id) = Self::orphan_of(transfer) {
+            if let Some(transfer) = self.transfers.get(&id) {
+                if let Some(upload_id) = Self::removal_orphan(transfer, &removal) {
                     self.orphans.insert(upload_id, transfer.key.clone());
                 }
             }

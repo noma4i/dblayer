@@ -122,6 +122,8 @@ impl OutboxState {
             return;
         }
         self.phase = Phase::Ready;
+        let blocked: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued && self.operation_blocked(operation, true)).map(|operation| operation.op_id).collect();
+        for op_id in blocked { self.start_discard(op_id, fx); }
         let mut deferred = std::mem::take(&mut self.deferred);
         deferred.sort_unstable();
         for op_id in deferred {

@@ -155,7 +155,7 @@ impl TransferState {
                     if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: row_id.clone() });
                     }
-                    if let (Some(Removal::Cancel), Some(upload_id)) = (&transfer.removal, Self::orphan_of(transfer)) {
+                    if let Some(upload_id) = transfer.removal.as_ref().and_then(|removal| Self::removal_orphan(transfer, removal)) {
                         ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                     }
                     if let Some(op_id) = own {
@@ -247,6 +247,14 @@ impl TransferState {
 
     /// The multipart upload a removed transfer leaves on the server: it gets `abort` until the server answers.
     pub(super) fn orphan_of(transfer: &Transfer) -> Option<String> { transfer.upload_id.clone().filter(|_| !transfer.aborted && transfer.signed_id.is_none()) }
+
+    pub(super) fn removal_orphan(transfer: &Transfer, removal: &Removal) -> Option<String> {
+        match removal {
+            Removal::Cancel => Self::orphan_of(transfer),
+            Removal::Discarded => transfer.upload_id.clone().filter(|_| !transfer.aborted),
+            _ => None,
+        }
+    }
 
     /// `abort` of every orphan whose abort is not in flight, when the network is up. `network`: the call comes from `Online(true)` or `RestoreReady`, so an abort already in flight is owed again.
     pub(super) fn send_orphans(&mut self, network: bool, fx: &mut Fx) {
@@ -705,7 +713,7 @@ impl TransferState {
                 self.replay_held(fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
