@@ -101,9 +101,10 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     writer.connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp, real])?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
+    let exists = writer.stored(model, temp.as_str())?.is_some();
     let reader = Reader::new(writer.connection, writer.models);
     let mut envelope = BatchPlan::new(writer.generation);
-    if reader.point(model, temp.as_str())?.is_some() {
+    if exists {
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
     }

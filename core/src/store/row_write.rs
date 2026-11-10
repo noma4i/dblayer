@@ -36,6 +36,15 @@ pub(super) struct RowWrite<'a> {
 }
 
 impl RowWrite<'_> {
+    pub fn stored(&mut self, model: &str, id: &str) -> Result<Option<super::rows::StoredRow>, StoreError> {
+        let key = (model.to_string(), id.to_string());
+        if !self.current.contains_key(&key) {
+            let reader = Reader::new(self.connection, self.models);
+            self.current.insert(key.clone(), reader.stored_row(model, id)?);
+        }
+        Ok(self.current.get(&key).cloned().flatten())
+    }
+
     pub fn apply(&mut self, envelope: &BatchPlan) -> Result<CommitResult, StoreError> {
         let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
         let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
@@ -50,17 +59,15 @@ impl RowWrite<'_> {
     }
 
     pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {
-        let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let id = RowId::new(&row.row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let value: Value = serde_json::from_str(&row.values)?;
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
         let kind = if local { RowKind::Local } else { RowKind::Server };
-        let reader = Reader::new(self.connection, self.models);
         let Some(patch_id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
-        let key = (model.to_string(), patch_id.to_string());
-        if !self.current.contains_key(&key) { self.current.insert(key.clone(), reader.stored_row(model, patch_id.as_str())?); }
         let mut stored = BTreeMap::new();
-        if let Some(Some(row)) = self.current.get(&key) { stored.insert(patch_id.to_string(), row.clone()); }
+        if let Some(row) = self.stored(model, patch_id.as_str())? { stored.insert(patch_id.to_string(), row); }
+        let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+        let reader = Reader::new(self.connection, self.models);
         let ids = [patch_id.to_string()];
         if !self.feed_tombstones.get(model).is_some_and(|entries| entries.contains_key(patch_id.as_str())) {
             let rows = reader.tombstones(model, &ids)?;
@@ -142,8 +149,7 @@ impl RowWrite<'_> {
     }
 
     pub fn numbers(&mut self, model: &str, row_id: &str, writes: &[(String, i64)]) -> Result<Option<CommitResult>, StoreError> {
-        let reader = Reader::new(self.connection, self.models);
-        let Some(mut row) = reader.point(model, row_id)? else { return Ok(None) };
+        let Some(mut row) = self.stored(model, row_id)?.map(|stored| stored.row) else { return Ok(None) };
         for (path, number) in writes { number_at(&mut row, &path.split('.').collect::<Vec<_>>(), *number); }
         let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);

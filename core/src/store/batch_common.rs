@@ -17,13 +17,12 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             for id in ids { results.push(writer.remove(model, id)?); }
         }
         StoreOp::ExpireRow { model, row_id, write_revision } => {
-            let reader = super::Reader::new(writer.connection, writer.models);
             let expected = i64::try_from(*write_revision).ok();
-            if reader.stored_row(model, row_id)?.is_some_and(|row| Some(row.revision) == expected) { results.push(writer.expire(model, row_id)?); }
+            if writer.stored(model, row_id)?.is_some_and(|row| Some(row.revision) == expected) { results.push(writer.expire(model, row_id)?); }
         }
         StoreOp::LocalPending { model, rows } => results.push(writer.local_pending(model, rows)?),
         StoreOp::LocalFields { model, row_id, values } => {
-            let stored = super::Reader::new(writer.connection, writer.models).stored_row(model, row_id)?;
+            let stored = writer.stored(model, row_id)?;
             let Some(stored) = stored else { return Err(StoreError::Constraint(format!("local fields of a row that is not stored: {model}:{row_id}"))) };
             let mut row = stored.row;
             let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_str(values)?;
