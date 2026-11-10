@@ -125,8 +125,8 @@ async fn boundary_reader_release_races_pull() {
                 }
                 "simultaneous" => {
                     let barrier = Arc::new(tokio::sync::Barrier::new(3));
-                    let pull = tokio::spawn({ let stream = stream.clone(); let barrier = barrier.clone(); async move { barrier.wait().await; stream.pull(0).await } });
-                    let release = tokio::spawn({ let stream = stream.clone(); let barrier = barrier.clone(); async move { barrier.wait().await; stream.release_reader(0); } });
+                    let pull = tokio::spawn({ let stream = stream.clone(); let barrier = barrier.clone(); async move { within(barrier.wait()).await; stream.pull(0).await } });
+                    let release = tokio::spawn({ let stream = stream.clone(); let barrier = barrier.clone(); async move { within(barrier.wait()).await; stream.release_reader(0); } });
                     within(barrier.wait()).await;
                     within(release).await.unwrap();
                     within(pull).await.unwrap()
