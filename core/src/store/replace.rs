@@ -18,12 +18,13 @@ pub(crate) struct ReplaceRequest {
     pub scope: ScopeRef,
     pub coverage: Coverage,
     pub replace_all: bool,
+    pub ordered_complete: bool,
     pub start_after: Option<String>,
     pub local_order: Option<Vec<SortField>>,
 }
 
 impl ReplaceRequest {
-    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None, local_order: None } }
+    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, ordered_complete: false, start_after: None, local_order: None } }
 }
 
 struct Member {
@@ -119,7 +120,7 @@ fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortFie
     let mut removed = HashSet::new();
     for row in rows {
         let key = crate::store::query::place_of(&row.cells, &ranked.descending);
-        if bounds.is_some_and(|(low, high)| &key > low && &key < high) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
+        if (request.ordered_complete || bounds.is_some_and(|(low, high)| &key > low && &key < high)) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
             removed.insert(row.id);
         }
     }
