@@ -117,7 +117,9 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let case = format!("{wire} confirmed={confirmed}");
             if code == SessionCode::SessionEnded {
                 assert!(matches!(outcome, super::WireOperationOutcome::Ended { cause: crate::owners::read::deliveries::EndCause::SessionEnded }), "{case}: a revoked answer ends the operation with the session, got {outcome:?}");
-                assert_eq!(rig.credentials.inner.value(), None, "{case}: the server end erases the session");
+                let life = database.life_handle();
+                crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+                assert_eq!(rig.credentials.inner.value(), None, "{case}: the published server end erases the session");
                 continue;
             }
             let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
