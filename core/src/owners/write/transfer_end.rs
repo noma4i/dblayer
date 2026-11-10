@@ -427,7 +427,7 @@ impl TransferState {
         for id in self.open_ids() {
             self.interrupt(id, end.clone(), fx);
         }
-        self.answer_held(Fault::of_end(cause), fx);
+        self.answer_held(if end == crate::ffi::EndCause::Closed { Fault::Closed } else { Fault::SessionEnded }, fx);
     }
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
