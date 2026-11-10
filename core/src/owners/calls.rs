@@ -182,7 +182,7 @@ impl CallsState {
             CallPhase::Done => None,
         }).collect();
         for (call_id, request_id, kind) in sending {
-            self.finish(call_id, Err(CallError::Interrupted), fx, finished);
+            self.finish(call_id, Err(end.clone()), fx, finished);
             fx.push(CallsEffect::Cancel { request_id, kind });
         }
     }
