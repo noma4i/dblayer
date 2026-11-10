@@ -5,6 +5,7 @@
 ### Added
 
 - `cableCloses` streams connection closures and their causes on Swift and Kotlin.
+- `ServerContract` registers documents and looks them up by hash.
 
 ### Changed
 
@@ -18,6 +19,11 @@
 - `EndCause` replaces `ReadEnd` for stream termination.
 - `OperationOutcome.Ended` replaces `Interrupted` and carries the termination cause.
 - Swift `OperationOutcome.confirmed` names its value `confirmedValue`.
+- `ReadStream.claimReader` returns `ReadClaim` with a reader or an end cause.
+- `WireUploadRequest` and `WireUploadItem` carry `WireSource` instead of separate file fields.
+- `ServerContract.admit` and `settle` reject invalid JSON requests.
+- `SealedServer` requires declared documents and exposes registration for later operations.
+- `bridgeToTransport` no longer accepts an operations argument.
 
 ### Fixed
 
@@ -39,7 +45,6 @@
 - Subscription errors close only the affected channel.
 - Empty pages with a continuation cursor preserve existing list members.
 - A source awaiting upload preparation no longer expires.
-- Stream and operation outcomes preserve their termination causes.
 
 ## 6.21.0 - 2026-11-09
 
