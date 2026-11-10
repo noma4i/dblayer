@@ -23,6 +23,13 @@ pub struct FileBytes {
     pub mime: String,
 }
 
+/// The value of a confirmed operation: the row it shows and the JSON of its answer.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct Confirmed {
+    pub value: Option<super::wire::WireRow>,
+    pub answer_json: Option<String>,
+}
+
 /// The error of a call that an owner refused.
 pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
@@ -294,28 +301,16 @@ impl Database {
     }
 
     pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
-        self.not_closed()?;
-        let held = &receipt.ticket;
-        if !Arc::ptr_eq(&held.owner, &self.life) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
-        if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
-            return Err(DbError::Invalid { detail: "the receipt was changed".into() });
+        self.settle(receipt, false).await.map(|(outcome, _)| outcome)
+    }
+
+    /// The one outcome of a receipt (D-286): the value `Confirmed{value, answer_json}`, a refusal is `Rejected{failure, kept}` (`kept` = the failed intent stays for `retry` or `discard`), the end of the wait is the error of `cause_error`. With `discard_on_failure` a failed cycle is discarded first and reported with `kept = false`.
+    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<Confirmed, DbError> {
+        match self.settle(receipt, discard_on_failure).await? {
+            (WireOperationOutcome::Confirmed { value, answer_json }, _) => Ok(Confirmed { value, answer_json }),
+            (WireOperationOutcome::Rejected { failure }, kept) => Err(DbError::Rejected { failure, kept }),
+            (WireOperationOutcome::Ended { cause }, _) => Err(super::cause_error(&cause)),
         }
-        let epoch = receipt.epoch;
-        if let Some(cause) = self.admission_end(epoch) {
-            return match cause {
-                super::EndCause::SessionEnded => Ok(WireOperationOutcome::Ended { cause }),
-                _ => Err(super::cause_error(&cause)),
-            };
-        }
-        let result = match held.ticket.clone() {
-            None => {
-                if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
-                Ok(WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None })
-            }
-            Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket).await,
-            Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket).await,
-        };
-        result
     }
 
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
@@ -339,27 +334,55 @@ impl Database {
         let _ = self.await_life(self.life.operations_quiet(self.life.published().epoch)).await;
     }
 
+    /// The outcome of the owner and whether the intent of a refusal is kept.
+    async fn settle(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<(WireOperationOutcome, bool), DbError> {
+        self.not_closed()?;
+        let held = &receipt.ticket;
+        if !Arc::ptr_eq(&held.owner, &self.life) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
+        if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
+            return Err(DbError::Invalid { detail: "the receipt was changed".into() });
+        }
+        let epoch = receipt.epoch;
+        if let Some(cause) = self.admission_end(epoch) {
+            return match cause {
+                super::EndCause::SessionEnded => Ok((WireOperationOutcome::Ended { cause }, false)),
+                _ => Err(super::cause_error(&cause)),
+            };
+        }
+        let result = match held.ticket.clone() {
+            None => {
+                if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
+                Ok((WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None }, false))
+            }
+            Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket, discard_on_failure).await,
+            Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket, discard_on_failure).await,
+        };
+        result
+    }
+
     /// The outcome of a receipt is the one the owner Outbox holds for its cycle: the value is the row its landing batch showed.
-    async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
-        let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
+    async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt, discard_on_failure: bool) -> Result<(WireOperationOutcome, bool), DbError> {
+        let waiter = if discard_on_failure { self.life.operation_outcome_discarding(receipt.epoch, ticket.clone()) } else { self.life.operation_outcome(receipt.epoch, ticket.clone()) };
+        let answer = match self.await_life(waiter).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
-            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome"),
+            Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome").map(|outcome| (outcome, false)),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(error) => return outcome_error(error),
+            Err(error) => return outcome_error(error).map(|outcome| (outcome, false)),
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
                 let value = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
                     Ok(LifeReply::Outbox(OutboxAnswer::Written { shown, .. })) => shown.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?,
-                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome"),
+                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return fault_outcome(fault, "operation outcome").map(|outcome| (outcome, false)),
                     Ok(_) => return Err(super::database::foreign_reply()),
-                    Err(error) => return outcome_error(error),
+                    Err(error) => return outcome_error(error).map(|outcome| (outcome, false)),
                 };
-                WireOperationOutcome::Confirmed { value, answer_json: result }
+                (WireOperationOutcome::Confirmed { value, answer_json: result }, false)
             }
-            OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
-            OutboxOutcome::Discarded => WireOperationOutcome::Ended { cause: super::EndCause::Discarded },
-            OutboxOutcome::Ended(cause) => WireOperationOutcome::Ended { cause },
+            OutboxOutcome::Rejected { error } => (WireOperationOutcome::Rejected { failure: failure_of(&error) }, false),
+            OutboxOutcome::Failed { error } => (WireOperationOutcome::Rejected { failure: failure_of(&error) }, true),
+            OutboxOutcome::Discarded => (WireOperationOutcome::Ended { cause: super::EndCause::Discarded }, false),
+            OutboxOutcome::Ended(cause) => (WireOperationOutcome::Ended { cause }, false),
         })
     }
 

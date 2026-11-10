@@ -63,6 +63,8 @@ pub struct OutboxState {
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
+    /// The waiters of `OutcomeDiscarding` among the `discard_waiters`, with the error of the failed cycle they report.
+    pub(super) discard_outcomes: BTreeMap<ReplyId, String>,
     pub(super) outcome_waiters: Vec<(OpId, ReplyId)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
@@ -117,6 +119,7 @@ impl OutboxState {
             submit_replies: BTreeMap::new(),
             retry_waiters: Vec::new(),
             discard_waiters: Vec::new(),
+            discard_outcomes: BTreeMap::new(),
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
             expiry: BTreeMap::new(),
@@ -571,8 +574,12 @@ impl OutboxState {
         if let Some(reply) = self.submit_replies.remove(&op_id) {
             Self::reply(fx, reply, answer.clone());
         }
-        for reply in Self::take_waiters(&mut self.retry_waiters, op_id).into_iter().chain(Self::take_waiters(&mut self.discard_waiters, op_id)) {
+        for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
             Self::reply(fx, reply, answer.clone());
+        }
+        for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
+            let answer = self.discard_answer(reply, answer.clone());
+            Self::reply(fx, reply, answer);
         }
     }
 
@@ -608,7 +615,7 @@ impl OutboxState {
         let targeted = answered.or_else(|| match &input {
             OutboxInput::RetryDue { op_id, .. } => Some(*op_id),
             OutboxInput::Retry { model, row_id, action, .. } | OutboxInput::Discard { model, row_id, action, .. } => self.open_on_row(model, row_id, action.as_deref()),
-            OutboxInput::Outcome { receipt, .. } => Some(receipt.op_id),
+            OutboxInput::Outcome { receipt, .. } | OutboxInput::OutcomeDiscarding { receipt, .. } => Some(receipt.op_id),
             _ => None,
         });
         if let Some(op_id) = targeted { if self.member_removals.get(&op_id).is_some_and(|pending| !pending.in_flight && !pending.land_after_storage) { self.store_member(op_id, fx); } }
@@ -625,7 +632,7 @@ impl OutboxState {
             self.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Rejected(RejectReason::Storage(error.clone()))), fx);
             return;
         }
-        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::OutcomeDiscarding { reply, .. }) = (&self.queue_error, &input) {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -659,6 +666,7 @@ impl OutboxState {
             OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            OutboxInput::OutcomeDiscarding { receipt, reply } => self.outcome_discarding(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
@@ -710,7 +718,7 @@ impl StateOwner for Outbox {
                 _ => {}
             }
             match &input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::OutcomeDiscarding { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),
                 OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Closed), &mut fx),
                 _ => {}

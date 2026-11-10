@@ -590,6 +590,12 @@ impl TransferState {
     }
 
     fn handle(&mut self, input: TransferInput, fx: &mut Fx) {
+        let from = fx.len();
+        self.handle_input(input, fx);
+        if !self.discard_outcomes.is_empty() { self.tag_discard_outcomes(from, fx); }
+    }
+
+    fn handle_input(&mut self, input: TransferInput, fx: &mut Fx) {
         if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
@@ -622,6 +628,7 @@ impl TransferState {
             TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            TransferInput::OutcomeDiscarding { receipt, reply } => self.outcome_discarding(receipt, reply, fx),
             TransferInput::StatusInterestPlus { key, stream_id } => self.interest_plus(key, stream_id, fx),
             TransferInput::StatusInterestMinus { key, stream_id } => self.interest_minus(&key, stream_id),
             TransferInput::Committed(committed) => self.committed((committed.batch, committed.revision, committed.shown), fx),
@@ -675,7 +682,7 @@ impl TransferState {
                 self.replay_held(fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::OutcomeDiscarding { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -726,7 +733,7 @@ impl TransferState {
         for input in std::mem::take(&mut self.held) {
             match input {
                 TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
-                TransferInput::Outcome { reply: id, .. } => {
+                TransferInput::Outcome { reply: id, .. } | TransferInput::OutcomeDiscarding { reply: id, .. } => {
                     let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
                     reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None))
                 }

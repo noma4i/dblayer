@@ -254,6 +254,8 @@ pub enum TransferInput {
     RetryOutcome { cycles: Vec<(TransferId, CycleId)>, result: Result<i64, Fault> },
     DiscardOutcome { key: Key, result: Result<(), Fault> },
     Outcome { receipt: Receipt, reply: ReplyId },
+    /// `Outcome` of D-286 with `discard_on_failure`: a `Failed` cycle of this receipt is discarded by the existing `Discard` of its transfer and the reply is `Outcome(Rejected{error})` after the discard answered; any other state answers as `Outcome`.
+    OutcomeDiscarding { receipt: Receipt, reply: ReplyId },
     /// A `Blob` stream follows the key `model:row:action`, also before a transfer exists.
     StatusInterestPlus { key: Key, stream_id: StreamId },
     StatusInterestMinus { key: Key, stream_id: StreamId },
@@ -548,6 +550,8 @@ pub struct TransferState {
     pub online: Option<bool>,
     pub saving: bool,
     pub slots: u32,
+    /// The waiters of `OutcomeDiscarding` with the error of the failed cycle they report.
+    pub(super) discard_outcomes: BTreeMap<ReplyId, String>,
     pub phase: Phase,
     pub transfers: BTreeMap<TransferId, Transfer>,
     pub completed: std::collections::HashMap<TransferId, CycleOutcomes>,
@@ -600,6 +604,7 @@ impl TransferState {
             online: None,
             saving: false,
             slots,
+            discard_outcomes: BTreeMap::new(),
             phase: Phase::Restoring,
             transfers: BTreeMap::new(),
             completed: std::collections::HashMap::new(),

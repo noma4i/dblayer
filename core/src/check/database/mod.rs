@@ -68,6 +68,7 @@ pub(super) fn error_kind(error: &DbError) -> &'static str {
         DbError::Graphql { .. } => "graphql",
         DbError::Session { .. } => "session",
         DbError::Closed { .. } => "closed",
+        DbError::Rejected { .. } => "rejected",
         DbError::CorruptManifest { .. } => "corrupt_manifest",
         DbError::NotOpen { .. } => "not_open",
     }

@@ -53,7 +53,7 @@ pub fn user_agent(application: Option<String>) -> String { crate::transport::use
 pub use database::{Config, Database, EdgeRow, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
-pub use write::FileBytes;
+pub use write::{Confirmed, FileBytes};
 pub use encrypted::{fetch_server_config, fetch_server_config_with_clock, FetchPorts, CredentialStore, EncryptedHttp, RetryProgress, RetrySubscription};
 pub(crate) use encrypted::session_failure;
 pub use crate::transport::SessionCode;
@@ -119,6 +119,9 @@ pub enum DbError {
     /// The database is closed.
     #[error("closed: {detail}")]
     Closed { detail: String },
+    /// The server refused the operation: `kept` is true when the failed intent stays for `retry` or `discard`, false when it was rolled back.
+    #[error("rejected {}: {}", failure.kind, failure.message)]
+    Rejected { failure: wire::WireFailure, kept: bool },
     #[error("corrupt manifest: {detail}")]
     CorruptManifest { detail: String },
     /// No database was opened yet.
