@@ -9,14 +9,14 @@ async fn confirmed_group(rig: &Rig) -> crate::ffi::WireRow {
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap().into_iter().next().unwrap()
 }
 
 async fn remove_member(rig: &Rig, id: &str) {
     let epoch = rig.database.session_epoch();
     let receipt = bound(rig.database.act(epoch, "Group".into(), id.into(), "remove_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -29,7 +29,7 @@ async fn joining_multiple_members_keeps_each_once_in_order() {
     world.set_members("JOINED", &["u1", "u2", "u3", "u4", "u5"]);
     bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     let removed = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "remove_member".into(), "{}".into(), json!({"userIds":["u4","u5"]}).to_string())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(removed)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(removed, false)).await.is_ok());
     let hold = world.hold_next("AddMember");
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4","u5","u4"]}).to_string())).await.unwrap();
     hold.entered().await;
@@ -37,7 +37,7 @@ async fn joining_multiple_members_keeps_each_once_in_order() {
     let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert_eq!(ids, ["u1", "u2", "u3", "u4", "u5"]);
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.database.close_now();
 }
 
@@ -53,7 +53,7 @@ async fn boundary_receipt_orders() {
     hold.release();
     let first = bound(rig.database.outcome(receipt.clone())).await.unwrap();
     let leaving = bound(rig.database.act(epoch, "Group".into(), group.id, "leave".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(leaving, false)).await.is_ok());
     let second = bound(rig.database.outcome(receipt)).await.unwrap();
     assert!(matches!(first, crate::ffi::WireOperationOutcome::Confirmed { value: Some(_), .. }));
     assert_eq!(first, second);
@@ -106,7 +106,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     mutation.entered().await;
     let receipt = bound(acting).await.unwrap().unwrap();
     mutation.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     old.release();
     bound(refreshing).await.unwrap().unwrap();
     let shown = async {
@@ -146,10 +146,10 @@ async fn react_then_undo_keeps_the_other_users_reaction() {
     let optimistic = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(optimistic.cells[3], other);
     first.release();
-    assert!(matches!(bound(rig.database.outcome(first_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(first_receipt, false)).await.is_ok());
     second.entered().await;
     second.release();
-    assert!(matches!(bound(rig.database.outcome(second_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(second_receipt, false)).await.is_ok());
     let row = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(row.cells[3], other);
     rig.database.close_now();
@@ -172,7 +172,7 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
     assert!(bound(rig.database.read_row(epoch, "Message".into(), id.clone())).await.unwrap().is_some());
     if retry {
         let retry_receipt = bound(rig.database.retry(epoch, "Message".into(), id.clone(), None, None)).await.unwrap();
-        assert!(matches!(bound(rig.database.outcome(retry_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+        assert!(bound(rig.database.confirmed(retry_receipt, false)).await.is_ok());
     } else {
         bound(rig.database.discard(epoch, "Message".into(), id, None)).await.unwrap();
     }
@@ -209,7 +209,7 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     second.entered().await;
     second.release();
     let leaving = bound(leaving).await.unwrap().unwrap();
-    assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(leaving, false)).await.is_ok());
     old.release();
     bound(reading).await.unwrap().unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params}).to_string();
@@ -296,8 +296,8 @@ async fn an_offline_action_and_a_message_are_each_sent_once_after_reconnect() {
     assert!(receipt.optimistic_value.is_some());
     assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (0, 0));
     rig.database.set_online(true).unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    assert!(matches!(bound(rig.database.outcome(action)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(action, false)).await.is_ok());
     assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (1, 1));
     rig.database.close_now();
 }
@@ -348,7 +348,7 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
         bound(reading).await.unwrap().unwrap();
         let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
         assert_eq!(ids.contains(&"u4".to_string()), !removing, "{action}: an older read changed confirmed membership");
-        if !answer_first { mutation.release(); assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. })); }
+        if !answer_first { mutation.release(); assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok()); }
         rig.database.close_now();
     }
 }
@@ -411,7 +411,7 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     hold.entered().await;
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     let edits = loop {
         let delivery = crate::test_wait::within_secs(20, deliveries.recv()).await.expect("a delta that swaps the temporary id");
         if let crate::ffi::ReadValue::Delta { edits, .. } = delivery.value {

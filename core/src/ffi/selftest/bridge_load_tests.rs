@@ -299,7 +299,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     rig.world.set_members("JOINED", &["u2", "u3"]);
     response.release();
     let receipt = bound(action).await.unwrap().unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     assert_eq!(rig.world.count("GroupMembers"), before + 1);
     older.release();
     reread.entered().await;

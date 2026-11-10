@@ -2,7 +2,6 @@ use serde_json::{json, Value};
 
 use super::nested_storage_tests::wrapper_models;
 use super::rig_tests::{bound, Fault, Rig, World};
-use crate::ffi::WireOperationOutcome;
 
 const DEFINITIONS: &str = r#"[{"name":"MediaMarker","document":"query MediaMarker($chatId: ID!, $upToSequence: Int!) { node(id: $chatId) { mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail($chatId: ID!, $afterSequence: Int!, $first: Int, $after: String) { node(id: $chatId) { messages(afterSequence: $afterSequence, first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"},{"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}]"#;
 
@@ -58,7 +57,7 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     let ids = |rows: Vec<crate::ffi::wire::WireRow>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
     assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.clone()))).await.unwrap()), ["v1"]);
     let receipt = bound(rig.database.act(epoch, "MediaMessage".into(), "v1".into(), "like".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     bound(rig.database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone(), false)).await.unwrap();
     assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap()), ["v2"], "the stale window was not read again after the mutation");
     assert_eq!(requests(&rig, "ChatMedia"), 2);

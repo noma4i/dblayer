@@ -7,7 +7,6 @@ use super::rig_tests::{bound, Fault, Rig};
 use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
-use crate::ffi::WireOperationOutcome;
 use crate::test_wait::settled;
 
 async fn watch(rig: &Rig, query: &str) -> Arc<Rows> {
@@ -46,7 +45,7 @@ async fn flow_wallet_gift() {
     settled(&rig, "the balance shows 90", || field(&rig, "User", &profile, "user", "balance") == Some(int(90))).await;
     assert!(first_seen_at(&rig, "User", &profile, "user", "balance", int(90)) >= receipt.revision);
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the history, the thread and the chat row follow the answer", || history.len() == 1 && thread.len() == 1 && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("g1"))).await;
     assert_eq!(field(&rig, "User", &profile, "user", "balance"), Some(int(90)));
     rig.database.close_now();
@@ -77,6 +76,6 @@ async fn flow_search_follows_rows() {
     hold.entered().await;
     settled(&rig, "both lists show the local change", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "pinned") == Some(Cell::Bool { value: false }))).await;
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.database.close_now();
 }

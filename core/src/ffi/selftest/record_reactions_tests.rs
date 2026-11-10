@@ -7,7 +7,7 @@ use super::nested_storage_tests::wrapper_models;
 use super::rig_tests::{bound, Fault, Gate, Rig, World};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::{Cell, WireRow};
-use crate::ffi::{CommandRequest, WireOperationOutcome, WireOperationReceipt, WireSyncState};
+use crate::ffi::{CommandRequest, WireOperationReceipt, WireSyncState};
 use crate::test_wait::settled;
 
 const OPERATIONS: &str = r#"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt reactions { body userId } } }"},{"name":"RecordReact","document":"mutation RecordReact($id: ID!, $reactionBody: String!, $userId: ID!) { recordReact(id: $id, reactionBody: $reactionBody, userId: $userId) { id containerId authorId text createdAt reactions { body userId } } }"}]"#;
@@ -39,7 +39,7 @@ impl Session {
         drop(rig.database.watch_query(r#"{"model":"Record"}"#, list.clone()));
         let values = json!({"containerId":"c1","authorId":"u1","text":"hello"}).to_string();
         let sent = bound(rig.database.send(CommandRequest { epoch, model: "Record".into(), values_json: values, args_json: "{}".into(), upload: None })).await.unwrap();
-        assert!(matches!(bound(rig.database.outcome(sent)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+        assert!(bound(rig.database.confirmed(sent, false)).await.is_ok());
         settled(&rig, "the confirmed record is listed", || list.0.lock().unwrap().iter().any(|row| row.id == "x1")).await;
         Session { rig, epoch, list }
     }
@@ -78,10 +78,10 @@ async fn react_then_undo_keeps_the_other_users_reaction_of_a_record() {
     let undo = session.react("", "u1").await;
     assert_eq!(session.reactions(&undo.optimistic_value.clone().unwrap()), vec![pair("u2", "B")]);
     first.release();
-    assert!(matches!(bound(session.rig.database.outcome(one)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(session.rig.database.confirmed(one, false)).await.is_ok());
     second.entered().await;
     second.release();
-    assert!(matches!(bound(session.rig.database.outcome(undo)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(session.rig.database.confirmed(undo, false)).await.is_ok());
     settled(&session.rig, "the other reaction stays", || session.reactions(&session.shown()) == vec![pair("u2", "B")]).await;
     session.rig.database.close_now();
 }
@@ -129,7 +129,7 @@ async fn a_reaction_with_a_delayed_answer_shows_as_unsent_before_the_answer_and_
         row.sync.state != WireSyncState::Synced && session.reactions(&row) == vec![pair("u1", "C")]
     }).await;
     hold.release();
-    assert!(matches!(bound(session.rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(session.rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&session.rig, "the row is synced", || session.shown().sync.state == WireSyncState::Synced).await;
     session.rig.database.close_now();
 }

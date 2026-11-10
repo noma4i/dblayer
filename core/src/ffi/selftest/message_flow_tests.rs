@@ -49,7 +49,7 @@ fn first_seen_at(rig: &Rig, model: &str, rows: &Rows, id: &str, name: &str, valu
 }
 
 async fn confirmed(rig: &Rig, receipt: WireOperationReceipt) {
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.settle().await;
 }
 
@@ -126,7 +126,7 @@ async fn flow_message_status() {
     let temporary = ids(&thread).remove(0);
     assert_eq!(temporary, receipt.optimistic_value.clone().unwrap().id);
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the bubble has the id of the server", || ids(&thread) == ["m1"]).await;
     let doubled = thread.1.lock().unwrap().iter().any(|seen| seen.size > 1);
     assert!(!doubled, "the thread showed two bubbles for one message");

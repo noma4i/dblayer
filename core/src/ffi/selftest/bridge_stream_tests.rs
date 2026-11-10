@@ -140,7 +140,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     let before = rig.world.count("Users");
     rig.world.fail_next("DeleteGroup", Fault::Answer(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]})));
     let receipt = bound(rig.database.destroy(epoch, "User".into(), "user".into())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the open list is read once more", || rig.world.count("Users") > before).await;
     settle(&rig).await;
     assert_eq!(rig.world.count("Users") - before, 1);

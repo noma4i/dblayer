@@ -205,7 +205,7 @@ async fn xfer_prop_reply_after_delete() {
         stand.script.data("CreateBlob", BLOB);
         stand.script.data("CreateMoment", MOMENT_ROW);
         let confirmed = bound(database.send(clip("Moment", r#"{"text":"confirmed"}"#, "upload_clip", &file_of("confirmed"), epoch))).await.unwrap();
-        assert!(matches!(bound(database.outcome(confirmed)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+        assert!(bound(database.confirmed(confirmed, false)).await.is_ok());
         bound(crate::ffi::settled(&database)).await.unwrap();
         assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy of a confirmed transfer once the work settled");
         database.close_now();

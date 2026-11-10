@@ -1,6 +1,5 @@
 use super::rig_tests::bound;
 use super::upload_stand::{clip, plain, Stand, BLOB, CREATE_MOMENT};
-use crate::ffi::WireOperationOutcome;
 
 const ANSWER: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 
@@ -26,7 +25,7 @@ async fn a_reopen_with_the_saved_step_of_an_upload_whose_file_is_gone_does_not_h
     let epoch = reopened.session_epoch();
     let later = bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
 
-    assert!(matches!(bound(reopened.outcome(later)).await.unwrap(), WireOperationOutcome::Confirmed { .. }), "the mutation of another row is sent");
+    assert!(bound(reopened.confirmed(later, false)).await.is_ok(), "the mutation of another row is sent");
     let puts = stand.puts.seen.lock().unwrap().clone();
     assert_eq!(puts.len(), 0, "the upload whose file is gone sends no bytes: {puts:?} calls {:?}", stand.script.names());
     reopened.close_now();

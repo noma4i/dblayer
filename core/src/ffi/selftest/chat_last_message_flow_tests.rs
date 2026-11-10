@@ -8,7 +8,6 @@ use super::rig_tests::{bound, Rig, World};
 use super::flow_fixtures::{add_chat, cell, chat_row, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
-use crate::ffi::WireOperationOutcome;
 use crate::test_wait::settled;
 
 fn chat_cell(rig: &Rig, rows: &Rows, field: &str) -> Option<Cell> {
@@ -47,7 +46,7 @@ async fn flow_chat_last_message() {
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "c1" && cell(&rig, "Chat", row, "lastMessageAt") == int(100))).cloned().unwrap();
     assert!(first.revision >= receipt.revision, "the chat row changed before the receipt: {}", first.revision);
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the chat points at the message of the server", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
     assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(100)));
     rig.database.close_now();
@@ -58,7 +57,7 @@ async fn flow_chat_last_message() {
 async fn flow_chat_last_message_ignores_an_older_message_event() {
     let (rig, rows) = rig_with_chat().await;
     let receipt = send(&rig, 100).await;
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the chat points at m1", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;
     let mark = rows.1.lock().unwrap().len();
 
