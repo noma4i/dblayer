@@ -304,3 +304,5 @@ D133	snapshot-second-epoch	core	a_run_and_a_load_after_reset_and_login_end	green
 D288a	temp-param-alias	core	win_node_temp_alias_permutations	regression	-	coordinator D-288
 D288b	deferred-parent-swap	core	dlv_deferred_parent_swap_wakes	regression	-	coordinator D-288
 C62301	win-response-limit-permanent	core	win_response_limit_permanent	green	-	coordinator 6.23.0 cells
+C62401	confirmed-discard-storage-error	core	out_outcome_discard_storage_error	green	-	coordinator 6.24.0 cells
+C62402	confirmed-before-failure-discard	core	out_confirmed_before_failure_discard	green	-	coordinator 6.24.0 cells
