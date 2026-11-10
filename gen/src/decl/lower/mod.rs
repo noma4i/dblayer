@@ -458,8 +458,23 @@ pub(crate) fn lower_uploads(nodes: &[UploadsNode], models: &[ModelDecl], errors:
                     }
                 };
                 let parts = (part("initiate", &mut cx), part("presign", &mut cx), part("complete", &mut cx), part("abort", &mut cx));
+                let mut roots = std::collections::HashMap::new();
+                if let Some(pair) = line.opt(&mut cx, "roots") {
+                    if let Some(entries) = hash_pairs(&mut cx, &pair.value, "`roots`") {
+                        for entry in entries {
+                            if !["initiate", "presign", "complete"].contains(&entry.key.as_str()) {
+                                cx.fail(Pos { line: entry.line, column: entry.column }, format!("unknown multipart root `{}`", entry.key));
+                            } else if let Some(root) = path(&mut cx, &entry.value, "multipart root") {
+                                if roots.insert(entry.key.as_str(), root.item).is_some() { cx.fail(Pos { line: entry.line, column: entry.column }, format!("duplicate multipart root `{}`", entry.key)); }
+                            }
+                        }
+                    }
+                }
                 line.finish(&mut cx);
-                if let (Some(initiate), Some(presign), Some(complete), Some(abort)) = parts {
+                if let (Some(mut initiate), Some(mut presign), Some(mut complete), Some(abort)) = parts {
+                    initiate.root_path = roots.remove("initiate");
+                    presign.root_path = roots.remove("presign");
+                    complete.root_path = roots.remove("complete");
                     if steps.multipart.replace(MultipartOperations { initiate, presign, complete, abort }).is_some() {
                         cx.fail(line.pos, "`multipart` is declared twice");
                     }
