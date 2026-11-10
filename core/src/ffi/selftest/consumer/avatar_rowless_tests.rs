@@ -39,18 +39,24 @@ async fn operations(stand: &Stand) -> Vec<OperationInfo> {
 /// transfer.md xfer_accept_rowless, xfer_rowless_confirmed: CreateBlob, PUT and UserPhotoUpdate run in this order with no CurrentUser row, the receipt shows no optimistic row, and the final answer lands the row and carries the typed answer.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_rowless_upload() {
-    let stand = Stand::open().await;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+    stand.sign_in().await;
     let epoch = stand.database.session_epoch();
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     stand.answer("UserPhotoUpdate", good());
     stand.script_put(200, Some("etag"));
     stand.hold(&["CreateBlob", "UserPhotoUpdate"]);
-    let directory = tempfile::tempdir().unwrap();
     let rows = stand.entity("CurrentUser", "u1", ReadFetch::Never);
     let (me, landed) = (crate::identity::RowId::new("me").unwrap(), crate::identity::RowId::new("u1").unwrap());
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none() && stand.database.db.find("CurrentUser", &me).unwrap().is_none(), "no CurrentUser row before the upload");
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     assert!(receipt.optimistic_value.is_none(), "an upload without a row shows no optimistic row");
+    let items = operations(&stand).await;
+    let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::Path::new(url.strip_prefix("file://").unwrap());
+    assert_eq!(std::fs::read(copy).unwrap(), b"jpeg-bytes");
     arrived(&stand, "CreateBlob").await;
     assert_eq!((stand.requests("CreateBlob"), stand.puts(), stand.requests("UserPhotoUpdate")), (1, 0, 0), "CreateBlob is the first step: no PUT and no final mutation yet");
     stand.release(&["CreateBlob"]);
@@ -65,6 +71,7 @@ async fn consumer_avatar_rowless_upload() {
     stand.settle().await;
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_some(), "the row of the answer is in the base");
     assert_eq!(stand.text_of(&rows, "CurrentUser", "u1", "fullName").as_deref(), Some("Ann"), "the row of the answer is shown");
+    assert!(operations(&stand).await.is_empty());
     let sent = stand.asked().into_iter().find(|(operation, _)| operation == "UserPhotoUpdate").unwrap().1;
     assert_eq!((sent["input"]["signedId"].as_str(), sent["input"]["createInitialMoment"].as_bool()), (Some("signed-avatar"), Some(true)), "the signed id of the file goes into the input: {sent}");
     stand.database.close_now();
