@@ -239,30 +239,25 @@ impl<'a> Reader<'a> {
             include_str!("sql/rows/scope_edges.sql"),
         )?;
         let mut read = EdgeRead::default();
-        for row_id in row_ids {
-            statement.reset_status(StatementStatus::VmStep);
-            statement.reset_status(StatementStatus::FullscanStep);
-            let mut values = Vec::new();
-            let mut member = false;
-            let mut rows = statement.query(params![model, scope_key, row_id])?;
-            while let Some(row) = rows.next()? {
-                member = true;
-                let Some(name) = row.get::<_, Option<String>>(0)? else { continue };
-                let value = match (row.get::<_, Option<i64>>(1)?, row.get::<_, Option<f64>>(2)?, row.get::<_, Option<String>>(3)?) {
+        let ids = serde_json::to_string(row_ids).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        statement.reset_status(StatementStatus::VmStep);
+        statement.reset_status(StatementStatus::FullscanStep);
+        let mut rows = statement.query(params![model, scope_key, ids])?;
+        while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let values = read.members.entry(id).or_default();
+                let Some(name) = row.get::<_, Option<String>>(1)? else { continue };
+                let value = match (row.get::<_, Option<i64>>(2)?, row.get::<_, Option<f64>>(3)?, row.get::<_, Option<String>>(4)?) {
                     (Some(whole), _, _) => EdgeValue::Whole(whole),
                     (_, Some(fraction), _) => EdgeValue::Fraction(fraction),
                     (_, _, Some(text)) => EdgeValue::Text(text),
                     _ => continue,
                 };
                 values.push((name, value));
-            }
-            drop(rows);
-            read.steps += usize::try_from(statement.get_status(StatementStatus::VmStep)).unwrap_or_default();
-            read.scans += usize::try_from(statement.get_status(StatementStatus::FullscanStep)).unwrap_or_default();
-            if member {
-                read.members.insert(row_id.to_string(), values);
-            }
         }
+        drop(rows);
+        read.steps += usize::try_from(statement.get_status(StatementStatus::VmStep)).unwrap_or_default();
+        read.scans += usize::try_from(statement.get_status(StatementStatus::FullscanStep)).unwrap_or_default();
         Ok(read)
     }
 
