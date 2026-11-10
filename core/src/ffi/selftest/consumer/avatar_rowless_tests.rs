@@ -111,7 +111,7 @@ async fn consumer_avatar_reopen_discards_pending_behind_failed() {
     assert!(!copy.exists(), "the pending upload copy is removed");
     assert_eq!(reopened.requests("UserPhotoUpdate"), 0);
     let epoch = reopened.database.session_epoch();
-    bound(reopened.database.discard(epoch, "CurrentUser".into(), "singleton".into(), Some("update_photo".into()))).await.unwrap();
+    bound(reopened.database.discard(epoch, "CurrentUser".into(), "singleton".into(), None)).await.unwrap();
     reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     reopened.answer("UserPhotoUpdate", good());
     reopened.script_put(200, Some("etag"));
