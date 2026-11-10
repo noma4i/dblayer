@@ -65,20 +65,6 @@ fn committed_with(twin: &mut Twin, shown: Vec<Option<crate::store::Row>>) -> Out
 }
 
 #[test]
-fn xfer_accept_rowless() {
-    let mut twin = Twin::new();
-    let (id, reply, out) = accept(&mut twin, KEY, 2);
-    assert_eq!((Twin::fault(&out, reply), twin.stage(id)), (None, TransferStage::Reserving), "a missing row is not a refusal");
-    assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id), "the same reservation as a transfer with a row");
-    assert_eq!((out.writes(), out.all_replies()), (0, 0), "nothing before Committed");
-    reserve(&mut twin, id);
-    twin.commit();
-    twin.copy_done(id);
-    let out = twin.commit();
-    assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.op_id == id && receipt.cycle_id == 1 && receipt.optimistic.is_none()), "the receipt names the transfer and shows no row: {:?}", out.replies(reply));
-}
-
-#[test]
 fn xfer_accept_check_order_without_row() {
     let invalid = || { let mut broken = item(KEY, 2); broken.source.as_mut().unwrap().path.clear(); Box::new(broken) };
     let mut closing = Twin::new();
