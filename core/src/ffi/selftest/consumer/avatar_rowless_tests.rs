@@ -107,8 +107,7 @@ async fn consumer_avatar_reopen_discards_pending_behind_failed() {
     reopened.sign_in().await;
     reopened.settle().await;
     let items = operations(&reopened).await;
-    let restored = reopened.database.db.read_restore().unwrap();
-    assert_eq!(items.len(), 1, "only the failed intent remains: {items:?}, restored: {:?}", restored.ops);
+    assert_eq!(items.len(), 1, "only the failed intent remains: {items:?}");
     assert!(!copy.exists(), "the pending upload copy is removed");
     assert_eq!(reopened.requests("UserPhotoUpdate"), 0);
     let epoch = reopened.database.session_epoch();
