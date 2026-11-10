@@ -97,6 +97,8 @@ async fn chain_rig() -> (Rig, std::sync::Arc<ChainRows>, std::sync::Arc<crate::f
     }).await;
     let document = include_str!("../../../../fixtures/operations/queries/media.graphql");
     rig.database.register_operations(json!([{"name":"chatMedia", "document":document},{"name":"chatMediaState", "document":document}]).to_string()).await.unwrap();
+    rig.world.answer_with("chatMedia", json!({"data":{}}));
+    rig.world.answer_with("chatMediaState", json!({"data":{}}));
     rig.world.fail_next("chatMediaState", chain_marker("1", 0, 6));
     rig.world.fail_next("chatMedia", chain_page(&[1, 2], true));
     rig.world.fail_next("chatMedia", chain_page(&[3, 4], true));
