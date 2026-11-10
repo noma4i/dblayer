@@ -169,6 +169,8 @@ async fn admission_group(group: usize) {
     let closed_present = bound(closed_rig.database.send(message(closed_epoch, "present", 1))).await.unwrap().optimistic_value.map(|row| row.id).unwrap_or_default();
     let _ = bound(closed_rig.database.close_database()).await;
     let directory = tempfile::tempdir().unwrap();
+    let attach_source = directory.path().join("attachment.bin");
+    std::fs::write(&attach_source, [1]).unwrap();
     let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
     let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
     let _ = closed_files.close_database().await;
@@ -195,7 +197,7 @@ async fn admission_group(group: usize) {
             (false, false) => (rig.database.clone(), epoch, present.clone()),
             (false, true) => (closed_rig.database.clone(), closed_epoch, closed_present.clone()),
         };
-        let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into(), action: "upload".into(), source_path: String::new() };
+        let mut args = Args { epoch, model: if FILE_CALLS.contains(&name) { "Files" } else { "Message" }.into(), row, field: "photo".into(), local_path: "draft".into(), local_value: "{\"text\":\"x\"}".into(), values: "{\"chatId\":\"c1\",\"text\":\"t\",\"at\":1}".into(), action: "upload".into(), source_path: attach_source.to_string_lossy().into_owned() };
         if RELATION_CALLS.contains(&name) { args.model = "User".into(); args.row = "user".into(); }
         if name == "set_ephemeral" { args.model = "User".into(); args.row = "user".into(); args.values = "{\"typing\":true}".into(); }
         if !closed {
