@@ -1,64 +1,77 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const TAG: usize = std::mem::size_of::<u64>();
 
 struct Counting;
 
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
+static MEASUREMENTS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
-    static MEASURED: Cell<bool> = const { Cell::new(false) };
+    static MEASUREMENT: Cell<u64> = const { Cell::new(0) };
     static LIVE: Cell<usize> = const { Cell::new(0) };
     static PEAK: Cell<usize> = const { Cell::new(0) };
 }
 
-fn grown(size: usize) {
-    if !MEASURED.get() { return; }
+fn tagged(layout: Layout) -> Layout {
+    Layout::from_size_align(layout.size() + TAG, layout.align()).expect("a block with its tag fits the address space")
+}
+
+unsafe fn mark(block: *mut u8, size: usize) {
+    let measurement = MEASUREMENT.get();
+    unsafe { block.add(size).cast::<u64>().write_unaligned(measurement) };
+    if measurement == 0 { return; }
     let live = LIVE.get() + size;
     LIVE.set(live);
     if live > PEAK.get() { PEAK.set(live); }
 }
 
-fn shrunk(size: usize) {
-    if MEASURED.get() { LIVE.set(LIVE.get().saturating_sub(size)); }
+unsafe fn unmark(block: *mut u8, size: usize) {
+    let owner = unsafe { block.add(size).cast::<u64>().read_unaligned() };
+    if owner != 0 && owner == MEASUREMENT.get() { LIVE.set(LIVE.get() - size); }
 }
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let block = unsafe { System.alloc(layout) };
-        if !block.is_null() { grown(layout.size()); }
+        let block = unsafe { System.alloc(tagged(layout)) };
+        if !block.is_null() { unsafe { mark(block, layout.size()) }; }
         block
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let block = unsafe { System.alloc_zeroed(layout) };
-        if !block.is_null() { grown(layout.size()); }
+        let block = unsafe { System.alloc_zeroed(tagged(layout)) };
+        if !block.is_null() { unsafe { mark(block, layout.size()) }; }
         block
     }
 
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
-        shrunk(layout.size());
-        unsafe { System.dealloc(block, layout) };
+        unsafe { unmark(block, layout.size()) };
+        unsafe { System.dealloc(block, tagged(layout)) };
     }
 
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        let next = unsafe { System.realloc(block, layout, size) };
-        if !next.is_null() {
-            shrunk(layout.size());
-            grown(size);
+        unsafe { unmark(block, layout.size()) };
+        let next = unsafe { System.realloc(block, tagged(layout), size + TAG) };
+        if next.is_null() {
+            unsafe { mark(block, layout.size()) };
+        } else {
+            unsafe { mark(next, size) };
         }
         next
     }
 }
 
-/// Peak of the bytes the calling thread holds above its level at the start of the scenario.
+/// Peak of the bytes the calling thread allocates inside the scenario and still holds. Blocks from before the scenario and from other threads do not count, in either direction.
 pub(crate) fn measure_peak<T>(scenario: impl FnOnce() -> T) -> (T, usize) {
-    assert!(!MEASURED.get(), "one measurement per thread at a time");
+    assert_eq!(MEASUREMENT.get(), 0, "one measurement per thread at a time");
     LIVE.set(0);
     PEAK.set(0);
-    MEASURED.set(true);
+    MEASUREMENT.set(MEASUREMENTS.fetch_add(1, Ordering::Relaxed) + 1);
     let result = scenario();
-    MEASURED.set(false);
+    MEASUREMENT.set(0);
     (result, PEAK.get())
 }
 
@@ -74,4 +87,16 @@ fn measure_peak_reports_held_and_released_bytes() {
         }
     });
     assert!((BLOCK / 64..BLOCK / 32).contains(&churn), "64 blocks freed one by one peak at one block: {churn}");
+}
+
+#[test]
+fn measure_peak_ignores_the_release_of_older_blocks() {
+    const BLOCK: usize = 4 * 1024 * 1024;
+    let older = vec![1u8; BLOCK];
+    let (kept, peak) = measure_peak(move || {
+        drop(older);
+        vec![2u8; BLOCK]
+    });
+    assert!(peak >= BLOCK, "releasing an older block does not hide a new one: {peak}");
+    drop(kept);
 }

@@ -316,8 +316,9 @@ fn mem_events_flood_without_reader() {
             drop(Deliveries::step(&mut state, d::DeliveryInput::ModelGap { stream: STREAM }));
         }
     });
-    let unread = d::JOURNAL_LIMIT * (payload.len() + 256);
-    assert!(peak < 2 * unread, "100 MB of unread events hold at most the journal limit: peak={peak} bound={}", 2 * unread);
+    let slot = std::mem::size_of::<d::Value>();
+    let bound = (d::JOURNAL_LIMIT + 2) * payload.len() + 4 * d::JOURNAL_LIMIT * slot;
+    assert!(peak < bound, "100 MB of unread events hold the journal limit of payloads, its slots at double capacity and one event in flight: peak={peak} bound={bound}");
 }
 
 #[test]
