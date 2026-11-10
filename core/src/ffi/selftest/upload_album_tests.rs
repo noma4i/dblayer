@@ -18,6 +18,33 @@ const ALBUM_OPERATIONS: [(&str, &str); 3] = [
 ];
 const REFUSED_BLOB: &str = r#"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_confirmed_group_member_exact_cycle() {
+    let mut observed = Vec::new();
+    for automatic in [false, true] {
+        let stand = Stand::new();
+        let database = stand.open(None, &ALBUM_OPERATIONS).await;
+        let directory = tempfile::tempdir().unwrap();
+        let files = album_files(directory.path(), &["0.jpg", "1.jpg"], "image");
+        stand.script.data("CreateBlob", REFUSED_BLOB);
+        stand.script.data("CreateBlob", &blob(1));
+        stand.script.data("CreateAsset", r#"{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}"#);
+        let epoch = database.session_epoch();
+        let receipt = upload_batch(&database, items(&[&files[0], &files[1]], &["key-0", "key-1"], 2)).await;
+        let first = receipt.items[0].optimistic_value.id.clone();
+        let rows = watched(&database, "Asset", &first);
+        settled_showing(&database, "the refused file failed", || state_report(&stand, &database, &[first.as_str()]), || shows(&rows, WireSyncState::Failed)).await;
+        if automatic {
+            assert!(matches!(bound(database.confirmed(receipt.items[0].receipt.clone(), true)).await, Err(DbError::Rejected { kept: false, .. })));
+        } else {
+            bound(database.discard(epoch, "Asset".into(), first, Some("create_files".into()))).await.unwrap();
+        }
+        observed.push((outcomes(&database, &receipt).await, stand.script.count("CreateBlob"), stand.script.count("CreateAssets"), stand.script.variables("CreateAsset")));
+        bound(database.close_database()).await.unwrap();
+    }
+    assert_eq!(observed[0], observed[1], "confirmed discards the same group member as explicit discard");
+}
+
 fn blob(index: usize) -> String { format!(r#"{{"data":{{"blobCreate":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{index}","blobId":"b{index}"}}}}}}"#) }
 
 fn assets(rows: &[(&str, &str, usize)]) -> String {
