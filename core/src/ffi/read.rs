@@ -427,6 +427,7 @@ impl Database {
             _ if published.closed => return Err(super::command::closed()),
             State::Closing => return Err(super::command::closed()),
             State::NoSession => (SessionStanding::None, None),
+            State::Session | State::Resetting | State::StorageFailed if published.identity.is_none() => (SessionStanding::None, None),
             State::Session | State::Resetting | State::StorageFailed => (SessionStanding::Active, published.identity),
             State::Ending | State::EndingFailed => (SessionStanding::Ending, published.identity),
         };
