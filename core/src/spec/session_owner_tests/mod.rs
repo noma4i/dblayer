@@ -275,7 +275,7 @@ impl Twin {
             Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
             Input::Revoked { request_id, attempt_id, body, author_ref } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: EPOCH },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
-            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: sequenced },
+            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
