@@ -4,7 +4,6 @@ use super::stand::{message, Stand};
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::upload_wire::{WireUploadRequest, WireUploadSource};
-use crate::ffi::WireOperationOutcome;
 
 /// transfer.md Uploading x StepError temporary (xfer_step_temp) then StepOk (xfer_step_ok): a PUT answered 503 is retried by the Backoff, the next PUT answers 200, and the upload confirms after exactly two PUTs.
 #[tokio::test(flavor = "multi_thread")]
@@ -28,14 +27,14 @@ async fn xfer_scripted_put_failure() {
     let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"media":{"width":100,"height":80}}"#.into(), variables_json: "{}".into() };
     let mut armed = stand.clock.armed();
     bound(database.supply_source(epoch, "Message".into(), id.clone(), "send_file".into(), source)).await.unwrap();
-    let mut waiting = Box::pin(database.outcome(receipt));
+    let mut waiting = Box::pin(database.confirmed(receipt));
     let outcome = loop {
         tokio::select! {
             result = &mut waiting => break result.unwrap(),
             () = stand.clock.await_armed(armed) => { armed = stand.clock.armed(); stand.clock.advance(16_000); }
         }
     };
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(ref row), .. } if row.id == "m0"), "xfer_step_temp then xfer_step_ok confirm the upload: {outcome:?}");
+    assert!(matches!(outcome.value, Some(ref row) if row.id == "m0"), "xfer_step_temp then xfer_step_ok confirm the upload: {outcome:?}");
     assert_eq!(stand.puts(), 2, "xfer_step_temp retries the 503 PUT once, xfer_step_ok ends the 200 PUT");
     database.close_now();
 }
