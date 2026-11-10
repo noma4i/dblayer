@@ -88,3 +88,4 @@ macro_rules! ordered_case {
 }
 
 ordered_case!(consumer_ordered_visual_media, "Message", "visual_media", "chatMedia", r#"{"chatId":"c1"}"#, "IMAGE", false);
+ordered_case!(consumer_ordered_audio_media, "Message", "audio_media", "chatMedia", r#"{"chatId":"c1"}"#, "AUDIO", false);
