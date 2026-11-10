@@ -153,7 +153,12 @@ fn sess_prop_durable_answer() {
         let before = twin.feed(at_attempt(input.clone(), twin.aid()));
         assert!(matches!(&before[..], [RefEffect::CommitLanding { answer: Some((11, Err(stored))), .. }] if *stored == fail), "{fail:?}: the outcome is stored with the removal: {before:?}");
         assert!(!before.iter().any(|effect| matches!(effect, RefEffect::Answer { .. })), "{fail:?}: the author hears it after the commit");
-        assert!(twin.feed(committed()).contains(&answer(7, 11, permanent(fail.clone()))));
+        let after_commit = twin.feed(committed());
+        if fail == Fail::Revoked {
+            assert!(after_commit.iter().any(|effect| matches!(effect, RefEffect::ServerEnded { .. })) && !after_commit.iter().any(|effect| matches!(effect, RefEffect::Answer { .. })), "Revoked: the author learns the end through the epoch, no live answer: {after_commit:?}");
+        } else {
+            assert!(after_commit.contains(&answer(7, 11, permanent(fail.clone()))), "{fail:?}: the author hears the stored outcome: {after_commit:?}");
+        }
         let landed = twin.reference.credential.expect("the credential");
         let mut reopened = opened(open(Some((landed.digest, landed.sequence)), None, false, Secret::Present(landed.digest)));
         reopened.feed_all([Input::Restored { epoch: EPOCH, pending: None }, Input::RestoreReady { epoch: EPOCH }, Input::Online(true), Input::Tick, Input::Foreground]);
