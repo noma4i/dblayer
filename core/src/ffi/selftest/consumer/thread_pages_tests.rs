@@ -69,7 +69,7 @@ async fn consumer_thread_event_adds_after_three_pages() {
     let mut message = super::stand::message("m66", "c1", "message 66");
     message["sequenceNumber"] = json!(66);
     message["status"] = json!("SENT");
-    stand.push(&token, json!({"area":"MESSAGE", "kind":"CREATED", "entityId":"m66", "message":message}));
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"CREATED", "entityId":"m66", "parentId":"c1", "message":message}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m66"), "{event:?}");
     stand.settle().await;
@@ -224,7 +224,7 @@ async fn consumer_ordered_page_old_answer_after_delete() {
         bound(database.refresh(database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await
     });
     stand.received(received + 1).await;
-    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50"}));
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50", "parentId":"c1"}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
     settled(&stand, "the deleted message leaves the history", || !ids(&history).contains(&"m50".to_string())).await;
@@ -245,7 +245,7 @@ async fn consumer_queued_operation_server_delete() {
     let epoch = stand.database.session_epoch();
     let receipt = bound(stand.database.update(epoch, "Message".into(), "m50".into(), r#"{"body":"edited"}"#.into(), "{}".into())).await.unwrap();
     stand.received(received + 1).await;
-    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50"}));
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50", "parentId":"c1"}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
     let outcome = bound(stand.database.confirmed(receipt, false)).await;
