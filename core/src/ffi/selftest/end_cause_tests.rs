@@ -336,14 +336,12 @@ async fn outcome_after_answer() -> String {
     bound(rig.database.discard(epoch, "Message".into(), row, None)).await.unwrap();
     answer_woke(&wake).await;
     rig.database.close_now();
-    match bound(call).await {
-        Err(DbError::Closed { .. }) => "Closed".into(),
-        result => format!("{result:?}"),
-    }
+    outcome_tag(bound(call).await)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn boundary_close_after_owner_answer() {
+async fn boundary_owner_answer_survives_close() {
     let actual = (command_after_answer().await, read_after_answer().await, load_after_answer().await, outcome_after_answer().await);
-    assert_eq!(actual, ("Closed".into(), "Closed".into(), "Closed".into(), "Closed".into()));
+    let value = String::from("value (no end)");
+    assert_eq!(actual, (value.clone(), value.clone(), value, cause_tag(&EndCause::Discarded)), "an answer the owner gave before the close reaches the caller unchanged (P-BND-11, D-281)");
 }

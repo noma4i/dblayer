@@ -542,3 +542,14 @@ fn sess_calling_epoch_ended_close() {
     twin.feed(Input::Closing);
     assert!(!matches!(twin.reference.state, RefState::Calling { .. }), "Closing ends the call with Closed");
 }
+
+#[test]
+fn sess_sealing_epoch_ended_close() {
+    let mut twin = Twin::new();
+    twin.feed(call(1));
+    assert!(matches!(twin.reference.state, RefState::Sealing { .. }));
+    assert!(twin.feed(ended(EndCause::Close)).is_empty(), "an epoch ended by close leaves the sealing call to Closing");
+    assert!(matches!(twin.reference.state, RefState::Sealing { .. }), "the call is still sealing");
+    twin.feed(Input::Closing);
+    assert!(!matches!(twin.reference.state, RefState::Sealing { .. }), "Closing ends the call with Closed");
+}

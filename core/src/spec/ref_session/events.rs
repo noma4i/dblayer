@@ -131,7 +131,7 @@ impl Session {
 
     pub(super) fn on_epoch_ended(&mut self, state: State, epoch: u64, cause: EndCause, out: &mut Out) {
         match state {
-            State::Sealing { pending, .. } => {
+            State::Sealing { pending, .. } if is_ended(cause) => {
                 let error = Fail::NoSession;
                 Self::finish(out, &pending, Err(error));
                 self.refuse_queue(out, Fail::NoSession);
