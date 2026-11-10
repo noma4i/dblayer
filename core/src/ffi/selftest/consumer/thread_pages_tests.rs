@@ -273,7 +273,7 @@ async fn consumer_thread_temp_parent_swap() {
     let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
     stand.settle().await;
     assert_eq!(stand.requests("chatThread"), 0);
-    stand.answer("ChatGroupCreate", json!({"groupChatCreate":{"chat":super::stand::chat("c1", "group")}}));
+    stand.answer("ChatGroupCreate", json!({"groupChatCreate":{"skippedUserIds":[],"chat":super::stand::chat("c1", "group")}}));
     stand.answer("chatThread", page(1, 2, false, 2));
     stand.database.set_online(true).unwrap();
     settled(&stand, "the thread of the confirmed chat", || history.rows.len() == 2).await;
