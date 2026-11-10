@@ -412,10 +412,15 @@ public struct AccountScope: Sendable {
     return try MutationReceipt(database: database, wire: receipt)
   }
 
+  /// Sends the file of a record through its declared upload action. The row does not need to exist.
+  @concurrent public func upload<Model: DBModel>(_: Model.Type, id: String, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
+    let receipt = try await database.upload(epoch: epoch, model: Model.modelName, rowId: id, action: action, request: request.wire)
+    return try MutationReceipt(database: database, wire: receipt)
+  }
+
   /// Sends the file of an existing record through its declared upload action.
   @concurrent public func upload<Model: DBModel>(_ row: Model, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
-    let receipt = try await database.upload(epoch: epoch, model: Model.modelName, rowId: row.id, action: action, request: request.wire)
-    return try MutationReceipt(database: database, wire: receipt)
+    try await upload(Model.self, id: row.id, action: action, request)
   }
 
   @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {

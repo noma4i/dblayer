@@ -283,11 +283,14 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
         return MutationReceipt(database, decoder, receipt)
     }
 
-    /** Sends the file of an existing record through its declared upload action. */
-    suspend fun <Model : DBModel> upload(row: Model, action: String, request: UploadRequest, decoder: ModelDecoder<Model>): MutationReceipt<Model> {
-        val receipt = offCaller { database.upload(epoch, row.modelName, row.id, action, request.wire()) }
+    /** Sends the file of a record through its declared upload action. The row does not need to exist. */
+    suspend fun <Model : DBModel> upload(decoder: ModelDecoder<Model>, id: String, action: String, request: UploadRequest): MutationReceipt<Model> {
+        val receipt = offCaller { database.upload(epoch, decoder.modelName, id, action, request.wire()) }
         return MutationReceipt(database, decoder, receipt)
     }
+
+    /** Sends the file of an existing record through its declared upload action. */
+    suspend fun <Model : DBModel> upload(row: Model, action: String, request: UploadRequest, decoder: ModelDecoder<Model>): MutationReceipt<Model> = upload(decoder, row.id, action, request)
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): OperationReceipt<Model> =
         offCaller { OperationReceipt(database, decoder, database.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }

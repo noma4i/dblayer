@@ -395,7 +395,19 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             writeln!(out, "        return try await self.act(\"{}\", values: {values}, args: [{}], in: {scope})\n    }}", action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
-            writeln!(out, "    @concurrent public func {}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(self, action: \"{}\", request)\n    }}", identifier(&name(&action.name), true), action.name).unwrap();
+            let method = identifier(&name(&action.name), true);
+            let upload_args = standard_args(model, &action.name);
+            let singleton = singleton_relation(model).is_some();
+            let id_param = if singleton { String::new() } else { "id: String, ".to_string() };
+            let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
+            let params = if params.is_empty() { String::new() } else { format!(", {params}") };
+            writeln!(out, "    @concurrent public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        var variables_: [String: JSONValue] = [:]").unwrap();
+            for (arg, kind) in &upload_args {
+                if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
+                else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
+            }
+            writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+            writeln!(out, "    @concurrent public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
         }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
@@ -469,6 +481,16 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
             writeln!(out, "        }}").unwrap();
         }
+        for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
+            let method = identifier(&name(&action.name), false);
+            let upload_args = standard_args(model, &action.name);
+            let singleton = singleton_relation(model).is_some();
+            let id_param = if singleton { String::new() } else { ", id: String".to_string() };
+            let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
+            let params = if params.is_empty() { String::new() } else { format!(", {params}") };
+            let variables = upload_args.iter().map(|(arg, kind)| if kind.ends_with('?') { format!("if ({printed} != null) this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) } else { format!("this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) }).collect::<Vec<_>>().join("; ");
+            writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+        }
         let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);
         let args = "args_".to_string();
@@ -527,7 +549,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "    suspend fun {}({params}): MutationReceipt<{class}> = this.act({call}, {account})", identifier(&name(&action.name), false)).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
-            writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): MutationReceipt<{class}> = {ACCOUNT}.upload(this, \"{}\", request, {class})", identifier(&name(&action.name), false), action.name).unwrap();
+            writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): MutationReceipt<{class}> = {ACCOUNT}.upload({class}, id, \"{}\", request)", identifier(&name(&action.name), false), action.name).unwrap();
         }
         if !model.associations.is_empty() {
             out.push_str("    object Relations {\n");
