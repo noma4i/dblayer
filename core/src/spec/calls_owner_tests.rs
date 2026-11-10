@@ -536,6 +536,29 @@ fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usiz
 
 #[tokio::test(flavor = "multi_thread")]
 async fn call_prop_mutation_against_end_any_order() {
+    let mut offline = Twin::with(Some(false));
+    assert_eq!(offline.feed(run_mutate(1)).replies, vec![(1, Err(Fail::Offline))]);
+    for cancel in [false, true] {
+        let mut twin = Twin::with(None);
+        twin.feed(run_mutate(1));
+        let out = twin.feed(if cancel { Input::CallerCancel { reply: 1 } } else { Input::Deadline { call_id: 1 } });
+        assert_eq!(out.replies, if cancel { vec![] } else { vec![(1, Err(Fail::Network))] });
+        let late = twin.feed(Input::Snapshot(true));
+        assert!(late.effects.is_empty() && late.replies.is_empty());
+    }
+    for end in [End::Session, End::Close] {
+        for snapshot_first in [false, true] {
+            let mut twin = Twin::with(None);
+            assert!(twin.feed(run_mutate(1)).replies.is_empty());
+            if snapshot_first {
+                assert!(matches!(twin.feed(Input::Snapshot(true)).effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]));
+            }
+            let ended = twin.feed(Input::EpochEnded(end));
+            let expected = if end == End::Close { Fail::Closed } else { Fail::SessionEnded };
+            assert_eq!(ended.replies, vec![(1, Err(expected))]);
+            assert!(!ended.effects.iter().any(|effect| matches!(effect, RefEffect::Request { .. })));
+        }
+    }
     let mut permutations = Vec::new();
     orders(&mut Vec::new(), &mut vec![0, 1, 2, 3, 4], &mut permutations);
     let mut tasks = Vec::new();

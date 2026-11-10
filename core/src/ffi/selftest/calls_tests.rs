@@ -173,3 +173,75 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::EndCause::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_prop_mutation_against_end_any_order_public() {
+    let mut cases = Vec::new();
+    for end in ["reset", "close", "revoked", "logout"] {
+        for phase in ["before", "in_flight", "answered"] {
+            if end == "logout" && phase == "in_flight" { continue; }
+            cases.push(tokio::spawn(async move {
+                let rig = Rig::encrypted().await;
+                rig.login_ios("A").await;
+                let epoch = rig.database.session_epoch();
+                let gate = (phase == "in_flight").then(|| rig.world.hold_next("UnregisterDevice"));
+                let call = if let Some(gate) = &gate {
+                    let db = rig.database.clone();
+                    let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+                    gate.entered().await;
+                    Some(call)
+                } else {
+                    if phase == "answered" {
+                        assert!(bound(rig.database.run(epoch, "UnregisterDevice".into(), "{}".into())).await.is_ok());
+                    }
+                    None
+                };
+                match end {
+                    "reset" => bound(rig.database.session_reset()).await.unwrap(),
+                    "close" => rig.database.close_now(),
+                    "logout" => { bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap(); }
+                    _ => {
+                        rig.world.fail_next("MyProfile", Fault::Refuse { code: "SESSION_ENDED", confirmed: false });
+                        let _ = bound(rig.database.run(epoch, "MyProfile".into(), "{}".into())).await;
+                    }
+                }
+                let sent = rig.world.log().iter().filter(|entry| entry.operation == "UnregisterDevice").count();
+                if let Some(gate) = gate { gate.release(); }
+                let outcome = if let Some(call) = call {
+                    Some(bound(call).await.unwrap())
+                } else if phase == "before" {
+                    Some(bound(rig.database.run(epoch, "UnregisterDevice".into(), "{}".into())).await)
+                } else { None };
+                if let Some(outcome) = outcome {
+                    assert!(if end == "close" { matches!(outcome, Err(DbError::Closed { .. })) } else { matches!(outcome, Err(DbError::NoSession { .. })) }, "{end} {phase}: {outcome:?}");
+                }
+                assert_eq!(sent, usize::from(phase != "before"), "{end} {phase}");
+                if end != "close" { rig.settle().await; }
+                assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "UnregisterDevice").count(), sent, "request after {end} {phase}");
+                rig.database.close_now();
+            }));
+        }
+    }
+    for action in ["cancel", "deadline", "offline"] {
+        cases.push(tokio::spawn(async move {
+            let rig = Rig::encrypted().await;
+            rig.login_ios("A").await;
+            let epoch = rig.database.session_epoch();
+            let gate = rig.world.hold_next("UnregisterDevice");
+            let db = rig.database.clone();
+            let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+            gate.entered().await;
+            match action {
+                "cancel" => { call.abort(); assert!(bound(call).await.unwrap_err().is_cancelled()); }
+                "deadline" => { rig.clock.advance(30_000); assert!(matches!(bound(call).await.unwrap(), Err(DbError::Network { .. }))); }
+                _ => { rig.database.set_online(false).unwrap(); bound(rig.database.session_reset()).await.unwrap(); assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. }))); }
+            }
+            if action != "offline" { bound(rig.database.session_reset()).await.unwrap(); }
+            gate.release();
+            rig.settle().await;
+            assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "UnregisterDevice").count(), 1, "request after {action}");
+            rig.database.close_now();
+        }));
+    }
+    for case in cases { bound(case).await.unwrap(); }
+}
