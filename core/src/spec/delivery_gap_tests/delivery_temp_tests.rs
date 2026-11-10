@@ -39,7 +39,7 @@ fn dlv_deferred_index_other_model() {
     other.live = false;
     let mut real = other.clone();
     real.subject = "real-user".into();
-    let deferred = d::Deferred { temps: vec!["temp-1".into()], rebind: d::Rebind::new(move || signal.load(Ordering::SeqCst).then(|| real.clone())) };
+    let deferred = d::Deferred { temps: vec![("User".into(), "temp-1".into())], rebind: d::Rebind::new(move || signal.load(Ordering::SeqCst).then(|| real.clone())) };
     twin.post(d::DeliveryInput::Open { stream: STREAM + 1, view: other, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
     take(&twin.log);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
@@ -65,7 +65,11 @@ fn dlv_deferred_index_released() {
         match ending {
             "cancel" => twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 }),
             "release" => twin.post(d::DeliveryInput::Release { stream: STREAM, reader: None, now: crate::runtime::Time(0) }),
-            "sink" => twin.post(d::DeliveryInput::SinkClosed { stream: STREAM }),
+            "sink" => {
+                twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 });
+                assert!(Twin::modelled(take(&twin.log)).contains(&Effect::CloseSink));
+                twin.post(d::DeliveryInput::SinkClosed { stream: STREAM });
+            }
             "epoch" => { twin.det.end_epoch(EPOCH, Ended::SessionReset); twin.run(); }
             "closing" => { twin.det.close(); twin.run(); }
             _ => unreachable!(),
