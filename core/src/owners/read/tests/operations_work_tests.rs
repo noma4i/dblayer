@@ -126,3 +126,26 @@ fn dlv_edges_work_linear() {
     let large = edge_work(40);
     assert_eq!(small, large, "SQL query count must not grow with requested edges");
 }
+
+fn alias_work(size: usize) -> usize {
+    let db = Store::open_models(None, all_specs(), None).unwrap();
+    for index in 0..size {
+        crate::store::fixtures::put(&db, "moments", json!({"id":format!("r{index}"), "userId":"u1"}));
+        db.lock().connection.execute("INSERT INTO row_alias (model, temp, real) VALUES (?1, ?2, ?3)", rusqlite::params!["moments", format!("temp-{index}"), format!("r{index}")]).unwrap();
+    }
+    db.replaced().log_replaced(1, (0..4097).map(|index| ("moments".into(), RowId::new(&format!("temp-log-{index}")).unwrap(), RowId::new(&format!("log-{index}")).unwrap())));
+    SQL.with(|count| count.set(0));
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
+    let (_, _, replaced) = db.read_view(&crate::store::query::Query::new("moments"), false, 0, 0, None, None).unwrap();
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    assert_eq!(replaced.len(), size);
+    assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "r0"));
+    SQL.with(|count| count.get())
+}
+
+#[test]
+fn dlv_evicted_alias_work_linear() {
+    let small = alias_work(2);
+    let large = alias_work(40);
+    assert_eq!(small, large, "SQL query count must not grow with the prior rows");
+}
