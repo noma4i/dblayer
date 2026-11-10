@@ -172,9 +172,11 @@ async fn rowless_upload_session_reset_clears_pending_work() {
     assert!(receipt.optimistic_value.is_none());
     stand.put_started().await;
     assert_eq!(operations(&stand).await.len(), 1);
+    let requests_before_reset = stand.asked().len();
     bound(stand.database.session_reset()).await.unwrap();
     stand.release_put();
     stand.settle().await;
+    assert_eq!(stand.asked().len(), requests_before_reset, "no request follows the end of the session");
     assert_eq!(stand.requests("UserPhotoUpdate"), 0, "the old upload cannot send its final mutation");
     stand.sign_in().await;
     assert!(operations(&stand).await.is_empty(), "the old upload is removed after reset");
