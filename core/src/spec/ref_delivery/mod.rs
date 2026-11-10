@@ -261,6 +261,23 @@ impl Delivery {
         state
     }
 
+    fn evict_feed_prefix(&mut self) {
+        let feed = |value: &Val| matches!(value, Val::Event { .. } | Val::Lost { .. } | Val::Gap);
+        let Some(start) = self.journal.iter().position(feed) else { return };
+        let run = self.journal.iter().skip(start).take_while(|value| feed(value)).count();
+        let evicted = run.min(self.journal.len() - (JOURNAL_LIMIT - 1));
+        let positions: Vec<(u64, u64)> = self.journal.drain(start..start + evicted).filter_map(|value| match value {
+            Val::Event { position, .. } => Some((position, position)),
+            Val::Lost { first, last } => Some((first, last)),
+            _ => None,
+        }).collect();
+        let merged = match (positions.iter().map(|range| range.0).min(), positions.iter().map(|range| range.1).max()) {
+            (Some(first), Some(last)) => Val::Lost { first, last },
+            _ => Val::Gap,
+        };
+        self.journal.insert(start, merged);
+    }
+
     fn append(&mut self, value: Val, fx: &mut Vec<Effect>) {
         let value = match value {
             Val::Snapshot { revision, rows, state } => Val::Snapshot { revision, rows, state: self.shown(state) },
@@ -283,18 +300,7 @@ impl Delivery {
         }
         self.journal.push_back(value);
         if self.journal.len() > JOURNAL_LIMIT {
-            let (mut first, mut last, mut at) = (u64::MAX, 0u64, None);
-            while self.journal.len() > JOURNAL_LIMIT - 1 {
-                let Some(index) = self.journal.iter().position(|kept| matches!(kept, Val::Event { .. } | Val::Lost { .. } | Val::Gap)) else { break };
-                at.get_or_insert(index);
-                match self.journal.remove(index).unwrap() {
-                    Val::Event { position, .. } => { first = first.min(position); last = last.max(position); }
-                    Val::Lost { first: a, last: b } => { first = first.min(a); last = last.max(b); }
-                    Val::Gap => {}
-                    _ => unreachable!(),
-                }
-            }
-            if let Some(index) = at { self.journal.insert(index, if first > last { Val::Gap } else { Val::Lost { first, last } }); }
+            self.evict_feed_prefix();
         }
         if self.waiting {
             self.waiting = false;

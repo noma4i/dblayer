@@ -291,16 +291,15 @@ fn dlv_prop_gap_bounded() {
         assert!(twin.state().journal_len(STREAM) <= d::JOURNAL_LIMIT, "journal holds {} after {position}", twin.state().journal_len(STREAM));
     }
     let values = twin.read_all();
-    let mut next = 1;
-    for value in &values {
-        match value {
-            Val::Event { position, .. } if *position == next => next += 1,
-            Val::Lost { first, last } if *first == next => next = last + 1,
-            Val::Gap => {}
-            other => panic!("{other:?} at {next}"),
-        }
+    let Some(Val::Lost { first: 1, last }) = values.first() else { panic!("the evicted prefix of events and gaps is one Lost: {:?}", values.first()) };
+    assert_eq!(values.get(1), Some(&Val::Gap), "the gap after the last evicted event survives eviction");
+    let mut next = last + 1;
+    for pair in values[2..].chunks(2) {
+        assert_eq!(pair, [Val::Event { position: next, payload: format!("c{next}") }, Val::Gap], "every kept event keeps its gap");
+        next += 1;
     }
     assert_eq!(next, 601, "events and lost ranges cover 1..=600 with gaps in between");
+    assert!(values.len() <= d::JOURNAL_LIMIT);
 }
 
 #[test]
