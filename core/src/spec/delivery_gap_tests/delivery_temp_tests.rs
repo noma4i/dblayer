@@ -6,6 +6,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
     let resolved = Arc::new(AtomicBool::new(false));
     let ready = resolved.clone();
     let mut temporary = view(Kind::Entity(fetch));
+    temporary.tables = vec![crate::store::ddl::table_name("Moment")];
     temporary.subject = "temp-1".into();
     let mut real = temporary.clone();
     real.subject = "real-1".into();
@@ -22,7 +23,7 @@ fn rows(twin: &mut Twin, revision: i64, rows: Vec<d::StreamRow>, replaced: Vec<(
 }
 
 fn commit(twin: &mut Twin, revision: i64) {
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: revision as u64, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision, tables: vec![crate::store::ddl::table_name("Moment")], rows: None, models: Models::default(), stale_parents: Vec::new(), position: revision as u64, shown: Vec::new(), files_removed: 0 }));
 }
 
 #[test]
@@ -32,7 +33,7 @@ fn dlv_deferred_index_other_model() {
     let signal = second_ready.clone();
     let mut other = view(Kind::Entity(Fetch::Stale));
     other.model = "User".into();
-    other.tables = vec!["users".into()];
+    other.tables = vec![crate::store::ddl::table_name("User")];
     other.window.model = "User".into();
     other.subject = "temp-1".into();
     other.remote = false;
@@ -48,7 +49,7 @@ fn dlv_deferred_index_other_model() {
     take(&twin.log);
     first_ready.store(true, Ordering::SeqCst);
     second_ready.store(true, Ordering::SeqCst);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec![crate::store::ddl::table_name("Moment")], rows: Some([(crate::store::ddl::table_name("Moment"), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
     let effects = take(&twin.log);
     assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { .. } }) if *stream == STREAM)), "{effects:?}");
     assert!(!effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { .. } }) if *stream == STREAM + 1)), "{effects:?}");
@@ -76,7 +77,7 @@ fn dlv_deferred_index_released() {
         }
         take(&twin.log);
         ready.store(true, Ordering::SeqCst);
-        twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+        twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec![crate::store::ddl::table_name("Moment")], rows: Some([(crate::store::ddl::table_name("Moment"), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
         let effects = Twin::modelled(take(&twin.log));
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Read(_) | Effect::InterestPlus)), "{ending}: {effects:?}");
     }
@@ -90,7 +91,7 @@ fn dlv_deferred_index_released() {
     take(&twin.log);
     rows(&mut twin, 1, vec![d::StreamRow::new("real-1", 1)], vec![("temp-1".into(), "real-1".into())]);
     take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 2, revision: 2, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 2, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 2, revision: 2, tables: vec![crate::store::ddl::table_name("Moment")], rows: Some([(crate::store::ddl::table_name("Moment"), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 2, shown: Vec::new(), files_removed: 0 }));
     let effects = Twin::modelled(take(&twin.log));
     assert!(!effects.iter().any(|effect| matches!(effect, Effect::Read(_) | Effect::InterestPlus)), "{effects:?}");
 }
