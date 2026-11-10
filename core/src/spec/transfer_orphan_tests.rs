@@ -357,20 +357,21 @@ fn xfer_minted_write_interrupted() {
     }
 }
 
-/// xfer_orphan_restart_after_close (D-277, owner decision 2026-11-10): the debt written by the Control batch outlives the end of the session: after the epoch ends and a new one starts, the first network admission still aborts the id once.
+/// xfer_orphan_restart_after_close (D-277, owner decision 2026-11-10): the debt written by the Control batch is read back by the next open (Restored.orphans) and the first network admission aborts it once.
 #[test]
 fn xfer_orphan_restart_after_close() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     twin.online(false);
     minted(&mut twin, id, "u1");
-    twin.reject(RejectReason::NoSession);
+    let refused = twin.reject(RejectReason::NoSession);
+    assert_eq!(refused.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt is written before the process ends");
     twin.commit();
-    twin.end_epoch();
-    twin.post(TransferInput::EpochStarted(crate::owners::contract::EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 1 }));
-    assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "the debt of the ended session is aborted in the next one");
-    twin.online(false);
-    assert!(twin.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
+    twin.close();
+    let mut reopened = orphan_restart(vec![("u1".into(), KEY.into())]);
+    assert_eq!(reopened.online(true).orphan_aborts(), vec!["u1".to_string()], "the debt of the closed process is aborted after the restart");
+    reopened.online(false);
+    assert!(reopened.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
 }
 
 /// xfer_minted_write_other: a refused write of the minted id with StaleGeneration or Invalid behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
