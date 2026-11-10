@@ -4,6 +4,42 @@ import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests {
+  @MainActor @Test(.timeLimit(.minutes(1)))
+  func aPartialUploadAnswerMergesOnlyAnExistingRow() async throws {
+    for existing in [false, true] { try await partialUploadAnswer(existing: existing) }
+  }
+
+  @MainActor
+  private func partialUploadAnswer(existing: Bool) async throws {
+    let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data("video".utf8).write(to: source)
+    defer { try? FileManager.default.removeItem(at: source) }
+    let transport = MockTransport()
+    let definitions = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"#
+    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: definitions)
+    if existing {
+      transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"original","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+      let seeded = try await Moment.create(text: "intro", in: DB.account())
+      #expect(try await seeded.confirmed().value?.id == "m77")
+    }
+    transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
+    transport.enqueuePut("https://storage.test/video")
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","likedByMe":true}}}"#)
+    let sent = try await Moment.uploadClip(id: "m77", source: source.path, in: DB.account())
+    let confirmed = try await sent.confirmed()
+    let rows = try await Moment.ids(["m77"]).read()
+    if existing {
+      #expect(confirmed.value?.id == "m77")
+      #expect(confirmed.value?.likedByMe == true && confirmed.value?.uuid == "original")
+      #expect(rows.count == 1 && rows.first?.likedByMe == true && rows.first?.uuid == "original")
+    } else {
+      #expect(confirmed.value == nil)
+      #expect(rows.isEmpty)
+    }
+    #expect(transport.unscripted.isEmpty)
+    await DB.closeForCleanup()
+  }
+
   /// D-287: the call on the type uploads to a row that does not exist: the receipt shows no optimistic value, the queue shows the transfer by its key, and the answer of the final mutation lands the row and reaches `confirmed()`.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
