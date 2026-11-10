@@ -92,7 +92,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
             results.push(super::window_write::mark(writer, &key, marker)?);
         }
-        StoreOp::AttachFile { .. } => {
+        StoreOp::AttachFile { .. } | StoreOp::AttachCopied { .. } => {
             let record = files.iter().find(|file| file.index == index).ok_or_else(|| StoreError::Constraint("prepared file is missing".into()))?;
             results.push(writer.attach(&record.record)?);
         }

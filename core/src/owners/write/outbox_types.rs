@@ -172,6 +172,8 @@ pub enum LocalWriteKind {
     Detach,
     /// The bytes of a file the platform gives: the owner writes them with the row (`row` is the row, `values` the field).
     AttachBytes { bytes: Vec<u8>, name: String, mime: String },
+    /// A source file of the platform the library already copied (`row` is the row, `values` the field).
+    AttachCopy { copy: crate::store::files::CopiedFile, name: String, mime: String },
     /// The final rows of a call on a local model or of an action without a mutation.
     Model(IntentEffects),
     /// A call that changes nothing: the row and the revision of one snapshot of the Store, without a new revision.

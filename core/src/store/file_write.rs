@@ -16,6 +16,11 @@ pub(super) struct PreparedFile {
 pub(super) fn prepare_files(files: &FileDirectories, ops: &[StoreOp], now: i64) -> Result<Vec<PreparedFile>, StoreError> {
     let mut prepared: Vec<PreparedFile> = Vec::new();
     for (index, op) in ops.iter().enumerate() {
+        if let StoreOp::AttachCopied { model, row_id, field, copy, name, mime } = op {
+            let descriptor = FileDescriptor { id: copy.id.clone(), size: copy.size, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(copy.sha256.clone()) };
+            prepared.push(PreparedFile { index, record: FileRecord { id: copy.id.clone(), model: model.clone(), row_id: row_id.clone(), field: field.clone(), descriptor, location: copy.location, data: copy.data.clone(), created_at: now } });
+            continue;
+        }
         let StoreOp::AttachFile { model, row_id, field, bytes, name, mime } = op else { continue };
         let descriptor = FileDescriptor { id: uuid::Uuid::new_v4().to_string(), size: bytes.len() as u64, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(sha256_hex(bytes)) };
         let location = placement(bytes.len(), files.has_directory());

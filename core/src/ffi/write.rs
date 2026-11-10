@@ -265,6 +265,27 @@ impl Database {
         Ok(attached.into())
     }
 
+    /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.
+    pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> {
+        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
+        let files = self.db.files().clone();
+        let copied = files.clone();
+        let copy = self.offload(move || crate::store::files::copy_attachment(&copied, std::path::Path::new(&source_path)).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
+        let id = copy.id.clone();
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone(), self.life.now());
+        let answer = self.outbox_answer(epoch, waiter, "attach").await;
+        let attached = match &answer {
+            Ok(OutboxAnswer::Written { shown: Some(shown), .. }) => shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value),
+            _ => None,
+        };
+        if let Some(attached) = attached { return Ok(attached.into()); }
+        let _ = files.discard_partial(&id);
+        match answer {
+            Err(error) => Err(error),
+            Ok(_) => Err(DbError::Internal { detail: "the attached file is not on the row".into() }),
+        }
+    }
+
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.life.now());

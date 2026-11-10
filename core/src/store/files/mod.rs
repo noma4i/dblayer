@@ -9,6 +9,25 @@ pub(crate) use directories::{CopiedSource, FileDirectories};
 
 pub(crate) const TABLE_LIMIT: usize = 256 * 1024;
 
+/// The copy of a source file the library owns: a file above `TABLE_LIMIT` waits in `<id>.partial` until its batch commits, a smaller one is held in `data` for the table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopiedFile {
+    pub id: String,
+    pub size: u64,
+    pub sha256: String,
+    pub data: Vec<u8>,
+    pub location: Location,
+}
+
+/// Copies `source` in pieces of one chunk through the admission of the process. A source that cannot be read is a storage error.
+pub(crate) fn copy_attachment(files: &FileDirectories, source: &std::path::Path) -> std::io::Result<CopiedFile> {
+    let id = uuid::Uuid::new_v4().to_string();
+    match files.copy_source_partial(&id, source)? {
+        CopiedSource::Ready { size, sha256, data, location } => Ok(CopiedFile { id, size, sha256, data, location }),
+        CopiedSource::Unreadable(error) => Err(std::io::Error::other(error)),
+    }
+}
+
 pub(crate) fn placement(length: usize, has_directory: bool) -> Location {
     if length <= TABLE_LIMIT || !has_directory {
         Location::Table

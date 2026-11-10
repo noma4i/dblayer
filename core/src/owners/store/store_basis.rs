@@ -14,7 +14,7 @@ impl StoreBatch {
         for op in &self.ops {
             match op {
                 StoreOp::Rows { model, .. } | StoreOp::LocalRows { model, .. } | StoreOp::EphemeralRows { model, .. }
-                | StoreOp::LocalPending { model, .. } | StoreOp::LocalFields { model, .. } | StoreOp::RemoveRows { model, .. } | StoreOp::AttachFile { model, .. }
+                | StoreOp::LocalPending { model, .. } | StoreOp::LocalFields { model, .. } | StoreOp::RemoveRows { model, .. } | StoreOp::AttachFile { model, .. } | StoreOp::AttachCopied { model, .. }
                 | StoreOp::DetachFile { model, .. } | StoreOp::Numbers { model, .. } | StoreOp::Swap { model, .. } | StoreOp::ExpireRow { model, .. } | StoreOp::ResetEphemeral { model, .. } => { models.insert(model.clone()); }
                 StoreOp::Window { model, related, .. } => {
                     models.insert(model.clone());

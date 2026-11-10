@@ -164,6 +164,8 @@ pub enum StoreOp {
     Planned { effects: IntentEffects },
     /// A file for a field of a row: the bytes go to the directory of the files or to the table, the row gets the descriptor.
     AttachFile { model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String },
+    /// A file the library already copied for a field of a row: the descriptor and the placement come from the copy.
+    AttachCopied { model: String, row_id: String, field: String, copy: crate::store::files::CopiedFile, name: String, mime: String },
     DetachFile { model: String, row_id: String, field: String },
     /// Rows of a `memory` model, written to the TEMP tables.
     EphemeralRows { model: String, rows: Vec<RowValue> },

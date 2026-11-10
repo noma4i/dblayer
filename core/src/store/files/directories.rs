@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 const PART_SUFFIX: &str = ".part";
 const COPY_CHUNK: usize = 1024 * 1024;
 
+static COPY_ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) enum CopiedSource {
     Ready { size: u64, sha256: String, data: Vec<u8>, location: super::Location },
     Unreadable(String),
@@ -59,8 +61,8 @@ impl FileDirectories {
     }
 
     pub(crate) fn scratch() -> Self {
-        let cache = std::env::temp_dir().join(format!("dblayer-{}", uuid::Uuid::new_v4()));
-        Self { directory: None, cache, scratch: true, #[cfg(test)] source_reads: Default::default() }
+        let directory = std::env::temp_dir().join(format!("dblayer-{}", uuid::Uuid::new_v4()));
+        Self { cache: directory.join("cache"), directory: Some(directory), scratch: true, #[cfg(test)] source_reads: Default::default() }
     }
 
     pub(crate) fn has_directory(&self) -> bool {
@@ -135,10 +137,21 @@ impl FileDirectories {
     }
 
     pub(crate) fn copy_source(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+        self.copy_admitted(id, source, false)
+    }
+
+    /// The copy of an attached file: a large file stays in `<id>.partial` until the batch that names it commits (`finish`) or fails (`discard_partial`).
+    pub(crate) fn copy_source_partial(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+        self.copy_admitted(id, source, true)
+    }
+
+    fn copy_admitted(&self, id: &str, source: &Path, keep_partial: bool) -> io::Result<CopiedSource> {
+        let _admitted = COPY_ADMISSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         #[cfg(test)] self.source_reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let result = self.copy_into(id, source);
+        let result = self.copy_into(id, source, keep_partial);
         if !matches!(&result, Ok(CopiedSource::Ready { .. })) {
             self.discard(&[id.to_string()])?;
+            self.discard_partial(id)?;
         }
         result
     }
@@ -149,12 +162,13 @@ impl FileDirectories {
     #[cfg(test)]
     pub(crate) fn record_source_read(&self) { self.source_reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
 
-    fn copy_into(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+    fn copy_into(&self, id: &str, source: &Path, keep_partial: bool) -> io::Result<CopiedSource> {
         use sha2::{Digest, Sha256};
         let mut source = match File::open(source) {
             Ok(source) => source,
             Err(error) => return Ok(CopiedSource::Unreadable(error.to_string())),
         };
+        let suffix = if keep_partial { ".partial" } else { PART_SUFFIX };
         let mut buffer = vec![0; COPY_CHUNK];
         let mut data = Vec::new();
         let mut disk: Option<(File, PathBuf)> = None;
@@ -173,7 +187,7 @@ impl FileDirectories {
             if disk.is_none() && size > super::TABLE_LIMIT as u64 {
                 if let Some(target) = self.path(id) {
                     if let Some(parent) = target.parent() { fs::create_dir_all(parent)?; }
-                    let mut file = File::create(suffixed(&target, PART_SUFFIX))?;
+                    let mut file = File::create(suffixed(&target, suffix))?;
                     file.write_all(&data)?;
                     data = Vec::new();
                     disk = Some((file, target));
@@ -187,7 +201,7 @@ impl FileDirectories {
         let location = if let Some((file, target)) = disk {
             file.sync_all()?;
             drop(file);
-            fs::rename(suffixed(&target, PART_SUFFIX), target)?;
+            if !keep_partial { fs::rename(suffixed(&target, suffix), target)?; }
             super::Location::Directory
         } else { super::Location::Table };
         Ok(CopiedSource::Ready { size, sha256: digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect(), data, location })
@@ -259,6 +273,7 @@ fn write_atomic(target: &Path, partial: &Path, bytes: &[u8]) -> io::Result<()> {
 impl Drop for FileDirectories {
     fn drop(&mut self) {
         if self.scratch {
+            if let Some(directory) = &self.directory { let _ = fs::remove_dir_all(directory); }
             let _ = fs::remove_dir_all(&self.cache);
         }
     }
