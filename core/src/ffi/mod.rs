@@ -192,7 +192,7 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::Http { status: 401, body } => Self::Unauthorized { detail: body },
             TransportError::Http { status, body } => Self::Http { status, detail: body },
             TransportError::RequestTooLarge { size, limit } => Self::RequestTooLarge { size, limit },
-            TransportError::ResponseTooLarge { limit } => Self::ResponseTooLarge { limit },
+            TransportError::ResponseTooLarge { limit } | TransportError::SentAnswerTooLarge { limit } => Self::ResponseTooLarge { limit },
             TransportError::Network(detail) => Self::Network { detail },
             TransportError::Interrupted(detail) => Self::Interrupted { detail },
             TransportError::NoSession => Self::NoSession { detail: "the session ended".into() },

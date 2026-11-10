@@ -12,6 +12,8 @@ pub enum TransportError {
     RequestTooLarge { size: u64, limit: u64 },
     #[error("the answer is above the limit of {limit} bytes")]
     ResponseTooLarge { limit: u64 },
+    #[error("the answer of a sent request is above the limit of {limit} bytes")]
+    SentAnswerTooLarge { limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<super::GraphqlExtensions> },
     #[error("graphql answer: {response:?}")]

@@ -50,7 +50,7 @@ pub fn of_transport(error: &TransportError) -> String {
         TransportError::GraphqlAnswer { response } => of_graphql(response.errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>().join("; "), response.extensions()),
         TransportError::Session { code, detail } => text(&OperationFailure::new(FailureKind::Session(*code), if detail.is_empty() { code.name().to_string() } else { detail.clone() })),
         TransportError::RequestTooLarge { size, limit } => text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, error.to_string())),
-        TransportError::ResponseTooLarge { limit } => text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, error.to_string())),
+        TransportError::ResponseTooLarge { limit } | TransportError::SentAnswerTooLarge { limit } => text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, error.to_string())),
         TransportError::Network(_) | TransportError::Interrupted(_) => text(&OperationFailure::new(FailureKind::Network, error.to_string())),
         TransportError::Http { status, .. } if *status >= 500 => text(&OperationFailure::new(FailureKind::Server, error.to_string())),
         _ => text(&OperationFailure::new(FailureKind::Rejected, error.to_string())),
