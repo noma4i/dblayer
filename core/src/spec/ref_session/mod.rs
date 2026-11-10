@@ -526,7 +526,7 @@ impl Session {
         match wait {
             _ if failed => out.replies.push((reply, Err(Fail::Storage))),
             None if state == PubState::Session && identity.is_some() && identity == digest => out.replies.push((reply, result)),
-            None if state == PubState::Ending => out.replies.push((reply, Err(Fail::Interrupted))),
+            None if state == PubState::Ending => out.replies.push((reply, Err(Fail::NoSession))),
             Some(ended) if matches!(state, PubState::Session | PubState::NoSession) && epoch > ended => out.replies.push((reply, result)),
             _ => self.after_publish = Some((reply, result, wait)),
         }

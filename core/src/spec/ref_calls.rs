@@ -23,6 +23,8 @@ pub enum Fail {
     Dropped,
     InvalidResponse,
     Interrupted,
+    SessionEnded,
+    Closed,
 }
 
 pub type Answer = Result<String, Fail>;
@@ -167,9 +169,9 @@ impl Calls {
                 self.retries.clear();
                 out.effects.push(Effect::SnapshotRequest { epoch });
             }
-            Input::EpochEnded => self.interrupt(&mut out),
+            Input::EpochEnded => self.interrupt(Fail::SessionEnded, &mut out),
             Input::Closing => {
-                self.interrupt(&mut out);
+                self.interrupt(Fail::Closed, &mut out);
                 if !self.drained {
                     self.drained = true;
                     out.effects.push(Effect::Drained);
@@ -222,16 +224,16 @@ impl Calls {
         out.effects.push(Effect::Request { call_id, request_id, operation, kind });
     }
 
-    fn interrupt(&mut self, out: &mut Out) {
+    fn interrupt(&mut self, cause: Fail, out: &mut Out) {
         for (_, _, reply) in std::mem::take(&mut self.awaiting) {
-            out.replies.push((reply, Err(Fail::Interrupted)));
+            out.replies.push((reply, Err(cause.clone())));
         }
         let sending: Vec<(CallId, RequestId, Kind)> = self.calls.iter().filter_map(|(id, (state, _))| match state {
             CallState::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
             CallState::Done => None,
         }).collect();
         for (call_id, request_id, kind) in sending {
-            self.done(call_id, Err(Fail::Interrupted), out);
+            self.done(call_id, Err(cause.clone()), out);
             out.effects.push(Effect::Cancel { request_id, kind });
         }
     }

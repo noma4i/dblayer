@@ -108,7 +108,7 @@ impl Session {
                 self.restore_error = None;
                 if is_ended(cause) {
                     if self.after_publish.as_ref().is_some_and(|held| held.2.is_none()) {
-                        if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Interrupted))); }
+                        if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::NoSession))); }
                     }
                     self.held = None;
                 }
@@ -132,7 +132,7 @@ impl Session {
     pub(super) fn on_epoch_ended(&mut self, state: State, epoch: u64, cause: EndCause, out: &mut Out) {
         match state {
             State::Sealing { pending, .. } => {
-                let error = if pending.author.is_some() { Fail::NoSession } else { Fail::Interrupted };
+                let error = Fail::NoSession;
                 Self::finish(out, &pending, Err(error));
                 self.refuse_queue(out, Fail::NoSession);
                 if is_ended(cause) { self.credential = None; }
@@ -143,14 +143,14 @@ impl Session {
                 self.state = State::Idle;
             }
             State::Generating { call, .. } if is_ended(cause) => {
-                Self::refuse(out, call, Fail::Interrupted);
+                Self::refuse(out, call, Fail::NoSession);
                 self.refuse_queue(out, Fail::NoSession);
                 self.credential = None;
                 self.state = State::Idle;
             }
             State::Storing { call, credential_new, op, after } if is_ended(cause) => {
                 self.credential = None;
-                let after = if matches!(after, AfterStore::Drain) { AfterStore::Drain } else { AfterStore::Clear(Fail::Interrupted) };
+                let after = if matches!(after, AfterStore::Drain) { AfterStore::Drain } else { AfterStore::Clear(Fail::NoSession) };
                 self.state = State::Storing { call, credential_new, op, after };
             }
             State::ClearingSecret { call, reason, op, after } => {
@@ -167,7 +167,7 @@ impl Session {
                     self.state = state;
                     return;
                 };
-                Self::finish(out, &pending, Err(Fail::Interrupted));
+                Self::finish(out, &pending, Err(Fail::NoSession));
                 if let State::Calling { phase: CallPhase::InFlight(attempt_id), .. } = state { out.effects.push(Effect::HttpCancel { attempt_id }); }
                 self.refuse_queue(out, Fail::NoSession);
                 self.credential = None;

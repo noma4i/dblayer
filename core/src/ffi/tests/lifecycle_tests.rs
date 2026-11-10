@@ -164,10 +164,10 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         let ended = within(work).await.unwrap();
         let accepted = match (session_call, end == "close") {
             (_, true) => matches!(ended, Err(DbError::Closed { .. })),
-            (true, false) => matches!(ended, Err(DbError::Interrupted { .. })),
+            (true, false) => matches!(ended, Err(DbError::NoSession { .. })),
             (false, false) => matches!(ended, Err(DbError::NoSession { .. })),
         };
-        assert!(accepted, "old response was accepted (D-263: close = Closed, session end of a load = NoSession, session_call keeps Interrupted): session_call={session_call}, end={end}: {ended:?}");
+        assert!(accepted, "old response was accepted (D-263: close = Closed, session end of a load = NoSession, session_call = NoSession, D-279): session_call={session_call}, end={end}: {ended:?}");
         if !close {
             if end == "session_reset" { assert!(database.signed_in_digest().is_none()); }
             server.forbid(true);
@@ -199,7 +199,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
         end_it(&database, end).await;
         let ended = within(retrying).await.unwrap();
         let expected_close = end == "close";
-        assert!(if expected_close { matches!(ended, Err(DbError::Closed { .. })) } else { matches!(ended, Err(DbError::Interrupted { .. })) }, "{end}: a call in a retry wait outlived the transition: {ended:?}");
+        assert!(if expected_close { matches!(ended, Err(DbError::Closed { .. })) } else { matches!(ended, Err(DbError::NoSession { .. })) }, "{end}: a call in a retry wait outlived the transition: {ended:?}");
         database.close_now();
     }
     let server = Arc::new(Server::default());
@@ -216,7 +216,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     tokio::task::spawn_blocking(move || life.barrier()).await.unwrap();
     database.session_reset().await.unwrap();
     let (running, queued) = (within(running).await.unwrap(), within(queued).await.unwrap());
-    assert!(matches!(running, Err(DbError::Interrupted { .. })), "{running:?}");
+    assert!(matches!(running, Err(DbError::NoSession { .. })), "D-279: the call in flight ends with the session: {running:?}");
     assert!(matches!(queued, Err(DbError::NoSession { .. })), "a call queued behind another one ran after the session reset: {queued:?}");
     assert!(database.signed_in_digest().is_none());
     database.close_now();

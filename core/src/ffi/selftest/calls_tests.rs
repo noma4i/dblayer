@@ -96,7 +96,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     if matches!(transition, Transition::Close) {
         gate.release();
         let result = bound(running).await.unwrap();
-        let ended = if matches!(call, Call::Run | Call::SignIn) { matches!(result, Err(DbError::Interrupted { .. })) } else { matches!(result, Err(DbError::Closed { .. })) };
+        let ended = matches!(result, Err(DbError::Closed { .. }));
         assert!(ended, "{case}: the call ended the close with {result:?}");
         return;
     }
@@ -145,7 +145,7 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
         rig.database.close_now();
 
         let result = bound(running).await.unwrap();
-        let ended = if matches!(call, Call::Run | Call::SignIn) { matches!(result, Err(DbError::Interrupted { .. })) } else { matches!(result, Err(DbError::Closed { .. })) };
+        let ended = matches!(result, Err(DbError::Closed { .. }));
         assert!(ended, "{call:?}: the call ended the close with {result:?}");
         rig.database.close_now();
     }
@@ -168,7 +168,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
 
     for wait in waits {
         let ended = bound(wait).await.unwrap();
-        assert!(matches!(ended, Err(DbError::Interrupted { .. })), "a wait for the initial load outlived the close: {ended:?}");
+        assert!(matches!(ended, Err(DbError::Closed { .. })), "D-279: a wait for the initial load ends the close with Closed: {ended:?}");
     }
     assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::EndCause::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();

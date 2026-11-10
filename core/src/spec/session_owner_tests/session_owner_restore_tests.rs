@@ -495,7 +495,7 @@ fn sess_wait_call() {
     assert_eq!(twin.replies, vec![(1, Ok("{}".into()))]);
     for mut ending in [calling(), persisting()] {
         ending.feed(ended(EndCause::SessionReset));
-        assert_eq!(ending.replies, vec![(1, Err(Fail::Interrupted))]);
+        assert_eq!(ending.replies, vec![(1, Err(Fail::NoSession))]);
     }
     let mut closed = persisting();
     closed.feed(Input::Closing);

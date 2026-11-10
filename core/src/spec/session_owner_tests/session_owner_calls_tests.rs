@@ -120,7 +120,7 @@ fn sess_secret_stored_then_clear() {
     let mut twin = clearing();
     let op = twin.op();
     twin.feed(Input::SecretCleared { op, ok: true });
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Interrupted))]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::NoSession))]);
     assert!(twin.reference.credential.is_none());
 }
 
@@ -192,7 +192,7 @@ fn sess_generating_epoch_ended() {
     let mut twin = generating();
     let op = twin.op();
     twin.feed_all([call(2), ended(EndCause::SessionReset)]);
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Interrupted)), (2, Err(Fail::NoSession))]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::NoSession)), (2, Err(Fail::NoSession))]);
     twin.feed(Input::CredentialGenerated { op, credential: 5 });
     assert!(matches!(twin.reference.state, RefState::Idle), "a late generated credential is a foreign input");
 }
@@ -201,7 +201,7 @@ fn sess_generating_epoch_ended() {
 fn sess_storing_epoch_ended() {
     let mut twin = storing();
     twin.feed(ended(EndCause::ServerEnded));
-    assert!(matches!(&twin.reference.state, RefState::Storing { after: AfterStore::Clear(Fail::Interrupted), .. }));
+    assert!(matches!(&twin.reference.state, RefState::Storing { after: AfterStore::Clear(Fail::NoSession), .. }));
     assert!(twin.reference.credential.is_none());
 }
 

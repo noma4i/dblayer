@@ -97,7 +97,7 @@ fn call_awaiting_snapshot_end() {
         twin.det.run_until_quiet(100).unwrap();
         let effects = take(&twin.log);
         let answers: Vec<_> = effects.iter().filter_map(|effect| if let CallsEffect::Reply { id: 1, answer } = effect { Some(format!("{answer:?}")) } else { None }).collect();
-        assert_eq!(answers, vec!["Err(Interrupted)"], "calls.md:80: the owner answers Interrupted at the end of the epoch and at close, the boundary maps close to Closed (closing={closing})");
+        assert_eq!(answers, vec![if closing { "Err(Closed)" } else { "Err(SessionEnded)" }], "calls.md:80 (D-279): the owner answers the end cause 1:1");
         twin.det.tick(crate::runtime::Time(30_000));
         twin.det.run_until_quiet(100).unwrap();
         assert!(take(&twin.log).iter().all(|effect| !matches!(effect, CallsEffect::Reply { id: 1, .. })));
@@ -239,6 +239,8 @@ fn fail(error: &Fail) -> CallError {
         Fail::Dropped => CallError::Dropped,
         Fail::InvalidResponse => CallError::InvalidResponse,
         Fail::Interrupted => CallError::Interrupted,
+        Fail::SessionEnded => CallError::SessionEnded,
+        Fail::Closed => CallError::Closed,
     }
 }
 

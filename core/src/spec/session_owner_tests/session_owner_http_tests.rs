@@ -369,7 +369,7 @@ fn sess_published_answers_login() {
 
 #[test]
 fn sess_published_login_failed() {
-    for (state, want) in [(PubState::StorageFailed, Fail::Storage), (PubState::EndingFailed, Fail::Storage), (PubState::Ending, Fail::Interrupted)] {
+    for (state, want) in [(PubState::StorageFailed, Fail::Storage), (PubState::EndingFailed, Fail::Storage), (PubState::Ending, Fail::NoSession)] {
         let mut twin = generating();
         let op = twin.op();
         twin.feed(Input::CredentialGenerated { op, credential: 42 });
@@ -492,16 +492,16 @@ fn sess_epoch_ended_cleared() {
         twin.feed(call(2));
         let aid = twin.aid();
         let effects = twin.feed(ended(cause));
-        assert!(effects.contains(&RefEffect::HttpCancel { attempt_id: aid }) && effects.contains(&answer(7, 11, permanent(Fail::Interrupted))));
+        assert!(effects.contains(&RefEffect::HttpCancel { attempt_id: aid }) && effects.contains(&answer(7, 11, permanent(Fail::NoSession))));
         assert_eq!(twin.replies, vec![(2, Err(Fail::NoSession))]);
         assert!(twin.reference.credential.is_none());
     }
     let mut twin = persisting();
     twin.feed(ended(EndCause::SessionReset));
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Interrupted))]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::NoSession))]);
     let mut twin = landing(1);
     twin.feed(ended(EndCause::SessionReset));
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Interrupted))]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::NoSession))]);
 }
 
 #[test]
