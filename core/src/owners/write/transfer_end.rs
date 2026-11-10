@@ -76,8 +76,8 @@ impl TransferState {
             None => {}
         }
         if !std::mem::replace(&mut transfer.discard_sent, true) {
-            let (model, row_id, action) = (transfer.mutation.model.clone(), transfer.mutation.row_id.clone(), transfer.mutation.action.clone());
-            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Discard { model, row_id, action: Some(action), reply: NO_REPLY })));
+            let (transfer_id, cycle_id) = (transfer.transfer_id, transfer.cycle_id);
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply: NO_REPLY })));
         }
     }
 

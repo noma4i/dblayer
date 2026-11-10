@@ -519,6 +519,15 @@ impl OutboxState {
     }
 
     /// The first operation of the row that is not `Done`: the one `retry` and `discard` address.
+    /// The open operation of the transfer: by its identity, the cycle of a single transfer and the group of a batch member.
+    pub(super) fn open_for_transfer(&self, transfer: u64, cycle: u64) -> Option<OpId> {
+        self.ops.values().filter(|operation| operation.stage != Stage::Done && match &operation.op.origin {
+            OpSource::Transfer { transfer_id, cycle_id } => *transfer_id == transfer && *cycle_id == cycle,
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| member.transfer_id == transfer),
+            _ => false,
+        }).map(|operation| operation.op_id).next()
+    }
+
     pub(super) fn open_on_row(&self, model: &str, row: &str, action: Option<&str>) -> Option<OpId> {
         let row = self.aliases.get(&(model.to_string(), row.to_string())).map_or(row, String::as_str);
         self.ops.values().filter(|operation| Self::addresses_row(operation, model, row) && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).min_by_key(|operation| operation.sequence).map(|operation| operation.op_id)
@@ -620,6 +629,7 @@ impl OutboxState {
         let targeted = answered.or_else(|| match &input {
             OutboxInput::RetryDue { op_id, .. } => Some(*op_id),
             OutboxInput::Retry { model, row_id, action, .. } | OutboxInput::Discard { model, row_id, action, .. } => self.open_on_row(model, row_id, action.as_deref()),
+            OutboxInput::DiscardTransfer { transfer_id, cycle_id, .. } => self.open_for_transfer(*transfer_id, *cycle_id),
             OutboxInput::Outcome { receipt, .. } => Some(receipt.op_id),
             _ => None,
         });
@@ -667,6 +677,10 @@ impl OutboxState {
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
             OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
+            OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply } => match self.open_for_transfer(transfer_id, cycle_id) {
+                Some(op_id) => self.discard_op(op_id, reply, fx),
+                None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
+            },
             OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, version } => { if self.selection_current(reply, version, fx) { self.selected((model, row_id), action, kind, reply, fx); } }
             OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
@@ -722,7 +736,7 @@ impl StateOwner for Outbox {
                 _ => {}
             }
             match &input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),
                 OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Closed), &mut fx),
                 _ => {}

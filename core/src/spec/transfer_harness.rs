@@ -121,7 +121,7 @@ impl Out {
 
     pub fn submits(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Submit { .. } | OutboxInput::SubmitReserved { .. })).count() }
 
-    pub fn outbox_discards(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Discard { .. })).count() }
+    pub fn outbox_discards(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Discard { .. } | OutboxInput::DiscardTransfer { .. })).count() }
 
     pub fn rows(&self) -> Vec<(&UploadRow, UploadKind)> {
         self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Upload { row, kind } = op { Some((row, *kind)) } else { None }).collect()

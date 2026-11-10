@@ -193,6 +193,10 @@ impl OutboxState {
         let Some(op_id) = self.open_on_row(model, row, action) else {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
         };
+        self.discard_op(op_id, reply, fx);
+    }
+
+    pub(super) fn discard_op(&mut self, op_id: OpId, reply: ReplyId, fx: &mut Effects<Outbox>) {
         match self.ops[&op_id].stage {
             Stage::Submitting | Stage::PersistingAttempt | Stage::Sending | Stage::Landing | Stage::MarkingFailed | Stage::MarkingRetry | Stage::WaitingDeclaration => {
                 Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight));
