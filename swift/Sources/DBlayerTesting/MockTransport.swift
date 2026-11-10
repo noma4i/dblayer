@@ -148,7 +148,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
 
   /// The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. The server contract decides: a repeat of a pair gets the reply of the first send, a second body under one pair and a request nobody scripted are refused.
   private static func wire(_ request: TransportRequest) -> String {
-    let variables = (try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8), options: [.fragmentsAllowed])) ?? NSNull()
+    let variables = try! JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8), options: [.fragmentsAllowed])
     let object: [String: Any] = ["requestId": "\(request.requestId)", "sequence": NSNull(), "body": ["operationName": request.operationName, "variables": variables, "query": request.document]]
     return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
   }
