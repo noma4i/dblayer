@@ -296,7 +296,7 @@ impl Database {
             Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket).await,
             Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket).await,
         };
-        if let Some(result) = self.outcome_admission(epoch) { return result; }
+        self.close_after(epoch)?;
         result
     }
 

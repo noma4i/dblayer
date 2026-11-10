@@ -514,6 +514,7 @@ impl SessionState {
                                 self.after_publish = Some(AnswerAfterPublish { reply: id, result: answer.clone(), wait: PublishWait::EpochAfter(pending.epoch) });
                                 pending.reply = None;
                             }
+                            pending.author = None;
                         }
                         self.resume_finish(&pending, answer, fx);
                     }
