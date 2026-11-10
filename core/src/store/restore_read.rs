@@ -105,7 +105,7 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)) = self.read_models(&[], |reader| {
             let connection = reader.connection();
             let aliases = connection.prepare(include_str!("sql/restore_read/read_aliases.sql"))?.query_map([], |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?), row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
             let pending = crate::store::session_state::pending(connection).map_err(crate::store::StoreError::from)?;
@@ -113,18 +113,19 @@ impl Store {
             let answers_by_id = crate::store::session_state::answers(connection).map_err(crate::store::StoreError::from)?;
             let effects_only = connection.prepare(include_str!("sql/restore_read/read_restore_select_op.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let cycles = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_2.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
+            let causes = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_cause.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?.into_iter().filter_map(|(seq, kind, limit)| Some((seq, crate::value::sync::FailureKind::from_cause_columns(&kind, limit)?))).collect::<std::collections::BTreeMap<_, _>>();
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             let origins = read_origins(connection)?;
             let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)))
+            Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id)))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
         let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
-        let ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, &cycles);
+        let ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes));
         let intent_ids: std::collections::BTreeSet<u64> = origins.valid.values().flat_map(|origin| match origin {
             OpSource::Transfer { transfer_id, .. } => vec![*transfer_id],
             OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.transfer_id).collect(),
@@ -180,7 +181,7 @@ impl Store {
         Ok(Restore { aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan, held_orphan })
     }
 
-    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, CoreError> {
+    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, (cycles, causes): (&std::collections::BTreeMap<i64, i64>, &std::collections::BTreeMap<i64, crate::value::sync::FailureKind>)) -> Result<Vec<StoredOp>, CoreError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;
@@ -213,7 +214,7 @@ impl Store {
             let restore_failed = invalid.contains(&seq).then(|| "invalid intent origin".to_string());
             let restore_element = restore_failed.as_ref().map(|_| ("op".to_string(), seq.to_string()));
             let cycle_id = cycles.get(&seq).copied().and_then(|cycle| u64::try_from(cycle).ok()).ok_or_else(|| CoreError::Internal("invalid operation cycle".into()))?;
-            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, restore_failed, restore_element });
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, cause: causes.get(&seq).copied(), restore_failed, restore_element });
         }
         stored.extend(self.dropped_intents()?);
         Ok(stored)
@@ -228,7 +229,7 @@ impl Store {
             let Some((model, action)) = columns.get("action_key").and_then(serde_json::Value::as_str).and_then(|key| key.split_once(':')) else { continue };
             let row_id = columns.get("temp_id").and_then(serde_json::Value::as_str).unwrap_or(&row.key).to_string();
             let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None };
-            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())) });
+            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())) });
         }
         Ok(dropped)
     }

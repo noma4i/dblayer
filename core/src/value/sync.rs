@@ -58,6 +58,15 @@ const TOO_LARGE_PREFIX: &str = "request_too_large:";
 const RESPONSE_TOO_LARGE_PREFIX: &str = "response_too_large:";
 
 impl FailureKind {
+    /// The cause of a failed attempt as the columns of the operation: its kind and its number.
+    pub(crate) fn cause_columns(self) -> Option<(&'static str, i64)> {
+        match self { FailureKind::ResponseTooLarge { limit } => Some(("response_too_large", i64::try_from(limit).unwrap_or(i64::MAX))), _ => None }
+    }
+
+    pub(crate) fn from_cause_columns(kind: &str, limit: i64) -> Option<Self> {
+        match kind { "response_too_large" => u64::try_from(limit).ok().map(|limit| FailureKind::ResponseTooLarge { limit }), _ => None }
+    }
+
     fn text(self) -> String {
         match self {
             FailureKind::Network => "network".into(),

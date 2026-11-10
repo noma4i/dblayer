@@ -90,6 +90,8 @@ pub struct StoredOp {
     /// The durable attempt counter and the cycle of the intent (`0` = a layout without the columns).
     pub attempts: u32,
     pub cycle_id: u64,
+    /// The cause of the last failed attempt that the Backoff keeps: `Failed` carries it when the attempts run out.
+    pub cause: Option<crate::value::sync::FailureKind>,
     /// The intent was dropped by the layout move or cannot be read: the operation is `Failed{RestoreFailed}`.
     pub restore_failed: Option<String>,
     /// The `(table, key)` of the element of `restore_failed` this operation stands for.

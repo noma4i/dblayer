@@ -28,10 +28,11 @@ impl OutboxState {
             self.waiting.insert(op_id, (item, pending_lost));
             return;
         }
-        let StoredOp { answered, op, error_mark, pending, attempts, cycle_id, .. } = item;
+        let StoredOp { answered, op, error_mark, pending, attempts, cycle_id, cause, .. } = item;
         self.add_operation(op_id, op, Stage::Queued);
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.attempts = attempts;
+            operation.reject_error = cause.map(super::failure::of_cause);
             operation.cycle_id = cycle_id.max(1);
             operation.sent = true;
         }

@@ -48,10 +48,10 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             };
             results.push(writer.transitions(vec![transition])?);
         }
-        StoreOp::Attempt { op_id, attempts, cycle_id } => {
+        StoreOp::Attempt { op_id, attempts, cycle_id, cause } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
             let cycle_id = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
-            results.push(writer.transitions(vec![crate::store::OperationTransition::Attempt { seq, attempts: i64::from(*attempts), cycle_id }])?);
+            results.push(writer.transitions(vec![crate::store::OperationTransition::Attempt { seq, attempts: i64::from(*attempts), cycle_id, cause: *cause }])?);
         }
         StoreOp::Requeue { op_id } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS op (
   since INTEGER NOT NULL,
   error_kind TEXT,
   error_message TEXT,
+  cause_kind TEXT,
+  cause_limit INTEGER,
   intent_state TEXT NOT NULL DEFAULT 'ready' CHECK (intent_state IN ('effects_only', 'ready')),
   origin_kind TEXT NOT NULL DEFAULT 'api' CHECK (origin_kind IN ('api', 'transfer', 'transfer_group')),
   transfer_id INTEGER,

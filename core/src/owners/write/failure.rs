@@ -57,6 +57,14 @@ pub fn of_transport(error: &TransportError) -> String {
     }
 }
 
+/// The kept cause of a failed attempt as the text of its failure.
+pub fn of_cause(kind: FailureKind) -> String {
+    match kind {
+        FailureKind::ResponseTooLarge { limit } => text(&OperationFailure::new(kind, format!("the answer is above the limit of {limit} bytes"))),
+        _ => text(&OperationFailure::new(kind, "refused")),
+    }
+}
+
 /// The step had no live connection to run on.
 pub fn no_link() -> String { text(&OperationFailure::new(FailureKind::Network, "the transfer has no connection")) }
 
