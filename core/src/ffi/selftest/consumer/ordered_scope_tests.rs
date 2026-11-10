@@ -54,12 +54,18 @@ async fn consumer_chat_media_load_all_keeps_every_page() {
     ];
     for pass in 0..2 {
         for (index, case) in cases.into_iter().enumerate() {
-            for page in 0..2 {
+            let messages: Vec<_> = (0..2).map(|page| {
                 let mut message = row(case, (index * 2 + page + 1) as i32);
                 if case.media == "GIFT" { message["media"] = Value::Null; }
                 message["createdAt"] = json!("2026-10-20T00:00:00Z");
                 message["updatedAt"] = json!("2026-10-20T00:00:00Z");
-                stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":[{"node":message}],"pageInfo":{"hasNextPage":page == 0,"endCursor":if page == 0 { Some("mid") } else { None }}}}}}));
+                json!({"node":message})
+            }).collect();
+            if pass == 0 {
+                stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":[messages[0]],"pageInfo":{"hasNextPage":true,"endCursor":"mid"}}}}}));
+                stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":[messages[1]],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}));
+            } else {
+                stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":messages,"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}));
             }
             bound(stand.database.load_all(epoch, "Message".into(), Some(case.scope.into()), params.into(), true)).await.unwrap();
             let query = QuerySpec::json(json!({"model":"Message","relation":case.scope,"params":{"chatId":"c1"}}).to_string());
@@ -68,8 +74,8 @@ async fn consumer_chat_media_load_all_keeps_every_page() {
             assert_eq!(found, vec![format!("m{}", index * 2 + 1), format!("m{}", index * 2 + 2)], "{} pass {pass}", case.scope);
         }
         let requests: Vec<_> = stand.asked().into_iter().filter(|(name, _)| name == "chatMedia").collect();
-        assert_eq!(requests.len(), (pass + 1) * 6);
-        assert_eq!(requests.iter().filter(|(_, variables)| variables.get("after").is_some_and(|value| !value.is_null())).count(), (pass + 1) * 3);
+        assert_eq!(requests.len(), 6 + pass * 3);
+        assert_eq!(requests.iter().filter(|(_, variables)| variables.get("after").is_some_and(|value| !value.is_null())).count(), 3);
     }
     stand.database.close_now();
 }
