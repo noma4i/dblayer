@@ -18,7 +18,7 @@ class SealedSingletonUploadRefusalTest {
         for (dataPresent in listOf(false, true)) scenario(dataPresent, true)
     }
 
-    @Test fun sealedSingletonUploadRefusalKeepsTheKeyBusy() = bounded {
+    @Test fun sealedSingletonUploadRefusalIsReplaced() = bounded {
         for (dataPresent in listOf(false, true)) scenario(dataPresent, false)
     }
 
@@ -51,18 +51,21 @@ class SealedSingletonUploadRefusalTest {
             assertEquals(!discard, error.kept)
             val remaining = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first()
             assertEquals("requests=${transport.calls.map { it.operationName }}", discard, remaining.isEmpty())
-            if (discard) {
-                assertFalse(copy.exists())
-                transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}""")
-                transport.enqueuePut("https://storage.test/second")
-                transport.enqueue("UserPhotoUpdate", """{"data":{"userPhotoUpdate":{"userPhoto":{"reason":"ok","media":{"thumbUrl":"https://photo/2"}},"viewer":{"user":{"id":"u1","name":"Bea"}}}}}""")
-                val sent = awaitWithin("the second upload is accepted") { CurrentUser.updatePhoto(AccountScope.current(), source = second.path) }
-                assertEquals("u1", awaitWithin("the second upload is confirmed") { sent.confirmed() }.value?.id)
-            } else {
-                val blocked = runCatching { awaitWithin("the failed key refuses the second upload") { CurrentUser.updatePhoto(AccountScope.current(), source = second.path) } }.exceptionOrNull()
-                assertTrue("expected InFlight, got $blocked, requests=${transport.calls.map { it.operationName }}", blocked is DbException.InFlight)
-                AccountScope.current().discard("CurrentUser", "singleton", "update_photo")
+            transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}""")
+            transport.enqueuePut("https://storage.test/second")
+            val next = transport.hold("UserPhotoUpdate", reply = """{"data":{"userPhotoUpdate":{"userPhoto":{"reason":"ok","media":{"thumbUrl":"https://photo/2"}},"viewer":{"user":{"id":"u1","name":"Bea"}}}}}""")
+            val sent = awaitWithin("the second upload is accepted") { CurrentUser.updatePhoto(AccountScope.current(), source = second.path) }
+            awaitWithin("the replacement mutation reaches the server") { next.entered() }
+            val nextItems = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first()
+            assertEquals(1, nextItems.size)
+            assertTrue(requireNotNull(nextItems.first().uploadInfo?.localUrl) != items.first().uploadInfo?.localUrl)
+            assertFalse(copy.exists())
+            if (!discard) {
+                val old = runCatching { awaitWithin("the replaced receipt ends") { receipt.confirmed() } }.exceptionOrNull()
+                assertTrue("expected discarded, got $old", old is DbException.Interrupted && old.detail == "Discarded")
             }
+            next.release()
+            assertEquals("u1", awaitWithin("the second upload is confirmed") { sent.confirmed() }.value?.id)
             assertTrue("requests=${transport.calls.map { it.operationName }}", transport.unscripted.isEmpty())
         } finally {
             closeForCleanup()

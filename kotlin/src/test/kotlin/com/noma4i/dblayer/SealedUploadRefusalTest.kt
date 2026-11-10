@@ -18,7 +18,7 @@ class SealedUploadRefusalTest {
         for (dataPresent in listOf(false, true)) scenario(dataPresent, true)
     }
 
-    @Test fun sealedUploadRefusalKeepsTheKeyBusy() = bounded {
+    @Test fun sealedUploadRefusalIsReplaced() = bounded {
         for (dataPresent in listOf(false, true)) scenario(dataPresent, false)
     }
 
@@ -49,18 +49,21 @@ class SealedUploadRefusalTest {
             assertEquals(!discard, error.kept)
             val remaining = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first()
             assertEquals("requests=${transport.calls.map { it.operationName }}", discard, remaining.isEmpty())
-            if (discard) {
-                assertFalse(copy.exists())
-                transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}""")
-                transport.enqueuePut("https://storage.test/second")
-                transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","successMessage":"second"}}}""")
-                val sent = awaitWithin("the second upload is accepted") { Moment.uploadClip(AccountScope.current(), id = "absent", source = second.path) }
-                assertEquals("m77", awaitWithin("the second upload is confirmed") { sent.confirmed() }.value?.id)
-            } else {
-                val blocked = runCatching { awaitWithin("the failed key refuses the second upload") { Moment.uploadClip(AccountScope.current(), id = "absent", source = second.path) } }.exceptionOrNull()
-                assertTrue("expected InFlight, got $blocked, requests=${transport.calls.map { it.operationName }}", blocked is DbException.InFlight)
-                AccountScope.current().discard("Moment", "absent", "upload_clip")
+            transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}""")
+            transport.enqueuePut("https://storage.test/second")
+            val next = transport.hold("CreateMoment", reply = """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","successMessage":"second"}}}""")
+            val sent = awaitWithin("the second upload is accepted") { Moment.uploadClip(AccountScope.current(), id = "absent", source = second.path) }
+            awaitWithin("the replacement mutation reaches the server") { next.entered() }
+            val nextItems = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first()
+            assertEquals(1, nextItems.size)
+            assertTrue(requireNotNull(nextItems.first().uploadInfo?.localUrl) != items.first().uploadInfo?.localUrl)
+            assertFalse(copy.exists())
+            if (!discard) {
+                val old = runCatching { awaitWithin("the replaced receipt ends") { receipt.confirmed() } }.exceptionOrNull()
+                assertTrue("expected discarded, got $old", old is DbException.Interrupted && old.detail == "Discarded")
             }
+            next.release()
+            assertEquals("m77", awaitWithin("the second upload is confirmed") { sent.confirmed() }.value?.id)
             assertTrue("requests=${transport.calls.map { it.operationName }}", transport.unscripted.isEmpty())
         } finally {
             closeForCleanup()

@@ -37,6 +37,24 @@ private class HeldUploadTransport(val base: MockTransport = MockTransport()) : S
 
 class UploadSessionTest {
     @Test
+    fun anUploadInFlightRefusesAnotherUploadForTheSameKey() = bounded {
+        val file = Files.createTempFile("clip", ".mp4").toFile().apply { writeText("clip") }
+        val transport = HeldUploadTransport()
+        try {
+            transport.base.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+            openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
+            Moment.uploadClip(AccountScope.current(), id = "absent", source = file.path)
+            awaitWithin("the first PUT starts") { transport.arrived.await() }
+            val second = runCatching { awaitWithin("the second upload answers") { Moment.uploadClip(AccountScope.current(), id = "absent", source = file.path) } }.exceptionOrNull()
+            assertTrue("expected InFlight, got $second", second is DbException.InFlight)
+            assertEquals(1, transport.puts.get())
+        } finally {
+            closeForCleanup()
+            file.delete()
+        }
+    }
+
+    @Test
     fun uploadRoundKeepsEachGroupsOriginalEpoch() = bounded {
         val file = Files.createTempFile("clip", ".mp4").toFile().apply { writeText("clip") }
         val transport = MockTransport()
