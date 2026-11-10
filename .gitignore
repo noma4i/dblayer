@@ -13,3 +13,4 @@ kotlin/build/
 kotlin/local.properties
 !docs/
 !docs/*.md
+*.profraw
