@@ -95,3 +95,4 @@ ordered_case!(consumer_ordered_audio_since, "Message", "audio_since", "chatMedia
 ordered_case!(consumer_ordered_gifts_since, "Message", "gifts_since", "chatMedia", r#"{"chatId":"c1","afterSequence":0}"#, "GIFT", true);
 ordered_case!(consumer_ordered_moment_by_user, "Moment", "by_user", "userMoments", r#"{"userId":"u1"}"#, "", false);
 ordered_case!(consumer_ordered_moment_owned, "Moment", "owned", "myMoments", r#"{}"#, "", false);
+ordered_case!(consumer_ordered_moment_compass, "Moment", "compass", "meCompass", r#"{}"#, "", false);
