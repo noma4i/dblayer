@@ -17,7 +17,7 @@ use crate::transport::GraphQLRequest;
 
 /// The value of a confirmed operation: the row it shows and the JSON of its answer.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct Confirmed {
+pub struct WireConfirmed {
     pub value: Option<super::wire::WireRow>,
     pub answer_json: Option<String>,
 }
@@ -288,9 +288,9 @@ impl Database {
     }
 
     /// The one outcome of a receipt (D-286): the value `Confirmed{value, answer_json}`, a refusal is `Rejected{failure, kept}` (`kept` = the failed intent stays for `retry` or `discard`), the end of the wait is the error of `cause_error`. With `discard_on_failure` a failed cycle is discarded first and reported with `kept = false`.
-    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<Confirmed, DbError> {
+    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> {
         match self.settle(receipt, discard_on_failure).await? {
-            (WireOperationOutcome::Confirmed { value, answer_json }, _) => Ok(Confirmed { value, answer_json }),
+            (WireOperationOutcome::Confirmed { value, answer_json }, _) => Ok(WireConfirmed { value, answer_json }),
             (WireOperationOutcome::Rejected { failure }, kept) => Err(DbError::Rejected { failure, kept }),
             (WireOperationOutcome::Ended { cause }, _) => Err(super::cause_error(&cause)),
         }
