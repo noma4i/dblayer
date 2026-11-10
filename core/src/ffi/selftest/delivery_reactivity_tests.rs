@@ -7,7 +7,7 @@ use super::flow_fixtures::{add_chat, add_moment, add_profile, add_reactor_user, 
 use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::rig_models::add_reactions;
-use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValue, WireOperationOutcome};
+use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValue};
 use crate::ffi::wire::Cell;
 
 pub(super) struct FeedTransport {
@@ -345,7 +345,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let (draft_list, draft_entity) = (next_rows(&rig, &list, 5).await, next_rows(&rig, &entity, 5).await);
     assert!(draft_list >= receipt.revision && draft_entity >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it: {draft_list} {draft_entity}");
     refused.release();
-    assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(db.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let (rollback_list, rollback_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
     assert!(rollback_list > draft_list && rollback_entity > draft_entity, "the rollback follows the draft on each stream");
     assert_quiet(db, &[&list, &entity, &count]).await;
@@ -410,7 +410,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     }
     assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a stream showed the overlay before the receipt: {revisions:?}, receipt {}", receipt.revision);
     hold.release();
-    assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(db.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let mut restored = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull_next()).await.unwrap();

@@ -5,7 +5,7 @@ use serde_json::json;
 use super::bridge_support_tests::{group, seed_members};
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tape::Rows;
-use crate::ffi::{WireOperationOutcome, WireRow};
+use crate::ffi::WireRow;
 use crate::test_wait::settled;
 
 fn has(rows: &Rows, id: &str) -> bool { rows.0.lock().unwrap().iter().any(|row| row.id == id) }
@@ -16,7 +16,7 @@ async fn chat_with_members() -> (Rig, WireRow, Arc<Rows>, serde_json::Value) {
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    let WireOperationOutcome::Confirmed { value: Some(chat), .. } = bound(rig.database.outcome(receipt)).await.unwrap() else { panic!("the chat was not confirmed") };
+    let chat = bound(rig.database.confirmed(receipt)).await.unwrap().value.expect("the chat was not confirmed");
     seed_members(&rig, &chat.id).await;
     let params = json!({"groupId": chat.id, "order": "JOINED"});
     let rows = Arc::new(Rows::default());
@@ -61,7 +61,7 @@ async fn flow_group_members_refused_add_removes_the_user_from_the_list() {
     settled(&rig, "the member is in the list before the answer", || has(&rows, "u4")).await;
     hold.release();
 
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refused member left the list", || !has(&rows, "u4")).await;
     assert!(has(&rows, "u1") && has(&rows, "u3"));
     rig.database.close_now();

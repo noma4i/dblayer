@@ -8,7 +8,7 @@ use super::rig_tests::{bound, Fault, Rig, World};
 use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
-use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{ReadFetch, ReadRequest, WireOperationReceipt};
 use crate::test_wait::settled;
 
 const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"},"order":[{"field":"at","direction":"asc"}]}"#;
@@ -92,7 +92,7 @@ async fn flow_message_delete() {
     refused.entered().await;
     settled(&rig, "the thread and the chat row moved", || ids(&thread) == ["m1"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m1"))).await;
     refused.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refusal brings the message and the pointer back", || ids(&thread) == ["m1", "m2"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m2"))).await;
 
     let hold = rig.world.hold_next("MessageDelete");

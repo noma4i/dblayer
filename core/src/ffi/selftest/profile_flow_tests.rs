@@ -8,7 +8,6 @@ use super::rig_held::Held;
 use super::flow_fixtures::{one_revision, add_chat, add_profile, cell, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
-use crate::ffi::WireOperationOutcome;
 use crate::test_wait::settled;
 
 async fn rig() -> Rig {
@@ -39,7 +38,7 @@ async fn flow_current_user_profile() {
     refused.entered().await;
     settled(&rig, "every place shows the draft", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("Draft")))).await;
     refused.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refusal brings the old name back everywhere", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("A")))).await;
 
     let hold = rig.world.hold_next("ProfileUpdate");
@@ -119,7 +118,7 @@ async fn flow_user_block() {
     refused.entered().await;
     assert_eq!(blocked.len(), 0, "the blocked list changed before the answer");
     refused.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     rig.settle().await;
     assert_eq!(blocked.len(), 0, "a refused block changed the list");
 

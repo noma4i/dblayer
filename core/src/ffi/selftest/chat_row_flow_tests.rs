@@ -8,7 +8,7 @@ use super::rig_tests::{bound, Fault, Rig, World};
 use super::flow_fixtures::{add_chat, cell, chat_row, int};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
-use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{WireOperationReceipt};
 use crate::test_wait::settled;
 
 const ALL: &str = r#"{"model":"Chat","relation":"all","params":{}}"#;
@@ -72,7 +72,7 @@ async fn flow_chat_pin_mute() {
         refused.entered().await;
         settled(&rig, "the refused change shows first", || marked.len() == 1).await;
         refused.release();
-        assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }), "{action}");
+        assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })), "{action}");
         settled(&rig, "the refusal rolls the flag back everywhere", || marked.emptied() && field(&rig, &all, "c1", name) == Some(Cell::Bool { value: false })).await;
         rig.database.close_now();
     }
