@@ -40,6 +40,7 @@ pub enum Reason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fail {
+    ResponseTooLarge { limit: u64 },
     TooLarge { size: u64, limit: u64 },
     Invalid,
     Reason(Reason),
@@ -146,6 +147,7 @@ pub enum Input {
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<AuthorId> },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
+    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64, sequenced: bool },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     Unknown { request_id: RequestId, attempt_id: AttemptId },
     Committed(BatchId),

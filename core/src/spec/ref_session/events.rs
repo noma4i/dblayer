@@ -508,6 +508,19 @@ impl Session {
                 let answer = if pending.class == Class::Logout { Ok(body) } else { Err(Fail::Revoked) };
                 self.land(pending, answer, None, None, true, out);
             }
+            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } if mine(request_id, attempt_id) => {
+                if !sequenced {
+                    self.land(pending, Err(Fail::ResponseTooLarge { limit }), None, None, false, out);
+                } else if let Some(author) = pending.author {
+                    out.effects.push(author_error_retained(author, pending.request_id, Kind::Temporary, Fail::ResponseTooLarge { limit }, true));
+                    self.state = State::PendingHeld { pending };
+                } else if self.is_online() {
+                    out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
+                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
+                } else {
+                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
+                }
+            }
             Input::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(Fail::Security { code, detail }), None, None, false, out),
             Input::HttpError { request_id, attempt_id, temporary: true, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
