@@ -149,3 +149,32 @@ fn feed_event_touch_parent_once() {
     assert_eq!(revision_of("c1"), i64::try_from(written.revision).ok(), "the resident parent is touched at the revision of the batch");
     assert_eq!(revision_of("c2"), None, "an absent parent is skipped, not created");
 }
+
+unsafe extern "C" fn count_batch_reads(kind: u32, context: *mut std::ffi::c_void, statement: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+    if kind == rusqlite::ffi::SQLITE_TRACE_STMT {
+        let sql = unsafe { rusqlite::ffi::sqlite3_sql(statement.cast()) };
+        if !sql.is_null() && unsafe { std::ffi::CStr::from_ptr(sql) }.to_bytes().starts_with(b"SELECT") {
+            unsafe { *context.cast::<usize>() += 1; }
+        }
+    }
+    0
+}
+
+#[test]
+fn feed_batch_select_work() {
+    let measure = |size: usize| {
+        let spec = ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+        let db = Arc::new(Store::open_models(None, vec![spec], None).unwrap());
+        let events = (0..size).map(|i| ("docs".into(), json!({"op":"upsert", "id":format!("d{i}"), "row":{"id":format!("d{i}"), "text":"value"}, "observe":true}).to_string())).collect();
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: events, intents: 0, credential: None, ops: Vec::new() };
+        let mut count = 0usize;
+        let connection = unsafe { db.lock().connection.handle() };
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(connection, rusqlite::ffi::SQLITE_TRACE_STMT, Some(count_batch_reads), (&mut count as *mut usize).cast()); }
+        let result = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(connection, 0, None, std::ptr::null_mut()); }
+        assert_eq!(result.observed.len(), size);
+        assert!(result.observed.iter().all(|event| serde_json::from_str::<Value>(event).unwrap()["after"]["text"] == "value"));
+        count
+    };
+    assert_eq!(measure(2), measure(12), "feed SELECT count must not grow with event count");
+}
