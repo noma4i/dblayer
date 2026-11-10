@@ -329,7 +329,9 @@ fn sess_idle_stray() {
 fn sess_revoked_other_author() {
     for mut twin in [Twin::new(), calling()] {
         let effects = twin.feed(Input::Revoked { request_id: 77, attempt_id: 88, body: "{}".into(), author_ref: Some(31) });
-        assert!(matches!(&effects[..], [RefEffect::CommitLanding { erase_session: true, answer: Some((77, Err(Fail::Revoked))), digest: None, sequence: None, .. }]), "the erase-session landing commits with the author answer: {effects:?}");
+        let [RefEffect::CommitLanding { batch, erase_session: true, answer: None, digest: None, sequence: None, .. }] = effects[..] else { panic!("the revoked answer of another author commits only the session erase: {effects:?}") };
+        let committed = twin.feed(Input::Committed(batch));
+        assert!(matches!(&committed[..], [RefEffect::Answer { author: 31, req_id: 77, .. }, RefEffect::ServerEnded { .. }]), "after Committed the author is answered first, then the server end is published: {committed:?}");
     }
 }
 
