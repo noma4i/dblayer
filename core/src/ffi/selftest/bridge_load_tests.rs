@@ -38,11 +38,12 @@ async fn dlv_deferred_parent_swap_wakes() {
     let count = rig.database.subscribe_reading(epoch, ReadRequest::Count { query: query("thread_count") }, count_reader.clone());
     settled(&rig, "both temporary streams open empty", || !list_reader.deliveries().is_empty() && !count_reader.deliveries().is_empty()).await;
     assert_eq!((rig.world.count("Thread"), rig.world.count("ThreadCount")), (0, 0));
-    gate.release();
-    let real = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
-    let reply = json!({"data":{"thread":[{"id":"child-1", "chatId":real, "text":"child", "at":1}]}});
+    let reply = json!({"data":{"thread":[{"id":"child-1", "chatId":"g1", "text":"child", "at":1}]}});
     rig.world.answer_with("Thread", reply.clone());
     rig.world.answer_with("ThreadCount", reply);
+    gate.release();
+    let real = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
+    assert_eq!(real, "g1");
     settled(&rig, "both windows request the real parent", || rig.world.count("Thread") == 1 && rig.world.count("ThreadCount") == 1).await;
     let requests: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "Thread" || entry.operation == "ThreadCount").collect();
     assert_eq!((requests.iter().filter(|entry| entry.operation == "Thread").count(), requests.iter().filter(|entry| entry.operation == "ThreadCount").count()), (1, 1));
