@@ -51,11 +51,11 @@ async fn boundary_receipt_orders() {
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string())).await.unwrap();
     hold.entered().await;
     hold.release();
-    let first = bound(rig.database.outcome(receipt.clone())).await.unwrap();
+    let first = bound(rig.database.confirmed(receipt.clone())).await.unwrap();
     let leaving = bound(rig.database.act(epoch, "Group".into(), group.id, "leave".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(bound(rig.database.confirmed(leaving)).await.is_ok());
-    let second = bound(rig.database.outcome(receipt)).await.unwrap();
-    assert!(matches!(first, crate::ffi::WireOperationOutcome::Confirmed { value: Some(_), .. }));
+    let second = bound(rig.database.confirmed(receipt)).await.unwrap();
+    assert!(first.value.is_some());
     assert_eq!(first, second);
     rig.database.close_now();
 }
@@ -72,7 +72,7 @@ async fn a_refused_destroy_restores_the_row_according_to_its_declaration() {
         hold.entered().await;
         assert!(bound(rig.database.read_row(epoch, "Group".into(), group.id.clone())).await.unwrap().is_none());
         hold.release();
-        assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+        assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
         assert!(bound(rig.database.read_row(epoch, "Group".into(), group.id)).await.unwrap().is_some());
         rig.database.close_now();
     }
@@ -168,7 +168,7 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
     hold.entered().await;
     assert!(bound(rig.database.read_row(epoch, "Message".into(), id.clone())).await.unwrap().is_some());
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: true, .. })));
     assert!(bound(rig.database.read_row(epoch, "Message".into(), id.clone())).await.unwrap().is_some());
     if retry {
         let retry_receipt = bound(rig.database.retry(epoch, "Message".into(), id.clone(), None, None)).await.unwrap();
@@ -204,7 +204,7 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     first.entered().await;
     let joining = bound(joining).await.unwrap().unwrap();
     first.release();
-    assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(rig.database.confirmed(joining)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let leaving = start(later);
     second.entered().await;
     second.release();
@@ -246,7 +246,7 @@ async fn out_leave_rows_orders() {
         }
         gate.release();
         let receipt = bound(acting).await.unwrap().unwrap();
-        assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+        assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
         for (order, original) in orders {
             let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": group.id, "order": order}}).to_string();
             let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
@@ -276,11 +276,8 @@ async fn forward_returns_its_optimistic_value_before_the_server_answers() {
     let after = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(source.cells, after.cells);
     hold.release();
-    let outcome = bound(rig.database.outcome(result)).await.unwrap();
-    match outcome {
-        crate::ffi::WireOperationOutcome::Confirmed { value: Some(row), .. } => assert_eq!(row.id, "forwarded-1"),
-        other => panic!("forward did not return its confirmed row: {other:?}"),
-    }
+    let row = bound(rig.database.confirmed(result)).await.unwrap().value.expect("forward did not return its confirmed row");
+    assert_eq!(row.id, "forwarded-1");
     rig.database.close_now();
 }
 
@@ -311,7 +308,7 @@ async fn a_create_refusal_follows_the_declared_policy() {
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
         let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-        assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+        assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept, .. }) if kept == keep));
         assert_eq!(world.log().iter().filter(|entry| entry.operation == "CreateGroup").count(), 1);
         let rows = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap();
         assert_eq!(rows.len(), usize::from(keep), "the retained rows disagree with the declared policy");
@@ -343,7 +340,7 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
         mutation.entered().await;
         let receipt = bound(acting).await.unwrap().unwrap();
         if answer_first { mutation.release(); }
-        if answer_first { assert!(matches!(bound(rig.database.outcome(receipt.clone())).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. })); }
+        if answer_first { bound(rig.database.confirmed(receipt.clone())).await.unwrap(); }
         held.release();
         bound(reading).await.unwrap().unwrap();
         let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
@@ -390,10 +387,10 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
         let (database, receipt, done) = (rig.database.clone(), receipt.clone(), read_done.clone());
         tokio::spawn(async move {
             done.set();
-            database.outcome(receipt).await
+            database.confirmed(receipt).await
         })
     };
-    assert!(matches!(bound(reading).await.unwrap().unwrap(), crate::ffi::WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m1"));
+    assert!(matches!(bound(reading).await.unwrap().unwrap().value, Some(row) if row.id == "m1"));
     *shared.after_commit.lock().unwrap() = None;
     rig.database.close_now();
 }
