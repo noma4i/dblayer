@@ -159,12 +159,12 @@ impl Store {
         let models: Vec<String> = std::iter::once(model.to_string()).chain(super::plan::nested_ref::link_targets(self.spec(model)?)).collect();
         if let Some(pairs) = self.replaced().replaced_between(&models, after, seen) { return Ok(pairs); }
         let mut statement = reader.connection().prepare_cached(include_str!("sql/lookup/read_aliases_of.sql"))?;
+        let ids: Vec<&str> = keys.iter().map(|(id, _)| id.as_str()).collect();
+        let ids = serde_json::to_string(&ids).map_err(|error| CoreError::Internal(error.to_string()))?;
         let mut pairs = Vec::new();
-        for (id, _) in keys {
-            let real = RowId::new(id).map_err(|error| CoreError::Internal(error.to_string()))?;
-            for temp in statement.query_map([model, id.as_str()], |row| row.get::<_, String>(0))? {
-                pairs.push((RowId::new(&temp?).map_err(|error| CoreError::Internal(error.to_string()))?, real.clone()));
-            }
+        for pair in statement.query_map(rusqlite::params![model, ids], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))? {
+            let (temp, real) = pair?;
+            pairs.push((RowId::new(&temp).map_err(|error| CoreError::Internal(error.to_string()))?, RowId::new(&real).map_err(|error| CoreError::Internal(error.to_string()))?));
         }
         Ok(pairs)
     }
