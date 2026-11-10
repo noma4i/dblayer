@@ -341,7 +341,7 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
     }
     if state == St::WaitingDeclaration {
         let mut twin = Twin::bare();
-        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
+        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None };
         twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
         twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.stage(7), Some(St::WaitingDeclaration), "the owner reached WaitingDeclaration");

@@ -47,7 +47,7 @@ fn stored(kind: Kind2) -> StoredOp {
         Kind2::Exhausted => attempts = 39,
         Kind2::Expired => { attempts = 0; op.expires_after = Some(std::time::Duration::from_secs(10)); }
     }
-    StoredOp { answered, op_id: 1, op, error_mark, pending, attempts, cycle_id: 1, restore_element: restore_failed.as_ref().map(|_| ("op".to_string(), "k1".to_string())), restore_failed }
+    StoredOp { answered, op_id: 1, op, error_mark, pending, attempts, cycle_id: 1, cause: None, restore_element: restore_failed.as_ref().map(|_| ("op".to_string(), "k1".to_string())), restore_failed }
 }
 
 #[derive(Clone, Copy, Debug)]

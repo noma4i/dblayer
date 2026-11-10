@@ -52,7 +52,7 @@ fn out_discard_pending_owner_crash() {
     let mut twin = Twin::bare();
     twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
     twin.post(OutboxInput::Online(Online(false)));
-    let restored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: Some((41, 42)), attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
+    let restored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: Some((41, 42)), attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None };
     twin.post(OutboxInput::Restored { ops: vec![restored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     discard(&mut twin);

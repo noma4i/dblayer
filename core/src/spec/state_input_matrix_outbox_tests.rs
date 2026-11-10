@@ -201,7 +201,7 @@ impl Owner {
             Base::Restored { attempts, pending } => {
                 let mut twin = Twin::bare();
                 twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
-                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, restore_failed: None, restore_element: None };
+                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None };
                 twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
                 twin.post(OutboxInput::RestoreReady { epoch: super::outbox_harness::EPOCH });
                 Self { twin, pairs: Default::default() }
