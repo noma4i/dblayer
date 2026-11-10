@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn sess_answer_too_large_other() {
+    let mut sealing = Twin::new();
+    sealing.feed(call(1));
+    let mismatch = opened(open(Some((CRED, 6)), None, false, Secret::Present(9)));
+    let unavailable = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
+    let blocked = opened(open(Some((CRED, 6)), None, true, Secret::Present(CRED)));
+    let mut closed = Twin::new();
+    closed.feed(Input::Closing);
+    for (name, mut twin) in [
+        ("Idle", Twin::new()), ("Sealing", sealing), ("Generating", generating()),
+        ("Storing", storing()), ("ClearingSecret", clearing()), ("SecretMismatch", mismatch),
+        ("SecretUnavailable", unavailable), ("Persisting", persisting()), ("Landing", landing(1)),
+        ("BlockedPending", blocked), ("Closed", closed),
+    ] {
+        let before = twin.reference.state.clone();
+        for sequenced in [false, true] {
+            assert!(twin.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64, sequenced }).is_empty(), "{name}");
+            assert_eq!(twin.reference.state, before, "{name}");
+        }
+    }
+}
+
+#[test]
+fn sess_calling_answer_too_large_after_offline() {
+    let mut twin = calling();
+    let (request_id, attempt_id) = (twin.rid(), twin.aid());
+    assert_eq!(twin.feed(Input::Online(false)), vec![RefEffect::HttpCancel { attempt_id }]);
+    assert!(twin.in_phase(CallPhase::WaitingNetwork));
+    assert!(twin.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }).is_empty());
+    assert!(twin.in_phase(CallPhase::WaitingNetwork));
+}
+
+#[test]
 fn sess_answer_too_large_table() {
     let mut read = calling();
     let input = Input::AnswerTooLarge { request_id: read.rid(), attempt_id: read.aid(), limit: 64, sequenced: false };

@@ -242,7 +242,7 @@ impl Twin {
 
     fn feed(&mut self, input: Input) -> Vec<RefEffect> {
         if let RefState::Sealing { seal_id, .. } = self.reference.state {
-            if !matches!(input, Input::Sealed { .. } | Input::SealFailed { .. } | Input::EpochEnded { cause: EndCause::Close, .. }) {
+            if !matches!(input, Input::Sealed { .. } | Input::SealFailed { .. } | Input::AnswerTooLarge { .. } | Input::EpochEnded { cause: EndCause::Close, .. }) {
                 self.feed(Input::Sealed { seal_id, size: 1 });
             }
         }
