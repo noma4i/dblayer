@@ -32,4 +32,29 @@ extension BridgeProbeTests {
     #expect(transport.unscripted.isEmpty)
     await DB.closeForCleanup()
   }
+  @MainActor @Test(.timeLimit(.minutes(1)))
+  func aSecondUploadOfTheSameActionAfterConfirmation() async throws {
+    let first = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let second = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data("first".utf8).write(to: first)
+    try Data("second".utf8).write(to: second)
+    defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: second) }
+    let transport = MockTransport()
+    let row = #""__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""#
+    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"#)
+    for name in ["first", "second"] {
+      transport.enqueue("CreateBlob", reply: "{\"data\":{\"blobCreate\":{\"url\":\"https://storage.test/\(name)\",\"headers\":{},\"signedId\":\"\(name)\",\"blobId\":\"\(name)\"}}}")
+      transport.enqueuePut("https://storage.test/\(name)")
+      transport.enqueue("CreateMoment", reply: "{\"data\":{\"createMoment\":{\(row),\"successMessage\":\"\(name)\"}}}")
+    }
+    let firstReceipt = try await Moment.uploadClip(id: "absent", source: first.path, in: DB.account())
+    #expect(try await firstReceipt.confirmed().value?.id == "m77")
+    let secondReceipt = try await Moment.uploadClip(id: "absent", source: second.path, in: DB.account())
+    #expect(try await secondReceipt.confirmed().value?.id == "m77")
+    #expect(try await secondReceipt.answer(as: MomentUploadClipResult.self).successMessage == "second")
+    #expect(transport.calls.map(\.operationName) == ["CreateBlob", "CreateMoment", "CreateBlob", "CreateMoment"])
+    #expect(transport.unscripted.isEmpty)
+    await DB.closeForCleanup()
+  }
+
 }
