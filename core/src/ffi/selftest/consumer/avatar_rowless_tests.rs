@@ -197,7 +197,7 @@ async fn consumer_avatar_forbidden_discard_and_next_upload() {
                         stand.script_put(200, Some("etag"));
                         let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
                         let outcome = bound(stand.database.confirmed(second, false)).await;
-                        assert!(outcome.is_ok(), "second upload: {outcome:?}");
+                        assert!(matches!(outcome, Ok(ref confirmed) if confirmed.value.as_ref().is_some_and(|row| row.id == "u1")), "second upload merges the existing row: {outcome:?}");
                         assert_eq!(stand.requests("UserPhotoUpdate"), 2);
                     } else {
                         let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await;
