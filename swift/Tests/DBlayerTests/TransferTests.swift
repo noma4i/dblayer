@@ -174,10 +174,9 @@ extension BridgeProbeTests {
       let rows = receipt.items.map(\.optimisticValue)
       await server.heldRequest()
       try await rows[0].discard(action: "create_files")
-      if lose { try DB.database.setOnline(online: false); server.loseAnswer(filename: "1.jpg") }
+      if lose { try DB.database.setOnline(online: false); await server.heldDropped() }
       server.hold(operation: nil)
       if lose {
-        await server.lostAnswer()
         try await openStand(transport, path: path, encrypted: encrypted, credential: credential, server: server, operations: operations, onlineAtOpen: onlineAtOpen)
         await eventually("the lost step is requested again") {
           server.requests.filter { $0.body["operationName"] as? String == "CreateBlob" && ($0.body["variables"] as? [String: Any])?["filename"] as? String == "1.jpg" }.count == 2

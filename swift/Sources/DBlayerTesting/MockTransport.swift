@@ -246,7 +246,7 @@ public final class Hold: @unchecked Sendable {
     TestPulse.shared.pulse()
   }
 
-  fileprivate func pass() async {
+  func pass() async {
     arrived.continuation.yield(())
     TestPulse.shared.pulse()
     var releases = freed.stream.makeAsyncIterator()

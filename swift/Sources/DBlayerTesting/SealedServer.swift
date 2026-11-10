@@ -18,13 +18,11 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   private var routed: [(operation: String?, purpose: NetworkPurpose)] = []
   private var refusing = false
   private var holding: String?
-  private var parked: [CheckedContinuation<Void, Never>] = []
+  private var parked: [Hold] = []
+  private var heldGate: Hold?
   private let arrivals = AsyncStream<Void>.makeStream()
-  private let lostAnswers = AsyncStream<Void>.makeStream()
   private let contract: ServerContract
   private var executed: [[String: Any]] = []
-  private var lostFile: String?
-  private var lost = false
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]?
   private let bridge: (@Sendable (String, [String: Any]) async throws -> [String: Any])?
   @TaskLocal public static var purpose: NetworkPurpose = .standard
@@ -60,10 +58,6 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
   public var requests: [(path: String, body: [String: Any])] { lock.withLock { received } }
   public var routes: [(operation: String?, purpose: NetworkPurpose)] { lock.withLock { routed } }
   public var effects: [[String: Any]] { lock.withLock { executed } }
-  public func loseAnswer(filename: String) { lock.withLock { lostFile = filename } }
-  public func lostAnswer() async { var arrivals = lostAnswers.stream.makeAsyncIterator()
-    _ = await arrivals.next() }
-  public var hasLostAnswer: Bool { lock.withLock { lost } }
 
   public func pathRequests(_ path: String) -> Int { requests.filter { $0.path == path }.count }
 
@@ -74,13 +68,14 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
 
   /// While set, a request for this operation reaches the server and waits there, so a test ends a call while its request is in flight. `nil` lets every waiting request answer.
   public func hold(operation: String?) {
-    let released = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+    let released = lock.withLock { () -> [Hold] in
       holding = operation
+      if operation != nil { heldGate = Hold() }
       guard operation == nil else { return [] }
       defer { parked = [] }
       return parked
     }
-    released.forEach { $0.resume() }
+    released.forEach { $0.release() }
   }
 
   /// How many requests wait in the hold.
@@ -90,6 +85,8 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
     var held = arrivals.stream.makeAsyncIterator()
     _ = await held.next()
   }
+
+  public func heldDropped() async { if let gate = lock.withLock({ heldGate }) { await gate.dropped() } }
 
   private static func wireExtensions(_ extensions: GraphqlExtensions?) throws -> [String: Any] {
     guard let extensions else { return [:] }
@@ -138,33 +135,20 @@ public final class SealedServer: ScriptedHttp, @unchecked Sendable {
       guard let scripted = answer(path, bodyForAnswer) else { throw DbError.Invalid(detail: "no response scripted for \(path)") }
       reply = scripted
     }
-    lock.withLock { executed.append(sent) }
-    TestPulse.shared.pulse()
-    if let operation = sent["operationName"] as? String, lock.withLock({ holding == operation }) {
-      await withCheckedContinuation { continuation in
-        let wait = lock.withLock { () -> Bool in
-          guard holding == operation else { return false }
-          parked.append(continuation)
-          return true
-        }
-        if wait {
-          arrivals.continuation.yield(())
-          TestPulse.shared.pulse()
-        }
-        if !wait { continuation.resume() }
-      }
-    }
-    let sealed = try seal(request, reply)
     let stored = String(decoding: try JSONSerialization.data(withJSONObject: reply, options: [.sortedKeys]), as: UTF8.self)
     try contract.settle(scope: scope, requestJson: wire, token: stored)
-    let lose = lock.withLock { () -> Bool in
-      let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
-      guard filename != nil && filename == lostFile else { return false }
-      lostFile = nil
-      lost = true
-      return true
+    lock.withLock { executed.append(sent) }
+    TestPulse.shared.pulse()
+    if let operation = sent["operationName"] as? String, let gate = lock.withLock({ () -> Hold? in
+      guard holding == operation, let gate = heldGate else { return nil }
+      parked.append(gate)
+      return gate
+    }) {
+      arrivals.continuation.yield(())
+      await gate.pass()
+      if Task.isCancelled { throw CancellationError() }
     }
-    if lose { lostAnswers.continuation.yield(()); throw DbError.Network(detail: "lost answer") }
+    let sealed = try seal(request, reply)
     return EncryptedReply(status: 200, body: sealed)
   }
 
