@@ -64,7 +64,14 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
       while !Task.isCancelled {
         do {
           switch try await socket.receive() {
-          case let .string(text): events.frame(text: text)
+          case let .string(text):
+            let limit = cableFrameLimit()
+            guard UInt64(text.utf8.count) <= limit else {
+              socket.cancel()
+              events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "DBlayer.ResponseLimit", code: 1, message: "the cable frame is above the limit of \(limit) bytes"))
+              return
+            }
+            events.frame(text: text)
           case let .data(bytes): events.binary(bytes: bytes)
           @unknown default: events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
           }

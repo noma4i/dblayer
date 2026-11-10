@@ -47,6 +47,10 @@ pub use event::WireModelEvent;
 pub mod upload_wire;
 pub mod wire;
 
+/// The most bytes of a cable frame the platform delivers; a larger frame ends the socket with `DBlayer.ResponseLimit`.
+#[uniffi::export]
+pub fn cable_frame_limit() -> u64 { crate::transport::encrypted::cable::SERVER_BYTES as u64 }
+
 #[uniffi::export]
 pub fn user_agent(application: Option<String>) -> String { crate::transport::user_agent(application) }
 

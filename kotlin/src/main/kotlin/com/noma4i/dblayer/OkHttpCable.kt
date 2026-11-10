@@ -37,7 +37,12 @@ internal class OkHttpCable(private val client: OkHttpClient) {
                 opened.complete(null)
             }
 
-            override fun onMessage(webSocket: WebSocket, text: String) = events.frame(text)
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val limit = cableFrameLimit()
+                if (text.toByteArray().size.toULong() <= limit) return events.frame(text)
+                webSocket.cancel()
+                events.ended(null, null, rawFailure(ResponseLimitException(limit)))
+            }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) = events.binary(bytes.toByteArray())
 

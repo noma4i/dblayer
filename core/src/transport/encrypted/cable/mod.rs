@@ -14,7 +14,7 @@ pub(crate) mod tests;
 pub use link::{CableKeys, CableLink};
 
 const CLIENT_BYTES: usize = 32 * 1024;
-const SERVER_BYTES: usize = 256 * 1024;
+pub const SERVER_BYTES: usize = 256 * 1024;
 const FRAME_BUDGET: u64 = 1 << 20;
 const HEADER: &str = r#"{"alg":"dir","enc":"A256GCM"}"#;
 
