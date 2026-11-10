@@ -1,4 +1,4 @@
-//! Types of the Outbox reference: owner state, inputs, effects. Written from specs/machines/outbox.md only.
+//! Types of the Outbox reference: owner state, inputs, effects. Written from the Outbox owner table of the machine spec only.
 
 use std::collections::{BTreeMap, BTreeSet};
 

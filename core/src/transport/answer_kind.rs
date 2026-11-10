@@ -1,4 +1,4 @@
-//! The one reader of a server answer: what the answer means for the owner of the call (`specs/machines/wire.md`).
+//! The one reader of a server answer: what the answer means for the owner of the call (the wire table of the machine spec).
 
 use serde_json::Value;
 

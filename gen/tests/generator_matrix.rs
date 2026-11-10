@@ -1,4 +1,4 @@
-//! C4: every DSL key x every fixture unit x platform. A unit is the `.dbl` files of one fixture directory, the models and operations of the consumer app together, with its GraphQL schema where the unit has one. Swift output is parsed with `swiftc -parse`. Kotlin output is compiled by the Gradle module `kotlin/consumer-check` (property `matrixKotlin`). Every DSL key must occur in a fixture, else the generator branch has no fixture row (red). The result goes to `.orca-artifacts/matrix/C4-generator.tsv`.
+//! C4: every DSL key x every fixture unit x platform. A unit is the `.dbl` files of one fixture directory, the models and operations of the consumer app together, with its GraphQL schema where the unit has one. Swift output is parsed with `swiftc -parse`. Kotlin output is compiled by the Gradle module `kotlin/consumer-check` (property `matrixKotlin`). Every DSL key must occur in a fixture, else the generator branch has no fixture row (red). The result goes to `target/matrix/C4-generator.tsv`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -52,7 +52,7 @@ fn generator_matrix_over_every_fixture_unit() {
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap());
     let repository = manifest.join("..");
     let root = repository.join("fixtures");
-    let scratch = repository.join(".orca-artifacts/matrix/kotlin-src");
+    let scratch = repository.join("target/matrix/kotlin-src");
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
     let mut sources = String::new();
     for unit in units(&root) {
@@ -90,7 +90,7 @@ fn generator_matrix_over_every_fixture_unit() {
         let count = sources.matches(key).count();
         rows.push(("DSL key".into(), key.into(), if count > 0 { "Green" } else { "Red" }.into(), format!("{count} occurrences in the fixtures")));
     }
-    let output = repository.join(".orca-artifacts/matrix");
+    let output = repository.join("target/matrix");
     std::fs::create_dir_all(&output).unwrap();
     let mut tsv = String::from("path\tkind\tverdict\tdetail\n");
     for (path, kind, verdict, detail) in &rows { tsv.push_str(&format!("{path}\t{kind}\t{verdict}\t{detail}\n")); }

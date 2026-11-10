@@ -1,4 +1,4 @@
-//! Executable reference of the Outbox owner and of the LocalWrites owner, written from specs/machines/outbox.md only. No library code.
+//! Executable reference of the Outbox owner and of the LocalWrites owner, written from the Outbox owner table of the machine spec only. No library code.
 //!
 //! `step(&State, &Input) -> (State, Vec<Effect>)`: every fired row emits `Effect::Row(<test id>)`. A pair that the spec does not answer emits
 //! `Effect::Undefined`. Ids with the prefix `rule_` name a table rule or a general rule (R2, R4, R4b) that has no test id of its own.

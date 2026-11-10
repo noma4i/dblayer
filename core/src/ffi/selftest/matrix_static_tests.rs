@@ -123,11 +123,11 @@ fn matrix_static_checks() {
         }
     }
 
-    // the removed-symbol table lives in specs/ (local only): the coordinator runs the rg when the specs directory is next to the crate, skipped when it is not
+    // the removed-symbol table lives in the local machine spec directory: the coordinator runs the rg when that directory is next to the crate, skipped when it is not
     if crate_dir().join("../specs").is_dir() {
         matrix.check("removed-symbol table", "specs directory present", "rg of the symbols the spec removed", "run by the coordinator", "run by the coordinator");
     } else {
-        matrix.check("removed-symbol table", "specs directory absent", "specs/ is local only, not next to the crate", "skipped", "skipped");
+        matrix.check("removed-symbol table", "spec directory absent", "the machine spec directory is local only, not next to the crate", "skipped", "skipped");
     }
     matrix.finish();
 }

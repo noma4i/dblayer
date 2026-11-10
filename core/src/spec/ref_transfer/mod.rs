@@ -1,4 +1,4 @@
-//! Executable reference of the Transfer owner and the Rounds owner, written from specs/machines/transfer.md only. No library code.
+//! Executable reference of the Transfer owner and the Rounds owner, written from the Transfer owner table of the machine spec only. No library code.
 
 #![allow(dead_code, clippy::too_many_arguments, clippy::large_enum_variant, clippy::manual_div_ceil, clippy::ptr_arg, clippy::match_like_matches_macro, clippy::map_flatten)]
 
