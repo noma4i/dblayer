@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::rig::{moment_models, within, Server, Wire, OPERATIONS};
 use super::harness_life::Held;
-use crate::ffi::{Config, Database, DbError, FakeHttp, EncryptedReply, OpenPorts, TestClock, WireOperationOutcome};
+use crate::ffi::{Config, Database, DbError, FakeHttp, EncryptedReply, OpenPorts, TestClock};
 use crate::schema::{ActionLanding, Coverage, FieldSpec, ModelSpec, OnFailure, RelationSpec, RemoteShape, RemoteSpec};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::{EncryptedOperationClass, NetworkPurpose};
@@ -64,7 +64,7 @@ async fn data_upsert_lands() {
     let load = db.begin_load(epoch, "Annotation".into(), Some("all".into()), "{}".into()).unwrap();
     within(load.result()).await.unwrap();
     let receipt = within(db.send_create("Moment", &json!({"text": "root"}).to_string())).await;
-    assert!(matches!(within(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert!(within(db.confirmed(receipt)).await.is_ok());
     let root = within(db.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().unwrap();
     for (id, text) in [("a1", "first"), ("a2", "second")] {
         let row = within(db.read_row(epoch, "Annotation".into(), id.into())).await.unwrap().unwrap();

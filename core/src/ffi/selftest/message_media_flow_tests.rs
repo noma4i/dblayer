@@ -79,7 +79,7 @@ async fn flow_message_media_upload() {
     bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
     settled(&rig, "the preview stands at once", || rows.0.lock().unwrap().iter().all(|row| cell(&rig, "Message", row, "localPreviewUrl") == text("file:///clip.jpg"))).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the answer replaced the bubble", || rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>() == ["m1"]).await;
     settled(&rig, "the entity of the answer shows", || last.len() == 1).await;
     settled(&rig, "the preview stands on the row of the server", || field(&rig, "Message", &rows, "m1", "localPreviewUrl") == Some(text("file:///clip.jpg"))).await;

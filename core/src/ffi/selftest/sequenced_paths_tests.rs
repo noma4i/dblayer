@@ -35,14 +35,14 @@ async fn drive(path: Path, database: &Arc<Database>, rig: &SessionRig, known: bo
         Path::OutboxMutation => {
             let request = CommandRequest { epoch, model: "Moment".into(), values_json: json!({"text": "hi"}).to_string(), args_json: "{}".into(), upload: None };
             let receipt = bound(database.send(request)).await.unwrap();
-            bound(database.confirmed(receipt, false)).await.unwrap();
+            bound(database.confirmed(receipt)).await.unwrap();
         }
         Path::UploadFinalMutation => {
             let directory = tempfile::tempdir().unwrap();
             let source = directory.path().join("clip.mp4");
             std::fs::write(&source, b"abc").unwrap();
             let receipt = bound(database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-            bound(database.confirmed(receipt, false)).await.unwrap();
+            bound(database.confirmed(receipt)).await.unwrap();
         }
         Path::CallsMutation => {
             let document = "mutation Ping { ping { id } }";

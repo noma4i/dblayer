@@ -132,7 +132,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
             let database = database.clone();
             let (started, ready) = tokio::sync::oneshot::channel();
             let task = tokio::spawn(async move {
-                let mut waiting = Box::pin(database.confirmed(receipt, false));
+                let mut waiting = Box::pin(database.confirmed(receipt));
                 let mut started = Some(started);
                 std::future::poll_fn(|context| {
                     let result = waiting.as_mut().poll(context);

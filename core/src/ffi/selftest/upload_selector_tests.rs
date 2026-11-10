@@ -39,7 +39,7 @@ async fn boundary_selector_without_action() {
         assert!(matches!(bound(rig.database.outcome(ended)).await.unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::Discarded }), "transfer_first {transfer_first}: the first operation ended");
 
         rig.database.set_online(true).unwrap();
-        assert!(bound(rig.database.confirmed(kept, false)).await.is_ok(), "transfer_first {transfer_first}: the other operation went out");
+        assert!(bound(rig.database.confirmed(kept)).await.is_ok(), "transfer_first {transfer_first}: the other operation went out");
         settled(&rig, "the server saw the kept operation only", || rig.world.count("ChatPin") + rig.world.count("ChatUpdatePhoto") == 1).await;
         assert_eq!(rig.world.count(if transfer_first { "ChatPin" } else { "ChatUpdatePhoto" }), 1, "transfer_first {transfer_first}");
         rig.database.close_now();
@@ -79,7 +79,7 @@ async fn boundary_transfer_selector() {
         }
 
         rig.database.set_online(true).unwrap();
-        assert!(bound(rig.database.confirmed(upload, false)).await.is_ok(), "discard_first {discard_first}: the upload of the other action went out");
+        assert!(bound(rig.database.confirmed(upload)).await.is_ok(), "discard_first {discard_first}: the upload of the other action went out");
         settled(&rig, "the server saw the upload once", || rig.world.count("ChatUpdatePhoto") == 1).await;
         rig.database.close_now();
     }

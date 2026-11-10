@@ -73,7 +73,7 @@ async fn flow_message_forward() {
     hold.entered().await;
     settled(&rig, "the copy stands again", || thread.len() == 1).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the answer replaced the copy", || ids(&thread) == ["forwarded-1"]).await;
     assert!(thread.1.lock().unwrap().iter().all(|seen| seen.size <= 1), "the thread showed the copy and the answer together");
     assert!(forwarded_by_me(&rig, &thread, "forwarded-1"));

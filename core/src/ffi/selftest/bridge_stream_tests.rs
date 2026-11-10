@@ -140,7 +140,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     let before = rig.world.count("Users");
     rig.world.fail_next("DeleteGroup", Fault::Answer(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]})));
     let receipt = bound(rig.database.destroy(epoch, "User".into(), "user".into())).await.unwrap();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the open list is read once more", || rig.world.count("Users") > before).await;
     settle(&rig).await;
     assert_eq!(rig.world.count("Users") - before, 1);
@@ -300,7 +300,7 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
 
     rig.database.set_online(true).unwrap();
-    let outcome = bound(rig.database.confirmed(receipt.clone(), false)).await.unwrap();
+    let outcome = bound(rig.database.confirmed(receipt.clone())).await.unwrap();
     assert!(matches!(outcome.value, Some(row) if row.id == "m2"));
     settled(&rig, "the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;
     settle(&rig).await;
@@ -399,7 +399,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     for (index, text) in ["six", "seven"].into_iter().enumerate() {
         let (before, mark) = (rig.database.db.counters().rows_delivered, reader.len());
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
-        bound(rig.database.confirmed(receipt, false)).await.unwrap();
+        bound(rig.database.confirmed(receipt)).await.unwrap();
         settle(&rig).await;
         let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let ReadValue::Delta { edits, .. } = &delivery.value { Some(crate::ffi::RowEdit::carried(edits).len()) } else { None }).collect();
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");

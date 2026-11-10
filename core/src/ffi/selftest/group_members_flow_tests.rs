@@ -41,7 +41,7 @@ async fn flow_group_members() {
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "u4")).cloned().unwrap();
     assert!(first.revision >= receipt.revision, "the member appeared before the receipt: {}", first.revision);
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     rig.settle().await;
     assert!(has(&rows, "u4"), "the member left the list after the answer");
     let gone = rows.1.lock().unwrap().iter().skip_while(|seen| !seen.rows.iter().any(|row| row.id == "u4")).any(|seen| seen.removed.iter().any(|id| id == "u4"));

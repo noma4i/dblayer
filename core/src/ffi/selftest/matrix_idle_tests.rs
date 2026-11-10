@@ -10,7 +10,7 @@ async fn idle_costs_nothing_for_a_day() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let receipt = bound(rig.database.send(message(epoch, "m", 1))).await.unwrap();
-    bound(rig.database.confirmed(receipt, false)).await.unwrap();
+    bound(rig.database.confirmed(receipt)).await.unwrap();
     let _ = bound(rig.database.run(epoch, "MyProfile".into(), "{}".into())).await;
     bound(rig.settle()).await;
     let (requests, armed) = (rig.world.log().len(), rig.clock.armed());

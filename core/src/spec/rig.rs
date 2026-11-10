@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-use crate::ffi::{ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, PutReply, TestClock, FakeTransport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
+use crate::ffi::{ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, PutReply, TestClock, FakeTransport, TransportRequest, WireConfirmed, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
@@ -339,7 +339,7 @@ impl Rig {
 
     pub async fn row(&self, id: &str) -> Option<WireRow> { within(self.db.read_row(self.epoch(), "Moment".into(), id.into())).await.unwrap() }
 
-    pub async fn outcome(&self, receipt: &WireOperationReceipt) -> WireOperationOutcome { within(self.db.outcome(receipt.clone())).await.unwrap() }
+    pub async fn confirmed(&self, receipt: &WireOperationReceipt) -> Result<WireConfirmed, DbError> { within(self.db.confirmed(receipt.clone())).await }
 }
 
 /// The credential of a file database outlives its reopen, as the credential store of the app does.

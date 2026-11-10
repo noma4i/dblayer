@@ -45,7 +45,7 @@ async fn flow_wallet_gift() {
     settled(&rig, "the balance shows 90", || field(&rig, "User", &profile, "user", "balance") == Some(int(90))).await;
     assert!(first_seen_at(&rig, "User", &profile, "user", "balance", int(90)) >= receipt.revision);
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the history, the thread and the chat row follow the answer", || history.len() == 1 && thread.len() == 1 && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("g1"))).await;
     assert_eq!(field(&rig, "User", &profile, "user", "balance"), Some(int(90)));
     rig.database.close_now();
@@ -76,6 +76,6 @@ async fn flow_search_follows_rows() {
     hold.entered().await;
     settled(&rig, "both lists show the local change", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "pinned") == Some(Cell::Bool { value: false }))).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     rig.database.close_now();
 }

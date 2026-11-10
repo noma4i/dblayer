@@ -50,7 +50,7 @@ async fn flow_current_user_profile() {
     assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a place showed the name before the receipt or never {revisions:?}, receipt {}", receipt.revision);
     one_revision(&rig, &places.map(|rows| &**rows)).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the refetch of the profile keeps the name", || rig.world.count("MyProfile") >= 2).await;
     rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New"))));
@@ -90,7 +90,7 @@ async fn flow_connection_accept() {
     assert!(first_seen_at(&rig, &people, "u5", "connectionStatus", text("CONNECTED")) >= receipt.revision, "the user showed the status before the receipt or never");
     rig.world.set_profile(json!({"secondaryChatsCount": 2, "unreadSecondaryChatsCount": 1}));
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the chat and the counters follow the answer", || {
         chats.0.lock().unwrap().iter().any(|row| row.id == "c1" && cell(&rig, "Chat", row, "connectionStatus") == text("CONNECTED"))
             && [&held.single, &held.entity, &held.rows].iter().all(|rows| counters(rows) == (Some(int(2)), Some(int(1))))
@@ -124,11 +124,11 @@ async fn flow_user_block() {
     assert_eq!(blocked.len(), 0, "a refused block changed the list");
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "block".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the blocked list shows the user", || blocked.len() == 1).await;
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the blocked list is empty again", || blocked.emptied()).await;
     rig.database.close_now();
 }
@@ -151,7 +151,7 @@ async fn flow_pending_counters() {
 
     rig.world.set_profile(json!({"secondaryChatsCount": 3, "premiumSecondaryChatsCount": 1, "unreadSecondaryChatsCount": 2}));
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus": "CONNECTED"}).to_string(), json!({"chatId": "c1"}).to_string())).await.unwrap();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the refetch of the profile sets every place to one value", || all([3, 1, 2])).await;
 
     rig.land("User", json!({"id": "user", "secondaryChatsCount": 0, "premiumSecondaryChatsCount": 0, "unreadSecondaryChatsCount": 0})).await;

@@ -38,7 +38,7 @@ async fn an_upload_answers_with_the_server_text_and_null_when_the_server_left_it
     std::fs::write(&source, b"video").unwrap();
     stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
     let created = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap();
-    assert!(bound(database.confirmed(created, false)).await.is_ok());
+    assert!(bound(database.confirmed(created)).await.is_ok());
 
     stand.script.data("CreateBlob", BLOB);
     for expected in [Some("Intro received"), None] {
@@ -46,7 +46,7 @@ async fn an_upload_answers_with_the_server_text_and_null_when_the_server_left_it
         stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}{field}}}}}}}"#));
         let uploaded = bound(database.upload(epoch, "Moment".into(), "m77".into(), "upload_clip".into(), request(&source))).await.unwrap();
         assert_eq!(uploaded.optimistic_value.as_ref().map(|row| row.id.as_str()), Some("m77"));
-        let answer_json = bound(database.confirmed(uploaded, false)).await.unwrap().answer_json;
+        let answer_json = bound(database.confirmed(uploaded)).await.unwrap().answer_json;
         let answer: Value = serde_json::from_str(&answer_json.expect("the upload carries its answer")).unwrap();
         assert_eq!(answer["successMessage"].as_str(), expected);
     }
@@ -67,7 +67,7 @@ async fn a_send_with_a_file_confirms_through_the_declared_steps() {
 
     let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
 
-    assert!(bound(database.confirmed(sent, false)).await.is_ok());
+    assert!(bound(database.confirmed(sent)).await.is_ok());
     assert_eq!(stand.script.names(), ["CreateBlob", "CreateMoment"]);
     database.close_now();
 }
@@ -113,7 +113,7 @@ async fn a_confirmed_upload_without_a_landed_row_answers_no_value_on_both_reads(
     std::fs::write(&source, b"video").unwrap();
     stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
     let created = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap();
-    assert!(bound(database.confirmed(created, false)).await.is_ok());
+    assert!(bound(database.confirmed(created)).await.is_ok());
     stand.script.data("CreateBlob", BLOB);
     let final_mutation = stand.script.hold("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
     stand.script.data("DeleteMoment", r#"{"data":{"deleteMoment":{"id":"m77"}}}"#);
@@ -125,7 +125,7 @@ async fn a_confirmed_upload_without_a_landed_row_answers_no_value_on_both_reads(
     final_mutation.release();
 
     for read in ["first", "second"] {
-        let outcome = bound(database.confirmed(uploaded.clone(), false)).await.unwrap();
+        let outcome = bound(database.confirmed(uploaded.clone())).await.unwrap();
         assert!(outcome.value.is_none(), "{read} read: {outcome:?}");
     }
     database.close_now();

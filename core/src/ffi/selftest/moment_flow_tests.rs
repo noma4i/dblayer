@@ -65,7 +65,7 @@ async fn flow_moment_reaction() {
     same_revision(&rig, &places, "m1", "visitsCount", int(3), receipt.revision).await;
     let floor = receipt.revision;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3))));
 
@@ -99,7 +99,7 @@ async fn flow_compass_unread() {
     same_revision(&rig, &[&compass], "m1", "unreadSimilarMomentsCount", int(0), receipt.revision).await;
     rig.world.set_profile(json!({"unreadCompassCount": 1}));
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the badge falls", || badge(&profile) == Some(int(1))).await;
     assert_eq!(ids(&compass), ["m2", "m1"]);
     rig.database.close_now();
@@ -130,14 +130,14 @@ async fn flow_moment_publish_delete() {
     assert!(places.iter().all(|rows| ids(rows) == [temporary.clone()]));
     assert!(places.iter().all(|rows| rows.0.lock().unwrap().iter().all(|row| row.uploads.iter().any(|entry| entry.action == "create_file"))), "the card shows its upload");
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     settled(&rig, "the answer replaced the card", || places.iter().all(|rows| ids(rows) == ["m9"])).await;
     assert!(places.iter().all(|rows| rows.1.lock().unwrap().iter().all(|seen| seen.size <= 1)), "a list showed the card twice");
 
     rig.world.answer_with("MomentDelete", json!({"data":{"momentDelete":{"id":"m9"}}}));
     let destroy = bound(rig.database.destroy(epoch, "Moment".into(), "m9".into())).await.unwrap();
     settled(&rig, "the destroy empties every list", || places.iter().all(|rows| rows.emptied())).await;
-    assert!(bound(rig.database.confirmed(destroy, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(destroy)).await.is_ok());
 
     rig.land("Moment", moment("m5", "u1", 0, 0)).await;
     settled(&rig, "an event card stands", || places.iter().all(|rows| rows.len() == 1)).await;

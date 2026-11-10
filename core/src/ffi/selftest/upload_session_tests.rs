@@ -47,7 +47,7 @@ async fn a_reset_during_a_put_ends_the_wait_and_removes_the_old_upload() {
     let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let id = sent.optimistic_value.clone().unwrap().id;
     put.entered().await;
-    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
@@ -78,7 +78,7 @@ async fn xfer_prop_reset_during_put_no_stray_work() {
     put.entered().await;
     let token = stand.puts.tokens.lock().unwrap()[0].clone();
     assert!(!token.is_cancelled());
-    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
@@ -130,7 +130,7 @@ async fn xfer_prop_put_cancel_pushes() {
         let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
         let id = sent.optimistic_value.clone().unwrap().id;
         put.entered().await;
-        let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
+        let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent).await } }));
 
         if cause == "cancel_upload" {
             assert!(bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await.unwrap(), "{cause}");
@@ -180,7 +180,7 @@ async fn xfer_prop_reply_after_delete() {
         let failed = bound(database.send(clip("Moment", r#"{"text":"failed"}"#, "upload_clip", &file_of("failed"), epoch))).await.unwrap();
         let failed_id = failed.optimistic_value.clone().unwrap().id;
         let failed_rows = watched(&database, "Moment", &failed_id);
-        assert!(matches!(bound(database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
+        assert!(matches!(bound(database.confirmed(failed)).await, Err(DbError::Rejected { kept: true, .. })));
         settled(&database, "the failed row shows its copy", || local_url(&failed_rows).is_some()).await;
         let url = local_url(&failed_rows).unwrap();
         let copies = std::path::Path::new(&url["file://".len()..]).parent().unwrap().to_path_buf();
@@ -205,7 +205,7 @@ async fn xfer_prop_reply_after_delete() {
         stand.script.data("CreateBlob", BLOB);
         stand.script.data("CreateMoment", MOMENT_ROW);
         let confirmed = bound(database.send(clip("Moment", r#"{"text":"confirmed"}"#, "upload_clip", &file_of("confirmed"), epoch))).await.unwrap();
-        assert!(bound(database.confirmed(confirmed, false)).await.is_ok());
+        assert!(bound(database.confirmed(confirmed)).await.is_ok());
         bound(crate::ffi::settled(&database)).await.unwrap();
         assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy of a confirmed transfer once the work settled");
         database.close_now();

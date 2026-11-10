@@ -49,7 +49,7 @@ async fn flow_message_reactions() {
     }
     one_revision(&rig, &[&thread, &entity]).await;
     hold.release();
-    bound(rig.database.confirmed(receipt, false)).await.unwrap();
+    bound(rig.database.confirmed(receipt)).await.unwrap();
     rig.settle().await;
     assert!(has(&rig, &thread, &["A", "B"]) && has(&rig, &entity, &["A", "B"]));
 

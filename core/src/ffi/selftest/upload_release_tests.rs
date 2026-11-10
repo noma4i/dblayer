@@ -24,7 +24,7 @@ async fn a_reopen_with_the_saved_step_of_an_exhausted_upload_does_not_hold_the_q
     let epoch = reopened.session_epoch();
     let later = bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
 
-    bound(reopened.confirmed(later, false)).await.expect("the mutation of another row is sent");
+    bound(reopened.confirmed(later)).await.expect("the mutation of another row is sent");
     assert_eq!((stand.script.count("CreateBlob"), stand.puts.seen.lock().unwrap().len()), (2, 0), "Session replays the saved pair once and the exhausted upload sends nothing else");
     reopened.close_now();
 }
@@ -42,7 +42,7 @@ async fn sess_request_identity_on_wire() {
     held.dropped().await;
     database.set_online(true).unwrap();
 
-    bound(database.confirmed(sent, false)).await.unwrap();
+    bound(database.confirmed(sent)).await.unwrap();
     let wires = stand.script.wires();
     let [.., (first_author, first_request, first_attempt), (second_author, second_request, second_attempt)] = wires[..] else { panic!("{wires:?}") };
     assert_eq!((first_author, second_author), (crate::transport::Author::Outbox, crate::transport::Author::Outbox), "{wires:?}");

@@ -60,7 +60,7 @@ async fn flow_chat_pin_mute() {
         settled(&rig, "the row of the list shows the flag", || field(&rig, &all, "c1", name) == Some(on.clone())).await;
         assert!(first_seen_at(&rig, &marked, "c1", name, on.clone()) >= receipt.revision, "{action}: the marked list showed the mark before the receipt or never");
         hold.release();
-        assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok(), "{action}");
+        assert!(bound(rig.database.confirmed(receipt)).await.is_ok(), "{action}");
         rig.settle().await;
         assert_eq!((marked.len(), field(&rig, &all, "c1", name)), (1, Some(on.clone())), "{action}: the answer kept the flag");
 
@@ -93,7 +93,7 @@ async fn flow_chat_unread_counters() {
     settled(&rig, "the badge is zero", || field(&rig, &all, "c1", "unreadCount") == Some(int(0))).await;
     assert!(first_seen_at(&rig, &all, "c1", "unreadCount", int(0)) >= receipt.revision, "the badge showed 0 before the receipt or never");
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     rig.settle().await;
     assert_eq!(field(&rig, &all, "c1", "unreadCount"), Some(int(0)));
 
@@ -117,7 +117,7 @@ async fn flow_chat_list_order() {
     let lifted = rows.1.lock().unwrap().iter().find(|seen| seen.rows.first().map(|row| row.id.as_str()) == Some("c1")).map(|seen| seen.revision);
     assert!(lifted >= Some(receipt.revision), "the list led with c1 at {lifted:?}, below the receipt {}", receipt.revision);
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
     rig.settle().await;
     assert_eq!(order(&rows), ["c1", "c2"]);
 

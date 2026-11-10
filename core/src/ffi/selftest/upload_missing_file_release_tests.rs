@@ -25,7 +25,7 @@ async fn a_reopen_with_the_saved_step_of_an_upload_whose_file_is_gone_does_not_h
     let epoch = reopened.session_epoch();
     let later = bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
 
-    assert!(bound(reopened.confirmed(later, false)).await.is_ok(), "the mutation of another row is sent");
+    assert!(bound(reopened.confirmed(later)).await.is_ok(), "the mutation of another row is sent");
     let puts = stand.puts.seen.lock().unwrap().clone();
     assert_eq!(puts.len(), 0, "the upload whose file is gone sends no bytes: {puts:?} calls {:?}", stand.script.names());
     reopened.close_now();

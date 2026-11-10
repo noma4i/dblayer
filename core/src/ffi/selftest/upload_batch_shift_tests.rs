@@ -22,7 +22,7 @@ pub(super) fn items(directory: &std::path::Path) -> Vec<WireUploadItem> {
 }
 
 async fn confirmed(database: &crate::ffi::Database, receipt: &WireOperationReceipt) -> Option<String> {
-    match bound(database.confirmed(receipt.clone(), false)).await {
+    match bound(database.confirmed(receipt.clone())).await {
         Ok(confirmed) => confirmed.value.map(|row| row.id),
         Err(crate::ffi::DbError::Rejected { .. } | crate::ffi::DbError::NoSession { .. } | crate::ffi::DbError::Interrupted { .. }) => None,
         Err(error) => panic!("the receipt could not be read: {error:?}"),
