@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
 use serde_json::json;
 
@@ -6,12 +6,12 @@ use super::stand::{moment, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::Cell;
 
-static SELECTS: AtomicUsize = AtomicUsize::new(0);
-
-fn count_selects(event: rusqlite::trace::TraceEvent<'_>) {
-    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
-        if sql.trim_start().to_ascii_uppercase().starts_with("SELECT") { SELECTS.fetch_add(1, Ordering::SeqCst); }
+unsafe extern "C" fn count_selects(_: u32, context: *mut std::ffi::c_void, _: *mut std::ffi::c_void, sql: *mut std::ffi::c_void) -> i32 {
+    let text = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_string_lossy();
+    if text.trim_start().to_ascii_uppercase().starts_with("SELECT") {
+        unsafe { &*context.cast::<AtomicUsize>() }.fetch_add(1, Ordering::SeqCst);
     }
+    0
 }
 
 async fn reference_batch(size: usize) -> usize {
@@ -31,12 +31,15 @@ async fn reference_batch(size: usize) -> usize {
     root["similarMoments"] = json!(similar);
     stand.answer("meCompass", json!({"viewer":{"compassMoments":{"edges":[{"node":root}], "pageInfo":{"hasNextPage":false,"endCursor":null}}}}));
     stand.settle().await;
-    SELECTS.store(0, Ordering::SeqCst);
-    stand.database.db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_selects));
+    let selects = Arc::new(AtomicUsize::new(0));
+    let connection = stand.database.db.lock();
+    let result = unsafe { rusqlite::ffi::sqlite3_trace_v2(connection.connection.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(count_selects), Arc::as_ptr(&selects).cast_mut().cast()) };
+    assert_eq!(result, rusqlite::ffi::SQLITE_OK);
+    drop(connection);
     bound(stand.database.refresh(epoch, "Moment".into(), Some("compass".into()), "{}".into())).await.unwrap();
     stand.settle().await;
     stand.database.db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-    let reads = SELECTS.load(Ordering::SeqCst);
+    let reads = selects.load(Ordering::SeqCst);
     let row = bound(stand.database.read_row(epoch, "Moment".into(), "root".into())).await.unwrap().unwrap();
     assert_eq!(stand.cell("Moment", &row, "visitorIds"), visitor_ids);
     assert_eq!(stand.cell("Moment", &row, "similarIds"), ids("m"));
