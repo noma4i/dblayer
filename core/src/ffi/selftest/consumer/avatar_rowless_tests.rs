@@ -25,6 +25,40 @@ fn document_answer() -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite").to_string_lossy().into_owned();
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer("UserPhotoUpdate", good());
+    first.script_put(200, Some("etag"));
+    let receipt = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    bound(first.database.confirmed(receipt, false)).await.unwrap();
+    bound(first.database.close_database()).await.unwrap();
+
+    let reopened = Stand::prepare_on(Some(path), credentials).await;
+    reopened.sign_in().await;
+    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    reopened.answer_next("UserPhotoUpdate", json!({"data":{"userPhotoUpdate":null},"errors":[{"message":"Please select a profile picture with a clearly visible face.","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    reopened.hold(&["UserPhotoUpdate"]);
+    reopened.script_put(200, Some("etag"));
+    let receipt = bound(reopened.database.upload(reopened.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    arrived(&reopened, "UserPhotoUpdate").await;
+    let before = reopened.database.life.waiting_calls();
+    let db = reopened.database.clone();
+    let waiting = tokio::spawn(crate::runtime::counted(Some(db.life.launch()), async move { db.confirmed(receipt, true).await }));
+    crate::test_wait::settled(&reopened, "receipt waits for its own mutation", || waiting.is_finished() || reopened.database.life.waiting_calls() > before).await;
+    if waiting.is_finished() { panic!("new receipt returned before its mutation: {:?}", bound(waiting).await.unwrap()); }
+    reopened.release(&["UserPhotoUpdate"]);
+    let result = bound(waiting).await.unwrap();
+    assert!(matches!(result, Err(DbError::Rejected { kept: false, .. })), "new receipt: {result:?}");
+    assert!(operations(&reopened).await.is_empty());
+    reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_forbidden_discard_and_next_upload() {
     let mut cases = Vec::new();
     for data_present in [false, true] {
