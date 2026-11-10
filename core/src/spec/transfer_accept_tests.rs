@@ -100,6 +100,33 @@ fn xfer_accept_batch() {
 }
 
 #[test]
+fn xfer_accept_failed_batch_member_stays_inflight() {
+    let mut twin = Twin::new();
+    let ids = twin.batch_mutating(&[KEY, OTHER]);
+    twin.mutation_outcome("batch:1", OutboxOutcome::Failed { error: "refused".into() });
+    twin.commit();
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Failed));
+    let before: Vec<_> = ids.iter().map(|id| {
+        let transfer = twin.t(*id);
+        (transfer.key.clone(), transfer.source.clone(), transfer.batch_id, transfer.op_id, transfer.cycle_id, transfer.error.clone(), transfer.last_shown.clone())
+    }).collect();
+    let (reply, outcome) = twin.outcome(ids[0], 1);
+    let original = outcome.replies(reply);
+    assert!(matches!(original.as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, _)]));
+    let reply = twin.reply();
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
+    assert_eq!((out.writes(), out.copies(), out.deletes(), out.outbox.len()), (0, 0, 0, 0));
+    for (index, id) in ids.iter().enumerate() {
+        let transfer = twin.t(*id);
+        assert_eq!((transfer.key.clone(), transfer.source.clone(), transfer.batch_id, transfer.op_id, transfer.cycle_id, transfer.error.clone(), transfer.last_shown.clone()), before[index]);
+        assert_eq!(twin.stage(*id), TransferStage::Failed);
+    }
+    let (reply, outcome) = twin.outcome(ids[0], 1);
+    assert_eq!(outcome.replies(reply), original);
+}
+
+#[test]
 fn xfer_accept_batch_invalid() {
     let mut twin = Twin::new();
     let mut broken = item(OTHER, 2);
