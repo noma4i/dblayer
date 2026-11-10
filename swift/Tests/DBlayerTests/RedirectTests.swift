@@ -26,7 +26,7 @@ struct RedirectTests {
       let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try Data("file".utf8).write(to: file)
       defer { try? FileManager.default.removeItem(at: file) }
-      let reply = await transport.put(target: PutTarget(url: origin.appendingPathComponent("upload").absoluteString, headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutNoBytes(noHandle: .init()))
+      let reply = await transport.put(target: PutTarget(url: origin.appendingPathComponent("upload").absoluteString, headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutNoBytes(noHandle: .init()))
       #expect(responseStatus(reply) == 302)
     }
     #expect(server.requests.count == 1)
@@ -44,7 +44,7 @@ struct PutPartTests {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("0123456789".utf8).write(to: file)
     defer { try? FileManager.default.removeItem(at: file) }
-    let outcome = await UrlSessionTransport(session: session).put(target: PutTarget(url: origin.appendingPathComponent("part").absoluteString, headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: 2, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .part(number: 1)), progress: PutNoBytes(noHandle: .init()))
+    let outcome = await UrlSessionTransport(session: session).put(target: PutTarget(url: origin.appendingPathComponent("part").absoluteString, headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 2, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .part(number: 1)), progress: PutNoBytes(noHandle: .init()))
     #expect(outcome == .response(status: 200, etag: "\"part\"", body: "busy"))
     #expect(try #require(server.requests.first).hasSuffix("\r\n\r\n2345"))
   }

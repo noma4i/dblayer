@@ -18,9 +18,13 @@ async fn dlv_deferred_parent_swap_wakes() {
         let relation = message["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "thread").unwrap().clone();
         let mut count_relation = relation;
         count_relation["name"] = json!("thread_count");
+        count_relation["remote"]["operation"] = json!("ThreadCount");
         message["relations"].as_array_mut().unwrap().push(count_relation);
     }).await;
     rig.login_ios("A").await;
+    let mut operations: Vec<serde_json::Value> = serde_json::from_str(&super::rig_models::plain_operations()).unwrap();
+    operations.push(json!({"name":"ThreadCount", "document":"query ThreadCount($chatId: ID!) { thread(chatId: $chatId) { id chatId text at } }"}));
+    bound(rig.database.register_operations(serde_json::to_string(&operations).unwrap())).await.unwrap();
     let epoch = rig.database.session_epoch();
     let gate = rig.world.hold_next("CreateGroup");
     let (values, args) = group("temporary");
@@ -28,19 +32,23 @@ async fn dlv_deferred_parent_swap_wakes() {
     let temporary = receipt.optimistic_value.as_ref().unwrap().id.clone();
     gate.entered().await;
     let query = |relation: &str| crate::ffi::QuerySpec::json(json!({"model":"Message", "relation":relation, "params":{"chatId":temporary}}).to_string());
-    let list = rig.database.subscribe_values(epoch, ReadRequest::List { query: query("thread") });
-    let count = rig.database.subscribe_values(epoch, ReadRequest::Count { query: query("thread_count") });
-    assert!(matches!(bound(list.pull_next()).await, Some(ReadValue::Snapshot { .. })));
-    assert!(matches!(bound(count.pull_next()).await, Some(ReadValue::Count { .. })));
-    let before = rig.world.count("Thread");
-    assert_eq!(before, 0);
-    rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+    let list_reader = Reader::open();
+    let count_reader = Reader::open();
+    let list = rig.database.subscribe_reading(epoch, ReadRequest::List { query: query("thread") }, list_reader.clone());
+    let count = rig.database.subscribe_reading(epoch, ReadRequest::Count { query: query("thread_count") }, count_reader.clone());
+    settled(&rig, "both temporary streams open empty", || !list_reader.deliveries().is_empty() && !count_reader.deliveries().is_empty()).await;
+    assert_eq!((rig.world.count("Thread"), rig.world.count("ThreadCount")), (0, 0));
     gate.release();
     let real = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
-    settled(&rig, "both windows request the real parent", || rig.world.count("Thread") == before + 2).await;
-    let requests: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "Thread").collect();
-    assert_eq!(requests.len(), 2);
+    let reply = json!({"data":{"thread":[{"id":"child-1", "chatId":real, "text":"child", "at":1}]}});
+    rig.world.answer_with("Thread", reply.clone());
+    rig.world.answer_with("ThreadCount", reply);
+    settled(&rig, "both windows request the real parent", || rig.world.count("Thread") == 1 && rig.world.count("ThreadCount") == 1).await;
+    let requests: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "Thread" || entry.operation == "ThreadCount").collect();
+    assert_eq!((requests.iter().filter(|entry| entry.operation == "Thread").count(), requests.iter().filter(|entry| entry.operation == "ThreadCount").count()), (1, 1));
     assert!(requests.iter().all(|entry| entry.body.contains(&real) && !entry.body.contains(&temporary)));
+    settled(&rig, "both streams show the returned child", || list_reader.rows().iter().any(|row| row.id == "child-1") && count_reader.deliveries().iter().any(|delivery| matches!(delivery.value, ReadValue::Count { count: 1, .. }))).await;
+    drop((list, count));
     rig.database.close_now();
 }
 

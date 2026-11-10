@@ -19,7 +19,7 @@ class FilePutTest {
                 override fun sent(bytes: ULong) { sent.add(bytes) }
                 override fun isCancelled() = false
             }
-            val reply = putFile(OkHttpClient(), server.url("/part").toString(), mapOf("x-a" to "1"), 10_000uL, 30_000uL, PutFile(file.path, 3u, 4u), progress)
+            val reply = putFile(OkHttpClient(), server.url("/part").toString(), mapOf("x-a" to "1"), 10_000uL, 30_000uL, PutFile(file.path, 3u, 4u), progress, 64uL * 1024uL)
             val request = server.takeRequest()
             assertEquals("3456", request.body.readUtf8())
             assertEquals("1", request.headers["x-a"])
@@ -40,7 +40,7 @@ class FilePutTest {
                 override fun sent(bytes: ULong) {}
                 override fun isCancelled() = false
             }
-            suspend fun put() = putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, 0u, 4u), progress)
+            suspend fun put() = putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, 0u, 4u), progress, 64uL * 1024uL)
             assertEquals(RawOutcome.Response(200u, null, "stored"), put())
             assertEquals(RawOutcome.Response(200u, null, ""), put())
         }
@@ -61,7 +61,7 @@ class FilePutTest {
                 override fun sent(bytes: ULong) { reports.add(bytes.toLong()) }
                 override fun isCancelled() = false
             }
-            putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, offset.toULong(), length.toULong()), progress)
+            putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, offset.toULong(), length.toULong()), progress, 64uL * 1024uL)
             val request = server.takeRequest()
             assertEquals(length.toString(), request.headers["Content-Length"])
             val body = request.body.readByteArray()

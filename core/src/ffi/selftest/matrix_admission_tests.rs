@@ -89,9 +89,9 @@ fn exported_calls() -> Vec<String> {
 }
 
 /// Calls that carry no model and no row: they have no admission steps 3 to 5.
-const WITHOUT_ROW: [&str; 27] = [
+const WITHOUT_ROW: [&str; 28] = [
     "retry_progress",
-    "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch",
+    "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch", "session_status",
     "interrupted_session_answer", "session_reset", "session_call", "set_round_jobs", "round_started", "round_refused", "round_ended", "outcome",
     "call", "cable_closes", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch", "confirmed",
 ];

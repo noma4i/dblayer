@@ -39,7 +39,7 @@ class ForeignFutureOutStructTest {
                             completed.countDown()
                         }
                     }
-                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeHttpRequest.lower(HttpRequest(Author.SESSION, 0uL, 1u, "https://graphql.test/", "POST", emptyMap(), "", 1uL, 1uL, NetworkPurpose.STANDARD)), complete, 0L, owned))
+                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeHttpRequest.lower(HttpRequest(Author.SESSION, 0uL, 1u, "https://graphql.test/", "POST", emptyMap(), "", 1uL, 1uL, NetworkPurpose.STANDARD, 16uL * 1024uL * 1024uL)), complete, 0L, owned))
                     if (!completed.await(10, TimeUnit.SECONDS)) {
                         unanswered.incrementAndGet()
                         break

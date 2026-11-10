@@ -99,7 +99,7 @@ struct UrlSessionPutTests {
     try Data("0123".utf8).write(to: file)
     defer { try? FileManager.default.removeItem(at: file) }
     let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
-    let outcome = await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+    let outcome = await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
     #expect(outcome == .response(status: 200, etag: nil, body: body))
   }
 
@@ -121,7 +121,7 @@ struct UrlSessionPutTests {
     (PartProtocol.received, PartProtocol.mismatch, PartProtocol.contentLength, PartProtocol.peakInUse, PartProtocol.first) = (0, nil, nil, 0, offset)
     let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
     let before = mallocInUse()
-    let outcome = await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: offset, length: length), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+    let outcome = await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: offset, length: length), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
     #expect(outcome == .response(status: 200, etag: "part", body: ""))
     #expect(PartProtocol.received == Int(length), "the server reads exactly the part")
     #expect(PartProtocol.mismatch == nil, "the bytes of the part are the bytes of the file range")
@@ -142,7 +142,7 @@ struct UrlSessionPutTests {
     configuration.protocolClasses = [StallProtocol.self]
     let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
     let call = Task {
-      await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: UInt64(megabyte), length: UInt64(4 * megabyte)), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+      await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: UInt64(megabyte), length: UInt64(4 * megabyte)), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
     }
     var first = events.makeAsyncIterator()
     _ = await first.next()

@@ -22,7 +22,7 @@ class RecordingEvents : CableEvents {
 fun cableUrl(server: MockWebServer): String = server.url("/api/cable").toString().replaceFirst("http", "ws")
 
 fun probeRequest(url: String, body: String = "jwe"): HttpRequest =
-    HttpRequest(Author.SESSION, 0uL, 1u, url, "POST", mapOf("Content-Type" to "application/jose", "Accept" to "", "Accept-Language" to ""), body, 10_000uL, 30_000uL, NetworkPurpose.STANDARD)
+    HttpRequest(Author.SESSION, 0uL, 1u, url, "POST", mapOf("Content-Type" to "application/jose", "Accept" to "", "Accept-Language" to ""), body, 10_000uL, 30_000uL, NetworkPurpose.STANDARD, 16uL * 1024uL * 1024uL)
 
 fun RawOutcome.status(): UShort? = (this as? RawOutcome.Response)?.status
 

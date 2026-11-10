@@ -31,7 +31,7 @@ class UserAgentTest {
                             override fun sent(bytes: ULong) {}
                             override fun isCancelled() = false
                         }
-                        putFile(client, origin + "upload", headers, 10_000uL, 30_000uL, PutFile(file.path, 0u, 4u), progress)
+                        putFile(client, origin + "upload", headers, 10_000uL, 30_000uL, PutFile(file.path, 0u, 4u), progress, 64uL * 1024uL)
                     }
                 }
                 val request = server.takeRequest()

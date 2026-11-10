@@ -34,7 +34,7 @@ class RedirectTest {
                             override fun sent(bytes: ULong) {}
                             override fun isCancelled() = false
                         }
-                        assertEquals(path, 302.toUShort(), transport.put(PutTarget(origin + "upload", emptyMap(), 10_000uL, 30_000uL), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status())
+                        assertEquals(path, 302.toUShort(), transport.put(PutTarget(origin + "upload", emptyMap(), 10_000uL, 30_000uL, 64uL * 1024uL), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status())
                     }
                 }
                 assertEquals(path, 1, server.requestCount)

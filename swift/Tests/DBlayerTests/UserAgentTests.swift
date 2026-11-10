@@ -36,7 +36,7 @@ struct UserAgentTests {
       let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try Data("file".utf8).write(to: file)
       defer { try? FileManager.default.removeItem(at: file) }
-      _ = await transport.put(target: PutTarget(url: origin.appendingPathComponent("upload").absoluteString, headers: headers, connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+      _ = await transport.put(target: PutTarget(url: origin.appendingPathComponent("upload").absoluteString, headers: headers, connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
     }
     let request = try #require(server.requests.first)
     let fields = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty }).map { $0.lowercased() }
@@ -62,7 +62,7 @@ struct UserAgentTests {
     let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("file".utf8).write(to: path)
     defer { try? FileManager.default.removeItem(at: path) }
-    let outcome = await transport.put(target: PutTarget(url: "http://127.0.0.1:1/upload", headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+    let outcome = await transport.put(target: PutTarget(url: "http://127.0.0.1:1/upload", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
     let failure = try #require(rawFailure(outcome))
     #expect((failure.domain, failure.code) == (NSURLErrorDomain, Int64(URLError.cannotConnectToHost.rawValue)))
   }

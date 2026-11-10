@@ -61,7 +61,7 @@ class TransportThreadTest {
         val transport = OkHttpTransport(client = client)
 
         val document = if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }"
-        val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", mapOf("Content-Type" to "application/json"), """{"query":"$document","operationName":"Probe","variables":{"id":"7"}}""", 10_000uL, 30_000uL, NetworkPurpose.STANDARD)
+        val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", mapOf("Content-Type" to "application/json"), """{"query":"$document","operationName":"Probe","variables":{"id":"7"}}""", 10_000uL, 30_000uL, NetworkPurpose.STANDARD, 16uL * 1024uL * 1024uL)
         val text = (withContext(caller) { transport.send(request) } as RawOutcome.Response).body
 
         assertEquals("""{"data":{"id":"7"}}""", text)
@@ -80,7 +80,7 @@ class TransportThreadTest {
     }
 
     private fun putOf(transport: OkHttpTransport) = suspend {
-        transport.put(PutTarget(server.url("/upload").toString(), emptyMap(), 10_000uL, 30_000uL), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), IdleProgress())
+        transport.put(PutTarget(server.url("/upload").toString(), emptyMap(), 10_000uL, 30_000uL, 64uL * 1024uL), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), IdleProgress())
     }
 
     @Test
