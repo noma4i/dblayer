@@ -91,7 +91,7 @@ fn op_columns_match_nullability() {
     assert_eq!(
         nullable,
         [
-            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "transfer_id", "batch_id"
+            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "cause_kind", "cause_limit", "transfer_id", "batch_id"
         ]
     );
 }
