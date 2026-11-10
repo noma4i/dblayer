@@ -18,7 +18,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Network`, `Http` | The request failed on the network, or the server answered with a status (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
 | `RequestTooLarge` | The request exceeds the local limit (`size`, `limit`). |
 | `Graphql` | The server answered with GraphQL errors (`messages`, `extensions`). |
-| `Interrupted` | The caller cancelled the wait or its deadline expired. The detail identifies the cause. |
+| `Interrupted` | The wait was cancelled. The detail identifies the cause. A call deadline returns its last error or `Network`. |
 | `Dropped` | The request left and its answer did not come. |
 | `InFlight` | The operation is on its way and cannot be dropped or cancelled now. |
 | `Storage` | The database could not save its state. |
