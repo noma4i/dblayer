@@ -36,15 +36,23 @@ impl Tasks for TokioTasks {
     }
 }
 
-/// The request id of a step of Transfer: a function of the transfer id, the cycle, the step and the part, so a repeat and a restart carry the same id (bit 62 keeps it apart from the counter ids).
-pub fn step_request_id(transfer_id: u64, cycle_id: u64, step: crate::owners::write::upload::UploadStage, part: u32) -> u64 {
+/// The request id of a request of Transfer: a function of its identity, so a repeat and a restart carry the same id (bit 62 keeps it apart from the counter ids).
+fn identity_request_id(identity: &[&[u8]]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut feed = |bytes: &[u8]| for byte in bytes { hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3); };
-    feed(&transfer_id.to_le_bytes());
-    feed(&cycle_id.to_le_bytes());
-    feed(&[step as u8]);
-    feed(&part.to_le_bytes());
+    for byte in identity.iter().flat_map(|part| part.iter()) {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+    }
     (hash & ((1 << 62) - 1)) | (1 << 62)
+}
+
+/// A step of a transfer: the transfer id, the cycle, the step and the part.
+pub fn step_request_id(transfer_id: u64, cycle_id: u64, step: crate::owners::write::upload::UploadStage, part: u32) -> u64 {
+    identity_request_id(&[&transfer_id.to_le_bytes(), &cycle_id.to_le_bytes(), &[step as u8], &part.to_le_bytes()])
+}
+
+/// An abort of a multipart upload: the key and the upload id, the abort has no transfer id or cycle of its own.
+pub fn abort_request_id(key: &str, upload_id: &str) -> u64 {
+    identity_request_id(&[key.as_bytes(), &[crate::owners::write::upload::UploadStage::Abort as u8], upload_id.as_bytes()])
 }
 
 /// The network of an executor: the transport and the gate of the epoch it works in.
