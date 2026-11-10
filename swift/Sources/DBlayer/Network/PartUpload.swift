@@ -6,6 +6,7 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
 
   private let file: PutFile
   private let pumps = Pumps()
+  private var readerError: Error?
 
   init(file: PutFile, progress: ByteProgress, limit: UInt64) {
     self.file = file
@@ -23,6 +24,7 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
       throw error
     }
     await pumps.idle()
+    if let readerError { throw readerError }
     return answer
   }
 
@@ -40,8 +42,11 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
     pumps.start()
     Thread.detachNewThread { [weak self] in
       let error = feed.pump(path: path, offset: offset, length: length)
+      if let error {
+        self?.readerError = error
+        self?.fail(error)
+      }
       pumps.end()
-      if let error { self?.fail(error) }
     }
     return input
   }
