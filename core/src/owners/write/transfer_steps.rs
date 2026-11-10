@@ -354,14 +354,15 @@ impl TransferState {
 
     pub(super) fn discard_outcome(&mut self, key: &str, result: Result<(), Fault>, fx: &mut Fx) {
         let Some(id) = self.open_id(key).filter(|id| self.waits_for_discard(*id)) else { return };
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if result.is_ok() {
-            return;
+        if let (Err(Fault::Rejected(RejectReason::Storage(detail))), Some((_, error))) = (&result, self.confirmed_discards.get(&id).cloned()) {
+            self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")))), fx);
         }
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let Err(fault) = result else { return };
         transfer.discard_sent = false;
         let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
         for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
-            reply(fx, waiter, TransferAnswer::Err(Fault::InFlight));
+            reply(fx, waiter, TransferAnswer::Err(fault.clone()));
         }
     }
 }

@@ -65,6 +65,7 @@ pub struct OutboxState {
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
     pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
     pub(super) confirmed_discards: BTreeMap<OpId, (u64, String)>,
+    pub(super) transfer_discards: BTreeMap<OpId, (u64, u64)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
     pub(super) resets: BTreeMap<(String, String, String), (ScheduleId, u64)>,
@@ -120,6 +121,7 @@ impl OutboxState {
             discard_waiters: Vec::new(),
             outcome_waiters: Vec::new(),
             confirmed_discards: BTreeMap::new(),
+            transfer_discards: BTreeMap::new(),
             ephemeral: BTreeMap::new(),
             expiry: BTreeMap::new(),
             resets: BTreeMap::new(),
@@ -544,7 +546,7 @@ impl OutboxState {
     pub(super) fn open_for_transfer(&self, transfer: u64, cycle: u64) -> Option<OpId> {
         self.ops.values().filter(|operation| operation.stage != Stage::Done && match &operation.op.origin {
             OpSource::Transfer { transfer_id, cycle_id } => *transfer_id == transfer && *cycle_id == cycle,
-            OpSource::TransferGroup { members, .. } => members.iter().any(|member| member.transfer_id == transfer),
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| member.transfer_id == transfer && member.cycle_id == cycle),
             _ => false,
         }).map(|operation| operation.op_id).next()
     }
@@ -699,7 +701,10 @@ impl OutboxState {
             OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply } => match self.open_for_transfer(transfer_id, cycle_id) {
-                Some(op_id) => self.discard_op(op_id, reply, fx),
+                Some(op_id) => {
+                    if self.stage_of(op_id) == Some(Stage::Failed) { self.transfer_discards.insert(op_id, (transfer_id, cycle_id)); }
+                    self.discard_op(op_id, reply, fx);
+                }
                 None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
             },
             OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, version } => { if self.selection_current(reply, version, fx) { self.selected((model, row_id), action, kind, reply, fx); } }

@@ -103,6 +103,17 @@ pub(crate) struct TransferPort {
 
 type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
 
+struct FileReplies {
+    settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
+    answers: Vec<(ReplyId, TransferAnswer)>,
+}
+
+impl Drop for FileReplies {
+    fn drop(&mut self) {
+        for (reply, answer) in std::mem::take(&mut self.answers) { (self.settle)(reply, answer); }
+    }
+}
+
 /// What a step asks of the codec.
 /// The saved answer of the pair of a restored step as the response its first request gets.
 fn seeded_response(seeded: Option<super::transfer_types::SeededAnswer>) -> Option<(u64, Result<Response, TransportError>)> {
@@ -308,14 +319,13 @@ impl TransferExecutor {
             }
             return;
         }
-        let (files, settle) = (self.files.clone(), self.settle.clone());
+        let files = self.files.clone();
+        let replies = FileReplies { settle: self.settle.clone(), answers };
         let _ = self.wire.tasks.start_blocking(Box::new(move || {
             for path in doomed {
                 let _ = files.discard(&[path]);
             }
-            for (reply, answer) in answers {
-                settle(reply, answer);
-            }
+            drop(replies);
         }));
     }
 }

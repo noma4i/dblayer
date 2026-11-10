@@ -330,6 +330,24 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let cycle = transfer.cycle_id;
         transfer.outcomes.entry(cycle).or_insert_with(|| outcome.clone());
+        if matches!(outcome, OutboxOutcome::Ended(_)) && self.confirmed_discards.contains_key(&id) {
+            self.answer_discarded_outcome(id, TransferAnswer::Outcome(outcome, None), fx);
+            return;
+        }
+        if matches!(outcome, OutboxOutcome::Discarded) {
+            if let Some((_, error)) = self.confirmed_discards.get(&id).cloned() {
+                self.answer_discarded_outcome(id, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None), fx);
+                return;
+            }
+        }
+        if let OutboxOutcome::Failed { error } = &outcome {
+            if transfer.outcome_waiters.iter().any(|(waits, _, discard)| *waits == cycle && *discard) {
+                self.confirmed_discards.insert(id, (cycle, error.clone()));
+                self.discard_failed(id, None, fx);
+                return;
+            }
+        }
+        self.confirmed_discards.remove(&id);
         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _, _)| *waits == cycle);
         transfer.outcome_waiters = rest;
         let outcome = transfer.outcomes[&cycle].clone();
@@ -337,6 +355,14 @@ impl TransferState {
         for (_, waiter, _) in mine {
             reply(fx, waiter, TransferAnswer::Outcome(outcome.clone(), row.clone()));
         }
+    }
+
+    pub(super) fn answer_discarded_outcome(&mut self, id: TransferId, answer: TransferAnswer, fx: &mut Fx) {
+        let Some((cycle, _)) = self.confirmed_discards.remove(&id) else { return };
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _, _)| *waits == cycle);
+        transfer.outcome_waiters = rest;
+        for (_, waiter, _) in mine { reply(fx, waiter, answer.clone()); }
     }
 
     /// The transfer ends: `Done`, `uploads[action]` gone, the copy file goes by `DeleteFile`.

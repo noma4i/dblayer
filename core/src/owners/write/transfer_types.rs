@@ -551,6 +551,7 @@ pub struct TransferState {
     pub phase: Phase,
     pub transfers: BTreeMap<TransferId, Transfer>,
     pub completed: std::collections::HashMap<TransferId, CycleOutcomes>,
+    pub(super) confirmed_discards: BTreeMap<TransferId, (CycleId, String)>,
     /// The row a confirmed cycle showed in the batch of its removal.
     pub(super) landed_rows: std::collections::HashMap<(TransferId, u64), crate::store::Row>,
     pub(super) groups: BTreeMap<u64, Group>,
@@ -603,6 +604,7 @@ impl TransferState {
             phase: Phase::Restoring,
             transfers: BTreeMap::new(),
             completed: std::collections::HashMap::new(),
+            confirmed_discards: BTreeMap::new(),
             landed_rows: std::collections::HashMap::new(),
             groups: BTreeMap::new(),
             selecting: BTreeMap::new(),

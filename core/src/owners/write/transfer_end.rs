@@ -56,7 +56,7 @@ impl TransferState {
     }
 
     /// `discard` and the expiry of a `Failed` transfer: the Outbox owns the operation of a saved or live intent, otherwise the transfer leaves alone.
-    fn discard_failed(&mut self, id: TransferId, waiter: Option<(ReplyId, bool)>, fx: &mut Fx) {
+    pub(super) fn discard_failed(&mut self, id: TransferId, waiter: Option<(ReplyId, bool)>, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
         let through_outbox = transfer.intent_live && transfer.signed_id.is_some() && !matches!(transfer.error.as_deref(), Some("missing_file" | "RestoreFailed"));
         if through_outbox {
@@ -215,8 +215,8 @@ impl TransferState {
         let error = transfer.error.clone().unwrap_or_default();
         let had_source = transfer.source.is_some();
         if let Some(rep) = transfer.supply_reply.take() { reply(fx, rep, TransferAnswer::Ok); }
-        self.settle(id, OutboxOutcome::Failed { error: error.clone() }, fx);
-        self.show(id, Shown::Failed { error }, fx);
+        self.show(id, Shown::Failed { error: error.clone() }, fx);
+        self.settle(id, OutboxOutcome::Failed { error }, fx);
         if had_source { self.rounds_idle(id, fx); }
         self.batch_after_removal(id, fx);
         self.send_orphans(false, fx);
@@ -314,6 +314,10 @@ impl TransferState {
             return;
         }
         for &id in ids {
+            if let Some((_, error)) = self.confirmed_discards.get(&id).cloned() {
+                let detail = match &reason { RejectReason::Storage(detail) => format!("{detail}: {error}"), _ => error };
+                self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(detail))), fx);
+            }
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let removal = transfer.removal.take();
             match (transfer.prior.take(), removal) {
@@ -361,7 +365,20 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Outcome(outcome.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
         let Some(transfer) = self.transfers.get_mut(&receipt.op_id) else { return Self::refuse(fx, rep, Fault::NotFound) };
+        if self.confirmed_discards.get(&receipt.op_id).is_some_and(|(cycle, _)| *cycle == receipt.cycle_id) {
+            transfer.outcome_waiters.push((receipt.cycle_id, rep, discard_on_failure));
+            return;
+        }
         if let Some(found) = transfer.outcomes.get(&receipt.cycle_id) {
+            if discard_on_failure && receipt.cycle_id == transfer.cycle_id && transfer.stage == TransferStage::Failed {
+                if let OutboxOutcome::Failed { error } = found {
+                    let error = error.clone();
+                    transfer.outcome_waiters.push((receipt.cycle_id, rep, true));
+                    self.confirmed_discards.insert(receipt.op_id, (receipt.cycle_id, error));
+                    self.discard_failed(receipt.op_id, None, fx);
+                    return;
+                }
+            }
             return reply(fx, rep, TransferAnswer::Outcome(found.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
         if receipt.cycle_id == transfer.cycle_id && transfer.stage != TransferStage::Done {

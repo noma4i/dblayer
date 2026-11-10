@@ -99,6 +99,7 @@ impl OutboxState {
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
+                self.transfer_discards.remove(&op_id);
                 if let Some((_, error)) = self.confirmed_discards.get(&op_id).cloned() {
                     self.answer_discarded_outcome(op_id, OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }), fx);
                 }
@@ -270,6 +271,22 @@ impl OutboxState {
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
+            }
+            RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.transfer_discards.contains_key(&op_id) => {
+                let Some((id, cycle)) = self.transfer_discards.remove(&op_id) else { return };
+                let fault = Fault::Rejected(RejectReason::Storage(detail));
+                let operation = &self.ops[&op_id];
+                let row = match &operation.op.origin {
+                    OpSource::TransferGroup { members, .. } => members.iter().find(|member| member.transfer_id == id && member.cycle_id == cycle).map(|member| member.row_id.as_str()),
+                    _ => Some(operation.op.row_id.as_str()),
+                };
+                if let (Some(peer), Some(row)) = (self.peers.transfer, row) {
+                    let key = format!("{}:{}:{}", operation.op.model, row, operation.op.action);
+                    let result = Err(fault.clone());
+                    fx.push(Effect::Send(Outbound::new(peer, super::transfer::TransferInput::DiscardOutcome { key, result })));
+                }
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
             }
             RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.confirmed_discards.contains_key(&op_id) => {
                 let error = self.confirmed_discards[&op_id].1.clone();
