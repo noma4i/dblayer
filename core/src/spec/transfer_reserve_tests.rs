@@ -171,6 +171,30 @@ fn xfer_accept_replaces_failed() {
 }
 
 #[test]
+fn xfer_accept_replaces_failed_without_operation_after_open() {
+    let mut row = stored(1, KEY, 2);
+    row.failed = Some("refused".into());
+    row.op_id = None;
+    row.has_intent = false;
+    row.has_operation = false;
+    let (mut twin, _) = Twin::opened(vec![row], Default::default());
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(twin.stage(1), TransferStage::Failed);
+    let out = twin.post(accept_input(KEY, 90));
+    assert!(out.replies(90).is_empty(), "failed upload without operation must not block: {:?}", out.replies(90));
+    let new = out.outbox.iter().find_map(|input| match input {
+        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != 1 => Some(*id),
+        _ => None,
+    }).expect("the replacement reserves its operation");
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    assert_eq!(out.writes(), 1);
+    assert_eq!(out.removed(), vec![KEY.to_string()]);
+    assert!(rolled_back(&out).is_empty());
+    assert_eq!(out.outcomes_written(), vec![(1, 1, OutboxOutcome::Discarded)]);
+    assert_eq!(out.rows().len(), 1);
+}
+
+#[test]
 fn xfer_remove_rolls_back_optimistic() {
     let mut twin = Twin::new();
     let id = ready(&mut twin);
