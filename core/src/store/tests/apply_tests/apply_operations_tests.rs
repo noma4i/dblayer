@@ -378,3 +378,32 @@ fn joining_a_list_costs_one_head_lookup_per_row() {
     commit(&store, rows("c1"), vec![]);
     assert_eq!(HEAD_LOOKUPS.load(Ordering::SeqCst), 40);
 }
+
+thread_local! { static QUEUE_RESULT_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn count_queue_result(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.starts_with("SELECT seq, action_key, status, temp_id") && sql.contains("FROM op WHERE") { QUEUE_RESULT_QUERIES.with(|count| count.set(count.get() + 1)); }
+    }
+}
+
+#[test]
+fn store_batch_operation_result_queries() {
+    let measure = |size: usize| {
+        let (store, _) = booted_store();
+        let changes = (0..size).map(|i| {
+            let mut item = record(None, OperationStatus::Pending, None);
+            item.row_ids = vec![id(&format!("r{i}"))];
+            item.temp_id = None;
+            OperationTransition::Begin(Box::new(item))
+        }).collect();
+        QUEUE_RESULT_QUERIES.with(|count| count.set(0));
+        store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_result));
+        let result = transitions(&store, changes);
+        store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+        assert_eq!(result.operations.len(), size);
+        assert_eq!(result.queue_operations.len(), size);
+        QUEUE_RESULT_QUERIES.with(|count| count.get())
+    };
+    assert_eq!(measure(2), measure(40), "result reads must not grow with operation count");
+}
