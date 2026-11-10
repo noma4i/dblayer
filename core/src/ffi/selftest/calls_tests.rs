@@ -173,4 +173,3 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::EndCause::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();
 }
-
