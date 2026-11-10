@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn sess_answer_too_large_table() {
+    let mut read = calling();
+    let input = Input::AnswerTooLarge { request_id: read.rid(), attempt_id: read.aid(), limit: 64, sequenced: false };
+    assert!(matches!(&read.feed(input)[..], [RefEffect::CommitLanding { .. }]));
+    assert!(read.replies.is_empty());
+    read.feed(committed());
+    assert_eq!(read.replies, vec![(1, Err(Fail::ResponseTooLarge { limit: 64 }))]);
+
+    let mut author = calling_mutate();
+    let input = Input::AnswerTooLarge { request_id: author.rid(), attempt_id: author.aid(), limit: 64, sequenced: true };
+    assert_eq!(author.feed(input), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::ResponseTooLarge { limit: 64 }, true))]);
+    assert!(matches!(author.reference.state, RefState::PendingHeld { .. }));
+    assert!(author.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64, sequenced: true }).is_empty());
+
+    let mut direct = calling();
+    let (request_id, attempt_id) = (direct.rid(), direct.aid());
+    for (rid, aid) in [(request_id + 1, attempt_id), (request_id, attempt_id + 1)] {
+        assert!(direct.feed(Input::AnswerTooLarge { request_id: rid, attempt_id: aid, limit: 64, sequenced: true }).is_empty());
+    }
+    assert_eq!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }), vec![RefEffect::ScheduleTick { attempts: 1 }]);
+    assert!(direct.in_phase(CallPhase::WaitingRetry));
+    for sequenced in [false, true] {
+        assert!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced }).is_empty());
+    }
+
+    let mut offline = calling();
+    let (request_id, attempt_id) = (offline.rid(), offline.aid());
+    offline.feed(Input::Online(false));
+    assert!(offline.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }).is_empty());
+    assert!(offline.in_phase(CallPhase::WaitingNetwork));
+    let mut idle = Twin::new();
+    assert!(idle.feed(Input::AnswerTooLarge { request_id: 1, attempt_id: 1, limit: 64, sequenced: false }).is_empty());
+}
+
+#[test]
 fn sess_calling_dropped_offline() {
     let mut twin = calling();
     let (rid, aid) = (twin.rid(), twin.aid());
