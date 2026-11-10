@@ -49,3 +49,28 @@ fn store_read_intents_held_orphan() {
     }
     assert_eq!(db.read_restore().unwrap().held_orphan, Some("u9".into()), "the same snapshot names the held pair");
 }
+
+/// store_commit_control_reply_and_restart (D-277, store.md): the Control batch written before a restart is read by the restore with the same upload_id and key, in the next epoch.
+#[test]
+fn store_commit_control_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("control.sqlite");
+    let batch = |id: u64, ops: Vec<crate::owners::store::StoreOp>| crate::owners::store::StoreBatch {
+        author: crate::owners::contract::BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, basis: std::collections::BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops,
+    };
+    {
+        let store = crate::store::Store::open(&path).unwrap();
+        store.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
+        store.mark_ready();
+        let first = batch(1, vec![StoreOp::UploadOrphan { upload_id: "u1".into(), key: "Moment:r1:upload".into() }]);
+        store.write_batch(&first, store.files(), store.pointer_guards(), None).unwrap();
+    }
+    let reopened = crate::store::Store::open(&path).unwrap();
+    reopened.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
+    reopened.mark_ready();
+    assert_eq!(reopened.read_restore().unwrap().orphans, vec![("u1".to_string(), "Moment:r1:upload".to_string())], "the debt of the abort survives the restart with its key");
+
+    let removal = batch(2, vec![StoreOp::RemoveOrphan { upload_id: "u1".into() }]);
+    reopened.write_batch(&removal, reopened.files(), reopened.pointer_guards(), None).unwrap();
+    assert!(reopened.read_restore().unwrap().orphans.is_empty(), "RemoveOrphan of the same stamp clears the debt");
+}

@@ -577,3 +577,26 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
     twin
 }
 
+/// lifecycle.md:526 (D-280, D-269): the stored abort pair goes out once, byte for byte, its answer reaches the Transfer author once after Committed, and a late repeat of the answer does nothing.
+#[test]
+fn session_restored_orphan_pair_once() {
+    let mut twin = Twin::new();
+    let pair = stored(Some(orphan_owner()), 5, 1);
+    twin.feed(Input::Restored { epoch: EPOCH, pending: Some(pair.clone()) });
+    let sent = twin.feed(Input::RestoreReady { epoch: EPOCH });
+    let [RefEffect::HttpRequest { pending, .. }] = &sent[..] else { panic!("one request for the held pair: {sent:?}") };
+    assert_eq!((pending.request_id, pending.sequence, &pending.path, &pending.body, &pending.owner), (pair.request_id, pair.sequence, &pair.path, &pair.body, &pair.owner), "the pair goes out as stored");
+    assert!(twin.feed(Input::Online(true)).is_empty(), "Online after RestoreReady sends nothing again");
+
+    let (request, attempt) = (twin.rid(), twin.aid());
+    let first = twin.response(1);
+    twin.feed(first);
+    let delivered = twin.feed(committed());
+    assert_eq!(delivered, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into()))], "one answer to the Transfer author after Committed");
+
+    let late = Input::Response { request_id: request, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None };
+    assert!(twin.feed(late).is_empty(), "a late repeat of the answer does nothing");
+    assert!(twin.feed(committed()).is_empty(), "a repeated Committed gives no second answer");
+    assert!(twin.replies.is_empty(), "no call reply");
+    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1), "the sequence moved once");
+}

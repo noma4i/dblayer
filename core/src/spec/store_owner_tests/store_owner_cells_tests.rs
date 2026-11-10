@@ -346,3 +346,21 @@ fn store_read_direct_pending() {
         assert_eq!(effects, vec![Action::ReadIntents { epoch: 5, direct }], "{identity:?} {pending}");
     }
 }
+
+/// store_commit_control_reply_and_restart (D-277, store.md): after `Written` of a Control batch of owner data the author hears exactly one `Committed` with the Control stamp, in the epoch and after its end.
+#[test]
+fn store_commit_control_reply() {
+    for stale in [false, true] {
+        let mut twin = Twin::live();
+        if stale { twin.send(StoreInput::EpochEnded(crate::owners::contract::EpochEnded { epoch: 1, cause: crate::runtime::Cause::ServerEnded })); }
+        twin.send(StoreInput::Commit(StoreBatch {
+            author: BatchAuthor::Transfer, id: 9, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
+            ops: vec![crate::owners::store::StoreOp::UploadOrphan { upload_id: "u1".into(), key: "Moment:r1:upload".into() }],
+        }));
+        let effects = twin.send(StoreInput::Written { author: BatchAuthor::Transfer, batch: 9, result: Ok(WriteDone { revision: 1, ..WriteDone::default() }) });
+        let committed = effects.iter().filter(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Transfer, batch: 9, stamp: crate::runtime::EpochStamp::Control, reply: StoreReply::Committed { .. } })).count();
+        assert_eq!(committed, 1, "stale={stale}: exactly one Committed with the Control stamp: {effects:?}");
+        assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(_), .. })), "stale={stale}: no refusal: {effects:?}");
+        assert_eq!(twin.state().revision(), 1, "stale={stale}: the revision follows the write");
+    }
+}
