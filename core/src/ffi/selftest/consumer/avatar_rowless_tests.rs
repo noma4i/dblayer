@@ -289,7 +289,8 @@ async fn consumer_avatar_rowless_rejected() {
 async fn consumer_rowless_retry_after_refusal() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.sqlite");
-    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+    let credentials = Arc::new(WatchedHeld::default());
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
     seed_moment(&stand).await;
@@ -306,12 +307,21 @@ async fn consumer_rowless_retry_after_refusal() {
     let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
     assert_eq!(std::fs::read(&copy).unwrap(), b"jpeg-bytes");
     assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "me".into())).await.unwrap().is_none());
+    assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+    bound(stand.database.close_database()).await.unwrap();
+    drop(stand);
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
+    stand.sign_in().await;
+    stand.answer("UserPhotoUpdate", good());
+    let epoch = stand.database.session_epoch();
+    assert_eq!(operations(&stand).await.len(), 1, "the failed upload survives reopening");
+    assert_eq!(std::fs::read(&copy).unwrap(), b"jpeg-bytes");
     let retried = bound(stand.database.retry(epoch, "CurrentUser".into(), "me".into(), Some("update_photo".into()), None)).await.unwrap();
     assert!(retried.optimistic_value.is_none());
     let confirmed = bound(stand.database.confirmed(retried, false)).await.unwrap();
     assert!(confirmed.value.is_none());
     assert!(bound(stand.database.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().is_some());
-    assert_eq!(stand.requests("UserPhotoUpdate"), 2);
+    assert_eq!(stand.requests("UserPhotoUpdate"), 1);
     assert!(operations(&stand).await.is_empty());
     stand.database.close_now();
 }
