@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reread the node when a change event declared with a node and a payload arrives without the payload.
+
 ## 6.25.3 - 2026-11-11
 
 ### Fixed
