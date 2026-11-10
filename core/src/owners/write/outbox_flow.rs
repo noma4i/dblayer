@@ -299,7 +299,7 @@ impl OutboxState {
         self.store(op_id, CommitKind::RemoveRow, fx);
     }
 
-    pub(super) fn outcome(&mut self, receipt: Receipt, reply: ReplyId, fx: &mut Effects<Outbox>) {
+    pub(super) fn outcome(&mut self, receipt: Receipt, reply: ReplyId, discard_on_failure: bool, fx: &mut Effects<Outbox>) {
         if receipt.epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
@@ -312,7 +312,7 @@ impl OutboxState {
         match operation.stage {
             Stage::Done => match operation.outcome.clone() { Some(outcome) => Self::reply(fx, reply, OutboxAnswer::Outcome(outcome)), None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal)) },
             Stage::Failed => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) })),
-            _ => self.outcome_waiters.push((receipt.op_id, reply)),
+            _ => self.outcome_waiters.push((receipt.op_id, receipt.cycle_id, reply, discard_on_failure)),
         }
     }
 

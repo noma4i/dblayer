@@ -252,7 +252,7 @@ pub enum TransferInput {
     MutationOutcomes { batch_id: BatchId, members: Vec<(TransferId, CycleId, OutboxOutcome)>, intent_removed: bool },
     RetryOutcome { cycles: Vec<(TransferId, CycleId)>, result: Result<i64, Fault> },
     DiscardOutcome { key: Key, result: Result<(), Fault> },
-    Outcome { receipt: Receipt, reply: ReplyId },
+    Outcome { receipt: Receipt, reply: ReplyId, discard_on_failure: bool },
     /// A `Blob` stream follows the key `model:row:action`, also before a transfer exists.
     StatusInterestPlus { key: Key, stream_id: StreamId },
     StatusInterestMinus { key: Key, stream_id: StreamId },
@@ -469,7 +469,7 @@ pub struct Transfer {
     /// A batch of the Store for the failure mark carries `abort`.
     pub failure_abort: bool,
     pub outcomes: CycleOutcomes,
-    pub outcome_waiters: Vec<(CycleId, ReplyId)>,
+    pub outcome_waiters: Vec<(CycleId, ReplyId, bool)>,
     pub accept_reply: Option<ReplyId>,
     /// The row of the transfer as the batch of its acceptance showed it.
     pub optimistic: Option<crate::store::Row>,

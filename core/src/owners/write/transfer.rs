@@ -330,11 +330,11 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let cycle = transfer.cycle_id;
         transfer.outcomes.entry(cycle).or_insert_with(|| outcome.clone());
-        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _)| *waits == cycle);
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _, _)| *waits == cycle);
         transfer.outcome_waiters = rest;
         let outcome = transfer.outcomes[&cycle].clone();
         let row = self.landed_rows.get(&(id, cycle)).cloned();
-        for (_, waiter) in mine {
+        for (_, waiter, _) in mine {
             reply(fx, waiter, TransferAnswer::Outcome(outcome.clone(), row.clone()));
         }
     }
@@ -624,7 +624,7 @@ impl TransferState {
             }
             TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
-            TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            TransferInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
             TransferInput::StatusInterestPlus { key, stream_id } => self.interest_plus(key, stream_id, fx),
             TransferInput::StatusInterestMinus { key, stream_id } => self.interest_minus(&key, stream_id),
             TransferInput::Committed(committed) => self.committed((committed.batch, committed.revision, committed.shown), fx),

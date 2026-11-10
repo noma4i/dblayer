@@ -356,7 +356,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, fx: &mut Fx) {
+    pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, discard_on_failure: bool, fx: &mut Fx) {
         if let Some(outcome) = self.completed.get(&receipt.op_id).and_then(|cycles| cycles.get(&receipt.cycle_id)) {
             return reply(fx, rep, TransferAnswer::Outcome(outcome.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
@@ -365,7 +365,7 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Outcome(found.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
         }
         if receipt.cycle_id == transfer.cycle_id && transfer.stage != TransferStage::Done {
-            transfer.outcome_waiters.push((receipt.cycle_id, rep));
+            transfer.outcome_waiters.push((receipt.cycle_id, rep, discard_on_failure));
         } else {
             Self::refuse(fx, rep, Fault::NotFound);
         }

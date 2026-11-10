@@ -216,7 +216,7 @@ pub enum OutboxInput {
     SelectedOutbox { model: String, row_id: String, action: String, kind: SelectKind, reply: ReplyId, version: u64 },
     SelectedNone { reply: ReplyId, version: u64 },
     SelectedTransfer { reply: ReplyId, transfer_id: u64, version: u64 },
-    Outcome { receipt: Receipt, reply: ReplyId },
+    Outcome { receipt: Receipt, reply: ReplyId, discard_on_failure: bool },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },
     /// The root row the answer of the operation landed.

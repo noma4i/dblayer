@@ -146,7 +146,7 @@ impl Life {
 
     pub fn discard_operation(&self, epoch: Epoch, (model, row_id): (String, String), action: Option<String>) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, action, reply }) }
 
-    pub fn operation_outcome(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
+    pub fn operation_outcome(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt, discard_on_failure: bool) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply, discard_on_failure }) }
 
     pub fn local_write(&self, epoch: Epoch, model: String, write: crate::owners::write::outbox::LocalWriteKind, row: String, values: String, now: crate::runtime::Time) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

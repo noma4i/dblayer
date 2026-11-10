@@ -63,7 +63,7 @@ pub struct OutboxState {
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
-    pub(super) outcome_waiters: Vec<(OpId, ReplyId)>,
+    pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
     pub(super) resets: BTreeMap<(String, String, String), (ScheduleId, u64)>,
@@ -357,7 +357,9 @@ impl OutboxState {
     }
 
     pub(super) fn give_outcome(&mut self, op_id: OpId, outcome: &OutboxOutcome, fx: &mut Effects<Outbox>) {
-        for reply in Self::take_waiters(&mut self.outcome_waiters, op_id) {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outcome_waiters).into_iter().partition(|(id, _, _, _)| *id == op_id);
+        self.outcome_waiters = rest;
+        for (_, _, reply, _) in mine {
             Self::reply(fx, reply, OutboxAnswer::Outcome(outcome.clone()));
         }
     }
@@ -684,7 +686,7 @@ impl OutboxState {
             OutboxInput::SelectedOutbox { model, row_id, action, kind, reply, version } => { if self.selection_current(reply, version, fx) { self.selected((model, row_id), action, kind, reply, fx); } }
             OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
-            OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            OutboxInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
