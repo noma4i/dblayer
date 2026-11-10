@@ -266,6 +266,25 @@ fn exec_xfer_view_and_local_copy() {
 }
 
 #[test]
+fn xfer_confirmed_waits_file_delete() {
+    let mut w = world();
+    let path = w.source(KEY, &vec![5u8; 300 * 1024]);
+    w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
+    w.accept(KEY, path, 1);
+    assert_eq!(w.stage(KEY), Some(TransferStage::Failed));
+    let copy = w.files.path(&w.copy(KEY)).unwrap();
+    let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).unwrap();
+    w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::Outcome { receipt, reply: 2, discard_on_failure: true });
+    while w.det.step() {}
+    assert_eq!(w.spawn.pending(), 1);
+    assert!(copy.exists());
+    assert!(lock(&w.answers).iter().all(|(reply, _)| *reply != 2));
+    w.settle();
+    assert!(!copy.exists());
+    assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 2 && matches!(answer, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if error.contains("400"))));
+}
+
+#[test]
 fn exec_xfer_key_path_chars() {
     let mut w = world();
     let key = "Moment:../../escape:upload";
