@@ -12,7 +12,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
     real.window.name = "real-node".into();
     temporary.remote = false;
     temporary.live = false;
-    let deferred = d::Deferred { temps: vec!["temp-1".into()], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| real.clone())) };
+    let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-1".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| real.clone())) };
     twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
     (twin, resolved)
 }
