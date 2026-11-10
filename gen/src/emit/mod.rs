@@ -334,7 +334,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let upload_args = standard_args(model, &action.name);
             let method = name(&action.name);
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
-            writeln!(out, "    public static func {method}Variables({params}) throws -> [String: JSONValue] {{\n        var variables_: [String: JSONValue] = [:]").unwrap();
+            writeln!(out, "    public static func {method}Variables({params}) throws -> [String: JSONValue] {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
                 else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
@@ -401,7 +401,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let id_param = if singleton { String::new() } else { "id: String, ".to_string() };
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
-            writeln!(out, "    @concurrent public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        var variables_: [String: JSONValue] = [:]").unwrap();
+            writeln!(out, "    @concurrent public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
                 else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }

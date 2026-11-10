@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Generated Swift upload calls without parameters compile without warnings.
+
 ## 6.23.0 - 2026-11-10
 
 ### Added

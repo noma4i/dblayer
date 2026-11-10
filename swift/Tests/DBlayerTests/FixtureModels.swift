@@ -315,7 +315,7 @@ public struct Asset: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public static func createFile(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
-        var variables_: [String: JSONValue] = [:]
+        let variables_: [String: JSONValue] = [:]
         return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_))
     }
     @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
@@ -588,14 +588,14 @@ public struct Container: DBModel {
         public static let lastRecord = Association<Container, Record>("lastRecord")
     }
     @concurrent public static func createPhoto(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
-        var variables_: [String: JSONValue] = [:]
+        let variables_: [String: JSONValue] = [:]
         return try await scope_.upload(Self.self, id: id, action: "create_photo", UploadRequest(path: source, variables: variables_))
     }
     @concurrent public func createPhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_photo", request)
     }
     @concurrent public static func updatePhoto(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
-        var variables_: [String: JSONValue] = [:]
+        let variables_: [String: JSONValue] = [:]
         return try await scope_.upload(Self.self, id: id, action: "update_photo", UploadRequest(path: source, variables: variables_))
     }
     @concurrent public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
@@ -1082,7 +1082,7 @@ public struct Moment: DBModel {
         return try await self.act("share", values: values_, args: [:], in: scope_)
     }
     @concurrent public static func uploadClip(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
-        var variables_: [String: JSONValue] = [:]
+        let variables_: [String: JSONValue] = [:]
         return try await scope_.upload(Self.self, id: id, action: "upload_clip", UploadRequest(path: source, variables: variables_))
     }
     @concurrent public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
