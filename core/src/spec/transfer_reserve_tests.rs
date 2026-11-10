@@ -195,6 +195,33 @@ fn xfer_accept_replaces_failed_without_operation_after_open() {
 }
 
 #[test]
+fn xfer_accept_batch_replaces_failed_single() {
+    let mut twin = Twin::new();
+    let old = ready(&mut twin);
+    twin.step_error(old, false);
+    twin.commit();
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 91, now: Time(0) });
+    assert!(out.replies(91).is_empty(), "the failed key must not reject the batch: {:?}", out.replies(91));
+    let ids: Vec<_> = out.outbox.iter().filter_map(|input| match input {
+        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } => Some(*id),
+        _ => None,
+    }).collect();
+    let group = out.outbox.iter().find_map(|input| match input {
+        OutboxInput::ReserveOp { target: ReserveTarget::Group(id), .. } => Some(*id),
+        _ => None,
+    }).expect("the batch reserves its operation");
+    assert_eq!(ids.len(), 2);
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(ids[0]), result: Ok(8) });
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(ids[1]), result: Ok(9) });
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(10) });
+    assert_eq!(out.writes(), 1);
+    assert_eq!(out.removed(), vec![KEY.to_string()]);
+    assert_eq!(rolled_back(&out), vec![OP_ID]);
+    assert_eq!(out.outcomes_written(), vec![(old, 1, OutboxOutcome::Discarded)]);
+    assert_eq!(out.rows().len(), 2);
+}
+
+#[test]
 fn xfer_remove_rolls_back_optimistic() {
     let mut twin = Twin::new();
     let id = ready(&mut twin);
