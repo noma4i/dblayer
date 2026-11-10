@@ -55,6 +55,11 @@ extension BridgeProbeTests {
     try await openSealedRig(transport)
     let failure = DbError.Session(code: code, detail: "\(code)")
 
+    if code == .sessionEnded {
+      transport.enqueue("MomentsFeed", failure: failure)
+      await expectDbError("NoSession") { try await Moment.feed.load() }
+      return
+    }
     if code != .replayedRequest {
       transport.enqueue("MomentsFeed", failure: failure)
       if code == .unauthenticated {

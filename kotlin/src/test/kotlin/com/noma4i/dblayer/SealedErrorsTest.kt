@@ -49,6 +49,12 @@ class SealedErrorsTest {
             registerStandOperations(DBlayer.database, operations)
             val failure = DbException.Session(code, code.name)
 
+            if (code == SessionCode.SESSION_ENDED) {
+                transport.enqueue("MomentsFeed", failure)
+                val load = runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull()
+                org.junit.Assert.assertTrue("load $code: $load", load is DbException.NoSession)
+                continue
+            }
             if (code != SessionCode.REPLAYED_REQUEST) {
                 transport.enqueue("MomentsFeed", failure)
                 val load = runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull()
