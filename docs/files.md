@@ -3,19 +3,19 @@
 A `:file` attribute stores binary data such as images, audio, video and documents.
 
 ```ruby
-attribute :media, :file, null: true
+attribute :avatar, :file, null: true
 ```
 
 ```swift
-let info = try await moment.attach(.media, source: fileURL, name: "a.png", mime: "image/png")   // FileInfo, fileURL is a local file URL
-let url  = try await moment.url(.media)     // local file URL for a player or viewer, read the bytes from it
-try await moment.detach(.media)
+let info = try await user.attach(.avatar, source: fileURL, name: "a.png", mime: "image/png")   // FileInfo, fileURL is a local file URL
+let url  = try await user.url(.avatar)     // local file URL for a player or viewer, read the bytes from it
+try await user.detach(.avatar)
 ```
 
 ```kotlin
-val info = moment.attach(Moment.media, source = file, name = "a.png", mime = "image/png")   // FileInfo, file is a local java.io.File
-val uri  = moment.url(Moment.media)         // java.net.URI of a local file for a player or viewer
-moment.detach(Moment.media)
+val info = user.attach(User.avatar, source = file, name = "a.png", mime = "image/png")   // FileInfo, file is a local java.io.File
+val uri  = user.url(User.avatar)         // java.net.URI of a local file for a player or viewer
+user.detach(User.avatar)
 ```
 
 | Call     | Result                                                                   |
