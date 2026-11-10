@@ -45,19 +45,22 @@ pub(crate) struct TempReplacement<'a> {
     pub real: &'a RowId,
 }
 
-pub(super) fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64, held: Option<serde_json::Map<String, serde_json::Value>>) -> Result<(), StoreError> {
+pub(super) fn plan(writer: &mut super::row_write::RowWrite<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64, held: Option<serde_json::Map<String, serde_json::Value>>) -> Result<(), StoreError> {
+        let connection = writer.connection;
+        let models = writer.models;
+        let reader = Reader::new(connection, models);
         let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
             envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: real.clone(), reason: DestroyReason::Local });
         }
-        carry_locals(reader, envelope, model, real, held)?;
+        carry_locals(&reader, envelope, model, real, held)?;
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });
         let references = references_to(reader.models(), model);
         let swap = Swap { model, temp, real, references: &references };
         envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap).transpose()).collect::<Result<Vec<_>, _>>()?);
-        for ReferencingRow { model: owner, field, mut row } in rows_referencing(reader, reader.models(), &references, temp)? {
+        for ReferencingRow { model: owner, field, mut row } in rows_referencing(writer, &references, temp)? {
             let Some(child) = row.get("id").and_then(read_id) else { continue };
             if let Some(value) = row.get_mut(&field) { swap_id(value, temp, real); }
             let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
@@ -106,7 +109,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     let mut envelope = BatchPlan::new(writer.generation);
     if held.is_some() {
         let outbox = crate::store::plan::read_outbox(&reader)?;
-        plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own, held)?;
+        plan(writer, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own, held)?;
     }
     writer.apply(&envelope)
 }

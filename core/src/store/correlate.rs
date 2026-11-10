@@ -26,15 +26,20 @@ fn candidates(reader: &Reader<'_>, spec: &crate::schema::ModelSpec, model: &str)
     Ok(entries)
 }
 
-pub(super) fn correlated_temp(reader: &Reader<'_>, model: &str, incoming: &Map<String, Value>) -> Result<(Option<Correlated>, usize), StoreError> {
-    let spec = &reader.models().get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
-    let entries = candidates(reader, spec, model)?;
+pub(super) fn correlated_temp(writer: &mut super::row_write::RowWrite<'_>, model: &str, incoming: &Map<String, Value>) -> Result<(Option<Correlated>, usize), StoreError> {
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
+    let spec = &models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+    let entries = candidates(&reader, spec, model)?;
+    let ids: Vec<String> = entries.iter().filter_map(|entry| entry.operation.temp_id.as_ref().map(ToString::to_string)).collect();
+    writer.prefetch(model, &ids, None)?;
     let mut found = Vec::new();
     for entry in &entries {
         let Some(temp) = entry.operation.temp_id.as_ref() else { continue };
         let Some(action) = entry.operation.action_key.strip_prefix(model).and_then(|rest| rest.strip_prefix(':')) else { continue };
         let Some(declared) = spec.actions.iter().find(|declared| declared.name == action && !declared.correlate.is_empty()) else { continue };
-        let Some(sent) = reader.point(model, temp.as_str())? else { continue };
+        let Some(sent) = writer.stored(model, temp.as_str())?.map(|stored| stored.row) else { continue };
         let same = declared.correlate.iter().all(|path| match (crate::schema::read_path(&sent, path), crate::schema::read_path(incoming, path)) {
             (Some(sent), Some(incoming)) => !is_blank(sent) && sent == incoming,
             _ => false,

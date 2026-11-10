@@ -8,6 +8,7 @@ use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::AssociationKind;
 
 use super::{ModelInfo, Reader, StoreError};
+use super::row_write::RowWrite;
 
 pub(super) struct ReferencingRow {
     pub model: String,
@@ -35,8 +36,12 @@ pub(super) fn references_to(models: &BTreeMap<String, ModelInfo>, model: &str) -
     found.into_iter().collect()
 }
 
-pub(super) fn rows_referencing(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, references: &[(String, String)], id: &RowId) -> Result<Vec<ReferencingRow>, StoreError> {
-    let mut rows = Vec::new();
+pub(super) fn rows_referencing(writer: &mut RowWrite<'_>, references: &[(String, String)], id: &RowId) -> Result<Vec<ReferencingRow>, StoreError> {
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
+    let mut matches = Vec::new();
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
     for (model, field) in references {
         let info = models.get(model).ok_or_else(|| StoreError::UnknownModel(model.clone()))?;
         let layout = &info.layout;
@@ -57,8 +62,14 @@ pub(super) fn rows_referencing(reader: &Reader<'_>, models: &BTreeMap<String, Mo
             fetch_keys(reader.connection(), &statement).map_err(|error| StoreError::Constraint(error.to_string()))?.into_iter().map(|(id, _)| id).collect()
         };
         for child_id in ids {
-            if let Some(row) = reader.point(model, &child_id)? { rows.push(ReferencingRow { model: model.clone(), field: field.clone(), row }); }
+            wanted.entry(model.clone()).or_default().push(child_id.clone());
+            matches.push((model.clone(), field.clone(), child_id));
         }
+    }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids, writer.closing)?; }
+    let mut rows = Vec::new();
+    for (model, field, id) in matches {
+        if let Some(row) = writer.stored(&model, &id)? { rows.push(ReferencingRow { model, field, row: row.row }); }
     }
     Ok(rows)
 }

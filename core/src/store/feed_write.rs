@@ -102,13 +102,13 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
         envelope.scope_ops = joins(writer, &reader, model, &id, wanted)?;
         let arrives_new = old.is_none();
-        let (correlated, looked_at) = if arrives_new { super::correlate::correlated_temp(&reader, model, &row)? } else { (None, 0) };
+        let (correlated, looked_at) = if arrives_new { super::correlate::correlated_temp(writer, model, &row)? } else { (None, 0) };
         writer.candidates += looked_at;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
         if let Some(found) = correlated {
             let held = writer.stored(model, found.temp.as_str())?.map(|stored| stored.row);
             let outbox = crate::store::plan::read_outbox(&reader)?;
-            super::swap::plan(&reader, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation, held)?;
+            super::swap::plan(writer, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation, held)?;
         }
         if let Some(values) = payload.get("set").and_then(Value::as_object).filter(|values| !values.is_empty()) { overlay.push((model.to_string(), id.to_string(), values.clone())); }
     } else {
