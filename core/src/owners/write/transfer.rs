@@ -409,7 +409,7 @@ impl TransferState {
             if matches!(pending.kind, StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed) { transfer.answer_saved = None; }
         }
         for (id, columns) in &pending.written { self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), fx); }
-        if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], true, fx); }
+        if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {

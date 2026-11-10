@@ -385,15 +385,14 @@ impl TransferState {
                 for model in &models { self.generations.insert(model.clone(), generation); }
                 self.write_restored(id, fx);
             }
-            RejectReason::Closed | RejectReason::NoSession => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
-            RejectReason::Invalid => self.staged_restored(id, false, fx),
+            RejectReason::Closed | RejectReason::NoSession | RejectReason::Invalid => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
         }
     }
 
     /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.
-    pub(super) fn staged_restored(&mut self, id: TransferId, committed: bool, fx: &mut Fx) {
+    pub(super) fn staged_restored(&mut self, id: TransferId, fx: &mut Fx) {
         let Some((rep, fault)) = self.transfers.get_mut(&id).and_then(|transfer| transfer.staged_failed.take()) else { return };
-        if committed { run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) }); }
+        run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) });
         self.rounds_idle(id, fx);
         if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Err(fault)); }
     }
