@@ -610,8 +610,8 @@ impl SessionState {
                     self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
                 }
             }
-            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: false } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx),
-            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: true } if mine(request_id, attempt_id) => {
+            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced: false } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx),
+            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced: true } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::ResponseTooLarge { limit }, true);
                     self.phase = SessionPhase::PendingHeld { pending };

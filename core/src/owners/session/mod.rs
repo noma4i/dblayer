@@ -279,7 +279,7 @@ pub enum SessionInput {
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<ReplyId>, epoch: Epoch },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
-    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64, sent: bool },
+    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64, sequenced: bool },
     /// The executor of the HTTP exchange of `attempt_id` died.
     HttpFailed { attempt_id: AttemptId },
     Committed(Committed),
