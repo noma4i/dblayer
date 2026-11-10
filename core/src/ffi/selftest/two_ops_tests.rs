@@ -65,7 +65,7 @@ async fn out_retry_two_ops_same_key_failed_only() {
     rig.database.set_online(true).unwrap();
     assert!(bound(rig.database.confirmed(retried)).await.is_ok());
     assert!(bound(rig.database.confirmed(waiting)).await.is_ok());
-    assert_eq!(rig.world.count("ProfileUpdate"), 3, "one refusal and one request per operation");
+    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "ProfileUpdate").count(), 3, "one refusal and one request per operation");
     rig.database.close_now();
 }
 
