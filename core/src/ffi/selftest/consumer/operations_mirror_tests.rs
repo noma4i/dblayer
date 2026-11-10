@@ -31,7 +31,7 @@ async fn dlv_prop_operations_mirror() {
     let (revision, items) = operations(&stand).await;
     assert_eq!((items.clone(), store_rows(&stand, revision)), (Vec::new(), Vec::new()), "no write, no operation");
 
-    stand.answer("MomentReact", json!({"momentReact": {"moment": moment("m1", 0)}}));
+    stand.answer("MomentReact", json!({"momentReact": {"moment": {"id": "m1", "reacted": true, "updatedAt": "2026-11-08T00:00:00Z", "user": null}}}));
     stand.database.set_online(false).unwrap();
     bound(stand.database.act(epoch, "Moment".into(), "m1".into(), "react".into(), "{}".into(), "{}".into())).await.unwrap();
     stand.settle().await;
