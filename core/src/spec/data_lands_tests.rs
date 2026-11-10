@@ -64,7 +64,7 @@ async fn data_upsert_lands() {
     let load = db.begin_load(epoch, "Annotation".into(), Some("all".into()), "{}".into()).unwrap();
     within(load.result()).await.unwrap();
     let receipt = within(db.send_create("Moment", &json!({"text": "root"}).to_string())).await;
-    assert!(within(db.confirmed(receipt)).await.is_ok());
+    assert!(within(db.confirmed(receipt, false)).await.is_ok());
     let root = within(db.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().unwrap();
     for (id, text) in [("a1", "first"), ("a2", "second")] {
         let row = within(db.read_row(epoch, "Annotation".into(), id.into())).await.unwrap().unwrap();

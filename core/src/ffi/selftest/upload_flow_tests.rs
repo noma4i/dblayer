@@ -65,7 +65,7 @@ async fn xfer_put_response_limit() {
     let limit = crate::transport::MAX_PUT_RESPONSE_BYTES;
     rig.world.fail_next("PUT", Fault::ResponseTooLarge(limit));
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    let result = bound(rig.database.confirmed(receipt)).await;
+    let result = bound(rig.database.confirmed(receipt, false)).await;
     assert!(matches!(result, Err(crate::ffi::DbError::Rejected { failure, kept: true }) if failure.kind == "response_too_large" && failure.response_limit == Some(limit)), "the upload keeps the typed response limit");
     settled(&rig, "the upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
     assert_eq!(puts(&rig), 1);
@@ -180,7 +180,7 @@ async fn flow_chat_photo_upload() {
     hold.entered().await;
     settled(&rig, "the chat shows the upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Uploading)).await;
     hold.release();
-    bound(rig.database.confirmed(receipt)).await.unwrap();
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
     assert_eq!((rig.world.count("CreateBlob"), puts(&rig), rig.world.count("ChatUpdatePhoto")), (1, 1, 1), "one blob, one PUT, one mutation");
     rig.database.close_now();
@@ -201,7 +201,7 @@ async fn xfer_prop_local_url() {
     let url = local_url(&chat, "c1", "update_photo").unwrap();
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
-    bound(rig.database.confirmed(receipt)).await.unwrap();
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
     rig.database.close_now();
 }
@@ -220,7 +220,7 @@ async fn flow_chat_photo_retry_and_discard() {
     settled(&rig, "the upload failed on the row", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
 
     let again = bound(rig.database.retry(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()), None)).await.unwrap();
-    bound(rig.database.confirmed(again)).await.unwrap();
+    bound(rig.database.confirmed(again, false)).await.unwrap();
     settled(&rig, "the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
 
     let (_other_directory, other) = source("logo2.jpg", b"another jpeg");
@@ -253,7 +253,7 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     assert!(first(&chat).is_some() && first(&list).is_some(), "a place never showed the upload {:?} {:?}", first(&chat), first(&list));
     one_revision(&rig, &[&chat, &list]).await;
     hold.release();
-    bound(rig.database.confirmed(receipt)).await.unwrap();
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;
     rig.database.close_now();
 }
@@ -285,7 +285,7 @@ async fn xfer_status_local_url() {
     let ReadValue::Status { local_url: Some(url), .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { local_url: Some(_), .. })).await else { unreachable!() };
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
-    bound(rig.database.confirmed(receipt)).await.unwrap();
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     status_until(&stream, "the URL goes with the transfer", |value| matches!(value, ReadValue::Status { local_url: None, .. })).await;
     rig.database.close_now();
 }

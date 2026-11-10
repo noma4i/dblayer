@@ -51,7 +51,7 @@ async fn data_operation_parameter_not_stored() {
     crate::test_wait::settled(&rig, "mutation is held", || server.held(super::rig::Kind::Mutate) == 1).await;
     assert_eq!(server.seen().last().unwrap().variables["clientFlag"], json!("chosen"));
     server.answer(super::rig::Kind::Mutate, super::rig::Reply::Ok);
-    assert!(rig.confirmed(&receipt).await.is_ok());
+    assert!(rig.confirmed(&receipt, false).await.is_ok());
     assert_eq!(rig.row("srv1").await.unwrap().cells, vec![crate::ffi::Cell::Text { value: "hello".into() }]);
 }
 
@@ -61,7 +61,7 @@ fn inv_op_19_create_with_an_existing_id_is_an_error_and_writes_nothing() { bound
 async fn inv_op_19_run() {
     let rig = Rig::open(OnFailure::Rollback).await;
     let created = rig.create("hello").await;
-    assert!(rig.confirmed(&created).await.is_ok());
+    assert!(rig.confirmed(&created, false).await.is_ok());
     let (revision, mutations) = (rig.row("srv1").await.unwrap().revision, rig.server.mutations());
 
     let again = within(rig.db.send(crate::ffi::CommandRequest { epoch: rig.epoch(), model: "Moment".into(), values_json: json!({"id": "srv1", "text": "other"}).to_string(), args_json: "{}".into(), upload: None })).await;
@@ -78,7 +78,7 @@ fn inv_row_05_update_with_unchanged_values_writes_nothing() { bounded("inv_row_0
 async fn inv_row_05_run() {
     let rig = Rig::open(OnFailure::Rollback).await;
     let created = rig.create("hello").await;
-    assert!(rig.confirmed(&created).await.is_ok());
+    assert!(rig.confirmed(&created, false).await.is_ok());
     let (revision, mutations) = (rig.row("srv1").await.unwrap().revision, rig.server.mutations());
 
     let receipt = rig.update("srv1", "hello").await;
@@ -87,7 +87,7 @@ async fn inv_row_05_run() {
     assert!(receipt.is_ok(), "{receipt:?}");
     assert_eq!((rig.row("srv1").await.unwrap().revision, rig.server.mutations()), (revision, mutations), "no commit, no operation, no request");
     let changed = rig.update("srv1", "changed").await.unwrap();
-    assert!(rig.confirmed(&changed).await.is_ok());
+    assert!(rig.confirmed(&changed, false).await.is_ok());
     assert!(rig.row("srv1").await.unwrap().revision > revision, "a real change commits");
 }
 
@@ -110,27 +110,27 @@ async fn inv_row_09_run() {
     let created = rig.create("hello").await;
     let temp = created.optimistic_value.clone().expect("create returns the optimistic row").id;
     assert_eq!(text_of(rig.row(&temp).await), text("hello"), "an Ok create finds its row at once");
-    assert!(rig.confirmed(&created).await.is_ok());
+    assert!(rig.confirmed(&created, false).await.is_ok());
     assert_eq!(text_of(rig.row("srv1").await), text("hello"), "find after the answer");
     assert_eq!(observed_texts(&rig).await, ["hello"], "observe");
 
     let updated = rig.update("srv1", "changed").await.unwrap();
-    assert!(rig.confirmed(&updated).await.is_ok());
+    assert!(rig.confirmed(&updated, false).await.is_ok());
     assert_eq!(observed_texts(&rig).await, ["changed"], "observe after update");
 
     rig.server.script("UpdateMoment", super::rig::Reply::Refuse);
     let refused = rig.update("srv1", "worse").await.unwrap();
-    assert!(matches!(rig.confirmed(&refused).await, Err(DbError::Rejected { kept: false, .. })));
+    assert!(matches!(rig.confirmed(&refused, false).await, Err(DbError::Rejected { kept: false, .. })));
     assert_eq!(text_of(rig.row("srv1").await), text("changed"), "a refused update rolls back to the values before it");
 
     rig.server.script("MakeMoment", super::rig::Reply::Refuse);
     let refused = rig.create("bad").await;
     let bad_temp = refused.optimistic_value.clone().expect("the optimistic row").id;
-    assert!(matches!(rig.confirmed(&refused).await, Err(DbError::Rejected { kept: false, .. })));
+    assert!(matches!(rig.confirmed(&refused, false).await, Err(DbError::Rejected { kept: false, .. })));
     assert!(rig.row(&bad_temp).await.is_none(), "a refused create leaves no row");
     assert_eq!(observed_texts(&rig).await, ["changed"]);
 
     let destroyed = within(rig.db.destroy(rig.epoch(), "Moment".into(), "srv1".into())).await.unwrap();
-    assert!(rig.confirmed(&destroyed).await.is_ok());
+    assert!(rig.confirmed(&destroyed, false).await.is_ok());
     assert!(rig.row("srv1").await.is_none() && observed_texts(&rig).await.is_empty(), "destroy");
 }

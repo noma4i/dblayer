@@ -16,7 +16,7 @@ async fn chat_with_members() -> (Rig, WireRow, Arc<Rows>, serde_json::Value) {
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    let chat = bound(rig.database.confirmed(receipt)).await.unwrap().value.expect("the chat was not confirmed");
+    let chat = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("the chat was not confirmed");
     seed_members(&rig, &chat.id).await;
     let params = json!({"groupId": chat.id, "order": "JOINED"});
     let rows = Arc::new(Rows::default());
@@ -41,7 +41,7 @@ async fn flow_group_members() {
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "u4")).cloned().unwrap();
     assert!(first.revision >= receipt.revision, "the member appeared before the receipt: {}", first.revision);
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.settle().await;
     assert!(has(&rows, "u4"), "the member left the list after the answer");
     let gone = rows.1.lock().unwrap().iter().skip_while(|seen| !seen.rows.iter().any(|row| row.id == "u4")).any(|seen| seen.removed.iter().any(|id| id == "u4"));
@@ -61,7 +61,7 @@ async fn flow_group_members_refused_add_removes_the_user_from_the_list() {
     settled(&rig, "the member is in the list before the answer", || has(&rows, "u4")).await;
     hold.release();
 
-    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refused member left the list", || !has(&rows, "u4")).await;
     assert!(has(&rows, "u1") && has(&rows, "u3"));
     rig.database.close_now();

@@ -63,7 +63,7 @@ fn xfer_outcome_unknown() {
     use crate::owners::write::transfer::{TransferAnswer, TransferInput};
     let mut twin = Twin::new();
     let receipt = crate::owners::write::outbox::Receipt { epoch: 1, op_id: 99, cycle_id: 1, revision: 0, optimistic: None };
-    let out = twin.post(TransferInput::Outcome { receipt, reply: 20 });
+    let out = twin.post(TransferInput::Outcome { receipt, reply: 20 , discard_on_failure: false});
     assert_eq!((out.replies(20), out.all_replies(), out.writes(), out.runs.len()), (vec![TransferAnswer::Err(Fault::NotFound)], 1, 0, 1));
     assert!(twin.state().transfers.is_empty());
 }

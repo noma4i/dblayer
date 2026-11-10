@@ -183,18 +183,18 @@ async fn admission_group(group: usize) {
     let (files, files_epoch, files_row) = files_database(&directory.path().join("open.sqlite")).await;
     let (closed_files, closed_files_epoch, closed_files_row) = files_database(&directory.path().join("closed.sqlite")).await;
     let _ = closed_files.close_database().await;
-    let _ = bound(rig.database.confirmed(receipt)).await;
+    let _ = bound(rig.database.confirmed(receipt, false)).await;
     rig.world.fail_next("SendMessage", Fault::Http(422));
     let retry_receipt = bound(rig.database.send(message(epoch, "retryrow", 2))).await.unwrap();
     let retry_row = retry_receipt.optimistic_value.as_ref().unwrap().id.clone();
-    let _ = bound(rig.database.confirmed(retry_receipt)).await;
+    let _ = bound(rig.database.confirmed(retry_receipt, false)).await;
     rig.world.fail_next("SendMessage", Fault::Http(422));
     let discard_receipt = bound(rig.database.send(message(epoch, "discardrow", 3))).await.unwrap();
     let discard_row = discard_receipt.optimistic_value.as_ref().unwrap().id.clone();
-    let _ = bound(rig.database.confirmed(discard_receipt)).await;
+    let _ = bound(rig.database.confirmed(discard_receipt, false)).await;
     let cancel_receipt = bound(rig.database.send(message(epoch, "cancelrow", 4))).await.unwrap();
     let cancel_row = cancel_receipt.optimistic_value.as_ref().unwrap().id.clone();
-    let _ = bound(rig.database.confirmed(cancel_receipt)).await;
+    let _ = bound(rig.database.confirmed(cancel_receipt, false)).await;
     let cancel_source = directory.path().join("cancel.bin");
     std::fs::write(&cancel_source, b"clip").unwrap();
     let _blob_gate = rig.world.hold_next("CreateBlob");
@@ -264,18 +264,18 @@ async fn matrix_call_admission_receipt() {
     let receipt = bound(rig.database.send(message(epoch, "present", 1))).await.unwrap();
     let other = Rig::encrypted().await;
     other.login_ios("B").await;
-    assert!(matches!(bound(other.database.confirmed(receipt.clone())).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(bound(other.database.confirmed(receipt.clone(), false)).await, Err(DbError::Invalid { .. })));
     bound(other.database.close_database()).await.unwrap();
-    assert!(matches!(bound(other.database.confirmed(receipt.clone())).await, Err(DbError::Closed { .. })));
+    assert!(matches!(bound(other.database.confirmed(receipt.clone(), false)).await, Err(DbError::Closed { .. })));
 
     let held = &receipt.ticket;
     let Some(Ticket::Outbox(mut unknown)) = held.ticket.clone() else { panic!("expected an Outbox receipt") };
     unknown.op_id = i64::MAX as u64;
     let ticket = WireReceiptTicket { ticket: Some(Ticket::Outbox(unknown)), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: Some(i64::MAX), revision: held.revision, optimistic_value: held.optimistic_value.clone() };
     let missing = crate::ffi::WireOperationReceipt { operation: Some(i64::MAX), ticket: Arc::new(ticket), ..receipt.clone() };
-    assert!(matches!(bound(rig.database.confirmed(missing)).await, Err(DbError::NotFound { .. })));
+    assert!(matches!(bound(rig.database.confirmed(missing, false)).await, Err(DbError::NotFound { .. })));
     bound(rig.database.session_reset()).await.unwrap();
-    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(DbError::NoSession { .. })));
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::NoSession { .. })));
 }
 
 /// The upload calls run on the stand of uploads: a process keeps one open database, so the stand is closed for the last row.

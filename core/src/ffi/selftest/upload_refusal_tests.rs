@@ -31,7 +31,7 @@ async fn out_response_limit_keeps_pending() {
     let receipt = bound(database.send(super::upload_stand::plain("Moment", r#"{"text":"held"}"#, database.session_epoch()))).await.unwrap();
     let operation = receipt.operation.unwrap();
     let db = database.clone();
-    let mut waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { db.confirmed(receipt).await }));
+    let mut waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { db.confirmed(receipt, false).await }));
     let mut armed = clock.armed();
     let result = loop {
         tokio::select! {
@@ -78,7 +78,7 @@ async fn xfer_prop_failure_carries_step_error() {
 
     let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap();
     let id = sent.optimistic_value.clone().unwrap().id;
-    assert!(matches!(bound(database.confirmed(sent)).await, Err(DbError::Rejected { failure, kept: true }) if failure.message == "BLOB_REFUSED" && failure.kind == "rejected"));
+    assert!(matches!(bound(database.confirmed(sent, false)).await, Err(DbError::Rejected { failure, kept: true }) if failure.message == "BLOB_REFUSED" && failure.kind == "rejected"));
 
     until_state(&database, &id, WireSyncState::Failed).await;
     let failed = row(&database, &id).await.unwrap();
@@ -142,7 +142,7 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
 
     let receipt = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
     let id = receipt.optimistic_value.clone().unwrap().id;
-    assert!(matches!(bound(database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
+    assert!(matches!(bound(database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
 
     assert_eq!(row(&database, &id).await.map(|row| row.sync.state), Some(WireSyncState::Failed));
     bound(database.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
@@ -161,7 +161,7 @@ async fn a_send_that_landed_before_the_accepted_row_is_read_gives_the_landed_row
     stand.script.data("CreateMoment", ROW);
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let landed = bound(database.confirmed(sent)).await.unwrap().value.expect("the transfer is confirmed with its row");
+    let landed = bound(database.confirmed(sent, false)).await.unwrap().value.expect("the transfer is confirmed with its row");
     assert_eq!((landed.id, landed.sync.state), ("m1".to_string(), WireSyncState::Synced));
     database.close_now();
 }
@@ -190,7 +190,7 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let receipt_revision = held.revision;
     let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None };
     let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
-    let value = bound(database.confirmed(late)).await.unwrap().value;
+    let value = bound(database.confirmed(late, false)).await.unwrap().value;
     let shown = value.map(|row| (row.id, row.sync.state));
     if shown.is_none() {
         let found = |row: &str| crate::ffi::database::id(row).ok().map(|row| database.optimistic("Moment", &row).map(|row| row.map(|row| (row.id, row.sync.state))));

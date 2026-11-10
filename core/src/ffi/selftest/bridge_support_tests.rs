@@ -83,7 +83,7 @@ pub(super) fn group(name: &str) -> (String, String) { (json!({"name": name}).to_
 
 pub(super) async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args: String) -> WireRow {
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    bound(rig.database.confirmed(receipt)).await.unwrap().value.expect("group create did not return a row")
+    bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("group create did not return a row")
 }
 
 pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {

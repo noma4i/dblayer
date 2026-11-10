@@ -157,7 +157,7 @@ async fn data_insert_on_response() {
     crate::test_wait::settled(&rig, "first response is held", || server.held(Kind::Mutate) >= 1).await;
     assert!(ids(&rig, "response").await.is_empty());
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
-    assert!(rig.confirmed(&receipt).await.is_ok());
+    assert!(rig.confirmed(&receipt, false).await.is_ok());
     assert_eq!(ids(&rig, "response").await, ["srv1"]);
     assert!(ids(&rig, "other").await.is_empty());
     assert!(ids(&rig, "unloaded").await.is_empty());
@@ -166,7 +166,7 @@ async fn data_insert_on_response() {
     let second = rig.create("second").await;
     crate::test_wait::settled(&rig, "second response is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
-    assert!(rig.confirmed(&second).await.is_ok());
+    assert!(rig.confirmed(&second, false).await.is_ok());
     assert_eq!(ids(&rig, "response").await, ["srv2", "srv1"]);
     assert_eq!(ids(&rig, "selected").await, ["srv2"]);
     assert_eq!(ids(&rig, "allowed").await, ["srv2"]);
@@ -175,7 +175,7 @@ async fn data_insert_on_response() {
     let update = rig.update("srv1", "changed").await.unwrap();
     crate::test_wait::settled(&rig, "update response is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Ok);
-    assert!(rig.confirmed(&update).await.is_ok());
+    assert!(rig.confirmed(&update, false).await.is_ok());
     assert_eq!(ids(&rig, "response").await, ["srv2", "srv1"]);
 }
 
@@ -197,7 +197,7 @@ async fn data_insert_on_create() {
     assert!(ids(&rig, "unloaded").await.is_empty());
     crate::test_wait::settled(&rig, "first create is held", || server.held(Kind::Mutate) >= 1).await;
     server.answer(Kind::Mutate, super::rig::Reply::Refuse);
-    assert!(matches!(rig.confirmed(&first).await, Err(DbError::Rejected { kept: false, .. })));
+    assert!(matches!(rig.confirmed(&first, false).await, Err(DbError::Rejected { kept: false, .. })));
     assert_eq!(ids(&rig, "created").await, [second_id]);
 }
 
@@ -240,14 +240,14 @@ async fn matching_threshold_updates_loaded_windows_through_database() {
     ]"#.into()).await.unwrap();
     for minimum in [5, 10] { load_params(&rig, "selected", json!({"minimum":minimum})).await; }
     let first = rig.create("8").await;
-    assert!(rig.confirmed(&first).await.is_ok());
+    assert!(rig.confirmed(&first, false).await.is_ok());
     assert_eq!(ids_params(&rig, "selected", json!({"minimum":5})).await, ["m1"]);
     assert!(ids_params(&rig, "selected", json!({"minimum":10})).await.is_empty());
     let update = rig.update("m1", "12").await.unwrap();
-    assert!(rig.confirmed(&update).await.is_ok());
+    assert!(rig.confirmed(&update, false).await.is_ok());
     assert_eq!(ids_params(&rig, "selected", json!({"minimum":10})).await, ["m1"]);
     let update = rig.update("m1", "3").await.unwrap();
-    assert!(rig.confirmed(&update).await.is_ok());
+    assert!(rig.confirmed(&update, false).await.is_ok());
     for minimum in [5, 10] { assert!(ids_params(&rig, "selected", json!({"minimum":minimum})).await.is_empty()); }
 }
 

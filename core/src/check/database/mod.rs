@@ -385,7 +385,7 @@ impl DatabaseSut {
                 let Some(name) = text("receipt") else { return Some(error("arguments")) };
                 let Some(receipt) = self.receipts.get(&name).cloned() else { return Some(error("unknown_receipt")) };
                 self.launch(async move {
-                    match outcome_name(database.confirmed(receipt).await) {
+                    match outcome_name(database.confirmed(receipt, false).await) {
                         Ok(result) => done("outcome", json!({ "receipt": name, "result": result })),
                         Err(error) => failed(&error),
                     }

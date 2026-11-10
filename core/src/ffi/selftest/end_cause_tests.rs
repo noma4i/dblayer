@@ -160,7 +160,7 @@ async fn write_outcome(end: End) -> String {
         End::Discard => bound(rig.database.discard(epoch, "Message".into(), id, None)).await.unwrap(),
         End::Cancel => unreachable!("a write has no cancel"),
     }
-    let observed = result_tag(bound(rig.database.confirmed(receipt)).await);
+    let observed = result_tag(bound(rig.database.confirmed(receipt, false)).await);
     rig.database.close_now();
     observed
 }
@@ -182,7 +182,7 @@ async fn upload_outcome(end: End) -> String {
         End::Cancel => { let _ = bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await; }
         End::Discard => bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap(),
     }
-    let observed = result_tag(bound(database.confirmed(receipt)).await);
+    let observed = result_tag(bound(database.confirmed(receipt, false)).await);
     database.close_now();
     observed
 }
@@ -322,7 +322,7 @@ async fn outcome_after_answer() -> String {
     let receipt = bound(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3))).await.unwrap();
     let row = receipt.optimistic_value.as_ref().unwrap().id.clone();
     let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
-    let mut call = Box::pin(rig.database.confirmed(receipt));
+    let mut call = Box::pin(rig.database.confirmed(receipt, false));
     poll_pending(call.as_mut(), &wake);
     bound(rig.database.discard(epoch, "Message".into(), row, None)).await.unwrap();
     answer_woke(&wake).await;

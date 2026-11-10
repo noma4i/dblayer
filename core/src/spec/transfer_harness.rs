@@ -482,7 +482,7 @@ impl Twin {
     pub fn outcome(&mut self, id: TransferId, cycle_id: u64) -> (ReplyId, Out) {
         let reply = self.reply();
         let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0, optimistic: None };
-        (reply, self.post(TransferInput::Outcome { receipt, reply }))
+        (reply, self.post(TransferInput::Outcome { receipt, reply , discard_on_failure: false}))
     }
 
     pub fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome) -> Out {

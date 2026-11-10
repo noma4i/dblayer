@@ -181,7 +181,7 @@ fn out_outcome_old_cycle() {
     let old = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0, optimistic: None };
     retry(&mut twin);
     twin.committed(id);
-    let effects = twin.post(OutboxInput::Outcome { receipt: old, reply: 804 });
+    let effects = twin.post(OutboxInput::Outcome { receipt: old, reply: 804 , discard_on_failure: false});
     assert!(matches!(answers(&effects, 804).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "the outcome of the earlier cycle is immutable: {effects:?}");
 }
 
@@ -190,7 +190,7 @@ fn out_outcome_failed() {
     let mut twin = Twin::new();
     let id = failed(&mut twin);
     let current = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0, optimistic: None };
-    let effects = twin.post(OutboxInput::Outcome { receipt: current, reply: 805 });
+    let effects = twin.post(OutboxInput::Outcome { receipt: current, reply: 805 , discard_on_failure: false});
     assert!(matches!(answers(&effects, 805).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "{effects:?}");
     assert_eq!(twin.stage(id), Some(St::Failed));
 }

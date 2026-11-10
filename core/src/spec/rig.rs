@@ -339,7 +339,7 @@ impl Rig {
 
     pub async fn row(&self, id: &str) -> Option<WireRow> { within(self.db.read_row(self.epoch(), "Moment".into(), id.into())).await.unwrap() }
 
-    pub async fn confirmed(&self, receipt: &WireOperationReceipt) -> Result<WireConfirmed, DbError> { within(self.db.confirmed(receipt.clone())).await }
+    pub async fn confirmed(&self, receipt: &WireOperationReceipt) -> Result<WireConfirmed, DbError> { within(self.db.confirmed(receipt.clone(), false)).await }
 }
 
 /// The credential of a file database outlives its reopen, as the credential store of the app does.

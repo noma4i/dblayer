@@ -319,7 +319,7 @@ fn out_rollback_retry() {
 fn out_outcome_wait() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER });
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER , discard_on_failure: false});
     assert_eq!((twin.stage(id), effects.len()), (Some(St::Sending), 0));
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let effects = twin.committed(id);
@@ -330,7 +330,7 @@ fn out_outcome_wait() {
 fn out_outcome_stale() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: WAITER });
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: WAITER , discard_on_failure: false});
     assert_eq!((twin.stage(id), answers(&effects, WAITER), effects.len()), (Some(St::Sending), vec![OutboxAnswer::Err(Fault::NoSession)], 1));
 }
 
@@ -340,7 +340,7 @@ fn out_outcome_done() {
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     twin.committed(id);
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER });
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER , discard_on_failure: false});
     assert_eq!(twin.stage(id), Some(St::Done));
     assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]));
     assert_eq!(effects.len(), 1);
@@ -423,7 +423,7 @@ fn out_unknown_operation() {
     for input in [
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
         OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
-        OutboxInput::Outcome { receipt: twin.receipt(99, EPOCH), reply: WAITER },
+        OutboxInput::Outcome { receipt: twin.receipt(99, EPOCH), reply: WAITER , discard_on_failure: false},
     ] {
         let effects = twin.post(input);
         assert_eq!((answers(&effects, WAITER), effects.len(), twin.state().ops.len()), (vec![OutboxAnswer::Err(Fault::NotFound)], 1, 0));
@@ -745,7 +745,7 @@ fn out_server_removed_row_all_stages() {
         if stage == St::MarkingRetry {
             let mut receipt = twin.receipt(id, EPOCH);
             receipt.cycle_id = twin.state().ops[&id].cycle_id;
-            twin.post(OutboxInput::Outcome { receipt, reply: WAITER });
+            twin.post(OutboxInput::Outcome { receipt, reply: WAITER , discard_on_failure: false});
         }
         let input = OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 };
         let before = twin.post(input.clone());
@@ -758,7 +758,7 @@ fn out_server_removed_row_all_stages() {
         let effects = twin.committed(id);
         let answers = if stage == St::Failed {
             let receipt = twin.receipt(id, EPOCH);
-            answers(&twin.post(OutboxInput::Outcome { receipt, reply: WAITER }), WAITER)
+            answers(&twin.post(OutboxInput::Outcome { receipt, reply: WAITER , discard_on_failure: false}), WAITER)
         } else { answers(&effects, WAITER) };
         assert_eq!(answers, [OutboxAnswer::Outcome(OutboxOutcome::Discarded)], "{stage:?}");
         assert_eq!(twin.stage(id), Some(St::Done));

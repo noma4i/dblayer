@@ -261,7 +261,7 @@ fn exec_xfer_view_and_local_copy() {
     w.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None } });
     assert_eq!(w.stage(KEY), None);
     assert!(std::fs::read(w.files.path(&copy).unwrap()).is_err(), "the local copy is deleted after Confirmed");
-    w.post(TransferInput::Outcome { receipt, reply: 2 });
+    w.post(TransferInput::Outcome { receipt, reply: 2 , discard_on_failure: false});
     assert!(lock(&w.answers).contains(&(2, TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None }, None))));
 }
 

@@ -330,7 +330,7 @@ impl Twin {
 
     pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None } }
 
-    pub(super) fn waiter(&mut self, id: OpId) { self.post(OutboxInput::Outcome { receipt: self.receipt(id, EPOCH), reply: WAITER }); }
+    pub(super) fn waiter(&mut self, id: OpId) { self.post(OutboxInput::Outcome { receipt: self.receipt(id, EPOCH), reply: WAITER , discard_on_failure: false}); }
 }
 
 /// Brings the owner to `state` of the operation `id` (row `r`) under the conditions of `ctx`.

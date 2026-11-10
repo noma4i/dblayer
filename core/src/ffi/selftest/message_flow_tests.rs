@@ -49,7 +49,7 @@ fn first_seen_at(rig: &Rig, model: &str, rows: &Rows, id: &str, name: &str, valu
 }
 
 async fn confirmed(rig: &Rig, receipt: WireOperationReceipt) {
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.settle().await;
 }
 
@@ -92,7 +92,7 @@ async fn flow_message_delete() {
     refused.entered().await;
     settled(&rig, "the thread and the chat row moved", || ids(&thread) == ["m1"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m1"))).await;
     refused.release();
-    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refusal brings the message and the pointer back", || ids(&thread) == ["m1", "m2"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m2"))).await;
 
     let hold = rig.world.hold_next("MessageDelete");
@@ -126,7 +126,7 @@ async fn flow_message_status() {
     let temporary = ids(&thread).remove(0);
     assert_eq!(temporary, receipt.optimistic_value.clone().unwrap().id);
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the bubble has the id of the server", || ids(&thread) == ["m1"]).await;
     let doubled = thread.1.lock().unwrap().iter().any(|seen| seen.size > 1);
     assert!(!doubled, "the thread showed two bubbles for one message");

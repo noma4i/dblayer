@@ -41,7 +41,7 @@ fn call_inputs() -> Vec<OutboxInput> {
     vec![
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 },
         OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 },
-        OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None }, reply: 43 },
+        OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None }, reply: 43 , discard_on_failure: false},
     ]
 }
 
@@ -264,7 +264,7 @@ fn out_open_restores_dropped() {
     restore(&mut twin, vec![StoredOp { restore_failed: Some("layout".into()), ..stored(7, "r") }]);
     ready(&mut twin);
     assert_eq!(twin.stage(7), Some(St::Failed));
-    let effects = twin.post(OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 7, cycle_id: 1, revision: 0, optimistic: None }, reply: 50 });
+    let effects = twin.post(OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 7, cycle_id: 1, revision: 0, optimistic: None }, reply: 50 , discard_on_failure: false});
     assert!(matches!(answers(&effects, 50).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { error })] if error == "RestoreFailed"), "{effects:?}");
 }
 

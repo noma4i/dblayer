@@ -42,7 +42,7 @@ async fn flow_chat_appears_from_event() {
     rig.world.answer_with("AnswerConnection", json!({"data":{"answerConnection":{"user":{"__typename":"User","id":"u5","connectionStatus":"PENDING"},"chat":{"__typename":"Chat","id":"c2","connectionStatus":"PENDING","name":"answer","lists":["SECONDARY"]}}}}));
     rig.land("User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"})).await;
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), "{}".into(), json!({"chatId": "c2"}).to_string())).await.unwrap();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the chat of the answer stands in SECONDARY", || secondary.len() == 1).await;
 
     rig.land("Chat", json!({"id": "c2", "name": "answer", "lists": ["PRIMARY"]})).await;
@@ -84,7 +84,7 @@ async fn flow_group_name_logo() {
     assert!(revisions.iter().all(|revision| revision.is_some_and(|revision| revision >= receipt.revision)), "a place showed the name before the receipt or never {revisions:?}");
     one_revision(&rig, &[&list, &entity]).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     rig.settle().await;
     assert!([&list, &entity].iter().all(|rows| names(&rig, rows) == [("c1".to_string(), text("new"))]));
 

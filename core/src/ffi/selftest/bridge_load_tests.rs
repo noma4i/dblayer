@@ -58,7 +58,7 @@ async fn dlv_deferred_parent_swap_wakes() {
     settled(&rig, "both temporary streams open empty", || !list_reader.deliveries().is_empty() && !count_reader.deliveries().is_empty()).await;
     assert_eq!((rig.world.count("Thread"), rig.world.count("ThreadCount")), (0, 0));
     gate.release();
-    let real = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
+    let real = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id;
     assert_eq!(real, "g1");
     settled(&rig, "both windows request the real parent", || rig.world.count("Thread") == 1 && rig.world.count("ThreadCount") == 1).await;
     let requests: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "Thread" || entry.operation == "ThreadCount").collect();
@@ -118,7 +118,7 @@ async fn win_node_temp_alias_permutations() {
     assert_eq!(rig.world.count("Thread"), before);
 
     gate.release();
-    let landed = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
+    let landed = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id;
     rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
     bound(rig.database.load(epoch, "Message".into(), "thread".into(), params)).await.unwrap();
     assert_eq!(rig.world.count("Thread"), before + 1);
@@ -403,7 +403,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let creation = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    let created = bound(rig.database.confirmed(creation)).await.unwrap().value.expect("the group was not confirmed");
+    let created = bound(rig.database.confirmed(creation, false)).await.unwrap().value.expect("the group was not confirmed");
     rig.world.set_members("JOINED", &["u1", "u2"]);
     let query = json!({"model":"Member", "relation":"group_members", "params":{"groupId":created.id,"order":"JOINED"}}).to_string();
     let reader = Reader::open();
@@ -420,7 +420,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     rig.world.set_members("JOINED", &["u2", "u3"]);
     response.release();
     let receipt = bound(action).await.unwrap().unwrap();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     assert_eq!(rig.world.count("GroupMembers"), before + 1);
     older.release();
     reread.entered().await;
@@ -498,7 +498,7 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
     for (index, text) in ["six", "seven"].into_iter().enumerate() {
         let (entity_mark, count_mark) = (entity.len(), count.len());
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
-        bound(rig.database.confirmed(receipt)).await.unwrap();
+        bound(rig.database.confirmed(receipt, false)).await.unwrap();
         settle(&rig).await;
         let entity_values = entity.deliveries().len() - entity_mark;
         let counts: Vec<i64> = count.deliveries().iter().skip(count_mark).filter_map(|delivery| if let ReadValue::Count { count, .. } = &delivery.value { Some(*count as i64) } else { None }).collect();
@@ -520,7 +520,7 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
     let waiting = rig.database.life.waiting_calls();
-    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { database.confirmed(receipt).await }) };
+    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { database.confirmed(receipt, false).await }) };
     crate::test_wait::settled(&rig, "the outcome call waits for the command", || rig.database.life.waiting_calls() > waiting).await;
     crate::ffi::owners_drained(&rig.database).await.unwrap();
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
@@ -528,7 +528,7 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     assert!(matches!(bound(outcome).await.unwrap(), Err(DbError::NoSession { .. })));
     rig.database.set_online(true).unwrap();
     rig.login_ios("B").await;
-    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(DbError::NoSession { .. })));
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::NoSession { .. })));
     assert_eq!(rig.world.count("SendMessage"), 0);
     rig.database.close_now();
 }

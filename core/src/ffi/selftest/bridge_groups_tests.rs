@@ -70,7 +70,7 @@ async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal
             let receipt = bound(acting).await.unwrap().unwrap();
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(changed[0]), joined(changed[1])), "{case}: the lists before the answer");
             gate.release();
-            let result = bound(rig.database.confirmed(receipt)).await;
+            let result = bound(rig.database.confirmed(receipt, false)).await;
             settle(&rig).await;
             let expected = if refusal { original } else { changed };
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(expected[0]), joined(expected[1])), "{case}: the lists after the outcome");
@@ -100,7 +100,7 @@ async fn leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_r
         settled(&rig, "the group left the list before the answer", || ids_of(reader.rows()).is_empty()).await;
         gate.release();
         let receipt = bound(acting).await.unwrap().unwrap();
-        let result = bound(rig.database.confirmed(receipt)).await;
+        let result = bound(rig.database.confirmed(receipt, false)).await;
         settle(&rig).await;
         assert_eq!(rejected(&result), refusal, "{case}: the operation returned {result:?}");
         if refusal {
@@ -135,7 +135,7 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
         assert!(crate::identity::RowId::new(copy).unwrap().is_temp(), "{case}: the copy {copy} is not a temporary row");
         gate.release();
         let receipt = bound(acting).await.unwrap().unwrap();
-        let result = bound(rig.database.confirmed(receipt)).await;
+        let result = bound(rig.database.confirmed(receipt, false)).await;
         settle(&rig).await;
         assert_eq!(rejected(&result), refusal, "{case}: the operation returned {result:?}");
         let expected = if refusal { strings(&["m1"]) } else { strings(&["m1", "forwarded-1"]) };
@@ -212,7 +212,7 @@ async fn a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_th
         for _ in 0..failures { rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down); }
         let mut armed = rig.clock.armed();
         let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-        let waiting = { let database = rig.database.clone(); rig.spawn(async move { database.confirmed(receipt).await }) };
+        let waiting = { let database = rig.database.clone(); rig.spawn(async move { database.confirmed(receipt, false).await }) };
         for retry in 0..failures {
             rig.clock.await_armed(armed).await;
             armed = rig.clock.armed();
@@ -262,7 +262,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
     assert_eq!(rig.database.session_epoch(), epoch, "the reset of another model ended the epoch");
     gate.release();
-    let row = bound(rig.database.confirmed(receipt)).await.unwrap().value.expect("the confirmed create has no row");
+    let row = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("the confirmed create has no row");
     settle(&rig).await;
     let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
     assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
@@ -300,8 +300,8 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         second_gate.release();
         let first = bound(first_call).await.unwrap().unwrap();
         let second = bound(second_call).await.unwrap().unwrap();
-        assert!(rejected(&bound(rig.database.confirmed(first)).await));
-        assert!(rejected(&bound(rig.database.confirmed(second)).await));
+        assert!(rejected(&bound(rig.database.confirmed(first, false)).await));
+        assert!(rejected(&bound(rig.database.confirmed(second, false)).await));
         settle(&rig).await;
         assert_eq!(lists(&rig), expected(original), "{case}: the lists after both refusals");
         rig.database.close_now();
@@ -341,7 +341,7 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         assert_eq!(lists(&rig), wanted, "{case}: the lists while the second change waits for its answer");
         second_gate.release();
         let (first, second) = (bound(first_call).await.unwrap().unwrap(), bound(second_call).await.unwrap().unwrap());
-        let (first, second) = (bound(rig.database.confirmed(first)).await, bound(rig.database.confirmed(second)).await);
+        let (first, second) = (bound(rig.database.confirmed(first, false)).await, bound(rig.database.confirmed(second, false)).await);
         assert_eq!((rejected(&first), rejected(&second)), (first_refused, !first_refused), "{case}: the outcomes differ");
         settle(&rig).await;
         assert_eq!(lists(&rig), wanted, "{case}: the lists after both answers");

@@ -50,7 +50,7 @@ fn out_wait_outcome() {
         assert!(matches!(&answers[0], OutboxAnswer::Outcome(outcome) if out_of(outcome) == want), "{answers:?}");
     }
     let (mut twin, id) = reach(St::Sending, &ready());
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: 77 });
+    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: 77 , discard_on_failure: false});
     assert_eq!(replies_of(&effects, 77), [OutboxAnswer::Err(Fault::NoSession)]);
 }
 
