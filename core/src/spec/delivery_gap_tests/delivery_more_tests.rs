@@ -18,7 +18,7 @@ fn dlv_deferred_alias_after_log_evicted() {
     let read_id = twin.read_id();
     take(&twin.log);
     let log = crate::store::replaced_log::ReplacedLog::default();
-    let pairs = (0..4097).map(|i| (RowId::new(if i == 0 { "temp-1".to_string() } else { format!("temp-{i}") }).unwrap(), RowId::new(format!("real-{i}")).unwrap()));
+    let pairs = (0..4097).map(|i| (RowId::new(&if i == 0 { "temp-1".to_string() } else { format!("temp-{i}") }).unwrap(), RowId::new(&format!("real-{i}")).unwrap()));
     log.log_replaced(1, pairs);
     let replaced = log.replaced_between(0, 1).into_iter().map(|(from, to)| (from.as_str().to_string(), to.as_str().to_string())).collect();
     resolved.store(true, Ordering::SeqCst);
