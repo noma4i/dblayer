@@ -3,7 +3,11 @@ use serde_json::{json, Value};
 
 use super::stand::Stand;
 
-fn connection() -> Value { json!({"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": 0}) }
+fn connection(count: bool) -> Value {
+    let mut value = json!({"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}});
+    if count { value["totalCount"] = json!(0); }
+    value
+}
 
 const KEYS: [(&str, &str, &str, &str, &str); 12] = [
     ("Campaign", "active", "{}", "activeCampaigns", ""),
@@ -23,14 +27,14 @@ const KEYS: [(&str, &str, &str, &str, &str); 12] = [
 fn answers(stand: &Stand) {
     stand.answer("activeCampaigns", json!({"eligibleCampaigns": []}));
     stand.answer("vibesList", json!({"vibes": []}));
-    stand.answer("gifts", json!({"gifts": connection()}));
-    stand.answer("feed", json!({"feed": connection()}));
-    stand.answer("myMoments", json!({"viewer": {"moments": connection()}}));
-    stand.answer("meCompass", json!({"viewer": {"compassMoments": connection()}}));
-    stand.answer("chats", json!({"viewer": {"chats": connection()}}));
-    stand.answer("transactions", json!({"viewer": {"wallet": {"transactions": connection()}}}));
-    stand.answer("blockedUsers", json!({"viewer": {"blockedUsers": connection()}}));
-    stand.answer("friendUsers", json!({"viewer": {"friends": connection()}}));
+    stand.answer("gifts", json!({"gifts": connection(false)}));
+    stand.answer("feed", json!({"feed": connection(false)}));
+    stand.answer("myMoments", json!({"viewer": {"moments": connection(false)}}));
+    stand.answer("meCompass", json!({"viewer": {"compassMoments": connection(false)}}));
+    stand.answer("chats", json!({"viewer": {"chats": connection(true)}}));
+    stand.answer("transactions", json!({"viewer": {"wallet": {"transactions": connection(false)}}}));
+    stand.answer("blockedUsers", json!({"viewer": {"blockedUsers": connection(true)}}));
+    stand.answer("friendUsers", json!({"viewer": {"friends": connection(true)}}));
 }
 
 fn asked_keys(stand: &Stand) -> Vec<String> {
