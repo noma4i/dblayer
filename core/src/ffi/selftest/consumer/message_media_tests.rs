@@ -7,7 +7,7 @@ use crate::ffi::ReadFetch;
 
 fn media_event(url: &str, progress: i64) -> Value {
     let mut row = message("m1", "c1", "clip");
-    row["media"] = json!({"blobId": null, "blurHash": null, "coverUrl": null, "createdAt": null, "duration": null, "fileUrl": url, "gifUrl": null, "height": null, "kind": "VIDEO", "thumbUrl": null, "transcoded": false, "transcodeStatus": "PROGRESSING", "transcodeProgress": progress, "transcodeError": null, "updatedAt": null, "width": null});
+    row["media"] = json!({"blobId": null, "blurHash": null, "coverUrl": null, "createdAt": "2026-11-08T00:00:00Z", "duration": null, "fileUrl": url, "gifUrl": null, "height": null, "kind": "VIDEO", "thumbUrl": null, "transcoded": false, "transcodeStatus": "PROGRESSING", "transcodeProgress": progress, "transcodeError": null, "updatedAt": "2026-11-08T00:00:00Z", "width": null});
     json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "parentId": "c1", "message": row})
 }
 
