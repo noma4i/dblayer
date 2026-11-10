@@ -11,7 +11,7 @@ use super::DbError;
 use crate::identity::RowId;
 use crate::owners::life::LifeReply;
 use crate::owners::read::windows::{Goal, WindowKey, WindowOutcome};
-use crate::schema::{NodeRead, NODE_PARAM};
+use crate::schema::{AssociationKind, NodeRead, NODE_PARAM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum LoadMoreResult {
@@ -113,13 +113,13 @@ impl Drop for LeaveLoad {
     }
 }
 
-/// Swaps the temporary ids among the params for server ids with `resolve(model of the param, id)`, the model is the declared link of the field the param names. A param without a declared link is no row id. Returns the temporary ids that have no server id yet.
+/// Swaps the temporary ids among the params for server ids with `resolve(model of the param, id)`, the model is the target of the `BelongsTo` or `References` association of the model whose foreign key the param names. A param without such an association is no row id. Returns the temporary ids that have no server id yet.
 pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut Map<String, Value>) -> Result<Vec<String>, DbError> {
     let spec = db.spec(model)?;
     let mut waiting = Vec::new();
     for (name, value) in params.iter_mut() {
         let Some(temp) = value.as_str().filter(|text| crate::identity::is_temp_id(text)) else { continue };
-        let Some(target) = spec.fields.iter().find_map(|field| field.link.as_ref().filter(|link| link.id == *name)).map(|link| link.model.as_str()) else { continue };
+        let Some(target) = spec.associations.iter().find(|association| matches!(association.kind, AssociationKind::BelongsTo | AssociationKind::References) && (if association.foreign_key.is_empty() { &association.name } else { &association.foreign_key }) == name).map(|association| association.target.as_str()) else { continue };
         let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
         let real = db.resolve(target, &temp)?;
         if real.is_temp() { waiting.push(temp.as_str().to_string()); } else { *value = Value::String(real.as_str().to_string()); }
