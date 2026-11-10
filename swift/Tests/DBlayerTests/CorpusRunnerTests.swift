@@ -103,6 +103,7 @@ private func kind(of error: DbError) -> String {
   case .Interrupted: return "interrupted"
   case .Http: return "http"
   case .RequestTooLarge: return "request_too_large"
+  case .ResponseTooLarge: return "response_too_large"
   case .Graphql: return "graphql"
   case .Session: return "session"
   case .Closed: return "closed"

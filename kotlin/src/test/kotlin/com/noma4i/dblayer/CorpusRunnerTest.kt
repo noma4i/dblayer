@@ -81,6 +81,7 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.Interrupted -> "interrupted"
     is DbException.Http -> "http"
     is DbException.RequestTooLarge -> "request_too_large"
+    is DbException.ResponseTooLarge -> "response_too_large"
     is DbException.Graphql -> "graphql"
     is DbException.Session -> "session"
     is DbException.Closed -> "closed"
