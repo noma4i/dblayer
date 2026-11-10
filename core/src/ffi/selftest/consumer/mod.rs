@@ -23,3 +23,4 @@ mod operations_mirror_tests;
 mod transcode_event_tests;
 mod avatar_rowless_tests;
 mod thread_pages_tests;
+mod ordered_scope_tests;
