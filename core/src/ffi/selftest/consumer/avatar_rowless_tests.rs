@@ -30,6 +30,35 @@ async fn seed_moment(stand: &Stand) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_replaces_failed_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("failed.sqlite").to_string_lossy().into_owned();
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer_next("UserPhotoUpdate", json!({"errors":[{"message":"no face","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    first.script_put(200, Some("etag"));
+    let _old = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    arrived(&first, "UserPhotoUpdate").await;
+    first.settle().await;
+    assert_eq!(operations(&first).await.len(), 1);
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+
+    let reopened = Stand::prepare_on(Some(path), credentials).await;
+    reopened.sign_in().await;
+    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    reopened.answer("UserPhotoUpdate", good());
+    reopened.script_put(200, Some("etag"));
+    let new = bound(reopened.database.upload(reopened.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(bound(reopened.database.confirmed(new, false)).await.is_ok());
+    assert!(operations(&reopened).await.is_empty());
+    assert_eq!(reopened.requests("UserPhotoUpdate"), 1);
+    reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.sqlite").to_string_lossy().into_owned();
