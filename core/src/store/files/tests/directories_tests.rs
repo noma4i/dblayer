@@ -95,3 +95,22 @@ fn concurrent_materializations_of_one_file_all_succeed_with_the_same_bytes() {
         }
     }
 }
+
+#[test]
+fn mem_upload_copy_is_chunked() {
+    const CHUNK: usize = 1024 * 1024;
+    const SOURCE_BYTES: u64 = 32 * CHUNK as u64;
+    let (root, directories) = beside_database();
+    let source = root.path().join("source");
+    let source_file = std::fs::File::create(&source).unwrap();
+    source_file.set_len(SOURCE_BYTES).unwrap();
+    drop(source_file);
+    let (result, peak) = crate::tests::peak_tests::measure_peak(|| {
+        directories.copy_source("upload", &source).unwrap()
+    });
+    match result {
+        super::super::directories::CopiedSource::Ready { size, .. } => assert_eq!(size, SOURCE_BYTES),
+        super::super::directories::CopiedSource::Unreadable(error) => panic!("{error}"),
+    }
+    assert!(peak < 2 * CHUNK, "a source of 32 MiB is copied with one chunk and the table limit in memory: peak={peak}");
+}
