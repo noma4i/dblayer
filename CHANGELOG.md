@@ -9,6 +9,8 @@
 ### Changed
 
 - `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
+- `RetrySnapshot.waiting` replaces `activeCalls` and `lastAttempt`.
+- `RetryEntry` replaces `RetryAttempt` in retry snapshots.
 - `EndCause` replaces `ReadEnd` for stream termination.
 - `OperationOutcome.Ended` replaces `Interrupted` and carries the termination cause.
 - Swift `OperationOutcome.confirmed` names its value `confirmedValue`.
