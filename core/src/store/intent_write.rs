@@ -17,12 +17,17 @@ fn values(text: &str) -> Result<Map<String, Value>, StoreError> {
     serde_json::from_str::<Value>(text)?.as_object().cloned().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))
 }
 
-fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -> Result<(BatchPlan, Prior), StoreError> {
+fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_>) -> Result<(BatchPlan, Prior), StoreError> {
     let mut envelope = BatchPlan::new(writer.generation);
     let mut prior = Prior::default();
+    let mut wanted = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for row in &writes.rows { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
+    for row in &writes.tombstones { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
+    for row in &writes.members { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids)?; }
     for EffectRow { model, row_id, values: text } in &writes.rows {
         let fields = values(text)?;
-        let next = match reader.point(model, row_id)? {
+        let next = match writer.stored(model, row_id)?.map(|stored| stored.row) {
             Some(current) => {
                 let mut merged = current.clone();
                 merged.extend(fields);
@@ -56,7 +61,7 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id(row_id)?, row: next });
     }
     for tombstone in &writes.tombstones {
-        if let Some(row) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id)? { prior.rows.push(row); }
+        if let Some(row) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id, writer.stored(&tombstone.model, &tombstone.row_id)?.map(|stored| stored.row))? { prior.rows.push(row); }
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: id(&tombstone.row_id)?, reason: DestroyReason::Local });
     }
     for touch in &writes.touches {
@@ -69,7 +74,7 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -
             if before.is_some() { envelope.scope_ops.push(ScopeOp::Detach { scope, row: id(&member.row_id)? }); }
             prior.rows.push(PriorRow::Leave { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned: writer.revision });
         } else {
-            let present = writes.rows.iter().any(|row| row.model == member.model && row.row_id == member.row_id) || reader.point(&member.model, &member.row_id)?.is_some();
+            let present = writes.rows.iter().any(|row| row.model == member.model && row.row_id == member.row_id) || writer.stored(&member.model, &member.row_id)?.is_some();
             if before.is_none() && present { envelope.scope_ops.push(ScopeOp::Append { scope, row: id(&member.row_id)?, order_key: member.order_key.clone() }); }
             prior.rows.push(PriorRow::Join { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned: writer.revision });
         }
@@ -78,7 +83,9 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -
 }
 
 pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Result<CommitResult, StoreError> {
-    let reader = Reader::new(writer.connection, writer.models);
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
     let (mut envelope, _) = effects(&reader, writes, writer)?;
     envelope.writes_local = true;
     envelope.validate(writer.generation)?;
@@ -86,7 +93,9 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
 }
 
 pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, action): (&str, &str, &str), payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
-    let reader = Reader::new(writer.connection, writer.models);
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
     let (mut envelope, prior) = effects(&reader, writes, writer)?;
     let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
     let held = crate::store::plan::op_effect::read_prior(writer.connection, seq)?;

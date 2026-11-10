@@ -38,12 +38,12 @@ pub(super) struct RowWrite<'a> {
 impl RowWrite<'_> {
     pub fn prefetch(&mut self, model: &str, ids: &[String]) -> Result<(), StoreError> {
         let reader = Reader::new(self.connection, self.models);
-        let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect();
+        let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !missing.is_empty() {
             let mut rows = reader.stored_rows_with_revisions(model, &missing)?;
             for id in missing { self.current.insert((model.to_string(), id.clone()), rows.remove(&id)); }
         }
-        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(model).is_some_and(|fields| fields.contains_key(*id))).cloned().collect();
+        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(model).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !needed.is_empty() {
             self.feed_tombstones.entry(model.to_string()).or_default();
             let mut fields = unconfirmed_fields(&reader, self.closing, model, &needed)?;

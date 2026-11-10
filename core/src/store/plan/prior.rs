@@ -60,8 +60,8 @@ impl PriorRow {
     }
 
 
-    pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<PriorRow>, StoreError> {
-        let Some(before) = reader.point(model, id)? else { return Ok(None) };
+    pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str, before: Option<Map<String, Value>>) -> Result<Option<PriorRow>, StoreError> {
+        let Some(before) = before else { return Ok(None) };
         let mut statement = reader.connection().prepare_cached(include_str!("../sql/plan/destroyed.sql"))?;
         let members = statement
             .query_map(params![model, id], |row| Ok(PriorMember { scope_key: row.get(0)?, order_key: row.get(1)? }))?
