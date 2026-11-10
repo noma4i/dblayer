@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -283,6 +285,35 @@ class ValueBridgeTest {
             assertTrue("the released stream ends closed: $next", next is ReadValue.Ended && next.cause is EndCause.Closed)
             val another = awaitWithin("another reader sees the closed stream") { stream.values.first() }
             assertTrue("the next reader sees closed: $another", another is ReadValue.Ended && another.cause is EndCause.Closed)
+            stream.close()
+        } finally {
+            closeForCleanup()
+        }
+    }
+
+    @Test
+    fun bridge_reader_cancel_pending_pull_parity_c9() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val stream = scope.stream(Moment.recent)
+            val first = CompletableDeferred<ReadValue>()
+            val waiting = launch { stream.values.collect { first.complete(it) } }
+            assertTrue(awaitWithin("the first snapshot") { first.await() } is ReadValue.Snapshot)
+            awaitWithin("the pending collection ends after cancellation") { waiting.cancelAndJoin() }
+            val values = Channel<ReadValue>(Channel.UNLIMITED)
+            val next = launch { stream.values.collect { values.send(it) } }
+            val initial = awaitWithin("the new reader receives the current value") { values.receive() }
+            assertTrue("the new reader receives a snapshot: $initial", initial is ReadValue.Snapshot)
+            var projection = requireNotNull(ListProjection<Moment>().apply(initial, Moment))
+            DBlayer.database.setOnline(false)
+            val sent = scope.send(Moment, buildJsonObject { put("text", "after cancellation") })
+            val id = requireNotNull(sent.optimisticValue).id
+            val changed = awaitWithin("the new reader receives the write") { values.receive() }
+            projection = requireNotNull(projection.apply(changed, Moment))
+            assertTrue("the new reader receives the written row", projection.rows.any { it.id == id })
+            next.cancelAndJoin()
             stream.close()
         } finally {
             closeForCleanup()
