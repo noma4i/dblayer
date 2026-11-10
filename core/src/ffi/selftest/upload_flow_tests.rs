@@ -56,6 +56,31 @@ fn local_url(rows: &Rows, id: &str, action: &str) -> Option<String> {
 fn puts(rig: &Rig) -> usize { rig.world.log().iter().filter(|entry| entry.operation == "PUT").count() }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn xfer_confirmed_delete_failure_keeps_rejection() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    settled(&rig, "the chat is visible", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", &vec![42; 300 * 1024]);
+    let epoch = rig.database.session_epoch();
+    rig.world.fail_next("PUT", Fault::Http(400));
+    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    settled(&rig, "the upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    let url = local_url(&chat, "c1", "update_photo").unwrap();
+    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+    let directory = copy.parent().unwrap();
+    assert!(copy.exists());
+    let before = bound(rig.database.confirmed(receipt.clone(), false)).await;
+    let permissions = std::fs::metadata(directory).unwrap().permissions();
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = bound(rig.database.confirmed(receipt, true)).await;
+    std::fs::set_permissions(directory, permissions).unwrap();
+    assert!(matches!((before, result), (Err(crate::ffi::DbError::Rejected { failure: first, kept: true }), Err(crate::ffi::DbError::Rejected { failure: second, kept: false })) if first == second));
+    assert!(copy.exists(), "the refused delete leaves the file for startup cleanup");
+    bound(rig.database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn confirmed_after_discard_same_as_explicit_discard() {
     let mut observed = Vec::new();
     for automatic in [false, true] {
