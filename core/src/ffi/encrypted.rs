@@ -122,7 +122,7 @@ impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         self.not_closed()?;
         let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
-        match self.await_call(self.life.session_call(operation, body_json)).await? {
+        match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => Ok(body),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
@@ -163,14 +163,14 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => DbError::Storage { detail },
-        Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => DbError::NoSession { detail: "the session of this request ended".into() },
+        Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => super::cause_error(&super::EndCause::SessionEnded),
         Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),
         Failed::Rejected(reason @ (crate::owners::contract::RejectReason::StaleGeneration { .. } | crate::owners::contract::RejectReason::Invalid)) => DbError::Internal { detail: format!("the request was refused by the store: {reason:?}") },
         Failed::Session { code, body } => DbError::from(core::TransportError::Session { code, detail: body }),
         Failed::Graphql { code, body } => DbError::from(core::TransportError::graphql_answer(code, body)),
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },
-        Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
+        Failed::NoSession => super::cause_error(&super::EndCause::SessionEnded),
         Failed::Interrupted => DbError::Interrupted { detail: "the call ended".into() },
         Failed::Closed => super::command::closed(),
     }

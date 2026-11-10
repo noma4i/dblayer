@@ -25,7 +25,7 @@ pub struct CommandRequest {
 }
 
 /// The error of a call that finds the database closed.
-pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is closed".into() } }
+pub(super) fn closed() -> DbError { super::cause_error(&super::EndCause::Closed) }
 
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no create operation and no declared upload action for this command") } }
 
@@ -72,7 +72,7 @@ impl Database {
     }
 
     pub(super) fn close_after(&self, epoch: u64) -> Result<(), DbError> {
-        if matches!(self.life.verdict(epoch), crate::owners::life::CallVerdict::Closed) { return Err(closed()); }
+        if matches!(self.admission_end(epoch), Some(super::EndCause::Closed)) { return Err(closed()); }
         Ok(())
     }
 

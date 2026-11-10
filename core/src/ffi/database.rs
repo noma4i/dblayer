@@ -397,7 +397,7 @@ impl Database {
         }
         let waiter = self.life.run(epoch, operation, variables_json);
         let mut cancel = CancelCall { life: self.life.clone(), reply: waiter.id().raw(), armed: true };
-        let result = self.await_call(waiter).await;
+        let result = self.await_life(waiter).await;
         cancel.armed = false;
         match result? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
@@ -416,18 +416,9 @@ impl Database {
 
     /// Waits for the answer of an owner. An answer other than a value ends the call with the end of its epoch.
     pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
-        self.await_owner(waiter, |cause| super::cause_error(&super::EndCause::of(cause))).await
-    }
-
-    /// The wait of a call: the end of its epoch is Interrupted (calls.md, D-253), not an end cause.
-    pub(super) async fn await_call(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
-        self.await_owner(waiter, |_| DbError::Interrupted { detail: "the call ended".into() }).await
-    }
-
-    async fn await_owner(&self, waiter: crate::runtime::Waiter<LifeReply>, ended: fn(crate::runtime::Cause) -> DbError) -> Result<LifeReply, DbError> {
         match waiter.wait().await {
             crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
-            crate::runtime::Outcome::EpochEnded(cause) => Err(ended(cause)),
+            crate::runtime::Outcome::EpochEnded(cause) => Err(super::cause_error(&super::EndCause::of(cause))),
             crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
             crate::runtime::Outcome::Value(reply) => Ok(reply),
         }

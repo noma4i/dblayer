@@ -65,13 +65,6 @@ pub(super) fn outcome_error(error: DbError) -> Result<WireOperationOutcome, DbEr
 }
 
 impl Database {
-    fn outcome_admission(&self, epoch: u64) -> Option<Result<WireOperationOutcome, DbError>> {
-        self.admission_end(epoch).map(|cause| match cause {
-            super::EndCause::SessionEnded => Ok(WireOperationOutcome::Ended { cause }),
-            _ => Err(super::cause_error(&cause)),
-        })
-    }
-
     async fn outbox_answer(&self, epoch: u64, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
         match self.in_epoch(epoch, "write", self.await_life(waiter)).await? {
             LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, what)),
@@ -287,7 +280,12 @@ impl Database {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
         }
         let epoch = receipt.epoch;
-        if let Some(result) = self.outcome_admission(epoch) { return result; }
+        if let Some(cause) = self.admission_end(epoch) {
+            return match cause {
+                super::EndCause::SessionEnded => Ok(WireOperationOutcome::Ended { cause }),
+                _ => Err(super::cause_error(&cause)),
+            };
+        }
         let result = match held.ticket.clone() {
             None => {
                 if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
