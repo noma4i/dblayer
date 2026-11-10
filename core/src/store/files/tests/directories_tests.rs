@@ -38,9 +38,9 @@ fn directory_sits_next_to_the_database_file() {
 }
 
 #[test]
-fn memory_database_has_no_directory_and_cleans_its_scratch_cache_on_drop() {
+fn memory_database_keeps_files_in_a_scratch_directory_and_removes_it_on_drop() {
     let directories = FileDirectories::scratch();
-    assert!(!directories.has_directory());
+    assert!(directories.has_directory());
     let path = directories.materialize("f1", "clip.mp4", b"video").unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"video");
     assert!(path.ends_with("f1"));

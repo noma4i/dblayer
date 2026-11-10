@@ -20,3 +20,4 @@ mod window_page_tail_tests;
 mod matrix_window_landing_tests;
 mod session_end_tests;
 mod operations_mirror_tests;
+mod transcode_event_tests;
