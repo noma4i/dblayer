@@ -293,6 +293,32 @@ async fn consumer_rowless_cancel_removes_copy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_failed_expiry_removes_copy() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+    stand.sign_in().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+    stand.script_put(200, Some("etag"));
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(matches!(bound(stand.database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
+    let items = operations(&stand).await;
+    assert_eq!(items.len(), 1);
+    let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+    assert!(copy.exists());
+    stand.database.set_online(false).unwrap();
+    stand.clock.advance(7 * 24 * 60 * 60 * 1000 + 1);
+    stand.database.set_online(true).unwrap();
+    stand.settle().await;
+    assert!(operations(&stand).await.is_empty());
+    assert!(!copy.exists());
+    stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn direct_mutation_reports_the_end_cause() {
     for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
         let stand = Stand::open().await;
