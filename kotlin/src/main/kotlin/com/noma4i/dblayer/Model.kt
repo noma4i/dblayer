@@ -110,13 +110,6 @@ suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serializ
     return onAccount(account) { database, epoch -> MutationReceipt(database, decoder, database.act(epoch, modelName, id, action, values.jsonText(), args.jsonText())) }
 }
 
-sealed interface OperationOutcome<out Model : DBModel> {
-    val confirmedValue: Model? get() = null
-    class Confirmed<Model : DBModel>(override val confirmedValue: Model?, val answerJson: String?) : OperationOutcome<Model>
-    class Rejected(val failure: WireFailure) : OperationOutcome<Nothing>
-    data class Ended(val cause: EndCause) : OperationOutcome<Nothing>
-}
-
 data class Confirmed<Model : DBModel>(val value: Model?, val answerJson: String?)
 
 class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {
@@ -129,14 +122,6 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
     suspend fun confirmed(): Confirmed<Model> = offCaller {
         val result = database.confirmed(wire)
         Confirmed(result.value?.let(decoder::read), result.answerJson)
-    }
-
-    suspend fun outcome(): OperationOutcome<Model> = offCaller {
-        when (val result = database.outcome(wire)) {
-            is WireOperationOutcome.Confirmed -> OperationOutcome.Confirmed(result.value?.let(decoder::read), result.answerJson)
-            is WireOperationOutcome.Rejected -> OperationOutcome.Rejected(result.failure)
-            is WireOperationOutcome.Ended -> OperationOutcome.Ended(result.cause)
-        }
     }
 }
 

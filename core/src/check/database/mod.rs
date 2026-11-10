@@ -10,7 +10,7 @@ use super::model::Sut;
 use super::value::{Input, Observation};
 use crate::ffi::{
     CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, EndCause, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, QuerySpec, TestClock,
-    WireOperationOutcome, WireOperationReceipt, WireRow,
+    WireOperationReceipt, WireRow,
 };
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 
@@ -384,8 +384,8 @@ impl DatabaseSut {
                 let Some(name) = text("receipt") else { return Some(error("arguments")) };
                 let Some(receipt) = self.receipts.get(&name).cloned() else { return Some(error("unknown_receipt")) };
                 self.launch(async move {
-                    match database.outcome(receipt).await {
-                        Ok(outcome) => done("outcome", json!({ "receipt": name, "result": outcome_name(&outcome) })),
+                    match outcome_name(database.confirmed(receipt).await) {
+                        Ok(result) => done("outcome", json!({ "receipt": name, "result": result })),
                         Err(error) => failed(&error),
                     }
                 });
@@ -565,12 +565,18 @@ fn done(kind: &str, value: Value) -> Done {
     Done { observed: vec![observed], ..Done::default() }
 }
 
-fn outcome_name(outcome: &WireOperationOutcome) -> String {
-    match outcome {
-        WireOperationOutcome::Confirmed { .. } => "confirmed".into(),
-        WireOperationOutcome::Rejected { .. } => "rejected".into(),
-        WireOperationOutcome::Ended { cause } => format!("ended {}", cause_name(cause)),
-    }
+fn outcome_name<Value>(result: Result<Value, DbError>) -> Result<String, DbError> {
+    Ok(match result {
+        Ok(_) => "confirmed".into(),
+        Err(DbError::Rejected { .. }) => "rejected".into(),
+        Err(DbError::NoSession { .. }) => "ended session_ended".into(),
+        Err(DbError::Closed { .. }) => "ended closed".into(),
+        Err(DbError::Invalid { .. }) => "ended invalid".into(),
+        Err(DbError::Storage { .. }) => "ended storage".into(),
+        Err(DbError::Internal { .. }) => "ended internal".into(),
+        Err(DbError::Interrupted { detail }) => format!("ended {}", detail.to_lowercase()),
+        Err(error) => return Err(error),
+    })
 }
 
 fn more_name(result: LoadMoreResult) -> &'static str {

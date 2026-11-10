@@ -278,8 +278,8 @@ impl Database {
     }
 
     pub(crate) async fn refusal_of(&self, receipt: super::WireOperationReceipt) -> super::WireFailure {
-        match self.outcome(receipt).await.unwrap() {
-            super::WireOperationOutcome::Rejected { failure } => failure,
+        match self.confirmed(receipt).await {
+            Err(super::DbError::Rejected { failure, .. }) => failure,
             other => panic!("expected a refusal, got {other:?}"),
         }
     }

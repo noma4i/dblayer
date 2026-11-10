@@ -49,13 +49,6 @@ fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
 }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireOperationOutcome {
-    Confirmed { value: Option<WireRow>, answer_json: Option<String> },
-    Rejected { failure: super::wire::WireFailure },
-    Ended { cause: crate::owners::read::deliveries::EndCause },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]
 pub struct ItemId { pub value: String }
 

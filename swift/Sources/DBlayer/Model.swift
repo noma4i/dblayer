@@ -88,17 +88,6 @@ extension DBModel {
   }
 }
 
-public enum OperationOutcome<Model: DBModel>: Sendable {
-  case confirmed(confirmedValue: Model?, answerJSON: String?)
-  case rejected(failure: WireFailure)
-  case ended(cause: EndCause)
-
-  public var confirmedValue: Model? {
-    guard case let .confirmed(value, _) = self else { return nil }
-    return value
-  }
-}
-
 public struct Confirmed<Model: DBModel>: Sendable {
   public let value: Model?
   public let answerJSON: String?
@@ -125,14 +114,6 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
   @concurrent public func confirmed() async throws -> Confirmed<Model> {
     let confirmed = try await database.confirmed(receipt: wire)
     return Confirmed(value: try confirmed.value.map(Model.decode), answerJSON: confirmed.answerJson)
-  }
-
-  @concurrent public func outcome() async throws -> OperationOutcome<Model> {
-    switch try await database.outcome(receipt: wire) {
-    case let .confirmed(value, answerJSON): return .confirmed(confirmedValue: try value.map(Model.decode), answerJSON: answerJSON)
-    case let .rejected(failure): return .rejected(failure: failure)
-    case let .ended(cause): return .ended(cause: cause)
-    }
   }
 }
 

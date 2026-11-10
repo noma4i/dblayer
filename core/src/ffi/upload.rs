@@ -4,7 +4,7 @@
 use serde_json::{Map, Value};
 
 use super::database::id;
-use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
+use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationReceipt};
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
 use super::write::refused;
 use super::{Database, DbError};
@@ -295,23 +295,23 @@ impl Database {
     }
 
     /// The outcome of the receipt of a transfer.
-    pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<(WireOperationOutcome, bool), DbError> {
+    pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<super::WireConfirmed, DbError> {
         let waiter = self.life.upload_outcome(receipt.epoch, held.clone());
         let (answer, landed) = match self.await_life(waiter).await {
             Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
-            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return super::write::fault_outcome(fault, "upload outcome").map(|outcome| (outcome, false)),
+            Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(super::write::fault_error(fault, "upload outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
-            Err(error) => return super::write::outcome_error(error).map(|outcome| (outcome, false)),
+            Err(error) => return Err(super::write::end_error(error)),
         };
-        Ok(match answer {
+        match answer {
             OutboxOutcome::Confirmed { result, .. } => {
                 let value = landed.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
-                (WireOperationOutcome::Confirmed { value, answer_json: result }, false)
+                Ok(super::WireConfirmed { value, answer_json: result })
             }
-            OutboxOutcome::Rejected { error } => (WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) }, false),
-            OutboxOutcome::Failed { error } => (WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) }, true),
-            OutboxOutcome::Discarded => (WireOperationOutcome::Ended { cause: super::EndCause::Discarded }, false),
-            OutboxOutcome::Ended(cause) => (WireOperationOutcome::Ended { cause }, false),
-        })
+            OutboxOutcome::Rejected { error } => Err(DbError::Rejected { failure: super::write::failure_of(&error), kept: false }),
+            OutboxOutcome::Failed { error } => Err(DbError::Rejected { failure: super::write::failure_of(&error), kept: true }),
+            OutboxOutcome::Discarded => Err(super::cause_error(&super::EndCause::Discarded)),
+            OutboxOutcome::Ended(cause) => Err(super::cause_error(&cause)),
+        }
     }
 }
