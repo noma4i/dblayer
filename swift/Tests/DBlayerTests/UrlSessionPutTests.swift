@@ -39,14 +39,15 @@ private final class PartProtocol: URLProtocol, @unchecked Sendable {
     if let stream = request.httpBodyStream {
       stream.open()
       var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-      while true {
+      var count = 0
+      repeat {
         Self.peakInUse = max(Self.peakInUse, mallocInUse())
-        let count = stream.read(&buffer, maxLength: buffer.count)
+        count = stream.read(&buffer, maxLength: buffer.count)
         if count <= 0 { break }
         let start = Int((Self.first + UInt64(Self.received)) % 256)
         if Self.mismatch == nil && memcmp(buffer, Array(Self.pattern[start..<start + count]), count) != 0 { Self.mismatch = Self.received }
         Self.received += count
-      }
+      } while count > 0
       stream.close()
     }
     let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["ETag": "part"])!
@@ -148,8 +149,8 @@ struct UrlSessionPutTests {
     let call = Task {
       await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: UInt64(megabyte), length: UInt64(4 * megabyte)), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
     }
-    var first = events.makeAsyncIterator()
-    _ = await first.next()
+    let first = Cursor(events)
+    _ = await first.next("the stalled request")
     if !serverFails {
       #expect(openDescriptors(of: file.path) == 1, "the stalled part holds its file open")
       call.cancel()

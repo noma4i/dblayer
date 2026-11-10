@@ -18,10 +18,8 @@ extension BridgeProbeTests {
     let sent = try await Moment.uploadClip(id: "absent", source: source.path, in: DB.account())
     #expect(sent.optimisticValue == nil)
     var shown: UploadInfo?
-    for await item in try await DB.account().operations() {
-      if case let .queue(_, items) = item { shown = items.first?.uploadInfo }
-      break
-    }
+    let queue = Cursor(try await DB.account().operations())
+    if case let .queue(_, items)? = await queue.next("the queue") { shown = items.first?.uploadInfo }
     #expect((shown.map { [.waiting, .queued].contains($0.status) } ?? false) && shown?.totalBytes == 5, "the queue shows the transfer before it ends: \(String(describing: shown))")
     transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
     transport.enqueuePut("https://storage.test/video")

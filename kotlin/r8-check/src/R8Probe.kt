@@ -21,7 +21,7 @@ fun main() = runBlocking {
         check(db.peekRow(epoch, "Item", created.id)?.cells == created.cells)
         stream.cancel()
         try {
-            db.read(epoch, "Missing", "x", "title")
+            db.readRow(epoch, "Missing", "x")
             error("Missing model must fail")
         } catch (_: DbException) {
         }
