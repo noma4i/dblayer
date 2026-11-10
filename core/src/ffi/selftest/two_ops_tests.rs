@@ -28,13 +28,13 @@ async fn out_discard_two_ops_same_key_failed_only() {
         let epoch = rig.database.session_epoch();
         if failed_second {
             let first = update(&rig, json!({"name":"first"}), "first").await;
-            assert!(bound(rig.database.confirmed(first)).await.is_ok());
+            assert!(bound(rig.database.confirmed(first, false)).await.is_ok());
         }
         let refused = rig.world.hold_then("ProfileUpdate", Fault::Http(422));
         let failed = update(&rig, json!({"name":"failed"}), "failed").await;
         refused.entered().await;
         refused.release();
-        assert!(matches!(bound(rig.database.confirmed(failed.clone())).await, Err(DbError::Rejected { kept: true, .. })));
+        assert!(matches!(bound(rig.database.confirmed(failed.clone(), false)).await, Err(DbError::Rejected { kept: true, .. })));
         rig.database.set_online(false).unwrap();
         let waiting = if failed_second { None } else { Some(update(&rig, json!({"secondaryChatsCount":7}), "waiting").await) };
         let result = bound(rig.database.discard(epoch, "User".into(), "user".into(), Some("update".into()))).await;
@@ -44,7 +44,7 @@ async fn out_discard_two_ops_same_key_failed_only() {
         if let Some(waiting) = waiting {
             assert_eq!(cell(&rig, "User", &row, "secondaryChatsCount"), int(7));
             rig.database.set_online(true).unwrap();
-            assert!(bound(rig.database.confirmed(waiting)).await.is_ok());
+            assert!(bound(rig.database.confirmed(waiting, false)).await.is_ok());
         }
         rig.database.close_now();
     }
@@ -58,13 +58,13 @@ async fn out_retry_two_ops_same_key_failed_only() {
     let failed = update(&rig, json!({"name":"failed"}), "failed").await;
     refused.entered().await;
     refused.release();
-    assert!(matches!(bound(rig.database.confirmed(failed)).await, Err(DbError::Rejected { kept: true, .. })));
+    assert!(matches!(bound(rig.database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
     rig.database.set_online(false).unwrap();
     let waiting = update(&rig, json!({"secondaryChatsCount":7}), "waiting").await;
     let retried = bound(rig.database.retry(epoch, "User".into(), "user".into(), Some("update".into()), None)).await.unwrap();
     rig.database.set_online(true).unwrap();
-    assert!(bound(rig.database.confirmed(retried)).await.is_ok());
-    assert!(bound(rig.database.confirmed(waiting)).await.is_ok());
+    assert!(bound(rig.database.confirmed(retried, false)).await.is_ok());
+    assert!(bound(rig.database.confirmed(waiting, false)).await.is_ok());
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "ProfileUpdate").count(), 3, "one refusal and one request per operation");
     rig.database.close_now();
 }
@@ -94,7 +94,7 @@ async fn xfer_discard_two_transfers_same_key_failed_only() {
     let second = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request())).await;
     assert!(matches!(second, Err(DbError::InFlight { .. })), "{second:?}");
     held.release();
-    assert!(matches!(bound(rig.database.confirmed(first)).await, Err(DbError::Rejected { kept: true, .. })));
+    assert!(matches!(bound(rig.database.confirmed(first, false)).await, Err(DbError::Rejected { kept: true, .. })));
     let removed = bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await;
     assert!(removed.is_ok(), "{removed:?}");
     assert!(matches!(bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await, Err(DbError::NotFound { .. })));
