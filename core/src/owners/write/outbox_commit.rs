@@ -99,8 +99,7 @@ impl OutboxState {
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
-                    let answer = self.discard_answer(reply, OutboxAnswer::Ok);
-                    Self::reply(fx, reply, answer);
+                    Self::reply(fx, reply, OutboxAnswer::Ok);
                 }
                 if why == Why::Discarded && (self.ops[&op_id].pending_owned || self.ops[&op_id].pair_in_flight) {
                     if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; operation.pair_in_flight = false; }
@@ -120,7 +119,7 @@ impl OutboxState {
                         }
                         if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
                         for reply in Self::take_waiters(&mut self.retry_waiters, id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
-                        for reply in Self::take_waiters(&mut self.discard_waiters, id) { let answer = self.discard_answer(reply, OutboxAnswer::Ok); Self::reply(fx, reply, answer); }
+                        for reply in Self::take_waiters(&mut self.discard_waiters, id) { Self::reply(fx, reply, OutboxAnswer::Ok); }
                         self.finish(id, OutboxOutcome::Discarded, true, fx);
                     }
                 }
@@ -267,7 +266,6 @@ impl OutboxState {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
             }
-            RejectReason::Storage(detail) if stage == Stage::RollingBack(Why::Discarded) && self.discard_waiters.iter().any(|(id, reply)| *id == op_id && self.discard_outcomes.contains_key(reply)) => self.outcome_discard_refused(op_id, detail, fx),
             RejectReason::Storage(_) => self.retry_timer(op_id, fx),
             RejectReason::NoSession | RejectReason::Closed if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::NoSession | RejectReason::Closed => {
@@ -312,8 +310,7 @@ impl OutboxState {
                         if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = None; operation.before_cancel = None; }
                     }
                     for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
-                        let answer = self.discard_answer(reply, OutboxAnswer::Err(Fault::Internal));
-                        Self::reply(fx, reply, answer);
+                        Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal));
                     }
                     self.fail_with(op_id, "Internal(Invalid)".into(), fx);
                 }

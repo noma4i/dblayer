@@ -1,7 +1,6 @@
 //! Owner `Outbox`: the rows of the table for the network, the retry timers, `retry`, `discard`, `outcome`, `Submit` and `Online`.
 
 
-use crate::owners::contract::RejectReason;
 use super::outbox::{Batch, MemberRemoval, Outbox, OutboxState};
 use super::outbox_types::*;
 use crate::owners::contract::RequestId;
@@ -289,52 +288,6 @@ impl OutboxState {
         if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, .. } if *id == op_id)) { return; }
         self.removing.insert(op_id);
         self.store(op_id, CommitKind::RemoveRow, fx);
-    }
-
-    /// What a waiter of `OutcomeDiscarding` is told when the discard of its cycle answers `answer`: the rollback is the failed cycle `Rejected`, a refused rollback is `Storage` with the original error.
-    pub(super) fn discard_answer(&mut self, reply: ReplyId, answer: OutboxAnswer) -> OutboxAnswer {
-        let Some(error) = self.discard_outcomes.remove(&reply) else { return answer };
-        match answer {
-            OutboxAnswer::Ok => OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }),
-            OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(detail))) => OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}; the failed cycle: {error}")))),
-            other => other,
-        }
-    }
-
-    /// The rollback of a discarded failed cycle was refused by the Store: the waiters of `OutcomeDiscarding` get `Storage`, the intent stays `Failed`. A plain `Discard` waiter keeps the retry of the rollback.
-    pub(super) fn outcome_discard_refused(&mut self, op_id: OpId, detail: String, fx: &mut Effects<Outbox>) {
-        let ours: Vec<ReplyId> = self.discard_waiters.iter().filter(|(id, reply)| *id == op_id && self.discard_outcomes.contains_key(reply)).map(|(_, reply)| *reply).collect();
-        self.discard_waiters.retain(|(_, reply)| !ours.contains(reply));
-        for reply in ours {
-            let answer = self.discard_answer(reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(detail.clone()))));
-            Self::reply(fx, reply, answer);
-        }
-        if self.discard_waiters.iter().any(|(id, _)| *id == op_id) {
-            self.retry_timer(op_id, fx);
-        } else if let Some(operation) = self.ops.get_mut(&op_id) {
-            operation.stage = Stage::Failed;
-        }
-    }
-
-    /// `Outcome` with `discard_on_failure`: a `Failed` cycle that is the current one of the receipt starts the `Discard` of this `op_id` and its reply waits for the commit of the rollback.
-    pub(super) fn outcome_discarding(&mut self, receipt: Receipt, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let current = self.epoch == receipt.epoch && self.ops.get(&receipt.op_id).is_some_and(|operation| operation.cycle_id == receipt.cycle_id);
-        let stage = self.ops.get(&receipt.op_id).map(|operation| operation.stage);
-        match stage {
-            Some(Stage::Failed) if current => {
-                let error = self.ops[&receipt.op_id].error.clone().unwrap_or_else(|| "refused".into());
-                self.discard_outcomes.insert(reply, error);
-                self.discard_waiters.push((receipt.op_id, reply));
-                if let Some(operation) = self.ops.get_mut(&receipt.op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
-                self.store(receipt.op_id, CommitKind::Rollback, fx);
-            }
-            Some(Stage::RollingBack(Why::Discarded)) if current && self.ops[&receipt.op_id].error.is_some() && self.discard_outcomes.values().next().is_some() => {
-                let error = self.ops[&receipt.op_id].error.clone().unwrap_or_else(|| "refused".into());
-                self.discard_outcomes.insert(reply, error);
-                self.discard_waiters.push((receipt.op_id, reply));
-            }
-            _ => self.outcome(receipt, reply, fx),
-        }
     }
 
     pub(super) fn outcome(&mut self, receipt: Receipt, reply: ReplyId, fx: &mut Effects<Outbox>) {

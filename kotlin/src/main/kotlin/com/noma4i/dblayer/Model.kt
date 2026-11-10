@@ -125,9 +125,9 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
     val epoch: ULong = wire.epoch
     val operation: Long? = wire.operation
 
-    /** The one outcome of the receipt: the value, or [DbException.Rejected] (`kept` = the failed intent stays) or the exception of the end of the wait. [discardOnFailure] rolls a failed cycle back first. */
-    suspend fun confirmed(discardOnFailure: Boolean = false): Confirmed<Model> = offCaller {
-        val result = database.confirmed(wire, discardOnFailure)
+    /** The one outcome of the receipt: the value, or [DbException.Rejected] (`kept` = the failed intent stays) or the exception of the end of the wait. */
+    suspend fun confirmed(): Confirmed<Model> = offCaller {
+        val result = database.confirmed(wire)
         Confirmed(result.value?.let(decoder::read), result.answerJson)
     }
 

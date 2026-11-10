@@ -213,8 +213,6 @@ pub enum OutboxInput {
     SelectedNone { reply: ReplyId, version: u64 },
     SelectedTransfer { reply: ReplyId, transfer_id: u64, version: u64 },
     Outcome { receipt: Receipt, reply: ReplyId },
-    /// `Outcome` of D-286 with `discard_on_failure`: a `Failed` cycle of this receipt is discarded (the existing `Discard` of this `op_id`) and the reply is `Rejected{error}` after the rollback commits; any other state answers as `Outcome`.
-    OutcomeDiscarding { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },
     /// The root row the answer of the operation landed.

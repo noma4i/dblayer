@@ -356,30 +356,6 @@ impl TransferState {
         }
     }
 
-    /// `Outcome` with `discard_on_failure`: the current `Failed` cycle of the receipt is discarded by the existing `Discard` of its transfer. A discard already on its way, or any other state, answers as `Outcome`.
-    pub(super) fn outcome_discarding(&mut self, receipt: Receipt, rep: ReplyId, fx: &mut Fx) {
-        let failed = self.transfers.get(&receipt.op_id).filter(|transfer| transfer.stage == TransferStage::Failed && transfer.cycle_id == receipt.cycle_id && transfer.cancel_reply.is_none() && !transfer.discard_sent);
-        let Some(transfer) = failed else { return self.outcome(receipt, rep, fx) };
-        let error = transfer.error.clone().unwrap_or_else(|| "refused".into());
-        self.discard_outcomes.insert(rep, error);
-        self.discard_failed(receipt.op_id, Some((rep, false)), fx);
-    }
-
-    /// The answers of the waiters of `OutcomeDiscarding` among the effects pushed since `from`: the discard answered is the failed cycle `Rejected`, a refused one is `Storage` with the original error.
-    pub(super) fn tag_discard_outcomes(&mut self, from: usize, fx: &mut Fx) {
-        for effect in fx.iter_mut().skip(from) {
-            let Effect::Run(TransferEffect::Reply { reply: waiter, answer }) = effect else { continue };
-            let Some(error) = self.discard_outcomes.get(waiter).cloned() else { continue };
-            let tagged = match answer {
-                TransferAnswer::Ok | TransferAnswer::Cancelled(_) => TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None),
-                TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(detail))) => TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}; the failed cycle: {error}")))),
-                _ => continue,
-            };
-            *answer = tagged;
-            self.discard_outcomes.remove(waiter);
-        }
-    }
-
     pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, fx: &mut Fx) {
         if let Some(outcome) = self.completed.get(&receipt.op_id).and_then(|cycles| cycles.get(&receipt.cycle_id)) {
             return reply(fx, rep, TransferAnswer::Outcome(outcome.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));

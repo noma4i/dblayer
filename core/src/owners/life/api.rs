@@ -148,8 +148,6 @@ impl Life {
 
     pub fn operation_outcome(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
 
-    pub fn operation_outcome_discarding(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::OutcomeDiscarding { receipt, reply }) }
-
     pub fn local_write(&self, epoch: Epoch, model: String, write: crate::owners::write::outbox::LocalWriteKind, row: String, values: String, now: crate::runtime::Time) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(epoch);

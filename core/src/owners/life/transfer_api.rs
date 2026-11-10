@@ -31,8 +31,6 @@ impl Life {
 
     pub fn discard_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Discard { key, reply }) }
 
-    pub fn upload_outcome_discarding(&self, epoch: Epoch, receipt: Receipt) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::OutcomeDiscarding { receipt, reply }) }
-
     pub fn upload_outcome(&self, epoch: Epoch, receipt: Receipt) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Outcome { receipt, reply }) }
 
     pub fn jobs_sink_set(&self) { self.wiring.to_rounds(RoundsInput::JobsSinkSet); }

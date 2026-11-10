@@ -295,8 +295,8 @@ impl Database {
     }
 
     /// The outcome of the receipt of a transfer.
-    pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt, discard_on_failure: bool) -> Result<(WireOperationOutcome, bool), DbError> {
-        let waiter = if discard_on_failure { self.life.upload_outcome_discarding(receipt.epoch, held.clone()) } else { self.life.upload_outcome(receipt.epoch, held.clone()) };
+    pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt) -> Result<(WireOperationOutcome, bool), DbError> {
+        let waiter = self.life.upload_outcome(receipt.epoch, held.clone());
         let (answer, landed) = match self.await_life(waiter).await {
             Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
             Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return super::write::fault_outcome(fault, "upload outcome").map(|outcome| (outcome, false)),
