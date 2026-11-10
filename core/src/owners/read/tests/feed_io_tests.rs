@@ -118,7 +118,7 @@ fn feed_close_reaches_the_delivery_stream() {
         let deliveries = det.add::<Deliveries>("deliveries", DeliveriesState::new(1, DeliveryPeers { windows: Address::new(windows.index()), feed: feed_at }), Discard);
         det.start_epoch(EPOCH);
         let view = View { kind: Kind::CableCloses, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: super::windows::WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None };
-        det.post(deliveries, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: 7, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        det.post(deliveries, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: 7, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
         det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
         det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
         pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));

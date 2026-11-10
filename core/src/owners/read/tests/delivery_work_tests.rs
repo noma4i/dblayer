@@ -103,11 +103,11 @@ fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usi
         work.put(index, "r0", "old");
     }
     for index in 0..streams {
-        work.feed(DeliveryInput::Open { stream: index as StreamId + 1, view: view(index), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        work.feed(DeliveryInput::Open { stream: index as StreamId + 1, view: view(index), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
     }
-    work.feed(DeliveryInput::Open { stream: 999, view: entity_view(0, "r0"), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.feed(DeliveryInput::Open { stream: 999, view: entity_view(0, "r0"), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
     for other in 0..others {
-        work.feed(DeliveryInput::Open { stream: 1000 + other as StreamId, view: entity_view(0, &format!("x{other}")), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        work.feed(DeliveryInput::Open { stream: 1000 + other as StreamId, view: entity_view(0, &format!("x{other}")), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
     }
     work.pull(1);
     let (examined, read) = (work.state.streams_examined(), work.db.counters().rows_read);
@@ -153,7 +153,7 @@ fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery
     let mut work = Work::new(1);
     work.put(0, "a", "keep");
     let query = Query::new(&model(0)).filtered(crate::store::query::Where::equal("text", json!("keep")));
-    work.feed(DeliveryInput::Open { stream: 1, view: view_of(&query), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.feed(DeliveryInput::Open { stream: 1, view: view_of(&query), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
     work.pull(1);
     let cost = |work: &Work| (work.db.counters().rows_read, work.state.journal_len(1));
 
@@ -172,8 +172,8 @@ fn dlv_streams_of_one_commit_deliver_independently() {
     let mut work = Work::new(1);
     work.put(0, "r0", "old");
     let marked = Query::new(&model(0)).filtered(crate::store::query::Where::equal("text", json!("new")));
-    work.feed(DeliveryInput::Open { stream: 1, view: view(0), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
-    work.feed(DeliveryInput::Open { stream: 2, view: view_of(&marked), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.feed(DeliveryInput::Open { stream: 1, view: view(0), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
+    work.feed(DeliveryInput::Open { stream: 2, view: view_of(&marked), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
     work.pull(1);
     work.pull(2);
     let (all_before, marked_before) = (work.state.journal_len(1), work.state.journal_len(2));
@@ -199,7 +199,7 @@ fn dlv_committed_rows_select_the_entity_streams_of_those_rows() {
     work.put(0, "a", "old");
     work.put(0, "b", "old");
     for (stream, row) in [(1, "a"), (2, "b")] {
-        work.feed(DeliveryInput::Open { stream, view: entity_view(0, row), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        work.feed(DeliveryInput::Open { stream, view: entity_view(0, row), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
         work.pull(stream);
     }
     let table = table_name(&model(0));
@@ -275,7 +275,7 @@ fn dlv_prop_fanout_matches_reference() {
         for (model, row) in [(0, "a"), (0, "b"), (1, "a")] { work.put(model, row, "old"); }
         let views = [(1, view(0)), (2, view(1)), (3, entity_view(0, "a")), (4, entity_view(0, "b")), (5, linked_entity_view(1, "a", 0))];
         for (stream, view) in views {
-            work.feed(DeliveryInput::Open { stream, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+            work.feed(DeliveryInput::Open { stream, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
             work.pull(stream);
         }
         let (notice, want) = match &change {

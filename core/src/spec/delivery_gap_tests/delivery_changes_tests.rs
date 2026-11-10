@@ -52,7 +52,7 @@ fn dlv_changes_ended() {
 fn dlv_changes_not_in_census() {
     let mut twin = open_rows();
     let rows_only = census_of(&mut twin);
-    twin.call(d::DeliveryInput::Open { stream: STREAM + 1, view: view(Kind::Changes), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
+    twin.call(d::DeliveryInput::Open { stream: STREAM + 1, view: view(Kind::Changes), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
     assert_eq!(census_of(&mut twin), rows_only, "an open Changes stream leaves the census as it was");
     assert_eq!(twin.state().streams(), 2);
     let mut alone = open_as(Kind::Changes);
