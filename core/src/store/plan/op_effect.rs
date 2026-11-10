@@ -121,6 +121,7 @@ pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collec
 
 pub(crate) fn read_prior(connection: &Connection, sequence: i64) -> Result<Option<Value>, StoreError> {
     let rows = crate::store::nodes::read_trees(connection, "op_effect_value", &["seq", "position"], "seq = ?1", &[SqlValue::Integer(sequence)])?;
-    if rows.is_empty() { return Ok(None) }
-    Ok(Some(serde_json::json!({ "rows": rows.into_iter().map(|(_, value)| value).collect::<Vec<_>>() })))
+    Ok(prior_rows(rows.into_iter().map(|(_, value)| value).collect()))
 }
+
+pub(super) fn prior_rows(rows: Vec<Value>) -> Option<Value> { (!rows.is_empty()).then(|| serde_json::json!({ "rows": rows })) }

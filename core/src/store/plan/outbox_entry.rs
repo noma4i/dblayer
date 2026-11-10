@@ -53,9 +53,18 @@ impl OutboxOperation {
 
 pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, StoreError> {
     let operations = crate::store::operation::open_operations(reader.connection())?;
+    let filter = format!("seq IN (SELECT seq FROM op WHERE status IN {})", crate::store::operation::OPEN_STATUSES);
+    let inputs = crate::store::nodes::read_trees(reader.connection(), "op_value", &["seq", "part"], &format!("{filter} AND part = 'input'"), &[])?;
+    let mut inputs: std::collections::HashMap<i64, Value> = inputs.into_iter().filter_map(|(owner, value)| match owner.first() { Some(rusqlite::types::Value::Integer(seq)) => Some((*seq, value)), _ => None }).collect();
+    let rows = crate::store::nodes::read_trees(reader.connection(), "op_effect_value", &["seq", "position"], &filter, &[])?;
+    let mut priors: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
+    for (owner, value) in rows { if let Some(rusqlite::types::Value::Integer(seq)) = owner.first() { priors.entry(*seq).or_default().push(value); } }
     let mut entries = Vec::with_capacity(operations.len());
     for operation in operations {
-        entries.push(OutboxOperation::from_operation(reader, operation)?);
+        let seq = operation.id.0;
+        let input = inputs.remove(&seq).unwrap_or(Value::Null);
+        let rollback = priors.remove(&seq).and_then(super::op_effect::prior_rows);
+        entries.push(OutboxOperation { operation, input, rollback });
     }
     Ok(entries)
 }
