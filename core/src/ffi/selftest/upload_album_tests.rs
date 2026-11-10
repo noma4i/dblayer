@@ -6,7 +6,7 @@ use super::rig_tests::bound;
 use super::upload_stand::{shows, watched, Answer, Stand};
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{Database, TestClock, WireBatchReceipt, WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{Database, DbError, TestClock, WireBatchReceipt, WireOperationReceipt};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled_showing;
 use crate::transport::{NetworkPurpose, TransferStep};
@@ -34,10 +34,11 @@ fn batch() -> WireUploadBatch { WireUploadBatch { operation: "create_files".into
 async fn upload_batch(database: &Database, items: Vec<WireUploadItem>) -> WireBatchReceipt { bound(database.upload_create_batch(database.session_epoch(), "Asset".into(), items, batch())).await.unwrap() }
 
 async fn outcome_of(database: &Database, receipt: &WireOperationReceipt) -> String {
-    match bound(database.outcome(receipt.clone())).await.unwrap() {
-        WireOperationOutcome::Confirmed { value, .. } => format!("confirmed {}", value.map(|row| row.id).unwrap_or_default()),
-        WireOperationOutcome::Rejected { failure } => format!("rejected {}", failure.message),
-        WireOperationOutcome::Ended { .. } => "interrupted".into(),
+    match bound(database.confirmed(receipt.clone())).await {
+        Ok(confirmed) => format!("confirmed {}", confirmed.value.map(|row| row.id).unwrap_or_default()),
+        Err(DbError::Rejected { failure, .. }) => format!("rejected {}", failure.message),
+        Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => "interrupted".into(),
+        Err(error) => panic!("unexpected receipt error: {error:?}"),
     }
 }
 
@@ -108,7 +109,7 @@ async fn a_batch_member_that_landed_before_the_accepted_row_is_read_gives_the_la
     database.set_online(true).unwrap();
     assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
 
-    let WireOperationOutcome::Confirmed { value: Some(landed), .. } = bound(database.outcome(receipt.items[0].receipt.clone())).await.unwrap() else { panic!("the item is confirmed with its row") };
+    let landed = bound(database.confirmed(receipt.items[0].receipt.clone())).await.unwrap().value.expect("the item is confirmed with its row");
     assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
     database.close_now();
 }

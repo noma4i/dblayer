@@ -1,5 +1,5 @@
 use crate::ffi::database::{blocking, on_executor};
-use crate::ffi::{Database, DbError, WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{Database, DbError, WireConfirmed, WireOperationReceipt};
 
 /// bridge errors (P-BND-04, D-195): a task of the executor that ends with a panic is a `Runtime` failure of the executor, not a refusal of the caller.
 #[tokio::test(flavor = "multi_thread")]
@@ -56,7 +56,7 @@ async fn an_aborted_task_is_interrupted_and_a_panicked_task_is_a_runtime_failure
 }
 
 /// The owner of the call holds it, then loses its answer while the epoch of the caller ends: the call ends as the answer the caller lost.
-async fn outcome_whose_answer_is_lost(database: &Database, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
+async fn outcome_whose_answer_is_lost(database: &Database, receipt: WireOperationReceipt) -> Result<WireConfirmed, DbError> {
     use crate::runtime::{Cause, OutcomeId};
     let outcomes = database.life.outcomes();
     let epoch = database.session_epoch();
@@ -64,7 +64,7 @@ async fn outcome_whose_answer_is_lost(database: &Database, receipt: WireOperatio
     let lost = OutcomeId::from_raw(probe.id().raw() + 1);
     outcomes.forget(probe.id());
     let held = outcomes.open_count();
-    let mut call = Box::pin(database.outcome(receipt));
+    let mut call = Box::pin(database.confirmed(receipt));
     tokio::select! { biased; _ = &mut call => panic!("the owner answered at once"), () = std::future::ready(()) => {} }
     let life = database.life_handle();
     crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();

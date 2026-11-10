@@ -463,10 +463,9 @@ fn matrix_value_core_wrapper() {
     if swift_text.is_empty() || kotlin_text.is_empty() { matrix.unclassified("wrappers", "-", "-", "the hand-written wrapper sources are not readable"); matrix.finish(); return; }
     let shapes: BTreeMap<String, CoreShape> = core_shapes().into_iter().collect();
 
-    let projections: [(&str, &str, Projection); 11] = [
+    let projections: [(&str, &str, Projection); 10] = [
         ("WireSyncState", "SyncState", Projection::Enum),
         ("WireUploadStatus", "UploadStatus", Projection::Enum),
-        ("WireOperationOutcome", "OperationOutcome", Projection::Enum),
         ("WireUploadRequest", "UploadRequest", Projection::Produced),
         ("WireUploadItem", "UploadItem", Projection::Produced),
         ("WireUploadSource", "UploadSource", Projection::Produced),
