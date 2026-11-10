@@ -2,7 +2,7 @@ use super::rig_tests::bound;
 use super::upload_stand::{clip, request, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::tape::Rows;
 use crate::ffi::tests::session_guards_tests::SOCIAL_BODY;
-use crate::ffi::{DbError, WireOperationOutcome};
+use crate::ffi::DbError;
 use crate::test_wait::settled;
 
 const PROFILE: (&str, &str) = ("UserProfile", "query UserProfile { me { id name } }");
@@ -47,11 +47,11 @@ async fn a_reset_during_a_put_ends_the_wait_and_removes_the_old_upload() {
     let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let id = sent.optimistic_value.clone().unwrap().id;
     put.entered().await;
-    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
-    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
+    assert!(matches!(bound(waiting).await.unwrap(), Err(DbError::NoSession { .. })));
     let refused = bound(database.upload(database.session_epoch(), "Moment".into(), id.clone(), "upload_clip".into(), request(&file))).await.unwrap_err();
     assert!(matches!(refused, DbError::NoSession { .. }), "{refused:?}");
     database.set_online(true).unwrap();
@@ -78,12 +78,12 @@ async fn xfer_prop_reset_during_put_no_stray_work() {
     put.entered().await;
     let token = stand.puts.tokens.lock().unwrap()[0].clone();
     assert!(!token.is_cancelled());
-    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
 
     bound(database.session_reset()).await.unwrap();
 
     assert!(token.is_cancelled(), "the PUT of the ended epoch is cancelled when the reset answers");
-    assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }));
+    assert!(matches!(bound(waiting).await.unwrap(), Err(DbError::NoSession { .. })));
     assert_eq!(stand.puts.seen.lock().unwrap().len(), 1);
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -130,13 +130,13 @@ async fn xfer_prop_put_cancel_pushes() {
         let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
         let id = sent.optimistic_value.clone().unwrap().id;
         put.entered().await;
-        let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.outcome(sent).await } }));
+        let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), { let database = database.clone(); async move { database.confirmed(sent, false).await } }));
 
         if cause == "cancel_upload" {
             assert!(bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await.unwrap(), "{cause}");
         } else {
             bound(database.session_reset()).await.unwrap();
-            assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded }), "{cause}");
+            assert!(matches!(bound(waiting).await.unwrap(), Err(DbError::NoSession { .. })), "{cause}");
         }
 
         put.dropped().await;
@@ -180,7 +180,7 @@ async fn xfer_prop_reply_after_delete() {
         let failed = bound(database.send(clip("Moment", r#"{"text":"failed"}"#, "upload_clip", &file_of("failed"), epoch))).await.unwrap();
         let failed_id = failed.optimistic_value.clone().unwrap().id;
         let failed_rows = watched(&database, "Moment", &failed_id);
-        assert!(matches!(bound(database.outcome(failed)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+        assert!(matches!(bound(database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
         settled(&database, "the failed row shows its copy", || local_url(&failed_rows).is_some()).await;
         let url = local_url(&failed_rows).unwrap();
         let copies = std::path::Path::new(&url["file://".len()..]).parent().unwrap().to_path_buf();
