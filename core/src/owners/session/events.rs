@@ -101,7 +101,7 @@ impl SessionState {
                     match pending.owner {
                         None if pending.author.is_none() => self.restored_direct = Some(PendingCall { epoch, ..pending }),
                         Some(MutateOwner::Detached) => self.restored_detached = Some(PendingCall { epoch, ..pending }),
-                        Some(MutateOwner::Transfer { .. }) => self.restored_transfer = Some(PendingCall { epoch, author: Some(TRANSFER_AUTHOR), ..pending }),
+                        Some(MutateOwner::Transfer { .. } | MutateOwner::Orphan { .. }) => self.restored_transfer = Some(PendingCall { epoch, author: Some(TRANSFER_AUTHOR), ..pending }),
                         _ => {}
                     }
                 }

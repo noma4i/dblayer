@@ -198,7 +198,7 @@ impl SessionState {
     /// A pair held for the transfer that owned it before the restart: Session sends it itself and the answer goes to that transfer.
     pub(super) fn drive_held_transfer(&mut self, fx: &mut Vec<SessionEffect>) {
         let SessionPhase::PendingHeld { pending } = self.phase.clone() else { return };
-        if !matches!(pending.owner, Some(MutateOwner::Transfer { .. })) || pending.reply.is_some() { return; }
+        if !matches!(pending.owner, Some(MutateOwner::Transfer { .. } | MutateOwner::Orphan { .. })) || pending.reply.is_some() { return; }
         self.restored_transfer = None;
         self.start_calling_again(PendingCall { author: Some(TRANSFER_AUTHOR), ..pending }, fx);
     }
