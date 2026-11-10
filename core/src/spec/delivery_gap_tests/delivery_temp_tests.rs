@@ -57,6 +57,49 @@ fn dlv_deferred_index_other_model() {
 }
 
 #[test]
+fn dlv_alias_restart_model_isolation() {
+    use crate::identity::RowId;
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::{EffectRow, IntentEffects, IntentOrigin, StoreBatch, StoreOp};
+    use crate::store::fixtures::{all_specs, put};
+    use crate::store::Store;
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("data.sqlite");
+    let db = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    put(&db, "moments", json!({"id":"temp-1", "userId":"u1"}));
+    put(&db, "users", json!({"id":"temp-1"}));
+    for (op_id, model, value) in [(1, "moments", json!({"id":"temp-1", "userId":"u1"})), (2, "users", json!({"id":"temp-1"}))] {
+        let effects = IntentEffects { rows: vec![EffectRow { model: model.into(), row_id: "temp-1".into(), values: value.to_string() }], ..Default::default() };
+        let batch = StoreBatch { author: BatchAuthor::Outbox, id: op_id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: model.into(), row_id: "temp-1".into(), action: "create".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }] };
+        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    }
+    drop(db);
+
+    let db = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    let temp = RowId::new("temp-1").unwrap();
+    assert_eq!(db.resolve("moments", &temp).unwrap(), temp);
+    assert_eq!(db.resolve("users", &temp).unwrap(), temp);
+    assert!(db.read(&["moments"], |reader| reader.point("moments", "temp-1")).unwrap().is_some());
+    assert!(db.read(&["users"], |reader| reader.point("users", "temp-1")).unwrap().is_some());
+    let batch = StoreBatch {
+        author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(),
+        rows: vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], intents: 0, credential: None,
+        ops: vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }],
+    };
+    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    assert_eq!(db.resolve("moments", &temp).unwrap().as_str(), "real-1");
+    assert_eq!(db.resolve("users", &temp).unwrap().as_str(), "temp-1");
+    assert!(db.read(&["users"], |reader| reader.point("users", "temp-1")).unwrap().is_some());
+    assert!(db.read(&["users"], |reader| reader.point("users", "real-1")).unwrap().is_none());
+    drop(db);
+    let reopened = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    assert_eq!(reopened.resolve("moments", &temp).unwrap().as_str(), "real-1");
+    assert_eq!(reopened.resolve("users", &temp).unwrap().as_str(), "temp-1");
+}
+
+#[test]
 fn dlv_deferred_index_released() {
     for ending in ["cancel", "release", "sink", "epoch", "closing"] {
         let (mut twin, ready) = temporary_entity(Fetch::Stale);
