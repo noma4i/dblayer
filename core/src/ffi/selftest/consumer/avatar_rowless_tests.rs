@@ -320,6 +320,45 @@ async fn consumer_rowless_failed_expiry_removes_copy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_upload_rejected_and_expired() {
+    for discard in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("app.sqlite");
+        let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+        stand.sign_in().await;
+        let epoch = stand.database.session_epoch();
+        stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+        stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+        stand.script_put(200, Some("etag"));
+        let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+        assert!(matches!(bound(stand.database.confirmed(receipt.clone(), false)).await, Err(DbError::Rejected { kept: true, .. })));
+        let first = operations(&stand).await;
+        assert_eq!(first.len(), 1);
+        let copy = std::path::PathBuf::from(first[0].upload.as_ref().unwrap().local_url.as_ref().unwrap().strip_prefix("file://").unwrap());
+        assert!(copy.exists());
+        stand.database.set_online(false).unwrap();
+        let pending = WireUploadRequest { source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() };
+        let neighbour = bound(stand.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), pending)).await.unwrap();
+        assert!(neighbour.optimistic_value.is_none());
+        assert_eq!(operations(&stand).await.len(), 2);
+        if discard {
+            assert!(matches!(bound(stand.database.confirmed(receipt, true)).await, Err(DbError::Rejected { kept: false, .. })));
+        } else {
+            stand.clock.advance(7 * 24 * 60 * 60 * 1000 + 1);
+            stand.database.set_online(true).unwrap();
+            stand.settle().await;
+        }
+        let remaining = operations(&stand).await;
+        assert_eq!(remaining.len(), 1, "discard={discard}: {remaining:?}");
+        assert_eq!((remaining[0].model.as_str(), remaining[0].row_id.as_str(), remaining[0].action.as_str()), ("CurrentUser", "other", "update_photo"));
+        assert_eq!(remaining[0].upload.as_ref().unwrap().status, crate::ffi::wire::WireUploadStatus::Waiting);
+        assert!(!copy.exists(), "discard={discard}: failed upload copy survives");
+        assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+        stand.database.close_now();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_rowless_accept_order() {
     let stand = Stand::open().await;
     let directory = tempfile::tempdir().unwrap();
