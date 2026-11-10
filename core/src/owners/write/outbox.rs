@@ -66,6 +66,7 @@ pub struct OutboxState {
     pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
     pub(super) confirmed_discards: BTreeMap<OpId, (u64, String)>,
     pub(super) transfer_discards: BTreeMap<OpId, (u64, u64)>,
+    pub(super) replacements: BTreeMap<u64, Option<OpId>>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
     pub(super) resets: BTreeMap<(String, String, String), (ScheduleId, u64)>,
@@ -123,6 +124,7 @@ impl OutboxState {
             outcome_waiters: Vec::new(),
             confirmed_discards: BTreeMap::new(),
             transfer_discards: BTreeMap::new(),
+            replacements: BTreeMap::new(),
             ephemeral: BTreeMap::new(),
             expiry: BTreeMap::new(),
             resets: BTreeMap::new(),
@@ -674,6 +676,10 @@ impl OutboxState {
         if let (Some(error), OutboxInput::ReserveOp { target, .. }) = (&self.queue_error, &input) {
             return self.opened(fx, *target, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
+        if let (Some(error), OutboxInput::ReserveReplacement { target, .. }) = (&self.queue_error, &input) {
+            if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, TransferInput::ReplacementReserved { target: *target, result: Err(Fault::Rejected(RejectReason::Storage(error.clone()))) }))); }
+            return;
+        }
         if let (Some(error), OutboxInput::RetryTransfer { uploads, .. }) = (&self.queue_error, &input) {
             self.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Rejected(RejectReason::Storage(error.clone()))), fx);
             return;
@@ -684,6 +690,8 @@ impl OutboxState {
         match input {
             OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
+            OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id } => self.reserve_replacement(epoch, target, transfer_id, cycle_id, fx),
+            OutboxInput::FinishReplacement { target, committed } => self.finish_replacement(target, committed, fx),
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
@@ -773,6 +781,7 @@ impl StateOwner for Outbox {
             match &input {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),
+                OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = state.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, TransferInput::ReplacementReserved { target: *target, result: Err(Fault::Closed) }))); },
                 OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Closed), &mut fx),
                 _ => {}
             }

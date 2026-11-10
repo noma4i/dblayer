@@ -147,6 +147,7 @@ impl OutboxState {
                     Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Ended(cause)))
                 }
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
+                OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(crate::runtime::Outbound::new(transfer, super::transfer::TransferInput::ReplacementReserved { target, result: Err(fault.clone()) }))); },
                 _ => {}
             }
         }
@@ -163,7 +164,7 @@ impl OutboxState {
                 }
             }
             OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
-            held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. } | OutboxInput::RowRemoved { .. }) => self.held.push(held),
+            held @ (OutboxInput::ReserveOp { .. } | OutboxInput::ReserveReplacement { .. } | OutboxInput::FinishReplacement { .. } | OutboxInput::SubmitReserved { .. } | OutboxInput::RowRemoved { .. }) => self.held.push(held),
             held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardTransfer { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
             OutboxInput::ModelsReset(reset) => {

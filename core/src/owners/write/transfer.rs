@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 pub use super::transfer_types::*;
-use super::outbox::{Fault, NewOp, OpSource, OutboxInput, OutboxOutcome, Receipt};
+use super::outbox::{Fault, NewOp, OpSource, OutboxInput, OutboxOutcome, Receipt, ReserveTarget};
 use super::outbox_types::Phase;
 use super::rounds::RoundsInput;
 use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, ReplyId};
@@ -138,7 +138,25 @@ impl TransferState {
         }
         let leaving: Vec<TransferId> = if kind == StoreKind::Removed { ids.iter().copied().filter(|id| matches!(self.transfers.get(id).and_then(|transfer| transfer.removal.as_ref()), Some(Removal::Cancel))).collect() } else { Vec::new() };
         let numbers: Vec<StoreOp> = leaving.into_iter().flat_map(|id| self.renumber_after(id)).collect();
-        let ops: Vec<StoreOp> = ids
+        let mut prefix = Vec::new();
+        if kind == StoreKind::SyncUpload {
+            let replacements: Vec<_> = ids.iter().filter_map(|id| self.replacements.get(id).cloned()).collect();
+            for (old, operation) in replacements {
+                let Some(transfer) = self.transfers.get(&old) else { continue };
+                if transfer.stage != TransferStage::Removing || transfer.prior != Some(TransferStage::Failed) { continue; }
+                prefix.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                if let Some(op_id) = transfer.op_id.filter(|_| transfer.has_operation) { prefix.push(StoreOp::RollBack { op_id }); }
+                if let Some(op_id) = operation.as_ref().map(|op| op.op_id).or_else(|| transfer.op_id.filter(|_| transfer.has_operation)) { prefix.push(StoreOp::RemoveIntent { op_id }); }
+                if let Some(operation) = operation {
+                    prefix.push(StoreOp::RemoveAnswer { request_id: operation.request_id });
+                    if operation.release_pending { prefix.push(StoreOp::ReleasePendingOwner { request_id: operation.request_id }); }
+                }
+                if let Some(upload_id) = Self::removal_orphan(transfer, &Removal::Discarded) { prefix.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() }); }
+                prefix.push(StoreOp::RetireTransferOutcome { transfer_id: old, cycle_id: transfer.cycle_id });
+                prefix.push(StoreOp::TransferOutcome { transfer_id: old, cycle_id: transfer.cycle_id, outcome: OutboxOutcome::Discarded });
+            }
+        }
+        let ops: Vec<StoreOp> = prefix.into_iter().chain(ids
             .iter()
             .filter_map(|id| self.transfers.get(id).map(|transfer| (*id, transfer)))
             .flat_map(|(id, transfer)| {
@@ -223,7 +241,7 @@ impl TransferState {
                     }
                 }
                 ops
-            })
+            }))
             .chain(numbers)
             .collect();
         let columns: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
@@ -465,6 +483,15 @@ impl TransferState {
 
     fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
+        if pending.kind == StoreKind::SyncUpload {
+            for id in &pending.ids {
+                if let Some((old, _)) = self.replacements.remove(id) {
+                    if let Some(transfer) = self.transfers.get_mut(&old) { transfer.outcomes.insert(transfer.cycle_id, OutboxOutcome::Discarded); }
+                    self.removing_committed(&[old], BTreeMap::new(), fx);
+                    fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(*id), committed: true })));
+                }
+            }
+        }
         for id in &pending.ids {
             let Some(transfer) = self.transfers.get_mut(id) else { continue };
             transfer.revision = revision;
@@ -535,6 +562,16 @@ impl TransferState {
 
     fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        if pending.kind == StoreKind::SyncUpload {
+            for id in &pending.ids {
+                if let Some((old, _)) = self.replacements.remove(id) {
+                    if let Some(transfer) = self.transfers.get_mut(&old) { transfer.stage = TransferStage::Failed; transfer.removal = None; transfer.prior = None; }
+                    fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(*id), committed: false })));
+                    run(fx, TransferEffect::DeleteFile { path: file_id(*id) });
+                    if matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession) { self.interrupt(old, super::outbox_types::end_cause(&rejected.reason), fx); }
+                }
+            }
+        }
         if let (StoreKind::OrphanRemoved, Some((upload_id, _))) = (pending.kind, &pending.orphan) {
             self.orphan_flight.remove(upload_id);
             return;
@@ -644,6 +681,11 @@ impl TransferState {
             TransferInput::StepAnswer { request_id, outcome } => self.held_step_answered(request_id, outcome, fx),
             TransferInput::StagedPromoteFailed { transfer_id, detail } => self.staged_promote_failed(transfer_id, detail, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
+            TransferInput::ReplacementReserved { target, result } => {
+                let (result, operation) = match result { Ok((id, operation)) => (Ok(id), operation), Err(fault) => (Err(fault), None) };
+                if let ReserveTarget::Transfer(id) = target { if let Some(entry) = self.replacements.get_mut(&id) { entry.1 = operation; } }
+                self.op_reserved(target, result, fx);
+            }
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(transfer_id, attempt_id, (temporary, error), fx),

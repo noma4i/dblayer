@@ -197,6 +197,7 @@ impl OutboxState {
     }
 
     pub(super) fn discard_op(&mut self, op_id: OpId, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        if self.replacements.values().any(|old| *old == Some(op_id)) { return Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)); }
         match self.ops[&op_id].stage {
             Stage::Submitting | Stage::PersistingAttempt | Stage::Sending | Stage::Landing | Stage::MarkingFailed | Stage::MarkingRetry | Stage::WaitingDeclaration => {
                 Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight));
@@ -366,6 +367,46 @@ impl OutboxState {
             Err(Fault::NoSession)
         };
         self.opened(fx, target, result);
+    }
+
+    pub(super) fn reserve_replacement(&mut self, epoch: Epoch, target: ReserveTarget, transfer_id: u64, cycle_id: u64, fx: &mut Effects<Outbox>) {
+        let result = if epoch != self.epoch {
+            Err(Fault::NoSession)
+        } else if let ReserveTarget::Transfer(new_id) = target {
+            let old = self.open_for_transfer(transfer_id, cycle_id);
+            if old.is_some_and(|id| self.stage_of(id) != Some(Stage::Failed)) {
+                Err(Fault::InFlight)
+            } else {
+                let operation = old.and_then(|id| self.ops.get_mut(&id)).map(|operation| {
+                    operation.stage = Stage::RollingBack(Why::Discarded);
+                    ReplacementOperation { op_id: operation.op_id, request_id: operation.request_id, release_pending: operation.pending_owned || operation.pair_in_flight }
+                });
+                self.replacements.insert(new_id, old);
+                let op_id = self.next_op;
+                self.next_op += 1;
+                Ok((op_id, operation))
+            }
+        } else { Err(Fault::Invalid) };
+        if let Some(transfer) = self.peers.transfer {
+            fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::ReplacementReserved { target, result })));
+        }
+    }
+
+    pub(super) fn finish_replacement(&mut self, target: ReserveTarget, committed: bool, fx: &mut Effects<Outbox>) {
+        let ReserveTarget::Transfer(id) = target else { return };
+        let Some(Some(old)) = self.replacements.remove(&id) else { return };
+        if committed {
+            if let Some(operation) = self.ops.get_mut(&old) {
+                if operation.pending_owned || operation.pair_in_flight {
+                    operation.pending_owned = false;
+                    operation.pair_in_flight = false;
+                    if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: operation.request_id }))); }
+                }
+            }
+            self.finish(old, OutboxOutcome::Discarded, true, fx);
+        } else if let Some(operation) = self.ops.get_mut(&old) {
+            operation.stage = Stage::Failed;
+        }
     }
 
     pub(super) fn opened(&self, fx: &mut Effects<Outbox>, target: ReserveTarget, result: Result<OpId, Fault>) {

@@ -148,12 +148,22 @@ impl TransferState {
             self.next_group += 1;
             self.next_group - 1
         });
-        if items.iter().any(|item| self.open_id(&item.key).is_some()) {
+        let mut keys = BTreeSet::new();
+        if items.iter().any(|item| !keys.insert(&item.key)) { return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)); }
+        let old: Vec<_> = items.iter().map(|item| self.open_id(&item.key)).collect();
+        if old.iter().flatten().any(|id| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::Failed || transfer.batch_id.is_some())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
             self.create(item, group, now, TransferStage::Reserving)
         }).collect();
+        for (&id, old) in ids.iter().zip(old) {
+            if let Some(old) = old {
+                self.replacements.insert(id, (old, None));
+                self.remove_with(old, Removal::Discarded, fx);
+                if let Some(transfer) = self.transfers.get_mut(&old) { transfer.prior = Some(TransferStage::Failed); }
+            }
+        }
         match (group, joint) {
             (Some(group), Some(joint)) => {
                 self.groups.insert(group, Group { ids: ids.clone(), op_id: None, reply: Some(rep), ready: BTreeSet::new(), joint, pending_op: None, phase: BatchPhase::Collecting, op_row: None });
@@ -165,7 +175,12 @@ impl TransferState {
             }
         }
         for &id in &ids {
-            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Transfer(id) })));
+            let target = ReserveTarget::Transfer(id);
+            let input = match self.replacements.get(&id).and_then(|(old, _)| self.transfers.get(old)) {
+                Some(transfer) => OutboxInput::ReserveReplacement { epoch: self.epoch, target, transfer_id: transfer.transfer_id, cycle_id: transfer.cycle_id },
+                None => OutboxInput::ReserveOp { epoch: self.epoch, target },
+            };
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, input)));
         }
         if let Some(group) = group {
             fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Group(group) })));
@@ -198,6 +213,10 @@ impl TransferState {
                 let group_reply = group.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
                 let own = ids.first().and_then(|id| self.transfers.get_mut(id)).and_then(|transfer| transfer.accept_reply.take());
                 for member in ids {
+                    if let Some((old, _)) = self.replacements.remove(&member) {
+                        if let Some(transfer) = self.transfers.get_mut(&old) { transfer.stage = TransferStage::Failed; transfer.removal = None; transfer.prior = None; }
+                        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(member), committed: false })));
+                    }
                     self.set(member, TransferStage::Done);
                 }
                 if let Some(rep) = own.or(group_reply) {

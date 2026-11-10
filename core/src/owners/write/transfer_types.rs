@@ -244,6 +244,7 @@ pub enum TransferInput {
     StagedPromoteFailed { transfer_id: TransferId, detail: String },
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
+    ReplacementReserved { target: super::outbox::ReserveTarget, result: Result<(OpId, Option<super::outbox::ReplacementOperation>), Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
     UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String, key: Key },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool, error: String },
@@ -558,6 +559,7 @@ pub struct TransferState {
     pub(super) groups: BTreeMap<u64, Group>,
     pub(super) selecting: BTreeMap<ReplyId, (TransferId, super::outbox_types::SelectKind)>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
+    pub(super) replacements: BTreeMap<TransferId, (TransferId, Option<super::outbox::ReplacementOperation>)>,
     pub(super) subscribers: BTreeMap<Key, BTreeSet<StreamId>>,
     /// The value row readers and Blob streams got last for a key, with the revision of the batch that wrote it: what a joining reader gets. A key without one shows `Gone`.
     pub(super) published: BTreeMap<Key, (Shown, i64)>,
@@ -610,6 +612,7 @@ impl TransferState {
             groups: BTreeMap::new(),
             selecting: BTreeMap::new(),
             pending: BTreeMap::new(),
+            replacements: BTreeMap::new(),
             subscribers: BTreeMap::new(),
             published: BTreeMap::new(),
             declarations: BTreeSet::new(),
@@ -645,7 +648,7 @@ impl TransferState {
     pub fn stage_of(&self, id: TransferId) -> Option<TransferStage> { self.transfers.get(&id).map(|transfer| transfer.stage) }
 
     /// The open transfer of `key`: a `Done` transfer keeps only its outcomes.
-    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.scan().find(|transfer| transfer.key == key && transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id) }
+    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.scan().filter(|transfer| transfer.key == key && transfer.stage != TransferStage::Done).min_by_key(|transfer| transfer.stage == TransferStage::Failed).map(|transfer| transfer.transfer_id) }
 
     pub(super) fn attempt(&mut self) -> AttemptId {
         self.next_attempt += 1;

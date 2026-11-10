@@ -45,6 +45,13 @@ pub enum ReserveTarget {
     Group(u64),
 }
 
+#[derive(Clone, Debug)]
+pub struct ReplacementOperation {
+    pub op_id: OpId,
+    pub request_id: RequestId,
+    pub release_pending: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpSource {
     Api,
@@ -186,6 +193,8 @@ pub enum OutboxInput {
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
     /// Transfer asks for the `op_id` of the optimistic effects it writes with the acceptance (`out_reserve_op`).
     ReserveOp { epoch: Epoch, target: ReserveTarget },
+    ReserveReplacement { epoch: Epoch, target: ReserveTarget, transfer_id: u64, cycle_id: u64 },
+    FinishReplacement { target: ReserveTarget, committed: bool },
     /// The final mutation of a transfer whose intent the batch of Transfer wrote under `op_id` (`out_submit_intent_written`).
     SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp },
     /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
