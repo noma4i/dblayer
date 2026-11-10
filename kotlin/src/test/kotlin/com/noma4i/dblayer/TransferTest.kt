@@ -179,10 +179,9 @@ class TransferTest {
                     val rows = receipt.items.map { it.optimisticValue }
                     awaitWithin("the held request reaches the server") { server.heldRequest() }
                     awaitWithin("the discard of the first file") { rows[0].discard("create_files") }
-                    if (lose) { DBlayer.database.setOnline(false); server.loseAnswer("1.jpg") }
+                    if (lose) { DBlayer.database.setOnline(false); awaitWithin("the held request is dropped") { server.heldDropped() } }
                     server.hold(null)
                     if (lose) {
-                        awaitWithin("the answer is lost") { server.lostAnswer() }
                         if (holdReplay) server.holdStored("CreateBlob")
                         openStand(transport, path, encrypted, credential, server, operations, onlineAtOpen)
                         eventually("the lost step is requested again") { server.requests.map { it.second }.count { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" && it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "1.jpg" } == 2 }

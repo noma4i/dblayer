@@ -40,7 +40,7 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
     private val holding = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private val parked = CopyOnWriteArrayList<kotlinx.coroutines.CompletableDeferred<Unit>>()
     private val arrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-    private val lostAnswers = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val drops = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val heldStored = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private val storedArrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val storedRelease = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -49,8 +49,6 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
     suspend fun storedRequest() { storedArrivals.receive() }
     fun releaseStored() { storedRelease.complete(Unit) }
 
-    private val lostFile = java.util.concurrent.atomic.AtomicReference<String?>(null)
-    private val lost = AtomicBoolean(false)
     val effects = CopyOnWriteArrayList<JsonObject>()
 
     init {
@@ -89,9 +87,7 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
     val parkedCount: Int get() = parked.size
 
     suspend fun heldRequest() { arrivals.receive() }
-    fun loseAnswer(filename: String) { lostFile.set(filename) }
-    suspend fun lostAnswer() { lostAnswers.receive() }
-    fun hasLostAnswer(): Boolean = lost.get()
+    suspend fun heldDropped() { drops.receive() }
 
     private fun wireExtensions(extensions: GraphqlExtensions?): JsonObject = buildJsonObject {
         extensions?.fields?.forEach { (key, text) -> put(key, Json.parseToJsonElement(text)) }
@@ -113,7 +109,7 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
             is ContractAdmission.Stored -> {
                 if (heldStored.get() == sent["operationName"]?.jsonPrimitive?.content) {
                     storedArrivals.trySend(Unit)
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { storedRelease.await() }
+                    storedRelease.await()
                 }
                 return EncryptedReply(200u, seal(request, Json.parseToJsonElement(admitted.token).jsonObject))
             }
@@ -142,6 +138,7 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
                 else -> throw failure
             }
         }
+        contract.settle(scope, wire, reply.toString())
         effects.add(sent)
         TestPulse.pulse()
         val operation = sent["operationName"]?.jsonPrimitive?.content
@@ -151,17 +148,12 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
             arrivals.trySend(Unit)
             TestPulse.pulse()
             if (holding.get() != operation) gate.complete(Unit)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+            try { gate.await() } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                drops.trySend(Unit)
+                throw cancelled
+            } finally { parked.remove(gate) }
         }
         val sealed = seal(request, reply)
-        contract.settle(scope, wire, reply.toString())
-        val filename = sent["variables"]?.jsonObject?.get("filename")?.jsonPrimitive?.content
-        val wanted = lostFile.get()
-        if (filename != null && filename == wanted && lostFile.compareAndSet(wanted, null)) {
-            lost.set(true)
-            lostAnswers.trySend(Unit)
-            throw DbException.Network("lost answer")
-        }
         return EncryptedReply(200u, sealed)
     }
 
