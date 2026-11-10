@@ -45,8 +45,11 @@ async fn xfer_retry_source_swap_reopen() {
     database.set_online(true).unwrap();
     within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     crate::test_wait::settled(&database, "session setup completes", || true).await;
-    rig.server.refuse_next("FORBIDDEN", true);
     let epoch = database.session_epoch();
+    rig.server.reply_with(serde_json::json!({"makeMoment":{"id":"r1","text":"original"}}));
+    let created = within(database.create(epoch, "Moment".into(), r#"{"text":"original"}"#.into(), "{}".into())).await.unwrap();
+    assert_eq!(within(database.confirmed(created, false)).await.unwrap().value.unwrap().id, "r1");
+    rig.server.refuse_next("FORBIDDEN", true);
     let source = WireSource::File { path: original.to_string_lossy().into_owned(), name: None, mime: None };
     let receipt = within(database.upload(epoch, "Moment".into(), "r1".into(), "upload".into(), WireUploadRequest { source, variables_json: "{}".into() })).await.unwrap();
     assert!(matches!(within(database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
