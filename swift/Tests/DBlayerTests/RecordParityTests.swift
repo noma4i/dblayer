@@ -120,10 +120,14 @@ extension BridgeProbeTests {
     #expect(try await probe.file(.file) == nil)
     for (label, bytes, name, mime) in fileCases {
       let comment = Comment(rawValue: label)
-      let info = try await probe.attach(.file, data: bytes, name: name, mime: mime)
+      let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: source) }
+      try bytes.write(to: source)
+      let info = try await probe.attach(.file, source: source, name: name, mime: mime)
       #expect((info.name, info.mime, info.size) == (name, mime, UInt64(bytes.count)), comment)
       #expect(try await probe.file(.file) == info, comment)
-      #expect(try await probe.read(.file) == bytes, comment)
+      let url = try #require(try await probe.url(.file))
+      #expect(try Data(contentsOf: url) == bytes, comment)
       #expect(try await ScalarProbe.find(probe.id).current()?.file == info, comment)
       let cursor = Cursor(try await ScalarProbe.ids([probe.id]).snapshots.stream())
       let snapshot = await cursor.first("the snapshot of the row with the file") { $0.rows.first?.file == info }

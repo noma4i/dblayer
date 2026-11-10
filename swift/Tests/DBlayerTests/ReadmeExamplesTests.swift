@@ -23,7 +23,10 @@ extension BridgeProbeTests {
 
     let user = try #require(try await User.create(name: "ann", in: scope).optimisticValue)
     let bytes = Data([1, 2, 3])
-    let info = try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")
+    let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: source) }
+    try bytes.write(to: source)
+    let info = try await user.attach(.avatar, source: source, name: "a.png", mime: "image/png")
     #expect((info.name, info.mime, info.size) == ("a.png", "image/png", 3))
 
     try await DB.sessionCall("login_link", body: PhoneBody(phone: "+61400000000"))

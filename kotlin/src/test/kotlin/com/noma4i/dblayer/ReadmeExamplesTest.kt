@@ -31,7 +31,10 @@ class ReadmeExamplesTest {
             moments.until("the row of the sent moment reaches the feed") { it.rows.map { it.text } == listOf("hello") }
 
             val user = User.create(name = "ann").optimisticValue!!
-            val info = user.attach(User.avatar, byteArrayOf(1, 2, 3), name = "a.png", mime = "image/png")
+            val source = java.io.File.createTempFile("attachment", ".png")
+            source.deleteOnExit()
+            source.writeBytes(byteArrayOf(1, 2, 3))
+            val info = user.attach(User.avatar, source, name = "a.png", mime = "image/png")
             assertEquals(Triple("a.png", "image/png", 3UL), Triple(info.name, info.mime, info.size))
 
             DBlayer.sessionCall<PhoneBody, kotlinx.serialization.json.JsonElement>("login_link", PhoneBody("+61400000000"))

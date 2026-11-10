@@ -111,10 +111,13 @@ class RecordParityTest {
         val probe = create(Values()).optimisticValue!!
         assertNull(probe.file(ScalarProbe.file))
         for (case in fileCases) {
-            val info = probe.attach(ScalarProbe.file, case.bytes, case.name, case.mime)
+            val source = java.io.File.createTempFile("attachment", ".bin")
+            source.deleteOnExit()
+            source.writeBytes(case.bytes)
+            val info = probe.attach(ScalarProbe.file, source, case.name, case.mime)
             assertEquals(case.label, Triple(case.name, case.mime, case.bytes.size.toULong()), Triple(info.name, info.mime, info.size))
             assertEquals(case.label, info, probe.file(ScalarProbe.file))
-            assertArrayEquals(case.label, case.bytes, probe.read(ScalarProbe.file))
+            assertArrayEquals(case.label, case.bytes, java.io.File(requireNotNull(probe.url(ScalarProbe.file))).readBytes())
             assertEquals(case.label, info, ScalarProbe.find(probe.id).current()?.file)
             val snapshot = withTimeout(5000) { ScalarProbe.ids(listOf(probe.id)).snapshots.flow.first { it.rows.firstOrNull()?.file == info } }
             assertNotNull(case.label, snapshot)
