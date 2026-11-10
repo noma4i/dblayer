@@ -9,6 +9,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.Json
@@ -130,15 +133,11 @@ class TransferTest {
     @Test
     fun shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() = bounded { shiftingABatch(listOf("live", "reopen"), onlineAtOpen = true) }
 
-    @Test
-    fun aSavedStepAndAnOrphanAbortGoOutOnceInEveryOpenOrder() = bounded {
-        for (order in listOf("onlineAtOpen", "onlineAfterRegister")) {
-            try {
-                shiftingABatch(listOf("reopen"), onlineAtOpen = order == "onlineAtOpen")
-                abortOfADiscardedPhotoAfterReopen(onlineAtOpen = order == "onlineAtOpen")
-            } catch (error: Throwable) { throw AssertionError("open order $order: ${error.message}", error) }
-        }
-    }
+    @Test fun savedStepOnlineAtOpen() = bounded { shiftingABatch(listOf("reopen"), onlineAtOpen = true) }
+    @Test fun savedStepOnlineAfterRegister() = bounded { shiftingABatch(listOf("reopen"), onlineAtOpen = false) }
+    @Test fun orphanAbortOnlineAtOpen() = bounded { abortOfADiscardedPhotoAfterReopen(onlineAtOpen = true) }
+    @Test fun orphanAbortOnlineAfterRegister() = bounded { abortOfADiscardedPhotoAfterReopen(onlineAtOpen = false) }
+    @Test fun savedStepAfterReaderOpens() = bounded { shiftingABatch(listOf("reopen"), onlineAtOpen = true, holdReplay = true) }
 
     @OptIn(DBlayerTestingApi::class)
     private suspend fun openStand(transport: HoldSecondFile, path: String, encrypted: EncryptedConfig, credential: TransferCredential, server: SealedServer, operations: String, onlineAtOpen: Boolean) {
@@ -149,7 +148,7 @@ class TransferTest {
         if (!onlineAtOpen) DBlayer.database.setOnline(true)
     }
 
-    private suspend fun shiftingABatch(cases: List<String>, onlineAtOpen: Boolean) {
+    private suspend fun shiftingABatch(cases: List<String>, onlineAtOpen: Boolean, holdReplay: Boolean = false) {
         val directory = Files.createTempDirectory("encrypted-album").toFile()
         try {
             for (case in cases) {
@@ -184,9 +183,11 @@ class TransferTest {
                     server.hold(null)
                     if (lose) {
                         awaitWithin("the answer is lost") { server.lostAnswer() }
+                        if (holdReplay) server.holdStored("CreateBlob")
                         openStand(transport, path, encrypted, credential, server, operations, onlineAtOpen)
                         eventually("the lost step is requested again") { server.requests.map { it.second }.count { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" && it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "1.jpg" } == 2 }
-                        Asset.ids(listOf("a1", "a2")).rowsReach("both assets are stored") { rows -> rows.map { it.id }.toSet() == setOf("a1", "a2") }
+                        if (holdReplay) awaitWithin("the stored answer is held") { server.storedRequest() }
+                        awaitAssets(server, transport, holdReplay)
                         assertEquals("key-1", Asset.find("a1").current()?.clientKey)
                         assertEquals("key-2", Asset.find("a2").current()?.clientKey)
                     } else {
@@ -206,9 +207,47 @@ class TransferTest {
                     assertEquals(listOf("key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
                     assertEquals(listOf("signed-1.jpg", "signed-2.jpg"), sent.map { it.jsonObject.getValue("signedId").jsonPrimitive.content })
                     closeForCleanup()
-                } finally { server.hold(null); closeForCleanup() }
+                } finally { server.releaseStored(); server.hold(null); closeForCleanup() }
             }
         } finally { closeForCleanup(); directory.deleteRecursively() }
+    }
+
+    private suspend fun awaitAssets(server: SealedServer, transport: HoldSecondFile, holdReplay: Boolean) = coroutineScope {
+        val latestRows = java.util.concurrent.atomic.AtomicReference("no list value")
+        val latestOperations = java.util.concurrent.atomic.AtomicReference("no operations value")
+        val directRows = java.util.concurrent.atomic.AtomicReference("not read after commit")
+        val opened = CompletableDeferred<Unit>()
+        val queueEmpty = CompletableDeferred<Unit>()
+        var sawOperation = false
+        val operations = launch {
+            AccountScope.current().operations().collect { value ->
+                latestOperations.set(value.toString())
+                if (value is OperationQueueItem.Queue) {
+                    if (value.items.isNotEmpty()) sawOperation = true
+                    if (sawOperation && value.items.isEmpty()) queueEmpty.complete(Unit)
+                }
+            }
+        }
+        val direct = launch {
+            queueEmpty.await()
+            directRows.set(listOf(Asset.find("a1").current(), Asset.find("a2").current()).toString())
+        }
+        val rows = async {
+            Asset.ids(listOf("a1", "a2")).live.flow.first { value ->
+                latestRows.set(value.toString())
+                opened.complete(Unit)
+                value.map { it.id }.toSet() == setOf("a1", "a2")
+            }
+        }
+        try {
+            if (holdReplay) {
+                awaitWithin("the asset reader opens") { opened.await() }
+                server.releaseStored()
+            }
+            awaitWithin("both assets are stored", {
+                "operations=${latestOperations.get()} rows=${latestRows.get()} readAfterCommit=${directRows.get()} requests=${server.requests} parked=${server.parkedCount} heldStored=$holdReplay puts=${transport.identities}"
+            }) { rows.await() }
+        } finally { rows.cancel(); direct.cancel(); operations.cancel() }
     }
 
     private val expiryOperations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"""

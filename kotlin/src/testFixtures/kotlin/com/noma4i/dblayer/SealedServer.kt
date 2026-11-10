@@ -41,6 +41,14 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
     private val parked = CopyOnWriteArrayList<kotlinx.coroutines.CompletableDeferred<Unit>>()
     private val arrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val lostAnswers = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val heldStored = java.util.concurrent.atomic.AtomicReference<String?>(null)
+    private val storedArrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val storedRelease = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    fun holdStored(operation: String) { heldStored.set(operation) }
+    suspend fun storedRequest() { storedArrivals.receive() }
+    fun releaseStored() { storedRelease.complete(Unit) }
+
     private val lostFile = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private val lost = AtomicBoolean(false)
     val effects = CopyOnWriteArrayList<JsonObject>()
@@ -102,7 +110,13 @@ class SealedServer(private val contract: ServerContract = ServerContract(), priv
         if (path.startsWith("/api/auth/") && request["sequence"]?.jsonPrimitive?.content == "1") contract.setLast(0)
         val scope = request["credential"]?.jsonPrimitive?.content ?: ""
         when (val admitted = contract.admit(scope, wire)) {
-            is ContractAdmission.Stored -> return EncryptedReply(200u, seal(request, Json.parseToJsonElement(admitted.token).jsonObject))
+            is ContractAdmission.Stored -> {
+                if (heldStored.get() == sent["operationName"]?.jsonPrimitive?.content) {
+                    storedArrivals.trySend(Unit)
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { storedRelease.await() }
+                }
+                return EncryptedReply(200u, seal(request, Json.parseToJsonElement(admitted.token).jsonObject))
+            }
             is ContractAdmission.TwoBodies -> throw DbException.Invalid("request ID reused with different content")
             is ContractAdmission.Refused -> return EncryptedReply(200u, seal(request, Json.parseToJsonElement(admitted.body).jsonObject, spending = false))
             is ContractAdmission.Fresh -> Unit
