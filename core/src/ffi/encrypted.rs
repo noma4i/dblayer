@@ -125,7 +125,7 @@ impl Database {
         match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => Ok(body),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
-            _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 
@@ -134,7 +134,7 @@ impl Database {
             LifeReply::SessionResume(Ok(Some(body))) => Ok(Some(body)),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
             LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
-            _ => Err(DbError::Interrupted { detail: "the call ended".into() }),
+            _ => Err(super::database::foreign_reply()),
         }
     }
 
