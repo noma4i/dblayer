@@ -207,12 +207,6 @@ impl FileDirectories {
         Ok(CopiedSource::Ready { size, sha256: digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect(), data, location })
     }
 
-    #[cfg(test)]
-    pub(crate) fn read(&self, id: &str) -> io::Result<Vec<u8>> {
-        let path = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
-        fs::read(path)
-    }
-
     pub(crate) fn cache_target(&self, id: &str, _name: &str) -> PathBuf {
         self.cache.join(id)
     }
