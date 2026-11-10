@@ -20,24 +20,24 @@ impl Reader for History {
     }
 }
 
-fn page(first: i32, last: i32, more: bool) -> Value {
+fn page(first: i32, last: i32, more: bool, total: i32) -> Value {
     let nodes: Vec<Value> = (first..=last).map(|n| json!({"id":format!("m{n}"),"chatId":"c1","body":format!("message {n}"),"kind":"TEXT","status":"SENT","oneTime":false,"expired":false,"isSystem":false,"isForwarded":false,"isReply":false,"unread":false,"sequenceNumber":n,"createdAt":"2026-10-27T00:00:00Z","updatedAt":"2026-10-27T00:00:00Z"})).collect();
     let edges: Vec<_> = nodes.into_iter().map(|node| json!({"node":node})).collect();
-    json!({"node":{"messages":{"edges":edges,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
+    json!({"node":{"messages":{"totalCount":total,"edges":edges,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
 }
 
 async fn three_pages() -> (Stand, Arc<History>, Arc<crate::ffi::tape::Watched>) {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let history = Arc::new(History::default());
     let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let stream = stand.database.watch(ReadRequest::List { query }, history.clone());
     settled(&stand, "the first history page", || history.rows.len() == 25).await;
-    stand.answer("chatThread", page(16, 40, true));
+    stand.answer("chatThread", page(16, 40, true, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     settled(&stand, "the second history page", || history.rows.len() == 50).await;
-    stand.answer("chatThread", page(1, 15, false));
+    stand.answer("chatThread", page(1, 15, false, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     stand.settle().await;
     assert_eq!(ids(&history), (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
@@ -54,7 +54,7 @@ fn ids(history: &History) -> Vec<String> {
 async fn consumer_thread_refresh_keeps_older_pages() {
     let (stand, history, _stream) = three_pages().await;
     let epoch = stand.database.session_epoch();
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     bound(stand.database.refresh(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     stand.settle().await;
     let rows = ids(&history);
@@ -82,7 +82,7 @@ async fn consumer_thread_event_adds_after_three_pages() {
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_thread_refresh_removes_deleted_head_row() {
     let (stand, history, _stream) = three_pages().await;
-    let mut answer = page(41, 65, true);
+    let mut answer = page(41, 65, true, 65);
     answer["node"]["messages"]["edges"].as_array_mut().unwrap().retain(|edge| edge["node"]["id"] != "m50");
     stand.answer("chatThread", answer);
     bound(stand.database.refresh(stand.database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
@@ -109,18 +109,18 @@ async fn consumer_thread_load_more_after_end_is_quiet() {
 async fn consumer_thread_three_pages_keep_all_rows() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let history = Arc::new(History::default());
     let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
     settled(&stand, "the first history page", || history.rows.len() == 25).await;
     assert_eq!(history.rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>(), (41..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
     assert_eq!(*history.has_more.lock().unwrap(), Some(true));
-    stand.answer("chatThread", page(16, 40, true));
+    stand.answer("chatThread", page(16, 40, true, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     settled(&stand, "the second history page", || history.rows.len() == 50).await;
     assert_eq!(history.rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>(), (16..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
-    stand.answer("chatThread", page(1, 15, false));
+    stand.answer("chatThread", page(1, 15, false, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     stand.settle().await;
     let ids: Vec<_> = history.rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect();
@@ -134,7 +134,7 @@ async fn consumer_thread_three_pages_keep_all_rows() {
 async fn consumer_thread_refresh_keeps_history_end() {
     let (stand, history, _stream) = three_pages().await;
     let epoch = stand.database.session_epoch();
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     bound(stand.database.refresh(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     stand.settle().await;
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
@@ -148,15 +148,15 @@ async fn consumer_tail_thread_after_reopen() {
     let stand = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let history = Arc::new(History::default());
     let query = || QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let stream = stand.database.watch(ReadRequest::List { query: query() }, history.clone());
     settled(&stand, "the first page", || history.rows.len() == 25).await;
-    stand.answer("chatThread", page(16, 40, true));
+    stand.answer("chatThread", page(16, 40, true, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     settled(&stand, "the second page", || history.rows.len() == 50).await;
-    stand.answer("chatThread", page(1, 15, false));
+    stand.answer("chatThread", page(1, 15, false, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     settled(&stand, "all pages", || history.rows.len() == 65).await;
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
@@ -169,7 +169,7 @@ async fn consumer_tail_thread_after_reopen() {
     assert_eq!(ids(&history), (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(reopened.requests("chatThread"), 0);
-    reopened.answer("chatThread", page(41, 65, true));
+    reopened.answer("chatThread", page(41, 65, true, 65));
     bound(reopened.database.refresh(reopened.database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     reopened.settle().await;
     let rows = ids(&history);
@@ -184,15 +184,15 @@ async fn consumer_tail_invalid_cursor_restarts_history() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
     let history = Arc::new(History::default());
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
     settled(&stand, "first page", || history.rows.len() == 25).await;
-    stand.answer("chatThread", page(16, 40, true));
+    stand.answer("chatThread", page(16, 40, true, 65));
     bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     settled(&stand, "second page", || history.rows.len() == 50).await;
     stand.answer_next("chatThread", json!({"errors":[{"message":"cursor", "extensions":{"code":"INVALID_CURSOR"}}]}));
-    stand.answer("chatThread", page(50, 55, false));
+    stand.answer("chatThread", page(50, 55, false, 6));
     let result = bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     assert!(matches!(result, crate::ffi::LoadMoreResult::Loaded { has_more: false }), "{result:?}");
     stand.settle().await;
@@ -218,7 +218,7 @@ async fn consumer_ordered_page_old_answer_after_delete() {
     let (events, token) = stand.events("Message").await;
     let received = stand.asked().len();
     stand.hold(&["chatThread"]);
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let database = stand.database.clone();
     let refresh = tokio::spawn(async move {
         bound(database.refresh(database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await
@@ -274,7 +274,7 @@ async fn consumer_thread_temp_parent_swap() {
     stand.settle().await;
     assert_eq!(stand.requests("chatThread"), 0);
     stand.answer("ChatGroupCreate", json!({"groupChatCreate":{"chat":super::stand::chat("c1", "group")}}));
-    stand.answer("chatThread", page(1, 2, false));
+    stand.answer("chatThread", page(1, 2, false, 2));
     stand.database.set_online(true).unwrap();
     settled(&stand, "the thread of the confirmed chat", || history.rows.len() == 2).await;
     assert_eq!(ids(&history), ["m1", "m2"]);
@@ -287,12 +287,12 @@ async fn consumer_thread_failed_page_retry() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
     let history = Arc::new(History::default());
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
     let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
     settled(&stand, "the first history page", || history.rows.len() == 25).await;
     stand.answer_next("chatThread", json!({"errors":[{"message":"temporarily unavailable","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}));
-    stand.answer("chatThread", page(16, 40, false));
+    stand.answer("chatThread", page(16, 40, false, 50));
     let mut armed = stand.clock.armed();
     let load = stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into());
     let result = crate::test_wait::within_named(15, "the failed page is retried", async {
@@ -322,7 +322,7 @@ async fn consumer_thread_stream_reset_and_gap() {
     projection.resync();
     let snapshot = bound(projection.pull(0)).await;
     assert!(matches!(snapshot, Some(ReadValue::Snapshot { ref rows, .. }) if rows.len() == 65), "{snapshot:?}");
-    stand.answer("chatThread", page(41, 65, true));
+    stand.answer("chatThread", page(41, 65, true, 65));
     stand.drop_cable(&token);
     let _token = stand.next_subscription().await;
     let gap = bound(events.pull_next()).await;
