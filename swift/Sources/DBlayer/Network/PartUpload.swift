@@ -5,6 +5,7 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
   static let chunk = 64 * 1024
 
   private let file: PutFile
+  private let pumps = Pumps()
 
   init(file: PutFile, progress: ByteProgress, limit: UInt64) {
     self.file = file
@@ -14,7 +15,15 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
   func run(_ request: URLRequest, in session: URLSession) async throws -> (Data, URLResponse) {
     var request = request
     request.setValue(String(file.length), forHTTPHeaderField: "Content-Length")
-    return try await run(in: session) { $0.uploadTask(withStreamedRequest: request) }
+    let answer: (Data, URLResponse)
+    do {
+      answer = try await run(in: session) { $0.uploadTask(withStreamedRequest: request) }
+    } catch {
+      await pumps.idle()
+      throw error
+    }
+    await pumps.idle()
+    return answer
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
@@ -27,11 +36,27 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
     Stream.getBoundStreams(withBufferSize: Self.chunk, inputStream: &input, outputStream: &output)
     guard let input, let output else { return nil }
     let feed = Feed(output: output)
-    let (path, offset, length) = (file.path, file.offset, file.length)
+    let (path, offset, length, pumps) = (file.path, file.offset, file.length, pumps)
+    pumps.start()
     Thread.detachNewThread { [weak self] in
-      if let error = feed.pump(path: path, offset: offset, length: length) { self?.fail(error) }
+      let error = feed.pump(path: path, offset: offset, length: length)
+      pumps.end()
+      if let error { self?.fail(error) }
     }
     return input
+  }
+
+  /// The file readers that still run: the call returns only after each of them closed its descriptor.
+  private final class Pumps: @unchecked Sendable {
+    private let readers = DispatchGroup()
+
+    func start() { readers.enter() }
+
+    func end() { readers.leave() }
+
+    func idle() async {
+      await withCheckedContinuation { continuation in readers.notify(queue: .global()) { continuation.resume() } }
+    }
   }
 
   private final class Feed: @unchecked Sendable {
