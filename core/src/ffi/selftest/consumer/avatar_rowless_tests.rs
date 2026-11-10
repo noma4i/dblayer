@@ -87,6 +87,14 @@ async fn consumer_avatar_rowless_rejected() {
     let extensions = failure.extensions.expect("the extensions of the refusal");
     assert_eq!(extensions.code.as_deref(), Some("FORBIDDEN"));
     assert_eq!(extensions.fields.get("reasonCode").map(String::as_str), Some("\"no_face_detected\""), "{extensions:?}");
+    let items = operations(&stand).await;
+    assert_eq!(items.len(), 1, "the refused upload remains queued");
+    let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+    assert!(copy.exists(), "the refused upload retains its copy");
+    bound(stand.database.discard(epoch, "CurrentUser".into(), "me".into(), Some("update_photo".into()))).await.unwrap();
+    assert!(operations(&stand).await.is_empty(), "discard removes the queued upload");
+    assert!(!copy.exists(), "discard removes its copy");
     stand.settle().await;
     assert!(rows.0.lock().unwrap().is_empty(), "a refused upload leaves no row");
     assert_eq!(stand.requests("UserPhotoUpdate"), 1, "a permanent refusal is not repeated");
