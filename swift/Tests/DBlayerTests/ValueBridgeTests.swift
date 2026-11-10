@@ -217,6 +217,21 @@ extension BridgeProbeTests {
     #expect(try await DB.subscriptionCensus().observedQueries == 0)
   }
 
+  @MainActor
+  @Test
+  func bridge_reader_release_parity_c9() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let stream = try DB.account().stream(User.profile)
+    var first: Cursor<ValueStream>? = Cursor(stream)
+    guard case .snapshot? = await first?.next("the first list value") else { Issue.record("the first reader did not receive a snapshot"); return }
+    first = nil
+    let next = Cursor(stream)
+    guard case .ended(.closed)? = await next.next("the released stream ends closed") else { Issue.record("the released stream did not end closed"); return }
+    let another = Cursor(stream)
+    guard case .ended(.closed)? = await another.next("another reader sees the closed stream") else { Issue.record("the next reader did not see closed"); return }
+  }
+
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
   @MainActor
   @Test
