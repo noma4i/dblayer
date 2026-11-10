@@ -49,3 +49,22 @@ async fn out_discard_two_ops_same_key_failed_only() {
         rig.database.close_now();
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_retry_two_ops_same_key_failed_only() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let refused = rig.world.hold_then("ProfileUpdate", Fault::Http(422));
+    let failed = update(&rig, json!({"name":"failed"}), "failed").await;
+    refused.entered().await;
+    refused.release();
+    assert!(matches!(bound(rig.database.confirmed(failed)).await, Err(DbError::Rejected { kept: true, .. })));
+    rig.database.set_online(false).unwrap();
+    let waiting = update(&rig, json!({"secondaryChatsCount":7}), "waiting").await;
+    let retried = bound(rig.database.retry(epoch, "User".into(), "user".into(), Some("update".into()), None)).await.unwrap();
+    rig.database.set_online(true).unwrap();
+    assert!(bound(rig.database.confirmed(retried)).await.is_ok());
+    assert!(bound(rig.database.confirmed(waiting)).await.is_ok());
+    assert_eq!(rig.world.count("ProfileUpdate"), 3, "one refusal and one request per operation");
+    rig.database.close_now();
+}
