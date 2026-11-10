@@ -51,6 +51,8 @@ pub(super) struct SessionRunner {
     mint: Sender<(u64, String, String)>,
     wires: HashMap<RequestId, Wire>,
     operations: HashMap<RequestId, i64>,
+    /// The sessionless requests that went out once: a repeat is a new request on the wire, the server refuses the old id as replayed.
+    sent: std::collections::HashSet<RequestId>,
 }
 
 /// What the stored rows and the secret give to the owner and its executor at open.
@@ -72,7 +74,7 @@ impl SessionRunner {
         let digests = restored.digest.iter().cloned().collect();
         let (mint, minted) = std::sync::mpsc::channel();
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations, sent: Default::default() }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -280,6 +282,10 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             SessionEffect::CommitRevoked { batch, epoch } => self.commit(batch, epoch, vec![StoreOp::EraseSession]),
             SessionEffect::HttpRequest { pending, attempt_id } => {
                 let request_id = pending.request_id;
+                if pending.class == OperationClass::Sessionless && pending.author.is_none() && !self.sent.insert(request_id) {
+                    let cut = self.wiring.gate.cut();
+                    self.wires.insert(request_id, Wire { id: uuid::Uuid::new_v4().to_string(), key: random_token(), cut });
+                }
                 let Some(wire) = self.wires.get(&request_id) else {
                     return back.reply(control, SessionInput::SecretMissing { request_id, attempt_id, lost: true });
                 };
