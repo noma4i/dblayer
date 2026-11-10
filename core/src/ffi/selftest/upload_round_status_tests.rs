@@ -76,3 +76,57 @@ async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any
     assert!(jobs.asked.lock().unwrap().is_empty(), "an idle database asked for a job");
     database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("round.sqlite");
+    let source = directory.path().join("clip");
+    std::fs::write(&source, b"clip").unwrap();
+    let stand = Stand::new();
+    let first = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    first.set_online(false).unwrap();
+    let old_jobs = Arc::new(Jobs::default());
+    first.set_round_jobs(old_jobs.clone());
+    let old_epoch = first.session_epoch();
+    let _receipt = bound(first.send(clip("Moment", r#"{"text":"clip"}"#, "upload_clip", &source, old_epoch))).await.unwrap();
+    settled(&first, "the old job is scheduled", || !old_jobs.asked.lock().unwrap().is_empty()).await;
+    let old_request = old_jobs.asked.lock().unwrap()[0].0;
+    bound(first.close_database()).await.unwrap();
+    drop(first);
+    let reopened = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    reopened.set_online(false).unwrap();
+    let jobs = Arc::new(Jobs::default());
+    reopened.set_round_jobs(jobs.clone());
+    let new_epoch = reopened.session_epoch();
+    assert_ne!(old_epoch, new_epoch);
+    settled(&reopened, "the restored upload schedules a new job", || !jobs.asked.lock().unwrap().is_empty()).await;
+    let new_request = jobs.asked.lock().unwrap()[0].0;
+    let new_round = jobs.rounds.lock().unwrap()[0];
+    let stream = reopened.subscribe_values(new_epoch, crate::ffi::ReadRequest::Operations);
+    let Some(crate::ffi::ReadValue::Operations { items, .. }) = bound(stream.pull_next()).await else { panic!("queue absent") };
+    let item = items.iter().find(|item| item.action == "upload_clip").unwrap();
+    let rows = watched(&reopened, "Moment", &item.row_id);
+    reopened.round_refused(old_request, old_epoch, crate::ffi::RoundRefusal::JobRefused, "old".into());
+    reopened.round_ended(new_round, old_epoch);
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
+    assert!(refusal(&rows).is_none(), "the old epoch changed the restored upload");
+    reopened.round_refused(new_request, new_epoch, crate::ffi::RoundRefusal::JobRefused, String::new());
+    settled(&reopened, "the current job refusal reaches the same upload", || refusal(&rows).is_some()).await;
+    let sink = crate::ffi::OnlineSink::of_life(&reopened.life);
+    let registration = sink.register_foreground();
+    sink.enter_foreground(registration);
+    settled(&reopened, "a new job is scheduled", || jobs.asked.lock().unwrap().len() == 2).await;
+    let current_request = jobs.asked.lock().unwrap()[1].0;
+    let current_round = jobs.rounds.lock().unwrap()[1];
+    reopened.round_started(current_request, current_round, new_epoch);
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
+    reopened.round_ended(current_round, old_epoch);
+    sink.enter_foreground(registration);
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
+    assert_eq!(jobs.asked.lock().unwrap().len(), 2, "the old epoch must not stop the current round");
+    reopened.round_ended(current_round, new_epoch);
+    sink.enter_foreground(registration);
+    settled(&reopened, "the current epoch can end the job", || jobs.asked.lock().unwrap().len() == 3).await;
+    bound(reopened.close_database()).await.unwrap();
+}
