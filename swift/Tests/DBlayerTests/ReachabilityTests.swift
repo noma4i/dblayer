@@ -52,7 +52,7 @@ struct ReachabilityTests {
       return ["data": [String: Any]()]
     }
     let signedIn = EncryptedConfig(origin: encrypted.origin, serverKey: encrypted.serverKey, pin: encrypted.pin, endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
-    try server.registerDocuments([PathProbe.self, SessionProbe.self])
+    try server.registerDocuments(#"[{"name":"PathProbe","document":"\#(PathProbe.document)"},{"name":"SessionProfile","document":"\#(SessionProbe.document)"}]"#)
     try await DB.openTesting(transport: MockTransport(), modelsJSON: withRawCalls(emptySpecs, ["PathProbe", "SessionProfile"]), operations: [PathProbe.self, SessionProbe.self], encrypted: signedIn, credentials: PathCredential(), http: server, observers: SystemObservers(path: path))
     path.set(true)
     try await DB.sessionCall("login_link", body: PathLogin(account: "A"))
