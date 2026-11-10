@@ -67,3 +67,34 @@ fn dlv_operations_work_linear() {
     assert_eq!(small.0, large.0, "SQL query count must not grow with the queue");
     assert!(large.1 <= 4 * (40 + 8), "comparisons must be linear: {large:?}");
 }
+
+fn nested_work(size: usize) -> usize {
+    use crate::schema::{FieldLink, FieldSpec, ModelSpec};
+    use crate::value::ScalarKind;
+    let mut user = FieldSpec::object("user").nullable();
+    user.link = Some(FieldLink { model: "User".into(), id: "userId".into() });
+    user.fields = vec![FieldSpec::scalar("name", ScalarKind::Str).nullable()];
+    let mut reactions = FieldSpec::array("reactions").optional();
+    reactions.fields = vec![FieldSpec::scalar("userId", ScalarKind::Id).nullable(), user];
+    let records = ModelSpec::new("Record", vec![FieldSpec::scalar("id", ScalarKind::Id), reactions]);
+    let users = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).nullable()]);
+    let db = Store::open_models(None, vec![records, users], None).unwrap();
+    for index in 0..size {
+        crate::store::fixtures::put(&db, "User", json!({"id": format!("u{index}"), "name": "current"}));
+        crate::store::fixtures::put(&db, "Record", json!({"id": format!("r{index}"), "reactions": [{"userId": format!("u{index}"), "user": {"name": "old"}}]}));
+    }
+    SQL.with(|count| count.set(0));
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
+    let rows = db.query(&crate::store::query::Query::new("Record")).unwrap();
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    assert_eq!(rows.len(), size);
+    assert!(rows.iter().all(|row| row.data["reactions"][0]["user"]["name"] == "current"));
+    SQL.with(|count| count.get())
+}
+
+#[test]
+fn dlv_nested_refs_work_linear() {
+    let small = nested_work(2);
+    let large = nested_work(40);
+    assert_eq!(small, large, "SQL query count must not grow with referenced rows");
+}
