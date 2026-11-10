@@ -346,21 +346,33 @@ impl Database {
             ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
-            ReadRequest::Entity { model, id, fetch } => {
-                let spec = self.db.spec(model)?;
-                let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
-                let fetch = fetch_of(*fetch);
-                if fetch != Fetch::Never && node.is_none() {
-                    return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
-                }
-                let window = match node {
-                    Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
-                    None => WindowKey { model: model.clone(), name: String::new() },
-                };
-                let scoped = node.map(|relation| crate::owners::read::scoped_channels(spec, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))]))).unwrap_or_default().into();
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), scoped: if fetch == Fetch::Never { Default::default() } else { scoped }, reload: false, window, subject: id.clone(), query: None })
-            }
+            ReadRequest::Entity { model, id, fetch } => self.entity_view(model, id, fetch_of(*fetch)).map(|(view, _)| view),
         }
+    }
+
+    /// The view of an entity read. The id passes `resolve` first: a temporary id that has no server id yet opens no window and sends no request, the stream reads the local row and opens its window at the swap (`Deferred`).
+    fn entity_view(&self, model: &str, id: &str, fetch: Fetch) -> Result<(View, Option<crate::owners::read::deliveries::Deferred>), DbError> {
+        let spec = self.db.spec(model)?;
+        let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
+        if fetch != Fetch::Never && node.is_none() {
+            return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
+        }
+        let row = crate::identity::RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let row = self.db.resolve(model, &row)?;
+        let id = row.as_str();
+        let waits = row.is_temp() && fetch != Fetch::Never;
+        let window = match node {
+            Some(relation) if !waits => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.to_string()))])),
+            _ => WindowKey { model: model.to_string(), name: String::new() },
+        };
+        let scoped = match node {
+            Some(relation) if fetch != Fetch::Never && !waits => crate::owners::read::node_scoped(spec, &relation.name).call(id).into(),
+            _ => Default::default(),
+        };
+        let remote = fetch != Fetch::Never && !waits;
+        let live = spec.is_live();
+        let deferred = node.filter(|_| waits).map(|relation| crate::owners::read::deliveries::Deferred { relation: relation.name.clone(), live, scoped: crate::owners::read::node_scoped(spec, &relation.name) });
+        Ok((View { kind: Kind::Entity { fetch }, model: model.to_string(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && live, scoped, reload: false, window, subject: id.to_string(), query: None }, deferred))
     }
 }
 
@@ -372,12 +384,16 @@ impl Database {
 
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
-        let (view, valid) = match self.view_of(&request) {
-            Ok(view) => (view, true),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false),
+        let (view, valid, deferred) = match match &request {
+            ReadRequest::Entity { model, id, fetch } => self.entity_view(model, id, fetch_of(*fetch)),
+            _ => self.view_of(&request).map(|view| (view, None)),
+        } {
+            Ok((view, deferred)) => (view, true, deferred),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false, None),
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision);
+        if let Some(deferred) = deferred { self.life.defer_stream(stream, deferred); }
         let wire = match (&request, valid) {
             (ReadRequest::Events { model }, true) => self.wire(model).ok().cloned(),
             _ => None,

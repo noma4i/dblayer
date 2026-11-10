@@ -224,6 +224,9 @@ impl super::Life {
         self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)(), revision });
     }
 
+    /// The entity stream just opened reads a temporary id: its window opens at the swap.
+    pub fn defer_stream(&self, stream: StreamId, deferred: crate::owners::read::deliveries::Deferred) { self.wiring.to_deliveries(DeliveryInput::Defer { stream, deferred }); }
+
     /// The next value of a stream: the answer comes with the next value of the journal.
     pub fn pull(&self, stream: StreamId, reader: u64) -> Waiter<PullAnswer> {
         let waiter = self.wiring.pulls.register(Epoch::MAX);

@@ -100,6 +100,27 @@ pub struct View {
     pub query: Option<std::sync::Arc<crate::store::query::Query>>,
 }
 
+/// The scoped channels of the node read of a row id.
+#[derive(Clone)]
+pub struct ScopedOf(std::sync::Arc<dyn Fn(&str) -> Vec<ScopedChannel> + Send + Sync>);
+
+impl ScopedOf {
+    pub fn call(&self, id: &str) -> Vec<ScopedChannel> { (self.0)(id) }
+    pub fn new(of: impl Fn(&str) -> Vec<ScopedChannel> + Send + Sync + 'static) -> Self { Self(std::sync::Arc::new(of)) }
+}
+
+impl std::fmt::Debug for ScopedOf {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str("ScopedOf") }
+}
+
+/// The node read of a stream on a temporary id: no window and no request exist until the id is swapped for the server id.
+#[derive(Clone, Debug)]
+pub struct Deferred {
+    pub relation: String,
+    pub live: bool,
+    pub scoped: ScopedOf,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreamRow {
     pub id: String,
@@ -261,6 +282,8 @@ pub enum DeliveryEffect {
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
     Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64 },
+    /// Follows `Open` of an entity stream on a temporary id that has no server id yet.
+    Defer { stream: StreamId, deferred: Deferred },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
@@ -362,6 +385,8 @@ struct Delivery {
     wants: bool,
     /// The first read of a watched window waits for the first `WindowState`: the first value holds the phase of the window.
     pending_read: Option<(u64, i64, Whole)>,
+    /// The node read waits for the swap of the subject.
+    deferred: Option<Deferred>,
 }
 
 fn entity_row(view: &View) -> Option<(String, &str)> {
@@ -426,6 +451,20 @@ impl DeliveriesState {
                 _ => { self.by_table.entry(table.clone()).or_default().insert(stream); }
             }
         }
+    }
+
+    /// The subject of an entity stream changed from `before`: the stream is indexed by the row it reads now.
+    fn rebind(&mut self, stream: StreamId, before: &str) {
+        let Some(machine) = self.streams.get(&stream) else { return };
+        let table = crate::store::ddl::table_name(&machine.view.model);
+        let subject = machine.view.subject.clone();
+        if let Some(rows) = self.by_row.get_mut(&table) {
+            if let Some(streams) = rows.get_mut(before) {
+                streams.remove(&stream);
+                if streams.is_empty() { rows.remove(before); }
+            }
+        }
+        self.by_row.entry(table).or_default().entry(subject).or_default().insert(stream);
     }
 
     fn settle(&mut self, stream: StreamId) {
@@ -524,6 +563,11 @@ impl StateOwner for Deliveries {
                 state.streams.insert(stream, machine);
                 state.index(stream);
             }
+            DeliveryInput::Defer { stream, deferred } => {
+                if let Some(machine) = state.streams.get_mut(&stream).filter(|machine| matches!(machine.view.kind, Kind::Entity { .. })) {
+                    machine.deferred = Some(deferred);
+                }
+            }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
             DeliveryInput::TaskFailed { id } => {
                 let ((stream, read_id), revision) = (task_read(id), state.revision);
@@ -609,9 +653,13 @@ impl StateOwner for Deliveries {
 fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliveries>, apply: impl FnOnce(&mut Delivery, &mut Vec<Emit>)) {
     let peers = state.peers;
     let Some(machine) = state.streams.get_mut(&stream) else { return };
+    let subject = machine.view.subject.clone();
     let mut fx = Vec::new();
     apply(machine, &mut fx);
     lower(peers, state.revision, stream, machine, fx, out);
+    if state.streams.get(&stream).is_some_and(|machine| machine.view.subject != subject) {
+        state.rebind(stream, &subject);
+    }
     state.settle(stream);
 }
 

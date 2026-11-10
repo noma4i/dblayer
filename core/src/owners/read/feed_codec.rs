@@ -254,6 +254,21 @@ pub fn channels_of(db: &Store) -> BTreeMap<String, Vec<String>> {
     }).collect()
 }
 
+/// The scoped channels of a node read of `relation` for any row id: the owner of a stream on a temporary id asks for them at the swap.
+pub fn node_scoped(spec: &ModelSpec, relation: &str) -> super::deliveries::ScopedOf {
+    let found = spec.relations.iter().find(|declared| declared.name == relation);
+    let remote = found.and_then(|declared| declared.remote.as_ref());
+    let updates: Vec<String> = match (found, remote) {
+        (Some(declared), Some(_)) => declared.updates.iter().filter(|updates| updates.takes_variables(declared)).map(|updates| updates.subscription.clone()).collect(),
+        _ => Vec::new(),
+    };
+    let mapping = remote.map(|remote| remote.variables.clone()).unwrap_or_default();
+    super::deliveries::ScopedOf::new(move |id| {
+        let params = Map::from_iter([(crate::schema::NODE_PARAM.to_string(), Value::String(id.to_string()))]);
+        updates.iter().map(|subscription| ScopedChannel { subscription: subscription.clone(), variables: mapped_variables(&params, &mapping) }).collect()
+    })
+}
+
 pub fn scoped_channels(spec: &ModelSpec, relation: &str, params: &Map<String, Value>) -> Vec<ScopedChannel> {
     let Some(relation) = spec.relations.iter().find(|declared| declared.name == relation) else { return Vec::new() };
     let Some(remote) = relation.remote.as_ref() else { return Vec::new() };

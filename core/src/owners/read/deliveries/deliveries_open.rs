@@ -48,6 +48,7 @@ impl Delivery {
             interested: false,
             wants: false,
             pending_read: None,
+            deferred: None,
         }
     }
 
