@@ -39,7 +39,7 @@ class UploadAnswerTest {
             val row = """"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""""
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row}}}""")
             openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]""")
-            val moment = requireNotNull(Moment.find(Moment.create(text = "intro", account = AccountScope.current()).confirmed().id).current())
+            val moment = requireNotNull(Moment.find(requireNotNull(Moment.create(text = "intro", account = AccountScope.current()).confirmed().value).id).current())
             for ((turn, expected) in listOf("Intro received", null).withIndex()) {
                 if (turn == 0) transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}""")
                 if (turn == 0) transport.enqueuePut("https://storage.test/video")

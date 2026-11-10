@@ -341,7 +341,7 @@ class TransferTest {
             assertNotNull(requireNotNull(Asset.find(rows[0].id).current()).sync.error)
             val retried = rows[0].retry("create_files")
             assertTrue(receipt.items[0].receipt.outcome() is OperationOutcome.Rejected)
-            assertEquals("a0", retried.confirmed().id)
+            assertEquals("a0", retried.confirmed().value?.id)
             assertEquals(listOf("a1", "a2"), confirmedIds(receipt).drop(1))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
             val sent = Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("items").jsonArray
@@ -423,7 +423,7 @@ class TransferTest {
             Moment.ids(listOf(row.id)).rowsReach("the refused complete fails the upload") { it.firstOrNull()?.sync?.state == SyncState.Failed }
             assertNotNull(requireNotNull(Moment.find(row.id).current()).sync.error)
             val retried = row.retry("upload_clip")
-            assertEquals("m1", retried.confirmed().id)
+            assertEquals("m1", retried.confirmed().value?.id)
             assertEquals(SyncState.Synced, Moment.find("m1").current()?.sync?.state)
             val names = transport.mock.calls.map { it.operationName }
             assertEquals(1, names.count { it == "InitMultipart" })

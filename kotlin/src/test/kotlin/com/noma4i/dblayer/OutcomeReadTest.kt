@@ -17,7 +17,7 @@ class OutcomeReadTest {
         openSigned(Config(null, null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
-        val ids = coroutineScope { (1..8).map { async { withTimeout(5000) { sent.confirmed().id } } }.awaitAll() }
+        val ids = coroutineScope { (1..8).map { async { withTimeout(5000) { requireNotNull(sent.confirmed().value).id } } }.awaitAll() }
         assertEquals(List(8) { "m77" }, ids)
     }
 }

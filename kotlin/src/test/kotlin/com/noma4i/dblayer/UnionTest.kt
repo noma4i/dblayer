@@ -150,6 +150,6 @@ class UnionTest {
 
         val sent = Record.create(containerId = "c", authorId = "u1", text = "hi", account = AccountScope.current())
         assertNull(sent.optimisticValue!!.attachment)
-        assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(withTimeout(5000) { sent.confirmed() }.id))
+        assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(requireNotNull(withTimeout(5000) { sent.confirmed() }.value).id))
     }
 }

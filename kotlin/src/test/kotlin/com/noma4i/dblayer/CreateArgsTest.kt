@@ -34,6 +34,6 @@ class CreateArgsTest {
         val confirmed = withTimeout(5000) { Record.create(containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1", account = AccountScope.current()).confirmed() }
         val sent = transport.calls.first { it.operationName == "CreateRecord" }.variablesJson
         assertTrue("variables sent: $sent", sent.contains("\"signedId\":\"blob-1\"") && sent.contains("\"attachedUserId\":42"))
-        assertEquals("hi", Record.find(confirmed.id).current()?.text)
+        assertEquals("hi", Record.find(requireNotNull(confirmed.value).id).current()?.text)
     }
 }

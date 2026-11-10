@@ -96,7 +96,7 @@ class BridgeProbeTest {
             eventually("the same open list shows the edited row") { deliveries.lastOrNull() == listOf<String?>("edited") }
             assertEquals(0, transport.calls.count { it.operationName == "UpdateMoment" })
             DBlayer.database.setOnline(true)
-            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            withTimeout(5000) { receipt.confirmed() }
             assertEquals(1, transport.calls.count { it.operationName == "UpdateMoment" })
         } finally {
             scope.cancel()
@@ -178,7 +178,7 @@ class BridgeProbeTest {
 
         val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
         assertEquals(true, sent.optimisticValue?.id?.startsWith("temp"))
-        assertEquals("m77", withTimeout(5000) { sent.confirmed() }.id)
+        assertEquals("m77", requireNotNull(withTimeout(5000) { sent.confirmed() }.value).id)
     }
 
     @Test
@@ -214,7 +214,7 @@ class BridgeProbeTest {
 
         assertEquals(true, local.id.startsWith("temp"))
         assertEquals(true, local.uploads["upload_clip"] != null)
-        assertEquals("m77", withTimeout(5000) { receipt.confirmed() }.id)
+        assertEquals("m77", requireNotNull(withTimeout(5000) { receipt.confirmed() }.value).id)
         val sent = transport.calls.filter { it.operationName == "CreateMoment" }
         assertEquals(1, sent.size)
         assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))

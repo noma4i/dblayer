@@ -76,7 +76,7 @@ class ReconnectTest {
         eventually("the first attempt failed on the network") { count(transport, "CreateMoment") == 1 }
         DBlayer.database.setOnline(false)
         DBlayer.database.setOnline(true)
-        assertEquals("m77", sent.confirmed().id)
+        assertEquals("m77", sent.confirmed().value?.id)
         assertEquals(2, count(transport, "CreateMoment"))
     }
 }

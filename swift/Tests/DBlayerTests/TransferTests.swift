@@ -320,7 +320,7 @@ extension BridgeProbeTests {
     #expect(refused.sync.state == .failed && refused.sync.error != nil)
     let retried = try await rows[0].retry(action: "create_files")
     guard case .rejected = try await receipt.items[0].receipt.outcome() else { throw DbError.Invalid(detail: "the refused cycle changed its outcome") }
-    #expect(try await retried.confirmed().id == "a0")
+    #expect(try await retried.confirmed().value?.id == "a0")
     #expect(try await confirmedIds(receipt).dropFirst() == ["a1", "a2"])
     let call = try #require(transport.calls.first { $0.operationName == "CreateAssets" })
     let variables = try JSONSerialization.jsonObject(with: Data(call.variablesJson.utf8)) as! [String: Any]
@@ -399,7 +399,7 @@ extension BridgeProbeTests {
     #expect(refusedComplete.sync.state == .failed && refusedComplete.sync.error != nil)
     let retried = try await row.retry(action: "upload_clip")
     let confirmed = try await retried.confirmed()
-    #expect(confirmed.id == "m1")
+    #expect(confirmed.value?.id == "m1")
     #expect(try await Moment.find("m1").current()?.sync.state == .synced)
     let names = transport.mock.calls.map(\.operationName)
     #expect(names.filter { $0 == "InitMultipart" }.count == 1)

@@ -175,7 +175,7 @@ class ValueBridgeTest {
             assertEquals(0, server.operationRequests("CreateMoment"))
 
             DBlayer.database.setOnline(true)
-            assertEquals("m1", sent.confirmed().id)
+            assertEquals("m1", sent.confirmed().value?.id)
             thread.until("the thread shows the confirmed message") { it.rows.firstOrNull()?.id == "m1" }
 
             assertEquals("one message, not a temporary row and a confirmed row", 1, thread.projection.value.rows.size)
