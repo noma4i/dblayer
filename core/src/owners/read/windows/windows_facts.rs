@@ -230,7 +230,7 @@ impl Facts {
         page.payload = chain.rows.clone();
         page.dependency_models = chain.models.clone();
         let number = if chain.base > 0 { 2 } else { 1 };
-        let replace_all = !keep_rows && chain.base == 0;
+        let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
         self.page_count = landed_tail(self.page_count, number, replace_all).0;
         self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
