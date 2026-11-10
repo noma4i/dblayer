@@ -329,7 +329,6 @@ impl<'a> Reader<'a> {
             .optional()?)
     }
 
-    #[cfg(test)]
     pub fn tombstones(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, i64>, StoreError> {
         let mut found = BTreeMap::new();
         for chunk in ids.chunks(CHUNK) {

@@ -23,9 +23,10 @@ fn admitted_rows(writer: &RowWrite<'_>, model: &str, rows: &[Map<String, Value>]
     let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
     let ids: Vec<String> = rows.iter().filter_map(|row| row.get("id").and_then(read_id).map(|id| id.as_str().to_string())).collect();
     let fields = unconfirmed_fields(&reader, None, model, &ids)?;
+    let tombstones = reader.tombstones(model, &ids)?;
     let mut accepted = Vec::new();
     for row in rows {
-        if let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, spec, guards, Some(&fields))? {
+        if let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, spec, guards, Some(&fields), Some(&tombstones))? {
             accepted.push(row);
         }
     }
@@ -39,12 +40,16 @@ fn related_rows(writer: &RowWrite<'_>, related: &[(String, Map<String, Value>)],
         if let Some(id) = row.get("id").and_then(read_id) { grouped.entry(model).or_default().push(id.as_str().to_string()); }
     }
     let mut fields = BTreeMap::new();
-    for (model, ids) in grouped { fields.insert(model, unconfirmed_fields(&reader, None, model, &ids)?); }
+    let mut tombstones = BTreeMap::new();
+    for (model, ids) in grouped {
+        fields.insert(model, unconfirmed_fields(&reader, None, model, &ids)?);
+        tombstones.insert(model, reader.tombstones(model, &ids)?);
+    }
     let mut ops = Vec::new();
     for (model, row) in related {
         let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, spec, guards, fields.get(model.as_str()))? else { continue };
+        let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, spec, guards, fields.get(model.as_str()), tombstones.get(model.as_str()))? else { continue };
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         let model = ModelKey::new(model);
         if !planned.contains(&(model.clone(), id.clone())) { ops.push(EntityOp::Upsert { model, id, row }); }

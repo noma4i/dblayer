@@ -54,10 +54,10 @@ pub(crate) enum RowKind {
 }
 
 pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
-    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None)
+    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None, None)
 }
 
-pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let decoded = decode_nested(spec, patch)?;
@@ -68,7 +68,7 @@ pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission
     if matches!((versioned, current), (Some(incoming), Some(current)) if incoming < current) {
         return Ok(None);
     }
-    let tombstone = reader.tombstone_seq(model, id.as_str())?;
+    let tombstone = match tombstones { Some(tombstones) => tombstones.get(id.as_str()).copied(), None => reader.tombstone_seq(model, id.as_str())? };
     let mut row = match admit_upsert(admission.base, stored.as_ref(), tombstone, patch.clone()) {
         UpsertAdmission::Row { row, .. } => row,
         UpsertAdmission::DropExistence => { return Ok(stored.map(|stored| stored.row)); }
