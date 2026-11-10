@@ -76,7 +76,7 @@ pub(crate) struct Restore {
 }
 
 /// The answer Session saved for the step this row would send next, found by the id the step carries.
-fn saved_answer_of(row: &crate::owners::write::transfer::StoredTransfer, answers: &std::collections::BTreeMap<u64, crate::store::session_state::StoredAnswer>) -> Option<(u64, String)> {
+fn saved_answer_of(row: &crate::owners::write::transfer::StoredTransfer, answers: &std::collections::BTreeMap<u64, crate::store::session_state::StoredAnswer>) -> Option<(u64, crate::store::session_state::StoredAnswer)> {
     use crate::owners::write::upload::UploadStage;
     let source = row.source.as_ref()?;
     if row.restore_failed.is_some() || row.failed.is_some() || row.completed || row.aborted || row.copying { return None; }
@@ -84,7 +84,7 @@ fn saved_answer_of(row: &crate::owners::write::transfer::StoredTransfer, answers
     let steps: Vec<(UploadStage, u32)> = if row.confirmed_parts >= source.parts { vec![(UploadStage::Complete, 0)] } else { vec![(UploadStage::Create, part), (UploadStage::Init, part), (UploadStage::Presign, part)] };
     steps.into_iter().find_map(|(step, part)| {
         let id = crate::owners::write::wire::step_request_id(row.transfer_id, row.cycle_id.max(1), step, part);
-        match answers.get(&id)? { crate::store::session_state::StoredAnswer::Ok(body) => Some((id, body.clone())), _ => None }
+        answers.get(&id).map(|answer| (id, answer.clone()))
     })
 }
 
@@ -162,9 +162,9 @@ impl Store {
         let mut claimed = Vec::new();
         let transfers = transfers.map(|mut rows| {
             for row in &mut rows {
-                if let Some((id, body)) = saved_answer_of(row, &answers_by_id) {
+                if let Some((id, answer)) = saved_answer_of(row, &answers_by_id) {
                     claimed.push(id);
-                    row.saved_answer = Some((id, body));
+                    row.saved_answer = Some((id, answer));
                 }
             }
             let asking = pending.as_ref().and_then(|held| held.owner.as_ref().and_then(|owner| transfer_asking_again(&rows, owner)).map(|row| (row.transfer_id, held.req_id)));

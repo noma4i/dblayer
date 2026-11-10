@@ -123,8 +123,11 @@ pub struct StoredTransfer {
     pub restore_failed: Option<String>,
     pub pending_step: Option<u64>,
     /// The answer of the step Session saved before the process died: `(request id, body)`.
-    pub saved_answer: Option<(u64, String)>,
+    pub saved_answer: Option<(u64, crate::store::session_state::StoredAnswer)>,
 }
+
+/// The answer of the saved pair of a step under its request id: the response, or the refusal Session kept.
+pub type SeededAnswer = (u64, Result<(String, crate::transport::AnswerKind), crate::owners::session::SessionError>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransferTick {
@@ -132,11 +135,11 @@ pub enum TransferTick {
     PutTimeout { transfer_id: TransferId, attempt_id: AttemptId },
     /// The write of a minted `upload_id` the Store refused is due again.
     Minted { upload_id: String, attempt_id: AttemptId },
+    /// The write of the old row after a failed swap, which the Store refused, is due again.
+    StagedRestore { transfer_id: TransferId },
     Expire,
 }
 
-    /// The write of the old row after a failed swap, which the Store refused, is due again.
-    StagedRestore { transfer_id: TransferId },
 /// The position and the size of the batch a row of an element carries: `renumber` rewrites them when an element leaves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Renumber {
@@ -351,8 +354,8 @@ pub enum TransferEffect {
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
-    Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<(u64, String, crate::transport::AnswerKind)> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer> },
+    Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<SeededAnswer> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },
@@ -483,7 +486,7 @@ pub struct Transfer {
     /// `Clock.now()` of the answer of the creation of the blob on the server: the term of its cache entry counts from it.
     pub blob_created_at: Option<Time>,
     /// The answer of the pair Session re-sent for a restored step: `(request id, body)`, served to the first request of the step.
-    pub seeded: Option<(u64, String, crate::transport::AnswerKind)>,
+    pub seeded: Option<SeededAnswer>,
     /// The saved answer the batch of the attempt removes from the Store with the attempt it starts.
     pub answer_saved: Option<u64>,
     /// The call a failed swap answers and the fault it gets, after the old row is committed.
@@ -575,11 +578,11 @@ pub struct TransferState {
     pub put_timeout: std::time::Duration,
     pub now: Time,
     pub drained: bool,
+    /// The held calls replay: a start waits until all of them are classified.
+    pub starts_held: bool,
     pub closing: bool,
     pub(super) ended: bool,
     pub(super) queue_error: Option<String>,
-    /// The held calls replay: a start waits until all of them are classified.
-    pub starts_held: bool,
     pub examined: std::sync::atomic::AtomicU64,
 }
 
@@ -620,10 +623,10 @@ impl TransferState {
             put_timeout: super::upload::UploadConfig::default().put_timeout,
             now: Time(0),
             drained: false,
+            starts_held: false,
             closing: false,
             ended: false,
             queue_error: None,
-            starts_held: false,
         }
     }
 

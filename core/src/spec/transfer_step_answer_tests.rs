@@ -58,7 +58,7 @@ fn xfer_step_answer_failed() {
 #[test]
 fn xfer_step_answer_restart() {
     let mut answered = saved();
-    answered.saved_answer = Some((STEP, "{\"ok\":true}".into()));
+    answered.saved_answer = Some((STEP, crate::store::session_state::StoredAnswer::Ok("{\"ok\":true}".into())));
     let (mut twin, _) = Twin::opened(vec![answered], Default::default());
     twin.online(true);
     let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });

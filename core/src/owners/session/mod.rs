@@ -64,6 +64,19 @@ pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
     }
 }
 
+/// The answer a saved row stands for, with the variant the Session kept.
+pub fn session_answer(stored: StoredAnswer) -> SessionAnswer {
+    match stored {
+        StoredAnswer::Ok(body) => Ok(body),
+        StoredAnswer::Http { status } => Err(SessionError::Http { status }),
+        StoredAnswer::TooLarge { size, limit } => Err(SessionError::TooLarge { size, limit }),
+        StoredAnswer::Unauthorized => Err(SessionError::Unauthorized),
+        StoredAnswer::Security { code, detail } => Err(SessionError::Security { code, detail }),
+        StoredAnswer::Revoked { body } => Err(SessionError::Revoked { body }),
+        StoredAnswer::Session { code, body } => Err(SessionError::Session { code, body }),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Credential {
     pub digest: Digest,

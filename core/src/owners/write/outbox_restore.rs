@@ -44,27 +44,15 @@ impl OutboxState {
                 operation.request_id = request_id;
                 operation.stage = Stage::Sending;
             }
-            return match answer {
-                crate::owners::session::StoredAnswer::Ok(body) => {
+            return match crate::owners::session::session_answer(answer) {
+                Ok(body) => {
                     if let Some(operation) = self.ops.get_mut(&op_id) {
                         operation.stage = Stage::Landing;
                         operation.rows_pending = true;
                     }
                     self.decode_answer(op_id, body, fx)
                 }
-                error => {
-                    use crate::owners::session::{AuthorOutcome, SessionError, StoredAnswer};
-                    let error = match error {
-                        StoredAnswer::Http { status } => SessionError::Http { status },
-                        StoredAnswer::TooLarge { size, limit } => SessionError::TooLarge { size, limit },
-                        StoredAnswer::Unauthorized => SessionError::Unauthorized,
-                        StoredAnswer::Security { code, detail } => SessionError::Security { code, detail },
-                        StoredAnswer::Revoked { body } => SessionError::Revoked { body },
-                        StoredAnswer::Session { code, body } => SessionError::Session { code, body },
-                        StoredAnswer::Ok(_) => return,
-                    };
-                    self.answered(request_id, AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: false }, fx);
-                }
+                Err(error) => self.answered(request_id, crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: false }, fx),
             };
         }
         if error_mark {

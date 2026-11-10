@@ -94,7 +94,7 @@ impl TransferState {
 
     /// The pair of a restored step was answered by Session: the transfer may start its attempt.
     pub(super) fn held_step_answered(&mut self, request_id: u64, outcome: crate::owners::session::AuthorOutcome, fx: &mut Fx) {
-        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, kind } => Some((request_id, body, kind)), _ => None };
+        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, kind } => Some((request_id, Ok((body, kind)))), _ => None };
         for transfer in self.transfers.values_mut().filter(|transfer| transfer.pending_step == Some(request_id)) {
             transfer.pending_step = None;
             transfer.seeded.clone_from(&seeded);

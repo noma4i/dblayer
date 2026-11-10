@@ -101,7 +101,7 @@ pub(crate) fn checked_path(path: &str) -> Result<(), TransportError> {
     Ok(())
 }
 
-pub(super) fn session_failure(error: crate::owners::session::SessionError) -> TransportError {
+pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> TransportError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::StateLost => TransportError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
