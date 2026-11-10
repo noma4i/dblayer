@@ -219,13 +219,10 @@ impl super::Life {
 
     pub fn request_snapshot(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Resync { stream }); }
 
-    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool, revision: i64) {
+    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool, revision: i64, deferred: Option<crate::owners::read::deliveries::Deferred>) {
         let identity = self.published().identity.is_some();
-        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)(), revision });
+        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)(), revision, deferred });
     }
-
-    /// The entity stream just opened reads a temporary id: its window opens at the swap.
-    pub fn defer_stream(&self, stream: StreamId, deferred: crate::owners::read::deliveries::Deferred) { self.wiring.to_deliveries(DeliveryInput::Defer { stream, deferred }); }
 
     /// The next value of a stream: the answer comes with the next value of the journal.
     pub fn pull(&self, stream: StreamId, reader: u64) -> Waiter<PullAnswer> {

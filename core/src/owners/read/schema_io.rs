@@ -294,7 +294,13 @@ pub fn preload_keys(db: &Store, derived: bool) -> Result<Vec<WindowKey>, String>
                         let source = db.spec(&from.model).map_err(|error| error.to_string())?;
                         let scope = source.selection_key(&from.relation, &Map::new()).map_err(|error| error.to_string())?;
                         let ids = db.read(&[from.model.as_str()], |reader| reader.scope_first_ids(&from.model, scope.as_str(), limit)).map_err(|error| error.to_string())?;
-                        ids.into_iter().map(Value::String).collect()
+                        let mut resolved = Vec::with_capacity(ids.len());
+                        for id in ids {
+                            let row = crate::identity::RowId::new(&id).map_err(|error| error.to_string())?;
+                            let row = db.resolve(&from.model, &row).map_err(|error| error.to_string())?;
+                            if !row.is_temp() { resolved.push(Value::String(row.as_str().to_string())); }
+                        }
+                        resolved
                     }
                 };
                 parameters.push((name, choices));

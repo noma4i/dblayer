@@ -12,6 +12,11 @@
 - Attach file fields from a local file path.
 - Read file fields through their local URLs.
 
+### Fixed
+
+- Stream and load calls on a temporary row id send no request until the id is swapped for the server id.
+- A stream on a temporary row id switches to the server row after the swap.
+
 ### Removed
 
 - Removed file-field reads that returned an in-memory byte array.

@@ -161,6 +161,8 @@ impl Store {
 
     pub(crate) fn replaced(&self) -> &Arc<ReplacedLog> { &self.context.replaced }
 
+    pub(crate) fn swaps(&self) -> tokio::sync::watch::Receiver<u64> { self.context.replaced.swaps() }
+
     pub(crate) fn observers(&self) -> &OnceLock<Arc<dyn crate::owners::life::ObserverPort>> { &self.context.observers }
 
     pub fn open_report(&self) -> &OpenReport { &self.context.opened }

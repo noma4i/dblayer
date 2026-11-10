@@ -246,8 +246,33 @@ impl Database {
         self.start_window(epoch, slot, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
     }
 
+    /// The params with the temporary ids swapped for server ids: a call on a row that has no server id yet waits for the swap, and no key and no request exist before it.
+    async fn swapped_params(&self, model: &str, params_json: &str) -> Result<String, DbError> {
+        if !params_json.contains(crate::identity::TEMP_ID_PREFIX) { return Ok(params_json.to_string()); }
+        loop {
+            let mut swaps = self.db.swaps();
+            let (db, found, asked) = (self.db.clone(), model.to_string(), params_json.to_string());
+            let resolved = super::database::blocking(move || {
+                let spec = db.spec(&found)?;
+                let mut params: Map<String, Value> = serde_json::from_str(&asked).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+                for (name, value) in params.iter_mut() {
+                    let Some(temp) = value.as_str().filter(|text| crate::identity::is_temp_id(text)) else { continue };
+                    let target = spec.fields.iter().find_map(|field| field.link.as_ref().filter(|link| link.id == *name)).map_or(found.as_str(), |link| link.model.as_str());
+                    let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+                    let real = db.resolve(target, &temp)?;
+                    if real.is_temp() { return Ok(None); }
+                    *value = Value::String(real.as_str().to_string());
+                }
+                Ok(Some(params))
+            }).await?;
+            if let Some(params) = resolved { return Ok(Value::Object(params).to_string()); }
+            swaps.changed().await.map_err(|_| super::cause_error(&super::EndCause::Closed))?;
+        }
+    }
+
     async fn prepare_load(&self, model: &str, relation: &str, params_json: &str) -> Result<Map<String, Value>, DbError> {
         self.remote()?;
+        let params_json = &self.swapped_params(model, params_json).await?;
         let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let prepared = super::database::blocking(move || {

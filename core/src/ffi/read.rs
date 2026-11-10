@@ -392,8 +392,7 @@ impl Database {
             Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false, None),
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
-        self.life.open_stream(stream, view, epoch, valid, revision);
-        if let Some(deferred) = deferred { self.life.defer_stream(stream, deferred); }
+        self.life.open_stream(stream, view, epoch, valid, revision, deferred);
         let wire = match (&request, valid) {
             (ReadRequest::Events { model }, true) => self.wire(model).ok().cloned(),
             _ => None,

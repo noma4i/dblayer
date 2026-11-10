@@ -281,9 +281,8 @@ pub enum DeliveryEffect {
 
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
-    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64 },
-    /// Follows `Open` of an entity stream on a temporary id that has no server id yet.
-    Defer { stream: StreamId, deferred: Deferred },
+    /// `deferred` is set for an entity stream on a temporary id that has no server id yet: its window opens at the swap.
+    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64, deferred: Option<Deferred> },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
@@ -544,7 +543,7 @@ impl StateOwner for Deliveries {
     fn step(state: &mut DeliveriesState, input: DeliveryInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            DeliveryInput::Open { stream, view, epoch, identity, valid, now, revision } => {
+            DeliveryInput::Open { stream, view, epoch, identity, valid, now, revision, deferred } => {
                 if state.streams.contains_key(&stream) {
                     return out;
                 }
@@ -559,14 +558,10 @@ impl StateOwner for Deliveries {
                 };
                 let mut machine = machine;
                 machine.opened_at = now;
+                machine.deferred = deferred.filter(|_| matches!(machine.view.kind, Kind::Entity { .. }));
                 lower(state.peers, state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
                 state.index(stream);
-            }
-            DeliveryInput::Defer { stream, deferred } => {
-                if let Some(machine) = state.streams.get_mut(&stream).filter(|machine| matches!(machine.view.kind, Kind::Entity { .. })) {
-                    machine.deferred = Some(deferred);
-                }
             }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
             DeliveryInput::TaskFailed { id } => {
