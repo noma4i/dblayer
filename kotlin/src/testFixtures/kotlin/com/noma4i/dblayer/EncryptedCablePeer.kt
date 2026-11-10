@@ -33,6 +33,8 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
     }
 
     val subscribed = Channel<String>(Channel.UNLIMITED)
+    val ping = Channel<String>(Channel.UNLIMITED)
+    val openedCount: Int get() = connections.size
     val closed = Channel<String>(Channel.UNLIMITED)
     private val connections = ConcurrentHashMap<String, Connection>()
     @Volatile var lastOpened: String? = null
@@ -106,6 +108,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         }
         val frame = data.getValue("frame").jsonPrimitive.content
         val body = openFrame(frame, connection.receiveKey!!)
+        if (body["t"]?.jsonPrimitive?.content == "ping") ping.trySend(token)
         if (body["t"]?.jsonPrimitive?.content == "subscribe") {
             val id = body.getValue("id").jsonPrimitive.content
             val operation = body["operationName"]?.jsonPrimitive?.content ?: ""

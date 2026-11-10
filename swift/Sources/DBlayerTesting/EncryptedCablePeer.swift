@@ -19,6 +19,8 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
   public var onSubscribe: (@Sendable (TransportRequest) -> Void)?
   public let opened = AsyncStream<String>.makeStream()
   public let subscribed = AsyncStream<String>.makeStream()
+  public let ping = AsyncStream<String>.makeStream()
+  public var openedCount: Int { lock.withLock { connections.count } }
   public let closed = AsyncStream<String>.makeStream()
   private let lock = NSLock()
   private var connections: [String: Connection] = [:]
@@ -101,6 +103,7 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
     }
     let frame = data["frame"] as! String
     let body = try openFrame(frame, key: connection.receiveKey!)
+    if body["t"] as? String == "ping" { ping.continuation.yield(token) }
     if body["t"] as? String == "subscribe" {
       let id = body["id"] as! String
       connection.subscriptions[body["operationName"] as? String ?? ""] = id
