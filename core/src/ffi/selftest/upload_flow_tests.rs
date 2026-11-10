@@ -73,6 +73,33 @@ async fn xfer_put_response_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn xfer_confirmed_parallel_discard() {
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    settled(&rig, "the chat is visible", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    let held = rig.world.hold_then("PUT", Fault::Http(400));
+    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    held.entered().await;
+    let before = rig.database.life.waiting_calls();
+    let first = { let db = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { db.confirmed(receipt, true).await }) };
+    let second = { let db = rig.database.clone(); rig.spawn(async move { db.confirmed(receipt, false).await }) };
+    settled(&rig, "both receipts wait for failure", || rig.database.life.waiting_calls() >= before + 2).await;
+    held.release();
+    let first = bound(first).await.unwrap();
+    let second = bound(second).await.unwrap();
+    match (first, second) {
+        (Err(crate::ffi::DbError::Rejected { failure: a, kept: false }), Err(crate::ffi::DbError::Rejected { failure: b, kept: false })) => {
+            assert_eq!((a.kind, a.message), (b.kind, b.message));
+        }
+        pair => panic!("both waiters must receive the discarded failure: {pair:?}"),
+    }
+    settled(&rig, "the discarded upload is gone", || status(&chat, "c1", "update_photo").is_none()).await;
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn xfer_confirmed_old_failed_cycle_does_not_discard_retry() {
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
