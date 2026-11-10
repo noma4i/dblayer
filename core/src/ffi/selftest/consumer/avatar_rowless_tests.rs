@@ -121,6 +121,93 @@ async fn consumer_avatar_reopen_discards_orphan_and_sends_pending() {
     reopened.database.close_now();
 }
 
+async fn repair_after_orphan(refused: bool) {
+    use crate::ffi::{OperationQueueStatus, WireUploadStatus};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("repair.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    first.sign_in().await;
+    let epoch = first.database.session_epoch();
+    let mut profile = viewer();
+    profile["user"]["id"] = json!("singleton");
+    first.answer("myProfile", json!({"viewer": profile}));
+    bound(first.database.refresh(epoch, "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer_next("UserPhotoUpdate", json!({"errors":[{"message":"old refusal","extensions":{"code":"FORBIDDEN"}}]}));
+    first.script_put(200, Some("etag"));
+    let old = bound(first.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(matches!(bound(first.database.confirmed(old, false)).await, Err(DbError::Rejected { kept: true, .. })));
+    first.hold(&["UserPhotoUpdate"]);
+    first.script_put(200, Some("etag"));
+    bound(first.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    loop {
+        let received = first.asked().len();
+        if first.requests("UserPhotoUpdate") >= 2 { break; }
+        first.received(received + 1).await;
+    }
+    let items = operations(&first).await;
+    let copy_url = items.iter().find(|item| item.row_id == "other").unwrap().upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::PathBuf::from(copy_url.strip_prefix("file://").unwrap());
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.execute("DELETE FROM sync_upload WHERE model = 'CurrentUser' AND row_id = 'singleton'", []).unwrap(), 1);
+    assert_eq!(connection.execute("UPDATE sync_upload SET row_id = 'singleton' WHERE model = 'CurrentUser' AND row_id = 'other'", []).unwrap(), 1);
+    connection.execute("UPDATE op_row SET row_id = 'singleton' WHERE row_id = 'other'", []).unwrap();
+    connection.execute("UPDATE op SET temp_id = 'singleton' WHERE temp_id = 'other'", []).unwrap();
+    assert_eq!(connection.execute("UPDATE op SET status = 'pending', attempts = 0 WHERE transfer_id = (SELECT transfer_id FROM sync_upload WHERE model = 'CurrentUser')", []).unwrap(), 1);
+    connection.execute("DELETE FROM encrypted_pending", []).unwrap();
+    drop(connection);
+    let reopened = Stand::prepare_online(Some(path.to_string_lossy().into_owned()), credentials, None, false).await;
+    let mut confirmed = good();
+    confirmed["userPhotoUpdate"]["viewer"]["user"]["id"] = json!("singleton");
+    confirmed["userPhotoUpdate"]["viewer"]["user"]["fullName"] = json!("Updated profile");
+    reopened.answer("UserPhotoUpdate", confirmed);
+    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    if refused {
+        reopened.answer_next("UserPhotoUpdate", json!({"data":{"userPhotoUpdate":null},"errors":[{"message":"Please select a profile picture with a clearly visible face.","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    }
+    reopened.database.set_online(true).unwrap();
+    reopened.settle().await;
+    assert_eq!(reopened.requests("UserPhotoUpdate"), 1, "requests: {:?}", reopened.asked());
+    let items = operations(&reopened).await;
+    let epoch = reopened.database.session_epoch();
+    if refused {
+        assert_eq!(items.len(), 1, "failed operation must remain: {items:?}, requests: {:?}", reopened.asked());
+        assert_eq!(items[0].status, OperationQueueStatus::Failed, "queue: {items:?}");
+        let failure = items[0].error.as_ref().expect("failed operation has no error");
+        assert_eq!(failure.kind, "rejected");
+        assert_eq!(failure.extensions.as_ref().and_then(|extensions| extensions.fields.get("reasonCode")).map(String::as_str), Some("\"no_face_detected\""));
+        let row = bound(reopened.database.read_row(epoch, "CurrentUser".into(), "singleton".into())).await.unwrap().unwrap();
+        let upload = &row.uploads.iter().find(|upload| upload.action == "update_photo").unwrap().upload;
+        assert_eq!(upload.status, WireUploadStatus::Failed);
+        assert_eq!(upload.error.as_ref(), Some(failure));
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let retained: i64 = connection.query_row("SELECT COUNT(*) FROM op WHERE status = 'failed' AND seq = (SELECT op_id FROM sync_upload WHERE model = 'CurrentUser' AND row_id = 'singleton' AND action = 'update_photo')", [], |row| row.get(0)).unwrap();
+        assert_eq!(retained, 1, "the saved operation must remain failed: {items:?}, requests: {:?}", reopened.asked());
+        drop(connection);
+        bound(reopened.database.discard(epoch, "CurrentUser".into(), "singleton".into(), Some("update_photo".into()))).await.unwrap();
+        assert!(operations(&reopened).await.is_empty());
+        assert!(!copy.exists());
+        reopened.script_put(200, Some("etag"));
+        let next = bound(reopened.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+        assert!(bound(reopened.database.confirmed(next, false)).await.is_ok());
+    } else {
+        assert!(items.is_empty(), "confirmed operation remains: {items:?}");
+        assert!(!copy.exists());
+        let row = reopened.database.db.read(&["CurrentUser"], |reader| reader.point("CurrentUser", "singleton")).unwrap().unwrap();
+        assert_eq!(row["fullName"], json!("Updated profile"), "the mutation answer must update the profile");
+    }
+    reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_repair_refused_preserves_failed_operation() { repair_after_orphan(true).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_repair_confirmed_clears_operation() { repair_after_orphan(false).await; }
+
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_forbidden_discard_and_next_upload() {
     let mut cases = Vec::new();
