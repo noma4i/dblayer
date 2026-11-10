@@ -210,3 +210,27 @@ async fn consumer_tail_invalid_cursor_restarts_history() {
     assert_eq!(stand.requests("chatThread"), 4);
     stand.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_ordered_page_old_answer_after_delete() {
+    let (stand, history, _stream) = three_pages().await;
+    let (events, token) = stand.events("Message").await;
+    let received = stand.asked().len();
+    stand.hold(&["chatThread"]);
+    stand.answer("chatThread", page(41, 65, true));
+    let database = stand.database.clone();
+    let refresh = tokio::spawn(async move {
+        bound(database.refresh(database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await
+    });
+    stand.received(received + 1).await;
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50"}));
+    let event = bound(events.pull_next()).await;
+    assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
+    settled(&stand, "the deleted message leaves the history", || !ids(&history).contains(&"m50".to_string())).await;
+    stand.release(&["chatThread"]);
+    bound(refresh).await.unwrap().unwrap();
+    stand.settle().await;
+    assert_eq!(ids(&history), (1..=65).filter(|n| *n != 50).map(|n| format!("m{n}")).collect::<Vec<_>>());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    assert_eq!(stand.requests("chatThread"), 4);
+}
