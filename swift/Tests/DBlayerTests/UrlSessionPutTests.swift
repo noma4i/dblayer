@@ -82,7 +82,8 @@ private final class ReadBodyProtocol: URLProtocol, @unchecked Sendable {
     if let stream = request.httpBodyStream {
       stream.open()
       var bytes = [UInt8](repeating: 0, count: 4096)
-      while stream.read(&bytes, maxLength: bytes.count) > 0 {}
+      var count = 0
+      repeat { count = stream.read(&bytes, maxLength: bytes.count) } while count > 0
       stream.close()
     }
     let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
