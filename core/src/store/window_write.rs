@@ -87,7 +87,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
         request.replace_all = to_end;
         request.start_after = start_after;
-        request.local_order = local_order;
+        request.local_order = if page.replace_all { None } else { local_order.clone() };
         replace_plan(&reader, &request, &accepted, page.base_revision).map_err(fault)?
     } else {
         let ids: Vec<String> = incoming_ids(&accepted).iter().map(ToString::to_string).collect();
@@ -107,11 +107,13 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     envelope.entity_ops.extend(plan.entity_ops);
     envelope.scope_ops = plan.scope_ops;
     envelope.edge_writes = edge_writes(&scope, &declared.edge_fields, &accepted, &edges);
+    let keep_tail = crate::owners::read::windows::preserves_tail(local_order.is_some(), page.page, stored.as_ref().and_then(|window| u32::try_from(window.pages).ok()).unwrap_or_default(), page.replace_all);
+    let cursor = if keep_tail { stored.as_ref().and_then(|window| window.cursor.clone()) } else { page.cursor.map(str::to_string) };
     envelope.window = Some(WindowSave {
-        marker: None, stale_since: None, key, scope, cursor: page.cursor.map(str::to_string), has_next: page.cursor.is_some(),
+        marker: None, stale_since: None, key, scope, has_next: cursor.is_some(), cursor,
         total: page.total.or(stored.as_ref().filter(|_| remote.total_from.is_some()).and_then(|window| window.total)),
-        pages: if first { 1 } else { stored.as_ref().map_or(1, |window| window.pages + 1) },
-        anchor: incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())), issued, applied, cleared_at: first.then_some(writer.now),
+        pages: if keep_tail { stored.as_ref().map_or(1, |window| window.pages) } else if first { 1 } else { stored.as_ref().map_or(1, |window| window.pages + 1) },
+        anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(writer.now),
     });
     envelope.validate(writer.generation)?;
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))

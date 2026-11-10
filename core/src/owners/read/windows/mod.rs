@@ -22,6 +22,10 @@ pub use windows_types::*;
 mod windows_facts;
 use windows_facts::*;
 
+pub(crate) fn preserves_tail(ordered: bool, page: u32, pages: u32, replace_all: bool) -> bool {
+    ordered && page == 1 && pages > 1 && !replace_all
+}
+
 #[state_machine(initial = "WinState::idle()", state(name = "WinState"))]
 impl Facts {
     #[state]
@@ -129,7 +133,9 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer, *now),
             Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) => {
                 self.answered_at = *now;
-                self.page_count = if load.page == 1 { 1 } else { self.page_count + 1 };
+                if !preserves_tail(self.local_order, load.page, self.page_count, self.replace_all) {
+                    self.page_count = if load.page == 1 { 1 } else { self.page_count + 1 };
+                }
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
                 self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });

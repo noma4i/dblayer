@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::windows::{AnswerPage, HasMedia, Lifetimes, Marker, MaxPages, MembersComplete, OnForeground, PageRows, RequestKind, WindowKey, WindowKind};
+use super::windows::{AnswerPage, HasLocalOrder, HasMedia, Lifetimes, Marker, MaxPages, MembersComplete, OnForeground, PageRows, RequestKind, WindowKey, WindowKind};
 use super::WindowCodec;
 use crate::store::Store;
 use crate::identity::RowId;
@@ -242,6 +242,13 @@ pub fn lifetimes(db: std::sync::Arc<Store>) -> Lifetimes {
 pub fn members_complete(db: std::sync::Arc<Store>) -> MembersComplete {
     Arc::new(move |key| match key.kind() {
         WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.members_complete),
+        WindowKind::Nodes { .. } => false,
+    })
+}
+
+pub fn has_local_order(db: std::sync::Arc<Store>) -> HasLocalOrder {
+    Arc::new(move |key| match key.kind() {
+        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| matches!(declared.sort, crate::schema::Sort::Fields(_))),
         WindowKind::Nodes { .. } => false,
     })
 }

@@ -30,6 +30,7 @@ pub(super) struct Facts {
     /// The last page that landed.
     pub(super) page: u32,
     pub(super) page_count: u32,
+    pub(super) local_order: bool,
     pub(super) max_pages: u32,
     pub(super) members_complete: bool,
     pub(super) cursor_reset_used: bool,
@@ -366,8 +367,10 @@ impl Facts {
             self.members = members;
             if replaced { self.stale_owed.set(false); }
         }
-        self.cursor = cursor;
-        self.page = page;
+        if !preserves_tail(self.local_order, page, self.page_count, self.replace_all) {
+            self.cursor = cursor;
+            self.page = page;
+        }
         self.landed_revision = revision;
         if page == 1 {
             self.landed_at = self.answered_at;
