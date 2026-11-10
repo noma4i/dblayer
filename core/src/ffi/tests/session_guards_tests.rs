@@ -17,6 +17,7 @@ pub(in super::super) struct WatchedHeld {
     sets: AtomicUsize,
     clears: AtomicUsize,
     fail_next_clear: AtomicBool,
+    fail_next_set: AtomicBool,
 }
 
 impl CredentialStore for WatchedHeld {
@@ -24,6 +25,7 @@ impl CredentialStore for WatchedHeld {
 
     fn set(&self, credential: String) -> Result<(), DbError> {
         self.sets.fetch_add(1, Ordering::SeqCst);
+        if self.fail_next_set.swap(false, Ordering::SeqCst) { return Err(DbError::Storage { detail: "credential save refused".into() }); }
         self.inner.set(&credential).map_err(failure)
     }
 
@@ -34,6 +36,49 @@ impl CredentialStore for WatchedHeld {
             false => self.inner.clear().map_err(failure),
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn life_session_state_read() {
+    use crate::ffi::SessionStanding;
+    let rig = Rig::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let database = rig.open(Some(&path), pin()).await.unwrap();
+    let before = rig.server.seen().len();
+    let status = database.session_status().unwrap();
+    assert_eq!((status.phase, status.identity, status.epoch), (SessionStanding::None, None, database.session_epoch()));
+    assert_eq!(rig.server.seen().len(), before);
+    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
+    let before = rig.server.seen().len();
+    let active = database.session_status().unwrap();
+    assert_eq!(active.phase, SessionStanding::Active);
+    assert!(active.identity.is_some());
+    assert_eq!(active.epoch, database.session_epoch());
+    assert_eq!(rig.server.seen().len(), before);
+    database.close_database().await.unwrap();
+    assert!(matches!(database.session_status(), Err(DbError::Closed { .. })));
+    drop(database);
+    let offline = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::EMPTY_SPECS.to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let before = rig.server.seen().len();
+    let restored = offline.session_status().unwrap();
+    assert_eq!((restored.phase, restored.identity, restored.epoch), (SessionStanding::Active, active.identity, offline.session_epoch()));
+    assert_eq!(rig.server.seen().len(), before);
+    offline.session_reset().await.unwrap();
+    let before = rig.server.seen().len();
+    let reset = offline.session_status().unwrap();
+    assert_eq!((reset.phase, reset.identity, reset.epoch), (SessionStanding::None, None, offline.session_epoch()));
+    assert_eq!(rig.server.seen().len(), before);
+    offline.close_database().await.unwrap();
+    let failed = rig.open(None, pin()).await.unwrap();
+    rig.credentials.fail_next_set.store(true, Ordering::SeqCst);
+    let _ = failed.session_call("social".into(), SOCIAL_BODY.into()).await;
+    let before = rig.server.seen().len();
+    let status = failed.session_status().unwrap();
+    assert_ne!(status.phase, SessionStanding::Active, "a refused credential save cannot publish an active session");
+    assert_eq!(status.epoch, failed.session_epoch());
+    assert_eq!(rig.server.seen().len(), before);
+    failed.close_database().await.unwrap();
 }
 
 pub(in super::super) struct Rig {
