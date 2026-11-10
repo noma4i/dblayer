@@ -289,11 +289,11 @@ impl Stand {
 }
 
 pub(super) fn chat(id: &str, name: &str) -> Value {
-    json!({"__typename": "Chat", "id": id, "uuid": format!("u-{id}"), "kind": "GROUP", "name": name, "viewerState": {"list": "PRIMARY", "lists": ["PRIMARY"], "premium": false, "pinned": false, "muted": false, "read": true}, "revision": 1, "messagesCount": 0, "membersCount": 2, "lastActivityAt": "2026-11-08T00:00:00Z", "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
+    json!({"__typename": "Chat", "id": id, "uuid": format!("u-{id}"), "kind": "GROUP", "name": name, "logoUrl": null, "description": null, "viewerState": {"list": "PRIMARY", "lists": ["PRIMARY"], "connectionStatus": null, "premium": false, "pinned": false, "muted": false, "mutedUntil": null, "read": true, "unreadCount": 0}, "revision": 1, "messagesCount": 0, "membersCount": 2, "lastActivityAt": "2026-11-08T00:00:00Z", "lastMessageAt": null, "connectedAt": null, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
 }
 
 pub(super) fn message(id: &str, chat_id: &str, text: &str) -> Value {
-    json!({"__typename": "Message", "id": id, "chatId": chat_id, "kind": "TEXT", "body": text, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
+    json!({"__typename": "Message", "id": id, "chatId": chat_id, "kind": "TEXT", "body": text, "status": "SENDING", "oneTime": false, "expired": false, "isSystem": false, "isForwarded": false, "isReply": false, "unread": false, "sequenceNumber": null, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
 }
 
 pub(super) fn moment(id: &str, visits: i64) -> Value {
