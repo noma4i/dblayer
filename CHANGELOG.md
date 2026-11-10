@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Declare response roots for multipart upload steps.
+
 ## 6.24.0 - 2026-11-10
 
 ### Added

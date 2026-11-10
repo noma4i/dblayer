@@ -98,14 +98,14 @@ Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
 The database format changes with these tables. Opening a database of another format keeps queued uploads when the layout of their tables is unchanged and clears them otherwise.
 
-An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The model needs no `file` field for it, and the row may not exist yet. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
+An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The model needs no `file` field for it, and the row may not exist yet. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. Multipart `roots` optionally names response paths for `initiate`, `presign`, and `complete`. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
 
 The steps of the upload are declared once in the `.dbl` files and travel with the models:
 
 ```ruby
 uploads do
   create_blob :CreateBlob, root: "uploadCreate.directUpload"
-  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart
+  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart, roots: { initiate: "multipartInit.upload" }
 end
 ```
 
