@@ -65,3 +65,69 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     assert_eq!(requests(&rig, "MediaMarker"), 5);
     rig.database.close_now();
 }
+
+#[derive(Default)]
+struct ChainRows {
+    rows: crate::ffi::tape::Rows,
+    has_more: std::sync::Mutex<Option<bool>>,
+}
+
+impl crate::ffi::tape::Reader for ChainRows {
+    fn delivered(&self, delivery: crate::ffi::tape::StreamDelivery) {
+        match &delivery.value {
+            crate::ffi::ReadValue::Snapshot { state, .. } | crate::ffi::ReadValue::Delta { state, .. } | crate::ffi::ReadValue::State { state, .. } => *self.has_more.lock().unwrap() = Some(state.has_more),
+            _ => {}
+        }
+        crate::ffi::tape::Reader::delivered(&self.rows, delivery);
+    }
+}
+
+fn chain_marker(revision: &str, count: i64, sequence: i64) -> Fault {
+    Fault::Answer(json!({"data":{"node":{"mediaLibrary":{"revision":revision,"visualCount":count,"audioCount":0,"giftCount":0,"latestSequence":sequence}}}}))
+}
+
+fn chain_page(numbers: &[i32], more: bool) -> Fault {
+    let nodes: Vec<_> = numbers.iter().map(|n| json!({"id":n.to_string(),"text":"media","sequenceNumber":n})).collect();
+    Fault::Answer(json!({"data":{"node":{"messages":{"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":numbers.last().unwrap().to_string()}}}}}))
+}
+
+async fn chain_rig() -> (Rig, std::sync::Arc<ChainRows>, std::sync::Arc<crate::ffi::tape::Watched>) {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+        *models = serde_json::from_str::<Value>(include_str!("../../../../fixtures/media-marker.json")).unwrap()["models"].clone();
+    }).await;
+    let document = include_str!("../../../../fixtures/operations/queries/media.graphql");
+    rig.database.register_operations(json!([{"name":"chatMedia", "document":document},{"name":"chatMediaState", "document":document}]).to_string()).await.unwrap();
+    rig.world.fail_next("chatMediaState", chain_marker("1", 0, 6));
+    rig.world.fail_next("chatMedia", chain_page(&[1, 2], true));
+    rig.world.fail_next("chatMedia", chain_page(&[3, 4], true));
+    rig.world.fail_next("chatMedia", chain_page(&[5, 6], false));
+    rig.world.fail_next("chatMediaState", chain_marker("1", 6, 6));
+    let rows = std::sync::Arc::new(ChainRows::default());
+    let query = crate::ffi::QuerySpec::json(r#"{"model":"MediaEntry","relation":"media","params":{"chatId":"c1"}}"#);
+    let stream = rig.database.watch(crate::ffi::ReadRequest::List { query }, rows.clone());
+    crate::test_wait::settled(&rig, "three media pages", || rows.rows.len() == 6).await;
+    assert_eq!(*rows.has_more.lock().unwrap(), Some(false));
+    assert_eq!(rig.world.count("chatMedia"), 3);
+    (rig, rows, stream)
+}
+
+fn chain_ids(rows: &ChainRows) -> Vec<String> { rows.rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect() }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_chain_refresh_keeps_tail() {
+    let (rig, rows, _stream) = chain_rig().await;
+    rig.world.fail_next("chatMediaState", chain_marker("1", 6, 6));
+    let epoch = rig.database.session_epoch();
+    bound(rig.database.refresh(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    crate::test_wait::settled(&rig, "the refresh settled", || chain_ids(&rows).len() == 6).await;
+    assert_eq!(chain_ids(&rows), ["1", "2", "3", "4", "5", "6"]);
+    assert_eq!(*rows.has_more.lock().unwrap(), Some(false));
+    let result = bound(rig.database.load_more(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    assert!(matches!(result, crate::ffi::LoadMoreResult::NoMore), "{result:?}");
+    assert_eq!(rig.world.count("chatMedia"), 3);
+    let calls: Vec<Value> = rig.world.log().into_iter().filter(|entry| entry.operation == "chatMedia").map(|entry| serde_json::from_str::<Value>(&entry.body).unwrap()["variables"].clone()).collect();
+    assert!(calls[0].get("after").is_none_or(Value::is_null), "{calls:?}");
+    assert_eq!(calls[1]["after"], "2");
+    assert_eq!(calls[2]["after"], "4");
+    rig.database.close_now();
+}
