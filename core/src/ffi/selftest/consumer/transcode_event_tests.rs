@@ -100,3 +100,43 @@ async fn consumer_moment_temp_entity_swap() {
     assert!(stand.asked().iter().filter(|(name, _)| name == "MomentNode").all(|(_, variables)| !variables["momentId"].as_str().is_some_and(|id| id.starts_with("temp-"))));
     database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_moment_create_then_stale_entity_reads_node() {
+    use crate::ffi::command::{CommandRequest, CommandUpload};
+    use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
+
+    let stand = Stand::open().await;
+    let database = &stand.database;
+    let epoch = database.session_epoch();
+    database.set_online(false).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("moment.jpg");
+    std::fs::write(&path, b"image").unwrap();
+    let command = CommandRequest {
+        epoch,
+        model: "Moment".into(),
+        values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(),
+        args_json: "{}".into(),
+        upload: Some(CommandUpload {
+            action: "create_file".into(),
+            request: WireUploadRequest {
+                source: WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None },
+                variables_json: "{}".into(),
+            },
+        }),
+    };
+    let receipt = bound(database.send(command)).await.unwrap();
+    stand.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
+    stand.script_put(200, Some("etag"));
+    stand.answer("MomentCreateFile", json!({"momentCreate":{"moment":media_row(moment("77", 0), "PROGRESSING", 40)}}));
+    stand.answer("MomentNode", json!({"node":media_row(moment("77", 0), "PROGRESSING", 40)}));
+    database.set_online(true).unwrap();
+    bound(database.confirmed(receipt)).await.unwrap();
+    assert_eq!(stand.requests_with("MomentNode", "momentId", "77"), 0);
+    let rows = stand.entity("Moment", "77", ReadFetch::Stale);
+    settled(&stand, "the stale entity reads its node", || stand.requests_with("MomentNode", "momentId", "77") == 1).await;
+    assert!(rows.0.lock().unwrap().iter().any(|row| row.id == "77"));
+    assert_eq!(stand.requests_with("MomentNode", "momentId", "77"), 1);
+    database.close_now();
+}
