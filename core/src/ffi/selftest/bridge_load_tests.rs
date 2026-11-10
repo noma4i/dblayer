@@ -10,6 +10,22 @@ use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn win_response_limit_permanent() {
+    let world = World::new("server", "A", true);
+    let limit = crate::transport::MAX_HTTP_RESPONSE_BYTES;
+    world.fail_next("MyProfile", Fault::ResponseTooLarge(limit));
+    let rig = Rig::plain(world, false).await;
+    let reader = Reader::open();
+    let _stream = rig.database.subscribe_reading(rig.database.session_epoch(), profile(), reader.clone());
+    settled(&rig, "the oversized answer ends the window", || reader.deliveries().iter().any(|delivery| matches!(&delivery.value,
+        ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. }
+            if state.phase == ReadPhase::Failed && matches!(&state.error, Some(DbError::ResponseTooLarge { limit: seen }) if *seen == limit)))).await;
+    rig.clock.advance(1_000_000);
+    settled(&rig, "the failed window does not retry", || rig.world.log().iter().filter(|entry| entry.operation == "MyProfile").count() == 1).await;
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dlv_deferred_parent_swap_wakes() {
     let rig = Rig::encrypted_edited(false, false, false, |models| {
         let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
