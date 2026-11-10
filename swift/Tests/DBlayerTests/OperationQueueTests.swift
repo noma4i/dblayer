@@ -51,12 +51,12 @@ extension BridgeProbeTests {
     try await moment.discard(action: "update", in: scope)
     let remaining = try #require(await queue.first("the failed update is gone") { $0.count == 1 && $0[0].status == .pending })
     #expect(remaining[0].action == "update")
-    #expect(await changes.first("the waiting value remains") { $0.first?.text == "second" } != nil)
+    #expect(try await Moment.find(moment.id).current()?.text == "second")
     try DB.database.setOnline(online: true)
     await held.entered()
     held.release()
     #expect(try await second.confirmed().value?.text == "second")
-    #expect(await changes.first("the confirmed value") { $0.first?.text == "second" } != nil)
+    #expect(try await Moment.find(moment.id).current()?.text == "second")
     #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
   }
 
