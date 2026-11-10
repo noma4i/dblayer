@@ -25,7 +25,7 @@ pub fn tx(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
         Input::InterestPlus { stream_id, .. } => {
             row(e, if t.st == St::AwaitingSource { "xfer_pending_interest" } else { "xfer_interest" });
             g.subs.entry(t.id).or_default().insert(*stream_id);
-            e.push(Effect::Status { stream_id: *stream_id, transfer_id: t.id, shown: shown(g, t) });
+            e.push(Effect::Status { stream_id: *stream_id, transfer_id: t.id, shown: t.stored_shown.clone().unwrap_or_else(unknown_shown) });
         }
         Input::RoundStatus { refused, .. } => tx_round_status(g, t, refused, e),
         Input::Committed { .. } | Input::Rejected { .. } => tx_store(g, t, i, e),

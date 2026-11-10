@@ -40,14 +40,6 @@ pub fn shown(g: &G, t: &Transfer) -> Shown {
     Shown { status, wait_reason, sent_bytes: sent, total_bytes: t.size, error: if matches!(t.st, St::Failed) { t.error.clone() } else { None }, local_url: t.local_url, round_error: t.round_error.clone() }
 }
 
-pub fn status_push(g: &G, t: &Transfer, before: &Shown, e: &mut Vec<Effect>) {
-    let after = shown(g, t);
-    if *before == after { return; }
-    let mut ids: Vec<StreamId> = g.subs.get(&t.id).map(|x| x.iter().cloned().collect()).unwrap_or_default();
-    if let Some(k) = g.key_subs.get(&t.key) { ids.extend(k.iter().cloned()); }
-    for stream_id in ids { e.push(Effect::Status { stream_id, transfer_id: t.id, shown: after.clone() }); }
-}
-
 pub fn commit(g: &mut G, t: &Transfer, e: &mut Vec<Effect>, ops: Vec<Op>) -> StoreBatch {
     let b = g.next_batch;
     g.next_batch += 1;
@@ -155,10 +147,33 @@ pub fn run_on(s: &mut State, id: TransferId, i: &Input, e: &mut Vec<Effect>) {
     let mut t = match s.transfers.remove(&id) { Some(t) => t, None => { row(e, "stray_unknown_transfer"); return; } };
     let before = shown(&s.g, &t);
     tx(&mut s.g, &mut t, i, e);
-    status_push(&s.g, &t, &before, e);
-    t.stored_shown = Some(shown(&s.g, &t));
+    write_shown(&mut s.g, &t, &before, e);
     after(s, t);
     run_post(s, e);
+}
+
+/// A changed status is a Store `UploadShown` batch (D-226): readers see the value only once it is committed.
+pub fn write_shown(g: &mut G, t: &Transfer, before: &Shown, e: &mut Vec<Effect>) {
+    let now = shown(g, t);
+    if now == *before || t.st == St::Done { return; }
+    let b = g.next_batch;
+    g.next_batch += 1;
+    g.shown_batches.insert(b, (t.id, now.clone()));
+    e.push(Effect::Store { batch: b, generation: g.generation, basis: None, ops: vec![Op::UploadShown { shown: now }] });
+}
+
+pub fn shown_committed(s: &mut State, batch: StoreBatch, res: &Result<u64, Reason>, e: &mut Vec<Effect>) -> bool {
+    let Some((id, now)) = s.g.shown_batches.remove(&batch) else { return false };
+    if res.is_err() { return true; }
+    let Some(t) = s.transfers.get_mut(&id) else { return true };
+    let before = t.stored_shown.clone();
+    t.stored_shown = Some(now.clone());
+    if before.as_ref() != Some(&now) {
+        let mut ids: Vec<StreamId> = s.g.subs.get(&id).map(|x| x.iter().cloned().collect()).unwrap_or_default();
+        if let Some(k) = s.g.key_subs.get(&t.key) { ids.extend(k.iter().cloned()); }
+        for stream_id in ids { e.push(Effect::Status { stream_id, transfer_id: id, shown: now.clone() }); }
+    }
+    true
 }
 
 pub fn find_open(s: &State, key: &TransferKey) -> Option<TransferId> { s.transfers.values().find(|t| t.key == *key).map(|t| t.id) }

@@ -136,6 +136,7 @@ pub fn restore_failed_state(t: &mut Transfer, e: &mut Vec<Effect>) {
 
 pub fn store_reply(s: &mut State, batch: StoreBatch, epoch: u64, res: Result<u64, Reason>, e: &mut Vec<Effect>) {
     if epoch != s.g.epoch { row(e, "r4_store_reply_other"); return; }
+    if shown_committed(s, batch, &res, e) { return; }
     let kind = match s.g.batches.remove(&batch) { Some(k) => k, None => { row(e, "r2_store_reply_unknown"); return; } };
     match kind {
         BatchKind::Own { ids, ops } => {

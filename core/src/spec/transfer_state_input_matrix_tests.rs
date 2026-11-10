@@ -1,7 +1,7 @@
 //! Matrix S for the owner Transfer: scripts of the table (accept, write, copy, steps, failure) are played on the owner and on `ref_transfer`; after every step of a script and after every second input, the stage and the reply tokens of the transfer on both sides must be the same. Reply tokens keep the full `Ended(cause)` so a bare fault on the owner reads as a red cell. The reference is `ref_transfer::step` written from the table only; a mismatch is a red cell, not a change of the reference. The adapter between the inputs of the reference and the inputs of the owner is the code of this file; a cell can be red because of it, the message tells which side moved.
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use super::ref_transfer::{step, AbortFault, Answer as RefAnswer, Cached, Check, Effect, Failure, Input as RefInput, Item, MutOut, Source as RefSource, St, State, Target, TransferKey, ErrKind};
+use super::ref_transfer::{step, AbortFault, Answer as RefAnswer, Cached, Check, Effect, Failure, Input as RefInput, Item, MutOut, Op, Source as RefSource, St, State, Target, TransferKey, ErrKind};
 use super::transfer_harness::{Out, Twin};
 use crate::owners::write::outbox::OutboxOutcome;
 use crate::owners::write::transfer::{TransferAnswer, TransferEffect};
@@ -303,9 +303,15 @@ impl RefRun {
 
     fn feed(&mut self, input: RefInput) {
         let (state, effects) = step(&self.state, &input);
-        for effect in &effects { if let Effect::Store { batch, .. } = effect { self.pending.push(*batch); } }
+        let mut shown = Vec::new();
+        for effect in &effects {
+            if let Effect::Store { batch, ops, .. } = effect {
+                if ops.iter().all(|op| matches!(op, Op::UploadShown { .. })) { shown.push(*batch); } else { self.pending.push(*batch); }
+            }
+        }
         for effect in &effects { if let Effect::Reply(_, answer) = effect { self.replies.push(ref_answer(answer)); } }
         self.state = state;
+        for batch in shown { self.feed(RefInput::Committed { batch, epoch: 1, revision: 1 }); }
         if effects.iter().any(|effect| matches!(effect, Effect::SelfSlotFreed)) { self.feed(RefInput::SlotFreed); }
     }
 
