@@ -224,5 +224,5 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> 
     envelope.scope_ops = plan.scope_ops;
     envelope.operation_transitions = plan.transitions;
     envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack });
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None)
+    writer.apply(&envelope)
 }

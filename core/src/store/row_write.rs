@@ -8,7 +8,7 @@ use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::owners::store::RowValue;
 use crate::schema::AssociationSpec;
 
-use super::merge::{admitted, Admission, RowKind};
+use super::merge::{admitted_with_fields, unconfirmed_fields, Admission, RowKind};
 use super::{ModelInfo, Reader, StoreError};
 
 fn number_at(row: &mut Map<String, Value>, path: &[&str], number: i64) {
@@ -36,6 +36,19 @@ pub(super) struct RowWrite<'a> {
 }
 
 impl RowWrite<'_> {
+    pub fn apply(&mut self, envelope: &BatchPlan) -> Result<CommitResult, StoreError> {
+        let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
+        let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
+        let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, self.now, self.revision, Some(self.originals), Some((&mut self.current, &hidden)))?;
+        for operation in &envelope.entity_ops {
+            if let EntityOp::Destroy { model, id, reason } = operation {
+                if reason.writes_tombstone() { self.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), self.revision); }
+            }
+        }
+        if !envelope.operation_transitions.is_empty() { self.feed_fields.clear(); self.feed_hidden = None; }
+        Ok(result)
+    }
+
     pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let id = RowId::new(&row.row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
@@ -43,14 +56,25 @@ impl RowWrite<'_> {
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
         let kind = if local { RowKind::Local } else { RowKind::Server };
         let reader = Reader::new(self.connection, self.models);
+        let Some(patch_id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
+        let key = (model.to_string(), patch_id.to_string());
+        if !self.current.contains_key(&key) { self.current.insert(key.clone(), reader.stored_row(model, patch_id.as_str())?); }
+        let mut stored = BTreeMap::new();
+        if let Some(Some(row)) = self.current.get(&key) { stored.insert(patch_id.to_string(), row.clone()); }
+        let ids = [patch_id.to_string()];
+        if !self.feed_tombstones.get(model).is_some_and(|entries| entries.contains_key(patch_id.as_str())) {
+            let rows = reader.tombstones(model, &ids)?;
+            self.feed_tombstones.entry(model.to_string()).or_default().extend(rows);
+        }
+        let fields = unconfirmed_fields(&reader, self.closing, model, &ids)?;
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards)? else { return Ok(None) };
+        let Some(row) = admitted_with_fields(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards, Some(&fields), self.feed_tombstones.get(model), Some(&stored))? else { return Ok(None) };
         let mut envelope = BatchPlan::new(self.generation);
         envelope.response_rows = response;
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         envelope.validate(self.generation)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None).map(Some)
+        self.apply(&envelope).map(Some)
     }
 
     pub fn remove(&mut self, model: &str, id: &str) -> Result<CommitResult, StoreError> {
@@ -65,7 +89,7 @@ impl RowWrite<'_> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id, reason });
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn touch_upload(&mut self, key: &str) -> Result<CommitResult, StoreError> {
@@ -74,7 +98,7 @@ impl RowWrite<'_> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(model), id });
-        let mut result = super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)?;
+        let mut result = self.apply(&envelope)?;
         result.uploads_changed = true;
         Ok(result)
     }
@@ -83,14 +107,14 @@ impl RowWrite<'_> {
         let reader = Reader::new(self.connection, self.models);
         let mut envelope = BatchPlan::new(self.generation);
         super::file_write::attach(&reader, self.models, &mut envelope, record)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn detach(&mut self, model: &str, id: &str, field: &str) -> Result<CommitResult, StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let mut envelope = BatchPlan::new(self.generation);
         super::file_write::detach(&reader, self.models, &mut envelope, model, id, field)?;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn local_pending(&mut self, model: &str, rows: &[RowValue]) -> Result<CommitResult, StoreError> {
@@ -101,20 +125,20 @@ impl RowWrite<'_> {
             let value = value.get("value").cloned().ok_or_else(|| StoreError::Constraint("pending value has no value".into()))?;
             envelope.pending_locals.push(PendingLocal { model: model.to_string(), row_id: row.row_id.clone(), path: path.to_string(), value });
         }
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn transitions(&mut self, transitions: Vec<OperationTransition>) -> Result<CommitResult, StoreError> {
         let mut envelope = BatchPlan::new(self.generation);
         envelope.operation_transitions = transitions;
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn stale_families(&mut self, families: &[(String, String)]) -> Result<CommitResult, StoreError> {
         let since = super::windows::max_sequence(self.connection)? + 1;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.window_debts.extend(families.iter().map(|(model, relation)| WindowDebt { model: model.clone(), relation: relation.clone(), since }));
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None)
+        self.apply(&envelope)
     }
 
     pub fn numbers(&mut self, model: &str, row_id: &str, writes: &[(String, i64)]) -> Result<Option<CommitResult>, StoreError> {
@@ -124,6 +148,6 @@ impl RowWrite<'_> {
         let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals), None).map(Some)
+        self.apply(&envelope).map(Some)
     }
 }

@@ -82,7 +82,7 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     let (mut envelope, _) = effects(&reader, writes, writer)?;
     envelope.writes_local = true;
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None)
+    writer.apply(&envelope)
 }
 
 pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, action): (&str, &str, &str), payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
@@ -129,5 +129,5 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, acti
         rollback: Some(prior),
     })));
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), None)
+    writer.apply(&envelope)
 }
