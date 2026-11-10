@@ -124,7 +124,7 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     }
 }
 
-fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperation, revision: i64) -> Result<Restore, StoreError> {
+fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperation, revision: i64, rows: &super::apply::Prefetched) -> Result<Restore, StoreError> {
     let mut plan = Restore::default();
     let Some(prior) = Prior::of(entry)? else { return Ok(plan) };
     let own = entry.operation.id.0;
@@ -146,7 +146,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
                 restore_member(reader, &mut chain, own, (model, id, scope_key), before, revision, &mut plan)?;
             }
             PriorRow::Edited { model, id, before, owned } => {
-                restore_edit(reader, &mut chain, own, (model, id), (before, owned), revision, &mut plan)?;
+                restore_edit(rows, &mut chain, own, (model, id), (before, owned), revision, &mut plan)?;
             }
         }
     }
@@ -179,7 +179,7 @@ fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, 
 }
 
 fn restore_edit(
-    reader: &Reader<'_>,
+    rows: &super::apply::Prefetched,
     chain: &mut Chain<'_>,
     own: i64,
     (model, id): (&str, &str),
@@ -187,7 +187,7 @@ fn restore_edit(
     revision: i64,
     plan: &mut Restore,
 ) -> Result<(), StoreError> {
-    let stored = reader.stored_row(model, id)?;
+    let stored = rows.get(&(model.to_string(), id.to_string())).cloned().flatten();
     let current = stored.as_ref().map(|stored| stored.row.clone());
     let mut restored = current.clone().unwrap_or_default();
     for (field, owned_at) in owned {
@@ -216,9 +216,16 @@ fn restore_edit(
 
 pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> Result<CommitResult, StoreError> {
     let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
-    let reader = Reader::new(writer.connection, writer.models);
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
     let entry = OutboxOperation::read(&reader, seq)?.ok_or_else(|| StoreError::Constraint(format!("operation {seq} does not exist")))?;
-    let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision)?;
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
+    for row in Prior::of(&entry)?.into_iter().flat_map(|prior| prior.rows) {
+        if let PriorRow::Edited { model, id, .. } = row { wanted.entry(model).or_default().push(id); }
+    }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids)?; }
+    let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision, &writer.current)?;
     let mut envelope = BatchPlan::new(writer.generation);
     envelope.entity_ops = plan.entity_ops;
     envelope.scope_ops = plan.scope_ops;
