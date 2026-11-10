@@ -68,3 +68,35 @@ async fn out_retry_two_ops_same_key_failed_only() {
     assert_eq!(rig.world.count("ProfileUpdate"), 3, "one refusal and one request per operation");
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_discard_two_transfers_same_key_failed_only() {
+    use super::flow_fixtures::chat_row;
+    use super::rig_tests::World;
+    use super::upload_fixtures::add_uploads;
+    use crate::ffi::upload_wire::WireUploadRequest;
+    use crate::owners::write::upload::UploadFile;
+
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| { add_chat(models); add_uploads(models); })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("photo.jpg");
+    std::fs::write(&path, b"photo").unwrap();
+    let request = || {
+        let mut file = UploadFile::new(path.to_str().unwrap());
+        file.variables = json!({"id":"c1"}).as_object().unwrap().clone();
+        WireUploadRequest::of(&file)
+    };
+    let epoch = rig.database.session_epoch();
+    let held = rig.world.hold_then("CreateBlob", Fault::Http(422));
+    let first = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request())).await.unwrap();
+    held.entered().await;
+    let second = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request())).await;
+    assert!(matches!(second, Err(DbError::InFlight { .. })), "{second:?}");
+    held.release();
+    assert!(matches!(bound(rig.database.confirmed(first)).await, Err(DbError::Rejected { kept: true, .. })));
+    let removed = bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await;
+    assert!(removed.is_ok(), "{removed:?}");
+    assert!(matches!(bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await, Err(DbError::NotFound { .. })));
+    rig.database.close_now();
+}
