@@ -93,3 +93,4 @@ ordered_case!(consumer_ordered_gift_media, "Message", "gift_media", "chatMedia",
 ordered_case!(consumer_ordered_visual_since, "Message", "visual_since", "chatMedia", r#"{"chatId":"c1","afterSequence":0}"#, "IMAGE", true);
 ordered_case!(consumer_ordered_audio_since, "Message", "audio_since", "chatMedia", r#"{"chatId":"c1","afterSequence":0}"#, "AUDIO", true);
 ordered_case!(consumer_ordered_gifts_since, "Message", "gifts_since", "chatMedia", r#"{"chatId":"c1","afterSequence":0}"#, "GIFT", true);
+ordered_case!(consumer_ordered_moment_by_user, "Moment", "by_user", "userMoments", r#"{"userId":"u1"}"#, "", false);
