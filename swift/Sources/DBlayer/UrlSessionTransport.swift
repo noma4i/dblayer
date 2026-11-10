@@ -36,32 +36,18 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
     request.httpMethod = "PUT"
     target.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
     do {
-      let delegate = PutProgress(progress)
       let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? UInt64 ?? 0
       let response: URLResponse
       let body: Data
       if file.offset == 0 && file.length == size {
-        (body, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: delegate)
+        (body, response) = try await BoundedExchange(limit: target.responseLimit, progress: progress).run(in: session) { $0.uploadTask(with: request, fromFile: URL(fileURLWithPath: file.path)) }
       } else {
-        (body, response) = try await PartUpload(file: file, progress: progress).run(request, in: session)
+        (body, response) = try await PartUpload(file: file, progress: progress, limit: target.responseLimit).run(request, in: session)
       }
       let http = response as? HTTPURLResponse
       return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: String(decoding: body, as: UTF8.self))
     } catch {
       return .failed(error)
     }
-  }
-}
-
-private final class PutProgress: RefuseRedirect, @unchecked Sendable {
-  private let progress: ByteProgress
-
-  init(_ progress: ByteProgress) {
-    self.progress = progress
-    super.init()
-  }
-
-  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-    progress.sent(bytes: UInt64(totalBytesSent))
   }
 }

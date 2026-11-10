@@ -1,70 +1,24 @@
 import Foundation
 
 /// One PUT of a file range: the body leaves through a bound stream fed from the file in pieces of at most `chunk` bytes.
-/// The state of the request is touched only on the delegate queue of the session, which is serial.
-final class PartUpload: RefuseRedirect, URLSessionDataDelegate, @unchecked Sendable {
+final class PartUpload: BoundedExchange, @unchecked Sendable {
   static let chunk = 64 * 1024
 
   private let file: PutFile
-  private let progress: ByteProgress
-  private var queue: OperationQueue?
-  private var task: URLSessionTask?
-  private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
-  private var body = Data()
-  private var failure: Error?
 
-  init(file: PutFile, progress: ByteProgress) {
+  init(file: PutFile, progress: ByteProgress, limit: UInt64) {
     self.file = file
-    self.progress = progress
-    super.init()
+    super.init(limit: limit, progress: progress)
   }
 
   func run(_ request: URLRequest, in session: URLSession) async throws -> (Data, URLResponse) {
     var request = request
     request.setValue(String(file.length), forHTTPHeaderField: "Content-Length")
-    let task = session.uploadTask(withStreamedRequest: request)
-    task.delegate = self
-    queue = session.delegateQueue
-    self.task = task
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        self.continuation = continuation
-        task.resume()
-      }
-    } onCancel: {
-      task.cancel()
-    }
+    return try await run(in: session) { $0.uploadTask(withStreamedRequest: request) }
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
     completionHandler(open())
-  }
-
-  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-    progress.sent(bytes: UInt64(totalBytesSent))
-  }
-
-  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-    body.append(data)
-  }
-
-  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    let continuation = continuation
-    self.continuation = nil
-    if let reason = failure ?? error {
-      continuation?.resume(throwing: reason)
-    } else if let response = task.response {
-      continuation?.resume(returning: (body, response))
-    } else {
-      continuation?.resume(throwing: URLError(.badServerResponse))
-    }
-  }
-
-  private func fail(_ error: Error) {
-    queue?.addOperation { [self] in
-      if failure == nil { failure = error }
-      task?.cancel()
-    }
   }
 
   private func open() -> InputStream? {
