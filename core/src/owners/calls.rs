@@ -95,7 +95,7 @@ pub enum CallsInput {
     /// The addressed answer of `Network` to `SnapshotRequest{Calls}`.
     Snapshot(Online),
     ActivateEpoch(Epoch),
-    EpochEnded,
+    EpochEnded(Cause),
     Closing,
     Idle,
 }
@@ -321,7 +321,7 @@ impl StateOwner for Calls {
                 state.awaiting_by_id.clear();
                 fx.push(CallsEffect::SnapshotRequest { epoch });
             }
-            CallsInput::EpochEnded => state.interrupt(CallError::SessionEnded, &mut fx, &mut finished),
+            CallsInput::EpochEnded(cause) => state.interrupt(if cause == Cause::Close { CallError::Closed } else { CallError::SessionEnded }, &mut fx, &mut finished),
             CallsInput::Closing => {
                 state.interrupt(CallError::Closed, &mut fx, &mut finished);
                 if !state.drained {
@@ -342,7 +342,7 @@ impl StateOwner for Calls {
 
     fn tick(_now: Time) -> CallsInput { CallsInput::Idle }
 
-    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> CallsInput { CallsInput::EpochEnded }
+    fn epoch_ended(_epoch: Epoch, cause: Cause) -> CallsInput { CallsInput::EpochEnded(cause) }
 
     fn closing() -> CallsInput { CallsInput::Closing }
 }
