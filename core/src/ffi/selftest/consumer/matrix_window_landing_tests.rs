@@ -82,7 +82,11 @@ async fn run(path: &str) {
                     remaining = removal(position, &ALL);
                     stand.answer("blockedUsers", page(&remaining, has_next));
                     if path == "refetch" {
-                        stand.answer("UserUnblock", json!({"userUnblock": {"user": user("u4")}}));
+                        let mut public_user = user("u4");
+                        public_user["fullAvatarUrl"] = Value::Null;
+                        public_user["gender"] = Value::Null;
+                        public_user["shareUrl"] = Value::Null;
+                        stand.answer("UserUnblock", json!({"userUnblock": {"user": public_user}}));
                         bound(stand.database.act(epoch, "User".into(), "u4".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
                     } else {
                         bound(stand.database.refresh(epoch, "User".into(), Some("blocked".into()), "{}".into())).await.unwrap();
