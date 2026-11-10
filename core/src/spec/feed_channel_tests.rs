@@ -98,7 +98,7 @@ impl Rig {
             seen.sort();
             want.sort();
             assert_eq!(seen, want, "the owner and the reference give the same effects of the row");
-            assert_eq!(self.state().confirmed(, false), self.reference.confirmed.iter().cloned().collect::<Vec<_>>(), "the same confirmed channels");
+            assert_eq!(self.state().confirmed(), self.reference.confirmed.iter().cloned().collect::<Vec<_>>(), "the same confirmed channels");
             for model in ["Chat", "Post", "Third"] {
                 assert_eq!(self.state().position(model), self.reference.position.get(model).copied().unwrap_or(0), "the same position of {model}");
             }
@@ -180,7 +180,7 @@ fn feed_chan_ready_subscribes_all() {
     rig.want("Chat", CHAT);
     rig.want("Post", POST);
     assert_eq!(rig.handshake(), ["subscribe:A", "subscribe:B"], "one subscribe per channel, none per model, no ready before a confirmation");
-    assert_eq!(rig.state().confirmed(, false), Vec::<String>::new());
+    assert_eq!(rig.state().confirmed(), Vec::<String>::new());
 }
 
 #[test]
@@ -325,7 +325,7 @@ fn feed_chan_scope_variables_want_minus() {
     rig.confirm(ABOUT);
     assert!(rig.unwant("Screen", SCREEN).is_empty(), "the other window of the channel still wants it");
     assert_eq!(rig.unwant("Screen", SCREEN + 1), [format!("unsubscribe:{HOME}")], "the last window of the channel takes only its channel away");
-    assert_eq!((rig.state().subscribed(), rig.state().confirmed(, false)), ([ABOUT].map(String::from).to_vec(), [ABOUT].map(String::from).to_vec()));
+    assert_eq!((rig.state().subscribed(), rig.state().confirmed()), ([ABOUT].map(String::from).to_vec(), [ABOUT].map(String::from).to_vec()));
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn feed_chan_confirmed_unwanted() {
     rig.want("Third", THIRD);
     assert_eq!(rig.unwant("Third", THIRD), ["unsubscribe:C"]);
     assert!(rig.confirm("C").is_empty());
-    assert_eq!(rig.state().confirmed(, false), ["A", "B"]);
+    assert_eq!(rig.state().confirmed(), ["A", "B"]);
 }
 
 #[test]
@@ -365,7 +365,7 @@ fn feed_chan_unwant_last_user() {
     rig.want("Third", THIRD);
     rig.confirm("C");
     assert_eq!(rig.unwant("Third", THIRD), ["unsubscribe:C"]);
-    assert_eq!((rig.state().subscribed(), rig.state().confirmed(, false)), (["A", "B"].map(String::from).to_vec(), ["A", "B"].map(String::from).to_vec()));
+    assert_eq!((rig.state().subscribed(), rig.state().confirmed()), (["A", "B"].map(String::from).to_vec(), ["A", "B"].map(String::from).to_vec()));
     assert_eq!(rig.unwant("Post", POST), Vec::<String>::new(), "B is still read by Chat");
 }
 
@@ -373,7 +373,7 @@ fn feed_chan_unwant_last_user() {
 fn feed_chan_ended_resubscribes() {
     let mut rig = Rig::live();
     assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) }), ["schedule:channel"]);
-    assert_eq!(rig.state().confirmed(, false), ["A"], "the channel left the confirmed channels");
+    assert_eq!(rig.state().confirmed(), ["A"], "the channel left the confirmed channels");
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
@@ -384,7 +384,7 @@ fn feed_chan_ended_resubscribes() {
 fn feed_chan_ended_retryable() {
     let mut rig = Rig::live();
     assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) }), ["schedule:channel"]);
-    assert_eq!(rig.state().confirmed(, false), ["A"], "a retryable cable error leaves the channel like a plain end");
+    assert_eq!(rig.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
