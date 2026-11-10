@@ -39,4 +39,31 @@ class UploadRowlessTest {
             source.delete()
         }
     }
+    @Test
+    fun aSecondUploadOfTheSameActionAfterConfirmation() = bounded {
+        val first = Files.createTempFile("first", ".mp4").toFile().apply { writeText("first") }
+        val second = Files.createTempFile("second", ".mp4").toFile().apply { writeText("second") }
+        try {
+            val transport = MockTransport()
+            val row = """"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""""
+            openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]""")
+            for (name in listOf("first", "second")) {
+                transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage.test/$name","headers":{},"signedId":"$name","blobId":"$name"}}}""")
+                transport.enqueuePut("https://storage.test/$name")
+                transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row,"successMessage":"$name"}}}""")
+            }
+            val firstReceipt = Moment.uploadClip(AccountScope.current(), id = "absent", source = first.path)
+            assertEquals("m77", firstReceipt.confirmed().value?.id)
+            val secondReceipt = Moment.uploadClip(AccountScope.current(), id = "absent", source = second.path)
+            assertEquals("m77", secondReceipt.confirmed().value?.id)
+            assertEquals("second", secondReceipt.answer<MomentUploadClipResult>().successMessage)
+            assertEquals(listOf("CreateBlob", "CreateMoment", "CreateBlob", "CreateMoment"), transport.calls.map { it.operationName })
+            assertTrue(transport.unscripted.isEmpty())
+        } finally {
+            closeForCleanup()
+            first.delete()
+            second.delete()
+        }
+    }
+
 }
