@@ -287,6 +287,7 @@ fn xfer_confirmed_waits_file_delete() {
 #[test]
 fn xfer_confirmed_delete_spawn_failed() {
     let mut w = world();
+    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap());
     let path = w.source(KEY, &vec![5u8; 300 * 1024]);
     w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
     w.accept(KEY, path, 1);
@@ -306,6 +307,7 @@ fn xfer_confirmed_delete_spawn_failed() {
 fn xfer_confirmed_delete_failure_keeps_rejection() {
     use std::os::unix::fs::PermissionsExt;
     let mut w = world();
+    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap());
     let path = w.source(KEY, &vec![5u8; 300 * 1024]);
     w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
     w.accept(KEY, path, 1);
