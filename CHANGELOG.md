@@ -4,6 +4,9 @@
 
 ### Added
 
+- Upload a file to a row that does not exist yet: the receipt shows no optimistic value and the answer of the final mutation writes the row.
+- Declare nested objects in `returns` of a model action, with the syntax of a standalone operation.
+- Read the value of an active file transfer from `OperationInfo.upload` (`uploadInfo`), also without a row.
 - Wait for a receipt with `confirmed`, which returns the value or throws `Rejected`.
 - Read the session with `sessionStatus`: epoch, identity and phase.
 - Fail with `ResponseTooLarge` when an HTTP response exceeds its size limit.

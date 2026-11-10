@@ -98,7 +98,7 @@ Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
 The database format changes with these tables. Opening a database of another format keeps queued uploads when the layout of their tables is unchanged and clears them otherwise.
 
-An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
+An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The model needs no `file` field for it, and the row may not exist yet. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
 
 The steps of the upload are declared once in the `.dbl` files and travel with the models:
 
@@ -328,3 +328,31 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - `upload` on a row that does not exist fails with `NotFound` for every model. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action), then `NotFound` for the row.
 - `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
+
+## Upload to a row that does not exist
+
+An upload may target a row that is not in the base yet, such as the avatar of the registration step or a singleton before its first read. The call is the same, the receipt shows no `optimisticValue`, and the final mutation answer writes the row. The queue, retry, reading the file in pieces, restart and cleanup are those of an upload to a row. A refusal of the final mutation throws `Rejected` from `confirmed` with `kept: true`, like every upload. `operations()` shows the transfer by its key before any row exists.
+
+```ruby
+operation :update_photo, upload: true do
+  optimistic false
+  mutation "UserPhotoUpdate"
+  wrap "input"
+  returns do
+    attribute :userPhoto, AvatarPhoto do
+      attribute :status, :string
+    end
+  end
+  response from: "userPhotoUpdate.viewer"
+end
+```
+
+```swift
+let sent = try await CurrentUser.updatePhoto(UploadRequest(path: path), in: scope)
+let confirmed = try await sent.confirmed()
+```
+
+```kotlin
+val sent = CurrentUser.updatePhoto(UploadRequest(path = path), scope)
+val confirmed = sent.confirmed()
+```

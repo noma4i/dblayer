@@ -93,6 +93,9 @@ Each item of the list is an `OperationInfo`:
 | `error` | the failure of a `failed` write |
 | `createdAt` | when the write was queued |
 | `blockedBy` | the `seq` of the failed write of the same row that this write waits behind |
+| `upload` | the value of `uploads[action]` of an active file transfer, as the row shows it; `uploadInfo` gives it as `UploadInfo` (nil/null for a write that is no transfer) |
+
+An active file transfer is in the list from its acceptance until it ends, also when its row does not exist, and after a restart. An entry that has an operation shows once and carries `upload`.
 
 ```swift
 let scope = try DB.account()
