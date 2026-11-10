@@ -278,19 +278,23 @@ impl Delivery {
             Val::Retry { .. } => self.journal.retain(|kept| !matches!(kept, Val::Retry { .. })),
             _ => {}
         }
+        if matches!(value, Val::Gap) && matches!(self.journal.back(), Some(Val::Gap)) {
+            return;
+        }
         self.journal.push_back(value);
         if self.journal.len() > JOURNAL_LIMIT {
             let (mut first, mut last, mut at) = (u64::MAX, 0u64, None);
             while self.journal.len() > JOURNAL_LIMIT - 1 {
-                let Some(index) = self.journal.iter().position(|kept| matches!(kept, Val::Event { .. } | Val::Lost { .. })) else { break };
+                let Some(index) = self.journal.iter().position(|kept| matches!(kept, Val::Event { .. } | Val::Lost { .. } | Val::Gap)) else { break };
                 at.get_or_insert(index);
                 match self.journal.remove(index).unwrap() {
                     Val::Event { position, .. } => { first = first.min(position); last = last.max(position); }
                     Val::Lost { first: a, last: b } => { first = first.min(a); last = last.max(b); }
+                    Val::Gap => {}
                     _ => unreachable!(),
                 }
             }
-            if let Some(index) = at { self.journal.insert(index, Val::Lost { first, last }); }
+            if let Some(index) = at { self.journal.insert(index, if first > last { Val::Gap } else { Val::Lost { first, last } }); }
         }
         if self.waiting {
             self.waiting = false;

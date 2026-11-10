@@ -281,6 +281,29 @@ fn dlv_prop_bounded() {
 }
 
 #[test]
+fn dlv_prop_gap_bounded() {
+    let mut twin = open_events();
+    for position in 1..=600u64 {
+        twin.post(d::DeliveryInput::ModelEvent { stream: STREAM, position, payload: format!("c{position}") });
+        twin.reference.step(Input::ModelEvent { position, payload: format!("c{position}") });
+        twin.post(d::DeliveryInput::ModelGap { stream: STREAM });
+        twin.reference.step(Input::ModelGap);
+        assert!(twin.state().journal_len(STREAM) <= d::JOURNAL_LIMIT, "journal holds {} after {position}", twin.state().journal_len(STREAM));
+    }
+    let values = twin.read_all();
+    let mut next = 1;
+    for value in &values {
+        match value {
+            Val::Event { position, .. } if *position == next => next += 1,
+            Val::Lost { first, last } if *first == next => next = last + 1,
+            Val::Gap => {}
+            other => panic!("{other:?} at {next}"),
+        }
+    }
+    assert_eq!(next, 601, "events and lost ranges cover 1..=600 with gaps in between");
+}
+
+#[test]
 fn dlv_prop_ready_once() {
     let mut twin = open_as(Kind::Events);
     twin.step(Input::ModelEvent { position: 1, payload: "c1".into() });

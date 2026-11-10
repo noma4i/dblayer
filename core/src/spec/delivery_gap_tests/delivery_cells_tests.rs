@@ -474,6 +474,16 @@ fn dlv_live_gap() {
 }
 
 #[test]
+fn dlv_live_gap_coalesced() {
+    let mut twin = open_events();
+    twin.step_read(Input::ModelEvent { position: 1, payload: "c1".into() });
+    assert_eq!(twin.step(Input::ModelGap), [Effect::Available]);
+    assert!(twin.step(Input::ModelGap).is_empty(), "a second Gap without a read has no effect");
+    assert_eq!(twin.state().journal_len(STREAM), 1);
+    assert_eq!(twin.read_all(), [Val::Gap]);
+}
+
+#[test]
 fn dlv_live_gap_before_ready() {
     let mut twin = open_as(Kind::Events);
     twin.step(Input::Joined { position: 0 });
