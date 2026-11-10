@@ -98,7 +98,7 @@ Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
 The database format changes with these tables. Opening a database of another format keeps queued uploads when the layout of their tables is unchanged and clears them otherwise.
 
-An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The model needs no `file` field for it, and the row may not exist yet. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. Multipart `roots` optionally names response paths for `initiate`, `presign`, and `complete`. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
+An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action while its upload is waiting, preparing, transferring or sending the final mutation returns `InFlight`. A new upload replaces a failed upload of the same action. The model needs no `file` field for it, and the row may not exist yet. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. Multipart `roots` optionally names response paths for `initiate`, `presign`, and `complete`. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
 
 The steps of the upload are declared once in the `.dbl` files and travel with the models:
 
@@ -131,6 +131,18 @@ moment.uploads["upload_clip"]?.status       // Uploading
 moment.uploads["upload_clip"]?.progress      // 42.0
 moment.cancelUpload("upload_clip")
 ```
+
+To replace a failed upload, start the same action with the new request. The library discards the old upload, removes its optimistic value and file copy, and keeps any multipart abort owed to the server. The old receipt reports `discarded`. The app does not need to read the failed state or call `discard` before starting the replacement. `retry(action)` and `discard(action)` remain available for a failed upload.
+
+```swift
+let replacement = try await DB.account().upload(moment, action: "upload_clip", newRequest)
+```
+
+```kotlin
+val replacement = AccountScope.current().upload(moment, "upload_clip", newRequest, Moment)
+```
+
+For a batch, this rule applies to each item key. A failed upload at an item key is replaced. An upload still in progress at any item key returns `InFlight` for the whole batch.
 
 ### Android background transfer
 
@@ -324,7 +336,7 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - `retry(action)` and `discard(action)` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - Offline cancellation returns without a network call and keeps the multipart upload id. When the network returns, the saved cancellation aborts the multipart and removes the operation.
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
-- One record has one open upload per declared action.
+- One record has one upload in progress per declared action. A new upload replaces a failed upload of that action.
 - `upload` on a row that does not exist is accepted: it opens a transfer with no optimistic value and the answer of the final mutation writes the row. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action or variables). A missing row is no refusal.
 - `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
