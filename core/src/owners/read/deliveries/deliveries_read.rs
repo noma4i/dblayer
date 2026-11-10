@@ -8,6 +8,7 @@ impl Delivery {
     fn start_read(&mut self, revision: i64, mode: ReadMode) -> Emit {
         self.read_id += 1;
         self.read_revision = revision;
+        self.upload_inflight = self.view.kind == Kind::Blob;
         Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone(), mode })
     }
 

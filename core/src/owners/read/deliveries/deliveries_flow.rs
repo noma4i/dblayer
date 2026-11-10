@@ -219,11 +219,12 @@ impl Delivery {
         let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _, _)| *reason != blob.wait_reason);
         self.transfer = Some(blob);
         self.status_revision = revision;
-        if changed_reason { fx.push(self.new_read(self.read_revision)); } else { self.show_status(fx); }
+        if changed_reason { fx.push(self.new_read(self.read_revision)); } else if !self.upload_inflight { self.show_status(fx); }
     }
 
     pub(super) fn upload_read(&mut self, row: UploadRowRead, revision: i64, fx: &mut Vec<Emit>) {
         self.upload_row = Some(row);
+        self.upload_inflight = false;
         self.status_revision = self.status_revision.max(revision);
         self.show_status(fx);
     }

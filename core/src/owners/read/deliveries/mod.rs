@@ -346,6 +346,8 @@ struct Delivery {
     upload_row: Option<UploadRowRead>,
     retry: Option<RetryStatus>,
     status_revision: i64,
+    /// A read of the row of a `Blob` stream is in flight: a status that arrives meanwhile waits for it, so a value never mixes revisions.
+    upload_inflight: bool,
     journal: VecDeque<Value>,
     waiting: Option<OutcomeId>,
     ended_given: bool,

@@ -35,6 +35,7 @@ impl Delivery {
             upload_row: None,
             retry: None,
             status_revision: 0,
+            upload_inflight: false,
             journal: VecDeque::new(),
             waiting: None,
             ended_given: false,
