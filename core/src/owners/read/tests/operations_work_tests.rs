@@ -9,8 +9,10 @@ use serde_json::json;
 
 thread_local! { static SQL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
-fn count_sql(sql: &str) {
-    if sql.trim_start().to_ascii_uppercase().starts_with("SELECT") { SQL.with(|count| count.set(count.get() + 1)); }
+fn count_sql(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.trim_start().to_ascii_uppercase().starts_with("SELECT") { SQL.with(|count| count.set(count.get() + 1)); }
+    }
 }
 
 fn operation(seq: i64, row: &str, action: &str, status: OperationStatus) -> Operation {
@@ -50,11 +52,11 @@ fn queue_work(n: usize, m: usize) -> (usize, usize) {
     }
     SQL.with(|count| count.set(0));
     take_comparisons();
-    db.lock().connection.trace(Some(count_sql));
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
     let (_, operations, transfers) = db.read_queue(0).unwrap();
     assert_eq!((operations.len(), transfers.len()), (n, m));
     queue_of(&operations).unwrap();
-    db.lock().connection.trace(None);
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
     (SQL.with(|count| count.get()), take_comparisons())
 }
 
