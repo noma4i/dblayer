@@ -9,6 +9,7 @@ public struct OperationFailure: Codable, Sendable, Equatable {
   public let requestLimit: UInt64?
   public let message: String
   public let extensions: GraphqlExtensions?
+  public var responseLimit: UInt64? = nil
 }
 
 public struct SyncInfo: Codable, Sendable, Equatable {
@@ -88,7 +89,7 @@ extension UploadStatus {
 }
 
 extension OperationFailure {
-  init(wire: WireFailure) { self.init(kind: wire.kind, sessionCode: wire.sessionCode, requestSize: wire.requestSize, requestLimit: wire.requestLimit, message: wire.message, extensions: wire.extensions) }
+  init(wire: WireFailure) { self.init(kind: wire.kind, sessionCode: wire.sessionCode, requestSize: wire.requestSize, requestLimit: wire.requestLimit, message: wire.message, extensions: wire.extensions, responseLimit: wire.responseLimit) }
 }
 
 extension SyncInfo {

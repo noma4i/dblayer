@@ -70,6 +70,9 @@ pub struct WireFailure {
     pub request_limit: Option<u64>,
     pub message: String,
     pub extensions: Option<crate::transport::GraphqlExtensions>,
+    /// Set for `response_too_large`: the limit of the answer in bytes.
+    #[uniffi(default = None)]
+    pub response_limit: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -289,8 +292,9 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
 pub(super) fn failure(failure: &OperationFailure) -> WireFailure {
     let session_code = match failure.kind { crate::value::sync::FailureKind::Session(code) => Some(code), _ => None };
     let (request_size, request_limit) = match failure.kind { crate::value::sync::FailureKind::RequestTooLarge { size, limit } => (Some(size), Some(limit)), _ => (None, None) };
-    let kind = if request_size.is_some() { "request_too_large".to_string() } else if matches!(failure.kind, crate::value::sync::FailureKind::ResponseTooLarge { .. }) { "response_too_large".to_string() } else { enum_text(&failure.kind).unwrap_or_default() };
-    WireFailure { kind, session_code, request_size, request_limit, message: failure.message.clone(), extensions: failure.extensions.clone() }
+    let response_limit = match failure.kind { crate::value::sync::FailureKind::ResponseTooLarge { limit } => Some(limit), _ => None };
+    let kind = if request_size.is_some() { "request_too_large".to_string() } else if response_limit.is_some() { "response_too_large".to_string() } else { enum_text(&failure.kind).unwrap_or_default() };
+    WireFailure { kind, session_code, request_size, request_limit, message: failure.message.clone(), extensions: failure.extensions.clone(), response_limit }
 }
 
 pub(crate) fn upload(info: &UploadInfo) -> WireUpload {
