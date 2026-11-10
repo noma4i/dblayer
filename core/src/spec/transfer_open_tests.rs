@@ -105,6 +105,24 @@ fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
 }
 
 #[test]
+fn xfer_prop_discard_outcome_before_or_after_declaration() {
+    for outcome_first in [true, false] {
+        let mut row = completed(1, KEY);
+        row.has_intent = true;
+        let (mut twin, _) = undeclared(vec![row]);
+        let register = || TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] };
+        let outcome = || TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, outcome: OutboxOutcome::Discarded, intent_removed: true };
+        let mut removed = Vec::new();
+        for input in if outcome_first { vec![outcome(), register()] } else { vec![register(), outcome()] } {
+            removed.extend(twin.post(input).removed());
+        }
+        assert_eq!(removed, vec![KEY.to_string()], "outcome_first={outcome_first}");
+        twin.commit();
+        assert_eq!(twin.stage(1), TransferStage::Done, "outcome_first={outcome_first}");
+    }
+}
+
+#[test]
 fn xfer_restored() {
     let mut failed = row(2, OTHER);
     failed.restore_failed = Some("moved".into());
