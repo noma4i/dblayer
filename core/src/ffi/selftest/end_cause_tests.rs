@@ -336,3 +336,30 @@ async fn boundary_owner_answer_survives_close() {
     let value = String::from("value (no end)");
     assert_eq!(actual, (value.clone(), value.clone(), value, cause_tag(&EndCause::Discarded)), "an answer the owner gave before the close reaches the caller unchanged (P-BND-11, D-281)");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_prop_mutation_against_end_any_order_resolved() {
+    let mut cases = Vec::new();
+    for close in [false, true] {
+        cases.push(tokio::spawn(async move {
+            let rig = Rig::encrypted().await;
+            rig.login_ios("A").await;
+            let epoch = rig.database.session_epoch();
+            let gate = rig.world.hold_next("UnregisterDevice");
+            let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
+            let mut call = Box::pin(rig.database.run(epoch, "UnregisterDevice".into(), "{}".into()));
+            poll_pending(call.as_mut(), &wake);
+            answer_woke(&wake).await;
+            poll_pending(call.as_mut(), &wake);
+            gate.entered().await;
+            gate.release();
+            answer_woke(&wake).await;
+            if close { rig.database.close_now(); } else { bound(rig.database.session_reset()).await.unwrap(); }
+            let answer = bound(call).await.unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&answer).unwrap(), serde_json::json!({"ok":true}));
+            assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "UnregisterDevice").count(), 1);
+            rig.database.close_now();
+        }));
+    }
+    for case in cases { bound(case).await.unwrap(); }
+}
