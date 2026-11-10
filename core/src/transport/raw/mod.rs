@@ -4,6 +4,11 @@ use super::{GraphQLRequest, NetworkPurpose, SecurityCode, TransportError};
 
 pub const CONNECT_TIMEOUT_MS: u64 = 10_000;
 pub const REQUEST_TIMEOUT_MS: u64 = 30_000;
+/// The most bytes of an HTTP answer a platform reads for a GraphQL or encrypted request.
+pub const MAX_HTTP_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+/// The most bytes of the answer to a PUT of a file range.
+pub const MAX_PUT_RESPONSE_BYTES: u64 = 64 * 1024;
+const RESPONSE_LIMIT_DOMAIN: &str = "DBlayer.ResponseLimit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawFailureKind {
@@ -12,6 +17,7 @@ pub enum RawFailureKind {
     Unreachable,
     Timeout,
     Io,
+    ResponseLimit,
 }
 
 /// The raw facts of a call that produced no HTTP answer: the platform error domain (a `NSError` domain, or the exception class name), its code and its text. The core alone derives the kind.
@@ -39,6 +45,7 @@ impl RawFailure {
     pub fn kind(&self) -> RawFailureKind {
         let class = self.domain.as_str();
         let code = self.code.unwrap_or_default();
+        if class == RESPONSE_LIMIT_DOMAIN && code == 1 { return RawFailureKind::ResponseLimit; }
         if class == URL_ERROR_DOMAIN && self.code.is_some() {
             return match code {
                 URL_CANCELLED => RawFailureKind::Cancelled,
@@ -63,6 +70,7 @@ impl RawFailure {
             RawFailureKind::Unreachable => (URL_ERROR_DOMAIN, Some(-1009)),
             RawFailureKind::Timeout => (URL_ERROR_DOMAIN, Some(URL_TIMED_OUT)),
             RawFailureKind::Io => ("java.io.EOFException", None),
+            RawFailureKind::ResponseLimit => (RESPONSE_LIMIT_DOMAIN, Some(1)),
         };
         Self { domain: domain.into(), code, message: message.into() }
     }
@@ -92,6 +100,8 @@ pub struct HttpRequest {
     pub connect_ms: u64,
     pub request_ms: u64,
     pub purpose: NetworkPurpose,
+    /// The most bytes of the answer the platform reads: it counts while reading and aborts with `DBlayer.ResponseLimit` code 1 at the next byte.
+    pub response_limit: u64,
 }
 
 /// The owner that minted the request id of an `HttpRequest`. Ids of different authors may repeat, so a double keys by the pair.
@@ -134,6 +144,11 @@ pub enum ExchangeKind {
     Query,
     Mutation,
     Post,
+    Put,
+}
+
+impl ExchangeKind {
+    pub fn response_limit(self) -> u64 { if self == ExchangeKind::Put { MAX_PUT_RESPONSE_BYTES } else { MAX_HTTP_RESPONSE_BYTES } }
 }
 
 /// The one place where a raw platform failure gets its class. A mutation that may have reached the server is `Interrupted`, a call that never left the device is `Network`.
@@ -143,6 +158,7 @@ pub fn classify(failure: &RawFailure, kind: ExchangeKind) -> TransportError {
         RawFailureKind::Cancelled => TransportError::Interrupted(detail),
         RawFailureKind::Tls => TransportError::Security { code: SecurityCode::TlsTrust, detail },
         RawFailureKind::Unreachable => TransportError::Network(detail),
+        RawFailureKind::ResponseLimit => if kind == ExchangeKind::Mutation { TransportError::Interrupted(detail) } else { TransportError::ResponseTooLarge { limit: kind.response_limit() } },
         RawFailureKind::Timeout | RawFailureKind::Io => if kind == ExchangeKind::Mutation { TransportError::Interrupted(detail) } else { TransportError::Network(detail) },
     }
 }
@@ -207,6 +223,7 @@ pub fn graphql_call(endpoint: &str, request: &GraphQLRequest, wire: WireIds, app
         connect_ms: CONNECT_TIMEOUT_MS,
         request_ms: REQUEST_TIMEOUT_MS,
         purpose: request.purpose,
+        response_limit: MAX_HTTP_RESPONSE_BYTES,
     }
 }
 
@@ -223,6 +240,7 @@ pub fn encrypted_call(origin: &str, path: &str, body: String, (purpose, wire): (
         connect_ms: CONNECT_TIMEOUT_MS,
         request_ms: REQUEST_TIMEOUT_MS,
         purpose,
+        response_limit: MAX_HTTP_RESPONSE_BYTES,
     })
 }
 

@@ -112,6 +112,8 @@ pub enum DbError {
     Http { status: u16, detail: String },
     #[error("request is {size} bytes, exceeding the local limit of {limit} bytes")]
     RequestTooLarge { size: u64, limit: u64 },
+    #[error("the answer is above the limit of {limit} bytes")]
+    ResponseTooLarge { limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
@@ -186,6 +188,7 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::Http { status: 401, body } => Self::Unauthorized { detail: body },
             TransportError::Http { status, body } => Self::Http { status, detail: body },
             TransportError::RequestTooLarge { size, limit } => Self::RequestTooLarge { size, limit },
+            TransportError::ResponseTooLarge { limit } => Self::ResponseTooLarge { limit },
             TransportError::Network(detail) => Self::Network { detail },
             TransportError::Interrupted(detail) => Self::Interrupted { detail },
             TransportError::NoSession => Self::NoSession { detail: "the session ended".into() },

@@ -25,6 +25,8 @@ pub struct PutTarget {
     pub headers: HashMap<String, String>,
     pub connect_ms: u64,
     pub request_ms: u64,
+    /// The most bytes of the answer the platform reads, counted while reading.
+    pub response_limit: u64,
 }
 
 #[derive(uniffi::Object)]
@@ -194,6 +196,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
         DbError::NoSession { .. } => core::TransportError::NoSession,
         DbError::Http { status, detail } => core::TransportError::Http { status, body: detail },
         DbError::RequestTooLarge { size, limit } => core::TransportError::RequestTooLarge { size, limit },
+        DbError::ResponseTooLarge { limit } => core::TransportError::ResponseTooLarge { limit },
         DbError::Graphql { messages, extensions } => core::TransportError::Graphql { messages, extensions },
         DbError::Session { code, detail } => core::TransportError::Session { code, detail },
         other => core::TransportError::Decode(other.to_string()),
@@ -225,11 +228,11 @@ impl core::Upstream for ForeignTransport {
         let cancel = request.cancel.clone();
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let headers = core::merge_headers(HashMap::new(), request.headers.into_iter().collect());
-        let target = PutTarget { url: request.url, headers, connect_ms: core::CONNECT_TIMEOUT_MS, request_ms: core::REQUEST_TIMEOUT_MS };
+        let target = PutTarget { url: request.url, headers, connect_ms: core::CONNECT_TIMEOUT_MS, request_ms: core::REQUEST_TIMEOUT_MS, response_limit: core::MAX_PUT_RESPONSE_BYTES };
         match self.port.put(target, request.file, request.identity, progress).await {
             core::RawOutcome::Response { status, etag, .. } => Ok(core::PutReply { status, etag }),
             core::RawOutcome::Failed { .. } if cancel.is_cancelled() => Err(core::TransportError::Interrupted("the upload was cancelled".into())),
-            core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),
+            core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Put)),
         }
     }
 }

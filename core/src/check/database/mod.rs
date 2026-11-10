@@ -65,6 +65,7 @@ pub(super) fn error_kind(error: &DbError) -> &'static str {
         DbError::Interrupted { .. } => "interrupted",
         DbError::Http { .. } => "http",
         DbError::RequestTooLarge { .. } => "request_too_large",
+        DbError::ResponseTooLarge { .. } => "response_too_large",
         DbError::Graphql { .. } => "graphql",
         DbError::Session { .. } => "session",
         DbError::Closed { .. } => "closed",
