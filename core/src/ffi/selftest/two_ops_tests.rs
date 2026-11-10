@@ -100,3 +100,19 @@ async fn xfer_discard_two_transfers_same_key_failed_only() {
     assert!(matches!(bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await, Err(DbError::NotFound { .. })));
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_discard_two_ops_without_failure_keeps_waiting() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    let waiting = update(&rig, json!({"name":"waiting"}), "waiting").await;
+    let result = bound(rig.database.discard(epoch, "User".into(), "user".into(), Some("update".into()))).await;
+    assert!(matches!(result, Err(DbError::NotFound { .. })), "{result:?}");
+    let row = bound(rig.database.read_row(epoch, "User".into(), "user".into())).await.unwrap().unwrap();
+    assert_eq!(cell(&rig, "User", &row, "name"), text("waiting"));
+    rig.database.set_online(true).unwrap();
+    assert!(bound(rig.database.confirmed(waiting)).await.is_ok());
+    assert_eq!(rig.world.count("ProfileUpdate"), 1);
+    rig.database.close_now();
+}
