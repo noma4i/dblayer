@@ -304,7 +304,7 @@ async fn consumer_rowless_failed_expiry_removes_copy() {
     stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
     stand.script_put(200, Some("etag"));
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    assert!(matches!(bound(stand.database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
+    assert!(matches!(bound(stand.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
     let items = operations(&stand).await;
     assert_eq!(items.len(), 1);
     let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
@@ -367,7 +367,7 @@ async fn consumer_rowless_multipart_steps() {
     assert!(receipt.optimistic_value.is_none());
     tokio::select! {
         () = first.entered() => {},
-        outcome = bound(database.confirmed(receipt.clone())) => panic!("multipart ended before the first part: {outcome:?}"),
+        outcome = bound(database.confirmed(receipt.clone(), false)) => panic!("multipart ended before the first part: {outcome:?}"),
     }
     assert_eq!(stand.puts.seen.lock().unwrap().len(), 1);
     first.release();
@@ -391,7 +391,7 @@ async fn consumer_rowless_multipart_steps() {
     assert_eq!(final_requests.len(), 1);
     assert!(final_requests[0].to_string().contains("multipart-signed"));
     final_mutation.release();
-    bound(database.confirmed(receipt)).await.unwrap();
+    bound(database.confirmed(receipt, false)).await.unwrap();
     database.close_now();
 }
 
