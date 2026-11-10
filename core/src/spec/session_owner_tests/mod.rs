@@ -187,6 +187,7 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::SealProbe { seal_id, pending, credential } => RefEffect::SealProbe { seal_id: *seal_id, pending: pending_of(pending), credential: *credential },
         SessionEffect::CommitPending { batch, epoch, pending, session } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending), session: *session },
         SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), erase_session: *erase_session },
+        SessionEffect::CommitRevoked { batch, epoch } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: None, sequence: None, answer: None, erase_session: true },
         SessionEffect::HttpRequest { pending, attempt_id } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id },
         SessionEffect::HttpCancel { attempt_id } => RefEffect::HttpCancel { attempt_id: *attempt_id },
         SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
@@ -270,7 +271,7 @@ impl Twin {
             Input::RestoreFailed { epoch, error } => SessionInput::RestoreFailed { epoch, error },
             Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
             Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
-            Input::Revoked { request_id, attempt_id, body, .. } => SessionInput::Revoked { request_id, attempt_id, body },
+            Input::Revoked { request_id, attempt_id, body, author_ref } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: EPOCH },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },

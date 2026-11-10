@@ -68,7 +68,7 @@ fn sess_generating_other() {
         let inputs = [
             SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick(Time(0)),
             SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: None } },
-            SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into() },
+            SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into(), author_ref: None, epoch: 0 },
             SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None },
             SessionInput::Dropped { request_id: 9, attempt_id: 9 },
             SessionInput::Committed(Committed { batch: 9, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),

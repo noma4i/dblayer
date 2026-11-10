@@ -185,6 +185,7 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::RequestTooLarge { size, limit } => Self::RequestTooLarge { size, limit },
             TransportError::Network(detail) => Self::Network { detail },
             TransportError::Interrupted(detail) => Self::Interrupted { detail },
+            TransportError::NoSession => Self::NoSession { detail: "the session ended".into() },
             TransportError::Decode(detail) => Self::Invalid { detail },
             TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail } => Self::Unauthorized { detail },
             TransportError::Session { code, detail } => Self::Session { code, detail },

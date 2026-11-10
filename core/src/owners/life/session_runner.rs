@@ -190,7 +190,7 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logou
             let kind = classify_answer(&WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() }, sequenced, has_document);
             let refusal = match kind { AnswerKind::Refused { code } | AnswerKind::NotConsumed { code } | AnswerKind::PermanentSession { code } => Some(code), _ => None };
             if matches!(kind, AnswerKind::Revoked) {
-                return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
+                return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string(), author_ref: None, epoch: 0 };
             }
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal, kind }
         }
@@ -277,6 +277,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
                 self.commit(batch, epoch, ops);
             }
+            SessionEffect::CommitRevoked { batch, epoch } => self.commit(batch, epoch, vec![StoreOp::EraseSession]),
             SessionEffect::HttpRequest { pending, attempt_id } => {
                 let request_id = pending.request_id;
                 let Some(wire) = self.wires.get(&request_id) else {
@@ -307,7 +308,10 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     };
                     let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
                     back.reply(EpochStamp::Control, match sent {
-                        Ok(result) => session_input(request_id, attempt_id, logout, sequence.is_some(), has_document, result),
+                        Ok(result) => match session_input(request_id, attempt_id, logout, sequence.is_some(), has_document, result) {
+                            SessionInput::Revoked { request_id, attempt_id, body, author_ref, .. } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: pending.epoch },
+                            input => input,
+                        },
                         Err(_) => SessionInput::GateClosed { request_id, attempt_id },
                     });
                 }));

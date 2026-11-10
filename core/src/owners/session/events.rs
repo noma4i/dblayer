@@ -5,6 +5,7 @@ impl SessionState {
         let phase = std::mem::replace(&mut self.phase, SessionPhase::Closed);
         if matches!(phase, SessionPhase::Closed) {
             match input {
+                SessionInput::Revoked { author_ref: Some(author), request_id, .. } => author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Closed),
                 SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(SessionError::Closed)),
                 SessionInput::SessionResume { reply: id } => fx.push(SessionEffect::ResumeReply { id, answer: Err(SessionError::Closed) }),
                 SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::Closed),
@@ -12,6 +13,29 @@ impl SessionState {
                 _ => {}
             }
             return;
+        }
+        if let SessionInput::Revoked { author_ref: Some(author), request_id, epoch, body, .. } = &input {
+            self.phase = phase;
+            if *epoch != self.epoch || !self.current(*epoch) { author_error(fx, *author, *request_id, ErrorClass::Permanent, SessionError::NoSession); return; }
+            let batch = self.batch();
+            self.external_revoked.insert(batch, (*author, *request_id, body.clone(), *epoch));
+            fx.push(SessionEffect::CommitRevoked { batch, epoch: *epoch });
+            return;
+        }
+        if let SessionInput::Committed(committed) = &input {
+            if let Some((author, request_id, body, epoch)) = self.external_revoked.remove(&committed.batch) {
+                self.phase = phase;
+                author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Revoked { body });
+                fx.push(SessionEffect::ServerEnded(ServerEnded { epoch }));
+                return;
+            }
+        }
+        if let SessionInput::Rejected(rejected) = &input {
+            if let Some((author, request_id, _, _)) = self.external_revoked.remove(&rejected.batch) {
+                self.phase = phase;
+                author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Rejected(rejected.reason.clone()));
+                return;
+            }
         }
         if let SessionInput::HttpFailed { attempt_id } = &input {
             if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
@@ -561,7 +585,7 @@ impl SessionState {
                     self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::SequenceConflict, landing: None };
                 }
             }
-            SessionInput::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
+            SessionInput::Revoked { request_id, attempt_id, body, .. } if mine(request_id, attempt_id) => {
                 self.answer_kind = Some(crate::transport::AnswerKind::Revoked);
                 let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked { body }) };
                 self.land(pending, answer, None, None, true, fx);

@@ -14,6 +14,7 @@ const EPOCH_SHIFT: u32 = 32;
 pub struct EpochGate {
     state: AtomicU64,
     transport: OnceLock<Arc<dyn Upstream>>,
+    revoked: OnceLock<Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>>,
     /// Test builds record every request that reaches the network after `shutdown`; the gate fails the test that sent it when it is dropped.
     #[cfg(test)]
     recorder: recorder::Recorder,
@@ -53,7 +54,7 @@ enum Admit {
 }
 
 impl Default for EpochGate {
-    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), #[cfg(test)] recorder: recorder::Recorder::default() } }
+    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), #[cfg(test)] recorder: recorder::Recorder::default() } }
 }
 
 fn epoch_of(state: u64) -> u64 { state >> EPOCH_SHIFT }
@@ -70,6 +71,8 @@ impl EpochGate {
 
     pub fn attach(&self, transport: Arc<dyn Upstream>) { let _ = self.transport.set(transport); }
 
+    pub(crate) fn attach_revoked(&self, revoked: Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>) { let _ = self.revoked.set(revoked); }
+
     pub fn has_transport(&self) -> bool { self.transport.get().is_some() }
 
     fn lend(&self, epoch: Option<Epoch>) -> Result<Arc<dyn Upstream>, TransportError> {
@@ -82,9 +85,19 @@ impl EpochGate {
     }
 
     /// A request to the network of `epoch` (`None` belongs to no epoch): the epoch check, the borrow of the transport, the call and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without a transport to call. The borrow lasts as long as the call.
-    pub async fn query(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.lend(epoch)?.query(request).await }
+    pub async fn query(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch)?.query(request).await).await }
 
-    pub async fn mutate(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.lend(epoch)?.mutate(request).await }
+    pub async fn mutate(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch)?.mutate(request).await).await }
+
+    async fn answer(&self, epoch: Option<Epoch>, result: Result<Response, TransportError>) -> Result<Response, TransportError> {
+        match (epoch, result) {
+            (Some(epoch), Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail })) => match self.revoked.get() {
+                Some(revoked) => Err(revoked(epoch, detail).await),
+                None => Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail }),
+            },
+            (_, result) => result,
+        }
+    }
 
     pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.lend(epoch)?.put(request).await }
 

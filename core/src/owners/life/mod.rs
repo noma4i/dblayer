@@ -378,6 +378,23 @@ impl Life {
         let wiring = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
         if let Some(transport) = &ports.transport { wiring.gate.attach(transport.clone()); }
         let wiring = Arc::new(wiring);
+        let weak = Arc::downgrade(&wiring);
+        if session.is_some() { wiring.gate.attach_revoked(Arc::new(move |epoch, body| {
+            let weak = weak.clone();
+            Box::pin(async move {
+                let Some(wiring) = weak.upgrade() else { return crate::transport::TransportError::Interrupted("the database closed".into()) };
+                let request_id = super::contract::next_request_id();
+                let author_ref = WAITER_AUTHOR.saturating_add(request_id);
+                let waiter = wiring.mutations.register_as(author_ref, Epoch::MAX);
+                wiring.to_session(SessionInput::Revoked { request_id, attempt_id: 0, body, author_ref: Some(author_ref), epoch });
+                match waiter.wait().await {
+                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::Revoked { body }, .. })) => crate::transport::TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail: body },
+                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::NoSession, .. })) => crate::transport::TransportError::NoSession,
+                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::Rejected(super::contract::RejectReason::Storage(detail)) | super::session::SessionError::Storage(detail), .. })) => crate::transport::TransportError::Storage(detail),
+                    _ => crate::transport::TransportError::Interrupted("the session ended".into()),
+                }
+            })
+        })); }
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });

@@ -18,6 +18,8 @@ pub enum TransportError {
     Session { code: super::SessionCode, detail: String },
     #[error("interrupted: {0}")]
     Interrupted(String),
+    #[error("the session ended")]
+    NoSession,
     #[error("decode: {0}")]
     Decode(String),
     #[error("no scripted reply for {0}")]

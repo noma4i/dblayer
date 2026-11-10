@@ -209,6 +209,7 @@ pub enum SessionEffect {
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
     /// `erase_session`: the sign-in failed, `encrypted_session` of its new credential goes with the pending.
     CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, erase_session: bool },
+    CommitRevoked { batch: BatchId, epoch: Epoch },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Backoff` (R5b).
@@ -260,7 +261,7 @@ pub enum SessionInput {
     /// The snapshot of `ReadIntents`: Session classifies `pending`; `answers` go to the authors, `pending_lost` is the dropped `encrypted_pending` (also `Open.dropped_pending`).
     Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode>, kind: crate::transport::AnswerKind },
-    Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
+    Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<ReplyId>, epoch: Epoch },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     /// The executor of the HTTP exchange of `attempt_id` died.
@@ -299,6 +300,7 @@ pub struct SessionState {
     epoch: Epoch,
     published: PublishedState,
     after_publish: Option<AnswerAfterPublish>,
+    external_revoked: std::collections::BTreeMap<BatchId, (AuthorId, RequestId, String, Epoch)>,
     subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
     restored_detached: Option<PendingCall>,
@@ -440,7 +442,7 @@ impl SessionEffect {
     pub fn io_id(&self) -> Option<EffectId> {
         match self {
             Self::SealProbe { seal_id: id, .. } => Some(seal_id(*id)),
-            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } => Some(*batch),
+            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } | Self::CommitRevoked { batch, .. } => Some(*batch),
             Self::HttpRequest { attempt_id, .. } => Some(http_id(*attempt_id)),
             Self::GenerateCredential { secret_op_id } => Some(secret_id(0, *secret_op_id)),
             Self::StoreSecret { secret_op_id, .. } => Some(secret_id(1, *secret_op_id)),
