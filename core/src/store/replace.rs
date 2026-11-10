@@ -18,10 +18,11 @@ pub(crate) struct ReplaceRequest {
     pub coverage: Coverage,
     pub replace_all: bool,
     pub start_after: Option<String>,
+    pub local_order: bool,
 }
 
 impl ReplaceRequest {
-    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None } }
+    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None, local_order: false } }
 }
 
 struct Member {
@@ -53,6 +54,13 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
         }
     }
     let membership = scope_membership(reader, model.as_str(), scope_key, base_revision)?;
+    if request.local_order && request.start_after.is_some() {
+        let mut full: Vec<String> = whole.iter().map(|member| member.id.clone()).collect();
+        let mut present: HashSet<String> = full.iter().cloned().collect();
+        for id in incoming_ids { if membership.get(&id) != Some(&false) && present.insert(id.clone()) { full.push(id); } }
+        let entity_ops = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
+        return Ok(LandingPlan { entity_ops, scope_ops: order_ops(&request.scope, &whole, &full)? });
+    }
     incoming_ids.retain(|id| membership.get(id) != Some(&false) && !before_ids.contains(id.as_str()));
     let anchor = (request.coverage == Coverage::Page && !request.replace_all)
         .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))
