@@ -122,8 +122,11 @@ impl OutboxState {
             return;
         }
         self.phase = Phase::Ready;
-        let blocked: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued && self.failed_upload_precedes(operation)).map(|operation| operation.op_id).collect();
-        for op_id in blocked { self.start_discard(op_id, fx); }
+        let orphaned: Vec<OpId> = self.orphan_transfers.iter().copied().filter(|id| self.ops.contains_key(id)).collect();
+        for op_id in orphaned {
+            self.waiting.remove(&op_id);
+            self.start_discard(op_id, fx);
+        }
         let mut deferred = std::mem::take(&mut self.deferred);
         deferred.sort_unstable();
         for op_id in deferred {
@@ -175,6 +178,7 @@ impl OutboxState {
             }
             OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
             OutboxInput::AliasesRestored { aliases } => self.aliases = aliases,
+            OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::EpochEnded(ended) => {
                 self.ended = true;
                 self.answer_held(Fault::of_end(ended.cause), fx);

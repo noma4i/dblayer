@@ -650,16 +650,16 @@ impl TransferState {
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary, error } => self.complete_error(transfer_id, attempt_id, (temporary, error), fx),
             TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed: _ } => {
-                if let Some((_, outcomes)) = self.waiting.get_mut(&transfer_id) {
-                    outcomes.entry(transfer_id).or_default().insert(cycle_id, outcome);
+                if let Some((row, outcomes)) = self.waiting.get_mut(&transfer_id) {
+                    if row.cycle_id.max(1) == cycle_id { outcomes.entry(transfer_id).or_default().insert(cycle_id, outcome); }
                 } else if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.cycle_id == cycle_id) {
                     self.mutation_outcome(transfer_id, outcome, fx);
                 }
             }
             TransferInput::MutationOutcomes { batch_id, members, intent_removed } => {
                 let outcomes = members.into_iter().filter_map(|(id, cycle, outcome)| {
-                    if let Some((_, saved)) = self.waiting.get_mut(&id) {
-                        saved.entry(id).or_default().insert(cycle, outcome);
+                    if let Some((row, saved)) = self.waiting.get_mut(&id) {
+                        if row.cycle_id.max(1) == cycle { saved.entry(id).or_default().insert(cycle, outcome); }
                         None
                     } else {
                         self.transfers.get(&id).is_some_and(|transfer| transfer.cycle_id == cycle).then_some((id, outcome))

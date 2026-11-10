@@ -195,6 +195,7 @@ pub enum OutboxInput {
     RestoreFailed { error: String },
     /// The saved answers of the open that no stored operation owns: the owner removes them (`out_open_orphan_answer`).
     OrphanAnswers { request_ids: Vec<RequestId> },
+    OrphanTransfers { op_ids: Vec<OpId> },
     RestoreReady { epoch: Epoch },
     RegisterOperations { declarations: Vec<(String, String)> },
     Committed(Committed),

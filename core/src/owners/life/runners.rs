@@ -236,6 +236,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                                 }
                                 wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
                                 wiring.to_outbox(OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
+                                wiring.to_outbox(OutboxInput::OrphanTransfers { op_ids: restore.orphan_transfer_ops });
                                 wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
                                 wiring.to_outbox(OutboxInput::OrphanAnswers { request_ids: restore.orphan_answers.clone() });
                             }

@@ -82,6 +82,7 @@ pub struct OutboxState {
     pub(super) deferred: Vec<OpId>,
     pub(super) waiting: BTreeMap<OpId, (StoredOp, bool)>,
     pub(super) removed: BTreeSet<OpId>,
+    pub(super) orphan_transfers: BTreeSet<OpId>,
     pub(super) removing: BTreeSet<OpId>,
     pub(super) aliases: BTreeMap<(String, String), String>,
     pub(super) copying: BTreeMap<u64, (ReplyId, LocalCall, Time)>,
@@ -137,6 +138,7 @@ impl OutboxState {
             deferred: Vec::new(),
             waiting: BTreeMap::new(),
             removed: BTreeSet::new(),
+            orphan_transfers: BTreeSet::new(),
             removing: BTreeSet::new(),
             aliases: BTreeMap::new(),
             copying: BTreeMap::new(),
@@ -173,11 +175,6 @@ impl OutboxState {
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
         self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation))
-    }
-
-    pub(super) fn failed_upload_precedes(&self, operation: &QueuedOperation) -> bool {
-        if !matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { return false; }
-        self.ops.values().any(|other| matches!(other.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) && other.stage == Stage::Failed && other.sequence < operation.sequence && other.op.action == operation.op.action && Self::shares_row(other, operation))
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -314,7 +311,12 @@ impl OutboxState {
                 ops.push(StoreOp::TransferOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded });
             }
         }
-        if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
+        if kind == CommitKind::Rollback && self.orphan_transfers.contains(&op_id) {
+            if let OpSource::Transfer { transfer_id, cycle_id } = &operation.op.origin {
+                ops.push(StoreOp::RetireTransferOutcome { transfer_id: *transfer_id, cycle_id: *cycle_id });
+                ops.push(StoreOp::TransferOutcome { transfer_id: *transfer_id, cycle_id: *cycle_id, outcome: OutboxOutcome::Discarded });
+            }
+        } else if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
             ops.extend(Self::transfer_outcomes(operation, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
         }
         if kind == CommitKind::Rollback && operation.cancels == Some(op_id) {
@@ -436,6 +438,7 @@ impl OutboxState {
 
     /// The operation ends: `outcome` goes to the waiters and, for a transfer, to the Transfer owner. The next operation of the row goes out when `next_goes`.
     pub(super) fn finish(&mut self, op_id: OpId, outcome: OutboxOutcome, next_goes: bool, fx: &mut Effects<Outbox>) {
+        self.orphan_transfers.remove(&op_id);
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.stage = Stage::Done;
         operation.outcome = Some(outcome.clone());
@@ -684,6 +687,7 @@ impl OutboxState {
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
+            OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(fx),
             OutboxInput::RestoreReady { .. } => {}
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),

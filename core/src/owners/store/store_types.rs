@@ -152,6 +152,7 @@ pub enum StoreOp {
     IntentOrigin { op_id: u64, origin: IntentOrigin },
     Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
     TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
+    RetireTransferOutcome { transfer_id: u64, cycle_id: u64 },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
     Attempt { op_id: u64, attempts: u32, cycle_id: u64, cause: Option<crate::value::sync::FailureKind> },
     /// The cause of the last failed attempt of the operation row.
