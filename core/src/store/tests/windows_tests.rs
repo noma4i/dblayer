@@ -175,7 +175,7 @@ fn win_page_admission_query_work() {
     use crate::owners::store::{RowValue, StoreOp};
     use serde_json::json;
     let measure = |size: usize| {
-        let (db, _) = booted_store();
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();
