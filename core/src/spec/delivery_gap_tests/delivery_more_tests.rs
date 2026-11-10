@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn dlv_count_temp_swap() {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+    let mut twin = Twin::new();
+    let resolved = Arc::new(AtomicBool::new(false));
+    let ready = resolved.clone();
+    let mut temporary = view(Kind::Count);
+    temporary.subject = "temp-parent".into();
+    let mut real = temporary.clone();
+    real.subject = "server-parent".into();
+    real.window.name = "server-parent-window".into();
+    let rebound = real.clone();
+    let deferred = d::Deferred { temps: vec!["temp-parent".into()], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| rebound.clone())) };
+    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    let first = Twin::modelled(take(&twin.log));
+    assert!(!first.contains(&Effect::InterestPlus), "the temporary id must not open a window");
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, data: d::ReadData::Count(0) });
+    take(&twin.log);
+    resolved.store(true, Ordering::SeqCst);
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+    let read_id = twin.read_id();
+    take(&twin.log);
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, data: d::ReadData::Count(0) });
+    let effects = take(&twin.log);
+    let interests = effects.iter().filter(|effect| matches!(effect, Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") && input.contains("server-parent-window"))).count();
+    assert_eq!(interests, 1, "the swap opens the real count window exactly once: {effects:?}");
+    assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { view, .. }, .. }) if view.subject == "server-parent")));
+    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: WindowState::idle() });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, data: d::ReadData::Count(7) });
+    assert!(twin.state().journal(STREAM).iter().any(|value| matches!(value, d::Value::Count { count: 7, .. })));
+}
+
+#[test]
 fn dlv_force_load_uses_committed_revision() {
     let mut det = DetScheduler::new(7);
     let log = new_log();
