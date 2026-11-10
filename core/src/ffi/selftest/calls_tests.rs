@@ -196,14 +196,19 @@ async fn call_prop_mutation_against_end_any_order_public() {
                     None
                 };
                 if end == "logout" && phase == "in_flight" {
+                    let logout_gate = rig.world.hold_next("logout");
                     let before = rig.database.life.waiting_calls();
                     let db = rig.database.clone();
                     let logout = rig.spawn(async move { db.session_call("logout".into(), "{}".into()).await });
                     crate::test_wait::settled(&rig, "logout waits behind the mutation", || rig.database.life.waiting_calls() > before).await;
                     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "logout").count(), 0);
                     gate.unwrap().release();
-                    assert!(bound(call.unwrap()).await.unwrap().is_ok());
-                    assert!(bound(logout).await.unwrap().is_ok());
+                    let answer = bound(call.unwrap()).await.unwrap();
+                    assert!(answer.is_ok(), "P-BND-11: mutation answer before logout: {answer:?}");
+                    logout_gate.entered().await;
+                    logout_gate.release();
+                    let result = bound(logout).await.unwrap();
+                    assert!(result.is_ok(), "logout after mutation answer: {result:?}");
                     rig.settle().await;
                     assert_eq!(rig.world.count("UnregisterDevice"), 1);
                     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "logout").count(), 1);
@@ -251,7 +256,8 @@ async fn call_prop_mutation_against_end_any_order_public() {
         assert_eq!(rig.world.count("UnregisterDevice"), 0);
         gate.release();
         assert!(bound(logout).await.unwrap().is_ok());
-        assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. })));
+        let answer = bound(call).await.unwrap();
+        assert!(matches!(answer, Err(DbError::NoSession { .. })), "calls.md:68: logout before mutation answer: {answer:?}");
         rig.settle().await;
         assert_eq!(rig.world.count("UnregisterDevice"), 0);
         rig.database.close_now();
