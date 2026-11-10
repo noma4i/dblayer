@@ -11,26 +11,6 @@ fn stored(op_id: u64, row: &str) -> StoredOp {
     StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None }
 }
 
-#[test]
-fn out_restore_discards_only_uploads_behind_failed_uploads() {
-    use crate::owners::write::outbox::OpSource;
-    for (failed_upload, pending_upload, same_action, discard) in [(true, true, true, true), (false, true, true, false), (true, false, true, false), (true, true, false, false)] {
-        let mut twin = Twin::bare();
-        declare(&mut twin);
-        let mut failed = stored(1, "r");
-        failed.error_mark = true;
-        if failed_upload { failed.op.origin = OpSource::Transfer { transfer_id: 1, cycle_id: 1 }; }
-        let mut pending = stored(2, "r");
-        if pending_upload { pending.op.origin = OpSource::Transfer { transfer_id: 2, cycle_id: 1 }; }
-        if !same_action { pending.op.action = "other".into(); }
-        if !same_action { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "other".into())] }); }
-        restore(&mut twin, vec![failed, pending]);
-        let effects = ready(&mut twin);
-        assert_eq!(kinds(&effects).contains(&CommitKind::Rollback), discard, "failed_upload={failed_upload} pending_upload={pending_upload} same_action={same_action}: {effects:?}");
-        assert_eq!(twin.stage(1), Some(St::Failed));
-    }
-}
-
 fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
 
 fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {

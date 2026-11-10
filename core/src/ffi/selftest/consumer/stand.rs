@@ -161,8 +161,8 @@ impl Stand {
         let cable = Arc::new(Cable { peer, puts: StdMutex::default(), put_script: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, clock.clone())).await.unwrap();
-        database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(online).unwrap();
+        database.register_operations(OPERATIONS.into()).await.unwrap();
         Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed), clock }
     }
 

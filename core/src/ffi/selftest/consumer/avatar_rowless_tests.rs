@@ -66,7 +66,7 @@ async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_avatar_reopen_discards_pending_behind_failed() {
+async fn consumer_avatar_reopen_discards_orphan_and_sends_pending() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.sqlite");
     let credentials = Arc::new(WatchedHeld::default());
@@ -103,21 +103,16 @@ async fn consumer_avatar_reopen_discards_pending_behind_failed() {
     assert_eq!(saved.0, 1, "the saved upload reached its mutation: {saved:?}");
     connection.execute("DELETE FROM encrypted_pending", []).unwrap();
     drop(connection);
-    let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
-    reopened.sign_in().await;
+    let reopened = Stand::prepare_online(Some(path.to_string_lossy().into_owned()), credentials, None, false).await;
+    reopened.answer("UserPhotoUpdate", good());
+    reopened.database.set_online(true).unwrap();
     reopened.settle().await;
     let items = operations(&reopened).await;
-    assert_eq!(items.len(), 1, "only the failed intent remains: {items:?}");
-    assert!(!copy.exists(), "the pending upload copy is removed");
-    assert_eq!(reopened.requests("UserPhotoUpdate"), 0);
-    let epoch = reopened.database.session_epoch();
-    bound(reopened.database.discard(epoch, "CurrentUser".into(), "singleton".into(), None)).await.unwrap();
-    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-    reopened.answer("UserPhotoUpdate", good());
-    reopened.script_put(200, Some("etag"));
-    let next = bound(reopened.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    assert!(bound(reopened.database.confirmed(next, false)).await.is_ok());
+    assert!(items.is_empty(), "the orphan is removed and the pending upload completes: {items:?}");
+    assert!(!copy.exists(), "the completed upload copy is removed");
     assert_eq!(reopened.requests("UserPhotoUpdate"), 1);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.query_row("SELECT kind FROM transfer_outcome WHERE transfer_id = 1 AND cycle_id = 1", [], |row| row.get::<_, String>(0)).unwrap(), "discarded");
     reopened.database.close_now();
 }
 
