@@ -46,7 +46,7 @@ async fn universal_properties_on_seeded_traces() {
                 0 => { stand.answer("MomentNode", json!({"node": moment(&id, visits)})); let _ = bound(stand.database.node(epoch, "Moment".into(), "node".into(), id.clone(), true)).await; }
                 1 => {
                     let edges: Vec<Value> = ids.iter().map(|other| json!({"node": moment(other, visits)})).collect();
-                    stand.answer("myMoments", json!({"viewer": {"moments": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": 2}}}));
+                    stand.answer("myMoments", json!({"viewer": {"moments": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": null}}}}));
                     let _ = bound(stand.database.refresh(epoch, "Moment".into(), Some("owned".into()), "{}".into())).await;
                 }
                 2 => {
