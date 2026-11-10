@@ -53,6 +53,34 @@ private final class PartProtocol: URLProtocol, @unchecked Sendable {
   override func stopLoading() {}
 }
 
+/// Reads the first piece of the body and then stalls, or fails the request, the way a server that stops reading does.
+private final class StallProtocol: URLProtocol, @unchecked Sendable {
+  nonisolated(unsafe) static var started: AsyncStream<Void>.Continuation?
+  nonisolated(unsafe) static var failsEarly = false
+  private var stream: InputStream?
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    stream = request.httpBodyStream
+    stream?.open()
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    _ = stream?.read(&buffer, maxLength: buffer.count)
+    Self.started?.yield()
+    if Self.failsEarly { client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost)) }
+  }
+  override func stopLoading() { stream?.close() }
+}
+
+private func openDescriptors(of path: String) -> Int {
+  let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+  var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+  var count = 0
+  for descriptor in 0..<getdtablesize() where fcntl(descriptor, F_GETPATH, &buffer) == 0 {
+    if URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path == target { count += 1 }
+  }
+  return count
+}
+
 private final class NoProgress: ByteProgress, @unchecked Sendable {
   init() { super.init(noHandle: .init()) }
   required init(unsafeFromHandle handle: UInt64) { fatalError("not a core object") }
@@ -99,5 +127,33 @@ struct UrlSessionPutTests {
     #expect(PartProtocol.mismatch == nil, "the bytes of the part are the bytes of the file range")
     #expect(PartProtocol.contentLength == String(length), "the request names the length of the part")
     #expect(PartProtocol.peakInUse - before < 16 * megabyte, "a part of 64 MiB leaves without 64 MiB in memory: \(PartProtocol.peakInUse - before) bytes")
+  }
+
+  /// A part that stops in the middle, by a cancel of the caller or by the server, ends the call with a failure and leaves no open file behind.
+  @Test(.serialized, .timeLimit(.minutes(1)), arguments: [false, true])
+  func aStoppedPartEndsTheCallAndLeavesNoOpenFile(serverFails: Bool) async throws {
+    let megabyte = 1024 * 1024
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    #expect(FileManager.default.createFile(atPath: file.path, contents: Data(count: 8 * megabyte)))
+    defer { try? FileManager.default.removeItem(at: file) }
+    let (events, started) = AsyncStream<Void>.makeStream()
+    (StallProtocol.started, StallProtocol.failsEarly) = (started, serverFails)
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StallProtocol.self]
+    let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
+    let call = Task {
+      await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000), file: PutFile(path: file.path, offset: UInt64(megabyte), length: UInt64(4 * megabyte)), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+    }
+    var first = events.makeAsyncIterator()
+    _ = await first.next()
+    if !serverFails {
+      #expect(openDescriptors(of: file.path) == 1, "the stalled part holds its file open")
+      call.cancel()
+    }
+    guard case .failed = await call.value else {
+      Issue.record("a stopped part is a failure of the call")
+      return
+    }
+    #expect(openDescriptors(of: file.path) == 0, "the file of the part is closed when the call returns")
   }
 }

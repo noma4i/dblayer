@@ -86,6 +86,7 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.Closed -> "closed"
     is DbException.CorruptManifest -> "corrupt_manifest"
     is DbException.NotOpen -> "not_open"
+    is DbException.Rejected -> "rejected"
 }
 
 private fun failed(error: Throwable): Done = Done(failure(if (error is DbException) kindOf(error) else "invalid"))

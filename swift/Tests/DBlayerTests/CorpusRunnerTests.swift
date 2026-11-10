@@ -109,6 +109,7 @@ private func kind(of error: DbError) -> String {
   case .CorruptManifest: return "corrupt_manifest"
   case .NotOpen: return "not_open"
   case .AlreadyExists: return "already_exists"
+  case .Rejected: return "rejected"
   }
 }
 
