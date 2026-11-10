@@ -370,12 +370,13 @@ Dropping the Rust future stops the request and its backoff.
 Swift Task and Kotlin coroutine cancellation also stop bootstrap and `sessionCall`.
 
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
-It is optional. Without it, retries behave identically. There is no process-wide instance.
-`RetryProgress.changes` in Swift (an `AsyncSequence` that you iterate with `for await`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
+It is optional. All `RetryProgress` instances read the same process-wide source.
+`RetryProgress.changes` in Swift (an `AsyncSequence` that you iterate with `for await`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot` with a `waiting` list.
+Each entry identifies the owner, retry policy, schedule ID, attempt and delay in milliseconds.
 A reader gets the current snapshot first, then the newest one. A slow reader sees the newest snapshot and delays no request.
 Cancelling a read ends only that reader. The calls and the other readers go on.
-A call becomes active after its first temporary failure. It leaves when it succeeds, fails for good or is cancelled.
-`activeCalls` is 0 and `lastAttempt` is empty only when no call waits for a retry, even when one of several parallel calls ends.
+An entry appears when a retry is scheduled and leaves when its timer fires or is cancelled.
+`waiting` is empty when no retry is waiting, even when requests are in flight.
 There is no timer. The snapshot only follows the retry loops that `RetryPolicy` already runs.
 `attempt` starts at 1 for each call. `delayMs` is the actual jittered delay until the next attempt.
 `reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
