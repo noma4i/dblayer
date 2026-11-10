@@ -43,22 +43,13 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
       if file.offset == 0 && file.length == size {
         (body, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: delegate)
       } else {
-        (body, response) = try await session.upload(for: request, from: try part(file), delegate: delegate)
+        (body, response) = try await PartUpload(file: file, progress: progress).run(request, in: session)
       }
       let http = response as? HTTPURLResponse
       return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: String(decoding: body, as: UTF8.self))
     } catch {
       return .failed(error)
     }
-  }
-
-  private func part(_ file: PutFile) throws -> Data {
-    let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: file.path))
-    try handle.seek(toOffset: file.offset)
-    let bytes = try handle.read(upToCount: Int(file.length)) ?? Data()
-    try handle.close()
-    guard UInt64(bytes.count) == file.length else { throw URLError(.cannotDecodeRawData) }
-    return bytes
   }
 }
 
