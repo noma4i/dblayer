@@ -96,10 +96,12 @@ async fn consumer_thread_refresh_removes_deleted_head_row() {
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_thread_load_more_after_end_is_quiet() {
     let (stand, history, _stream) = three_pages().await;
+    let before = stand.asked().len();
     let result = bound(stand.database.load_more(stand.database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     assert!(matches!(result, crate::ffi::LoadMoreResult::NoMore), "{result:?}");
     stand.settle().await;
     assert_eq!(stand.requests("chatThread"), 3);
+    assert_eq!(stand.asked().len(), before);
     assert_eq!(ids(&history), (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
 }
