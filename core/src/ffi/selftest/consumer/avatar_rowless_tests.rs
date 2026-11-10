@@ -367,7 +367,10 @@ async fn consumer_rowless_multipart_steps() {
     let epoch = stand.database.session_epoch();
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), WireUploadRequest::of(&input))).await.unwrap();
     assert!(receipt.optimistic_value.is_none());
-    stand.put_started().await;
+    tokio::select! {
+        () = stand.put_started() => {},
+        outcome = bound(stand.database.confirmed(receipt.clone())) => panic!("multipart ended before the first part: {outcome:?}"),
+    }
     assert_eq!(stand.puts(), 1);
     stand.release_put();
     arrived(&stand, "UserPhotoUpdate").await;
