@@ -622,14 +622,16 @@ fn xfer_expired_failed_reopen_in_every_order() {
                 Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
             };
             aborts.extend(out.orphan_aborts());
+            removed += out.removed().len();
             if out.timers > 0 {
                 let expiry = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: crate::owners::write::transfer::TransferTick::Expire });
                 removed += expiry.removed().len();
                 aborts.extend(expiry.orphan_aborts());
-                while twin.has_pending() {
-                    let committed = twin.commit();
-                    aborts.extend(committed.orphan_aborts());
-                }
+            }
+            while twin.has_pending() {
+                let committed = twin.commit();
+                removed += committed.removed().len();
+                aborts.extend(committed.orphan_aborts());
             }
         }
         assert_eq!(removed, 1, "{order:?}: the expired transfer is removed once");
