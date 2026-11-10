@@ -376,17 +376,25 @@ impl TransferState {
     pub(super) fn staged_restore_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
         match reason {
-            RejectReason::Storage(_) => {
-                let attempt = self.transfers.get(&id).map_or(1, |transfer| transfer.attempts).max(1);
-                let timer = self.timer();
-                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { now: self.now, kind: TransferTick::StagedRestore { transfer_id: id } } });
+            RejectReason::Storage(_) => self.backoff_restore(id, fx),
+            RejectReason::Invalid => {
+                if let Some(rep) = self.transfers.get_mut(&id).and_then(|transfer| transfer.staged_failed.as_mut()).and_then(|(rep, _)| rep.take()) {
+                    reply(fx, rep, TransferAnswer::Err(Fault::Ended(super::outbox_types::end_cause(&reason))));
+                }
+                self.backoff_restore(id, fx);
             }
             RejectReason::StaleGeneration { models, generation } => {
                 for model in &models { self.generations.insert(model.clone(), generation); }
                 self.write_restored(id, fx);
             }
-            RejectReason::Closed | RejectReason::NoSession | RejectReason::Invalid => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
+            RejectReason::Closed | RejectReason::NoSession => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
         }
+    }
+
+    fn backoff_restore(&mut self, id: TransferId, fx: &mut Fx) {
+        let attempt = self.transfers.get(&id).map_or(1, |transfer| transfer.attempts).max(1);
+        let timer = self.timer();
+        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { now: self.now, kind: TransferTick::StagedRestore { transfer_id: id } } });
     }
 
     /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.
