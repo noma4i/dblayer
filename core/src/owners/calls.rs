@@ -164,8 +164,7 @@ impl CallsState {
             if let Some(id) = held { finished.push(id); }
             return;
         };
-        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; id });
-        deadlines.push(id);
+        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
         self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: self.generation }, reply));
         self.by_reply.insert(reply, id);
         self.attempts.insert(id, CallAttempt { operation: operation.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
@@ -238,6 +237,7 @@ impl StateOwner for Calls {
                 state.next += 1;
                 state.awaiting.insert(reply, (id, operation, variables));
                 state.awaiting_by_id.insert(id, reply);
+                deadlines.push(id);
             }
             CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), None, &mut fx, &mut deadlines, &mut finished),
             CallsInput::Response { call_id, body, data, errors, kind } if state.sending(call_id) => {
@@ -268,6 +268,13 @@ impl StateOwner for Calls {
                 state.finish(call_id, Err(error), &mut fx, &mut finished);
                 if let Some(CallPhase::Sending { request_id, kind: CallKind::Query, .. }) = phase { fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }); }
                 if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = phase { fx.push(CallsEffect::Release { request_id }); }
+            }
+            CallsInput::Deadline { call_id } if state.awaiting_by_id.contains_key(&call_id) => {
+                if let Some(reply) = state.awaiting_by_id.remove(&call_id) {
+                    state.awaiting.remove(&reply);
+                    fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Network) });
+                    finished.push(call_id);
+                }
             }
             CallsInput::CallerCancel { reply } => {
                 if let Some((id, _, _)) = state.awaiting.remove(&reply) { state.awaiting_by_id.remove(&id); finished.push(id); }
