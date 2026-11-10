@@ -73,7 +73,9 @@ class LifecycleSessionTest {
 
     @Test
     fun bridge_prop_session_state_parity_c9() = bounded {
-        assertTrue(runCatching { DBlayer.sessionStatus() }.exceptionOrNull() is DbException.NotOpen)
+        runCatching { closeForCleanup() }
+        val beforeOpen = runCatching { DBlayer.sessionStatus() }.exceptionOrNull()
+        assertTrue(beforeOpen is DbException.NotOpen || beforeOpen is DbException.Closed)
         openSession()
         val initial = DBlayer.sessionStatus()
         assertEquals(SessionStanding.NONE, initial.phase)

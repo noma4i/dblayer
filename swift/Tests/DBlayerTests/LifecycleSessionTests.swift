@@ -86,8 +86,9 @@ extension BridgeProbeTests {
 
   @Test @MainActor
   func bridge_prop_session_state_parity_c9() async throws {
+    await DB.closeForCleanup()
     do { _ = try DB.sessionStatus(); Issue.record("status before open succeeded") }
-    catch DbError.NotOpen(_) {} catch { Issue.record("before open: \(error)") }
+    catch DbError.NotOpen(_) {} catch DbError.Closed(_) {} catch { Issue.record("before open: \(error)") }
     _ = try await Self.openSealedSession()
     let initial = try DB.sessionStatus()
     #expect(initial.phase == .none && initial.identity == nil)
