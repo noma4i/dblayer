@@ -114,8 +114,9 @@ impl Life {
     pub fn mutate_answered(&self, owner: Option<crate::owners::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let author = WAITER_AUTHOR.saturating_add(req_id);
-        let waiter = self.wiring.mutations.register_as(author, Epoch::MAX);
-        self.mutate(author, owner, req_id, path, body, purpose);
+        let epoch = self.published().epoch;
+        let waiter = self.wiring.mutations.register_as(author, epoch);
+        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose });
         waiter
     }
 

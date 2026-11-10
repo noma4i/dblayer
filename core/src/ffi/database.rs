@@ -400,6 +400,7 @@ impl Database {
         let mut cancel = CancelCall { life: self.life.clone(), reply: waiter.id().raw(), armed: true };
         let result = self.await_life(waiter).await;
         cancel.armed = false;
+        self.close_after(epoch)?;
         match result? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
