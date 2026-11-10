@@ -82,3 +82,5 @@ mod write_cells_tests;
 mod call_order_tests;
 mod scope_channel_tests;
 mod typing_channel_tests;
+
+mod two_ops_tests;
