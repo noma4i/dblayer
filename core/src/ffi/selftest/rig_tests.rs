@@ -67,6 +67,7 @@ pub(super) struct Entry {
     pub(super) account: String,
     pub(super) label: String,
     pub(super) sequence: Option<i64>,
+    pub(super) request_id: Option<String>,
     pub(super) body: String,
     pub(super) marks_before: usize,
 }
@@ -166,7 +167,7 @@ impl World {
         gate
     }
 
-    fn enter(&self, operation: &str, sequence: Option<i64>, body: &Value) -> Option<(Value, Option<Fault>)> {
+    fn enter(&self, operation: &str, sequence: Option<i64>, request_id: Option<String>, body: &Value) -> Option<(Value, Option<Fault>)> {
         let mut state = self.state.lock().unwrap();
         if state.forbidden {
             let frames = std::backtrace::Backtrace::force_capture().to_string().lines().filter(|line| line.contains("dblayer::owners") || line.contains("dblayer::ffi::database") || line.contains("dblayer::ffi::loading") || line.contains("dblayer::ffi::command") || line.contains("dblayer::ffi::read")).take(16).map(|line| line.trim().to_string()).collect::<Vec<_>>().join(" | ");
@@ -176,7 +177,7 @@ impl World {
         }
         let account = state.account.clone();
         let marks_before = state.marks.len();
-        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, body: body.to_string(), marks_before });
+        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, request_id, body: body.to_string(), marks_before });
         let position = state.script.iter().position(|(wanted, _)| wanted == operation || wanted == "*");
         let fault = position.map(|index| state.script.remove(index).1);
         let commits = matches!(fault, None | Some(Fault::Hold(_)));
@@ -301,7 +302,7 @@ impl World {
     }
 
     async fn plain(&self, operation: &str, body: &Value) -> Result<String, DbError> {
-        let Some((answer, fault)) = self.enter(operation, None, body) else {
+        let Some((answer, fault)) = self.enter(operation, None, None, body) else {
             return Err(DbError::Http { status: 400, detail: format!("forbidden {operation}") });
         };
         match pass_gate(fault).await {
@@ -342,7 +343,7 @@ impl FakeHttp for World {
             Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
             Admission::Fresh => {}
         }
-        let Some((mut answer, fault)) = self.enter(&operation, sequence, &request["body"]) else {
+        let Some((mut answer, fault)) = self.enter(&operation, sequence, Some(contract_request.request_id.clone()), &request["body"]) else {
             return Ok(EncryptedReply { status: 400, body: String::new() });
         };
         let mut sealed_sequence = sequence;

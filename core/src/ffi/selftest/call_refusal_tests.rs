@@ -13,6 +13,30 @@ async fn run_unregister(rig: &Rig) -> Result<(), DbError> {
 
 async fn ends(database: &Database) { bound(crate::ffi::settled(database)).await.unwrap(); }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn call_response_limit_unknown_pair() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let limit = crate::transport::MAX_HTTP_RESPONSE_BYTES;
+    for _ in 0..100 { rig.world.fail_next("UnregisterDevice", Fault::ResponseTooLarge(limit)); }
+    let database = rig.database.clone();
+    let epoch = database.session_epoch();
+    let mut call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+    let mut armed = rig.clock.armed();
+    let result = loop {
+        tokio::select! {
+            result = &mut call => break result.unwrap(),
+            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
+        }
+    };
+    assert!(matches!(result, Err(DbError::ResponseTooLarge { limit: seen }) if seen == limit), "{result:?}");
+    let sends: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect();
+    assert!(sends.len() >= 2);
+    assert!(sends[0].request_id.is_some() && sends[0].sequence.is_some());
+    assert!(sends.iter().all(|send| send.request_id == sends[0].request_id && send.sequence == sends[0].sequence));
+    rig.database.close_now();
+}
+
 /// D-220: a mutation call retries the held pair on a transient transport failure and answers the server once the retry lands; `wire.md` «transport failure without an answer» sequenced = `Ok|2`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_mutation_call_with_a_transient_transport_failure_retries_the_held_pair() {
