@@ -95,6 +95,9 @@ impl TransferState {
     /// The pair of a restored step was answered by Session: the transfer may start its attempt.
     pub(super) fn held_step_answered(&mut self, request_id: u64, outcome: crate::owners::session::AuthorOutcome, fx: &mut Fx) {
         if let Some(upload_id) = self.orphans.keys().find(|upload_id| super::wire::abort_request_id(upload_id) == request_id).cloned() {
+            if !self.orphan_flight.contains(&upload_id) || self.pending.values().any(|pending| pending.kind == StoreKind::OrphanRemoved && pending.orphan.as_ref().is_some_and(|(removing, _)| *removing == upload_id)) {
+                return;
+            }
             use crate::owners::session::{AuthorOutcome, SessionError};
             let result = match outcome {
                 AuthorOutcome::Response { body, .. } => {
@@ -656,11 +659,12 @@ impl TransferState {
     /// `Restoring`: the calls on the keys of the base wait for `Restored`, the rest of the table works as in the other phases.
     fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
         match input {
-            TransferInput::Restored { uploads, outcomes, orphans, batches, .. } if !self.ended => {
+            TransferInput::Restored { uploads, outcomes, orphans, batches, held_orphan } if !self.ended => {
                 let owned: std::collections::BTreeSet<&String> = uploads.iter().filter_map(|row| row.upload_id.as_ref()).collect();
                 let (live, orphans): (Vec<_>, Vec<_>) = orphans.into_iter().partition(|(upload_id, _)| owned.contains(upload_id));
                 self.commit_ops(live.into_iter().map(|(upload_id, _)| StoreOp::RemoveOrphan { upload_id }).collect(), fx);
                 self.orphans.extend(orphans);
+                self.orphan_flight.extend(held_orphan.filter(|upload_id| self.orphans.contains_key(upload_id)));
                 self.restore_groups(batches);
                 self.restored(uploads, outcomes, fx)
             }
