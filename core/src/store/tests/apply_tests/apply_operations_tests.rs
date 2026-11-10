@@ -370,13 +370,13 @@ pub(super) fn count_head_lookups(event: rusqlite::trace::TraceEvent<'_>) {
 }
 
 #[test]
-fn joining_a_list_costs_one_head_lookup_per_row() {
+fn joining_a_list_reads_the_head_once() {
     let store = listed_messages_store();
     let rows = |chat: &str| -> Vec<EntityOp> { (0..40).map(|index| upsert("messages", message(&format!("m{index}"), chat))).collect() };
     commit(&store, rows("c0"), vec![]);
     store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_head_lookups));
     commit(&store, rows("c1"), vec![]);
-    assert_eq!(HEAD_LOOKUPS.load(Ordering::SeqCst), 40);
+    assert_eq!(HEAD_LOOKUPS.load(Ordering::SeqCst), 1, "one head lookup per list");
 }
 
 thread_local! { static QUEUE_RESULT_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
