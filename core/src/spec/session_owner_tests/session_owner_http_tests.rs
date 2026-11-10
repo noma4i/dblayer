@@ -59,6 +59,15 @@ fn sess_answer_too_large_table() {
         assert!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced }).is_empty());
     }
 
+    let mut secret = calling();
+    let (request_id, attempt_id) = (secret.rid(), secret.aid());
+    secret.feed(Input::SecretMissing { request_id, attempt_id, lost: false });
+    assert!(secret.in_phase(CallPhase::WaitingSecret));
+    for sequenced in [false, true] {
+        assert!(secret.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced }).is_empty());
+        assert!(secret.in_phase(CallPhase::WaitingSecret));
+    }
+
     let mut offline = calling();
     let (request_id, attempt_id) = (offline.rid(), offline.aid());
     offline.feed(Input::Online(false));

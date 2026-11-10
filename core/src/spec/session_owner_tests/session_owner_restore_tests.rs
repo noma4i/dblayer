@@ -544,7 +544,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             RefState::SecretUnavailable { read: Some(op), .. } => *op,
             _ => 1,
         };
-        let input = match next(&mut s) % 30 {
+        let input = match next(&mut s) % 31 {
             0..=2 => { reply += 1; call(reply) }
             3 | 4 => committed(),
             5 => rejected(Reason::Storage),
@@ -569,6 +569,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             26 => Input::SecretRead { op, read: [Secret::Present(CRED), Secret::Missing, Secret::Error("x".into())][(next(&mut s) % 3) as usize].clone() },
             27 => Input::InterestPlus(next(&mut s) % 3),
             28 => Input::InterestMinus(next(&mut s) % 3),
+            29 => Input::AnswerTooLarge { request_id: request + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, attempt_id: attempt + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, limit: 64, sequenced: next(&mut s).is_multiple_of(2) },
             _ => Input::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, security: None, body: None },
         };
         let effects = twin.feed(input.clone());
