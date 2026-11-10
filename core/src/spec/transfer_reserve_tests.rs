@@ -144,6 +144,33 @@ fn xfer_accept_key_open() {
 }
 
 #[test]
+fn xfer_accept_replaces_failed() {
+    let mut twin = Twin::new();
+    let old = ready(&mut twin);
+    twin.step_error(old, false);
+    twin.commit();
+    assert_eq!(twin.stage(old), TransferStage::Failed);
+
+    let out = twin.post(accept_input(KEY, 90));
+    assert!(out.replies(90).is_empty(), "the replacement must not be refused: {:?}", out.replies(90));
+    let new = out.outbox.iter().find_map(|input| match input {
+        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
+        _ => None,
+    }).expect("the replacement reserves its operation");
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    assert_eq!(out.writes(), 1, "removal and acceptance must share a Store batch");
+    assert_eq!(out.removed(), vec![KEY.to_string()]);
+    assert_eq!(rolled_back(&out), vec![OP_ID]);
+    assert_eq!(out.outcomes_written(), vec![(old, 1, OutboxOutcome::Discarded)]);
+    assert_eq!(out.rows().len(), 1);
+    let committed = twin.commit();
+    assert_eq!(twin.stage(old), TransferStage::Done);
+    assert_eq!(committed.deletes(), 1);
+    let (reply, outcome) = twin.outcome(old, 1);
+    assert_eq!(outcome.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
+}
+
+#[test]
 fn xfer_remove_rolls_back_optimistic() {
     let mut twin = Twin::new();
     let id = ready(&mut twin);
