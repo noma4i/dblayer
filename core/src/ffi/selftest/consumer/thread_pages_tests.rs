@@ -177,3 +177,36 @@ async fn consumer_tail_thread_after_reopen() {
     assert_eq!(reopened.requests("chatThread"), 1);
     reopened.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_tail_invalid_cursor_restarts_history() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let history = Arc::new(History::default());
+    stand.answer("chatThread", page(41, 65, true));
+    let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
+    let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
+    settled(&stand, "first page", || history.rows.len() == 25).await;
+    stand.answer("chatThread", page(16, 40, true));
+    bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    settled(&stand, "second page", || history.rows.len() == 50).await;
+    stand.answer_next("chatThread", json!({"errors":[{"message":"cursor", "extensions":{"code":"INVALID_CURSOR"}}]}));
+    stand.answer("chatThread", page(50, 55, false));
+    let result = bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    assert!(matches!(result, crate::ffi::LoadMoreResult::Loaded { has_more: false }), "{result:?}");
+    stand.settle().await;
+    let rows = ids(&history);
+    assert_eq!(rows, (50..=55).map(|n| format!("m{n}")).collect::<Vec<_>>(), "after invalid cursor: {} rows {rows:?}", rows.len());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    let requests: Vec<_> = stand.asked().into_iter().filter(|(name, _)| name == "chatThread").map(|(_, vars)| vars).collect();
+    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert!(requests[0].get("after").is_none_or(Value::is_null), "{requests:?}");
+    assert_eq!(requests[1]["after"], "41");
+    assert_eq!(requests[2]["after"], "16");
+    assert!(requests[3].get("after").is_none_or(Value::is_null), "{requests:?}");
+    let result = bound(stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    assert!(matches!(result, crate::ffi::LoadMoreResult::NoMore));
+    stand.settle().await;
+    assert_eq!(stand.requests("chatThread"), 4);
+    stand.database.close_now();
+}
