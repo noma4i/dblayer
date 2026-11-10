@@ -131,23 +131,18 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
 
 pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overlay: &mut OverlayWrites, results: &mut Vec<CommitResult>) -> Result<Vec<String>, StoreError> {
     let parsed = events.iter().map(|(model, text)| Ok((model, serde_json::from_str::<Value>(text)?))).collect::<Result<Vec<_>, StoreError>>()?;
-    let reader = Reader::new(writer.connection, writer.models);
     let mut wanted = BTreeMap::<String, Vec<String>>::new();
     for (model, payload) in &parsed {
         if let Some(id) = payload.get("id").and_then(Value::as_str) { wanted.entry((*model).clone()).or_default().push(id.to_string()); }
     }
     let mut before = EventRows::new();
     for (model, ids) in wanted {
-        let mut rows = reader.stored_rows_with_revisions(&model, &ids)?;
-        writer.feed_tombstones.insert(model.clone(), reader.tombstones(&model, &ids)?);
-        writer.feed_fields.insert(model.clone(), unconfirmed_fields(&reader, None, &model, &ids)?);
+        writer.prefetch(&model, &ids)?;
         for id in ids {
             let key = (model.clone(), id.clone());
-            if writer.current.contains_key(&key) { continue; }
-            let row = rows.remove(&id);
-            before.insert(key.clone(), row.as_ref().map(|row| row.row.clone()));
-            if let Ok(row_id) = RowId::new(&id) { writer.originals.entry(RowRef::new(ModelKey::new(&model), row_id)).or_insert_with(|| row.as_ref().map(|row| row.row.clone())); }
-            writer.current.insert(key, row);
+            let row = writer.current.get(&key).and_then(|row| row.as_ref());
+            before.entry(key).or_insert_with(|| row.map(|row| row.row.clone()));
+            if let Ok(row_id) = RowId::new(&id) { writer.originals.entry(RowRef::new(ModelKey::new(&model), row_id)).or_insert_with(|| row.map(|row| row.row.clone())); }
         }
     }
     writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);

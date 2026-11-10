@@ -36,6 +36,26 @@ pub(super) struct RowWrite<'a> {
 }
 
 impl RowWrite<'_> {
+    pub fn prefetch(&mut self, model: &str, ids: &[String]) -> Result<(), StoreError> {
+        let reader = Reader::new(self.connection, self.models);
+        let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect();
+        if !missing.is_empty() {
+            let mut rows = reader.stored_rows_with_revisions(model, &missing)?;
+            for id in missing { self.current.insert((model.to_string(), id.clone()), rows.remove(&id)); }
+        }
+        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(model).is_some_and(|fields| fields.contains_key(*id))).cloned().collect();
+        if !needed.is_empty() {
+            self.feed_tombstones.entry(model.to_string()).or_default();
+            let mut fields = unconfirmed_fields(&reader, self.closing, model, &needed)?;
+            let mut tombstones = reader.tombstones(model, &needed)?;
+            for id in needed {
+                self.feed_fields.entry(model.to_string()).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
+                if let Some(value) = tombstones.remove(&id) { self.feed_tombstones.entry(model.to_string()).or_default().insert(id, value); }
+            }
+        }
+        Ok(())
+    }
+
     pub fn stored(&mut self, model: &str, id: &str) -> Result<Option<super::rows::StoredRow>, StoreError> {
         let key = (model.to_string(), id.to_string());
         if !self.current.contains_key(&key) {
@@ -64,18 +84,13 @@ impl RowWrite<'_> {
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
         let kind = if local { RowKind::Local } else { RowKind::Server };
         let Some(patch_id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
+        self.prefetch(model, &[patch_id.to_string()])?;
         let mut stored = BTreeMap::new();
         if let Some(row) = self.stored(model, patch_id.as_str())? { stored.insert(patch_id.to_string(), row); }
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let reader = Reader::new(self.connection, self.models);
-        let ids = [patch_id.to_string()];
-        if !self.feed_tombstones.get(model).is_some_and(|entries| entries.contains_key(patch_id.as_str())) {
-            let rows = reader.tombstones(model, &ids)?;
-            self.feed_tombstones.entry(model.to_string()).or_default().extend(rows);
-        }
-        let fields = unconfirmed_fields(&reader, self.closing, model, &ids)?;
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted_with_fields(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards, Some(&fields), self.feed_tombstones.get(model), Some(&stored))? else { return Ok(None) };
+        let Some(row) = admitted_with_fields(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards, self.feed_fields.get(model), self.feed_tombstones.get(model), Some(&stored))? else { return Ok(None) };
         let mut envelope = BatchPlan::new(self.generation);
         envelope.response_rows = response;
         envelope.writes_local = local;
