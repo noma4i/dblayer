@@ -167,7 +167,7 @@ impl Reference {
             Step::Retry => self.feed(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
             Step::Discard => self.feed(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()) }, reply_to: Addr::Call }),
             Step::Outcome(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Outcome { receipt: super::ref_outbox::Receipt { epoch: 1, op_id: op, cycle_id: cycle } }) }
-            Step::EpochEnd => self.feed(RIn::EpochEnded(1)),
+            Step::EpochEnd => self.feed(RIn::EpochEnded(1, super::ref_outbox::EndCause::SessionEnded)),
             Step::Close => self.feed(RIn::Closing),
             Step::Stray => self.feed(RIn::TransportError { op_id: 999, cycle_id: 1, temporary: true, pending_retained: None }),
             Step::SubmitStale => self.feed(RIn::Submit { epoch: 2, op: spec(1, false, false), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),

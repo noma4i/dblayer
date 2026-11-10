@@ -79,7 +79,7 @@ impl Reference {
             Step::Write { expiry } => { *id += 1; self.feed(RIn::LocalWrite { epoch: 1, id: *id, kind: LKind::SetEphemeral, flags: LFlags { row_exists: true, expiry, ..LFlags::default() } }) }
             Step::Commit => self.feed(RIn::Committed { epoch: 1, batch: Batch::Local(*id), kind: Kind::Submit, revision: 11 }),
             Step::Reject(reason) => self.feed(RIn::Rejected { epoch: 1, batch: Batch::Local(*id), kind: Kind::Submit, reason: match reason { "NoSession" => Reason::NoSession, "Closed" => Reason::Closed, "Storage" => Reason::Storage, _ => Reason::StaleGeneration(Default::default()) } }),
-            Step::EpochEnd => self.feed(RIn::EpochEnded(1)),
+            Step::EpochEnd => self.feed(RIn::EpochEnded(1, super::ref_outbox::EndCause::SessionEnded)),
             Step::Close => self.feed(RIn::Closing),
             Step::Expire => self.feed(RIn::ExpireRow { model: "Moment".into(), row_id: "w".into(), write_revision: 11 }),
         };

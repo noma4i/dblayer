@@ -534,3 +534,11 @@ fn sess_calling_dropped_mutate() {
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }), "the slot stays with the author");
 }
 
+#[test]
+fn sess_calling_epoch_ended_close() {
+    let mut twin = calling();
+    assert!(twin.feed(ended(EndCause::Close)).is_empty(), "an epoch ended by close leaves the in-flight call to Closing");
+    assert!(matches!(twin.reference.state, RefState::Calling { .. }), "the call is still in flight");
+    twin.feed(Input::Closing);
+    assert!(!matches!(twin.reference.state, RefState::Calling { .. }), "Closing ends the call with Closed");
+}

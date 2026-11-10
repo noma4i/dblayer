@@ -81,7 +81,7 @@ fn expected_kind(st: Stage) -> Option<Kind> {
 pub(crate) fn op_input(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     match i {
         Input::Outcome { receipt } => return ops_late::outcome(op, receipt, e),
-        Input::EpochEnded(_) => return ops_late::epoch_ended(op, e),
+        Input::EpochEnded(_, cause) => return ops_late::epoch_ended(op, *cause, e),
         Input::Closing => return ops_late::closing(op, e),
         _ => {}
     }
@@ -172,22 +172,22 @@ fn closing(s: &mut State, e: &mut Vec<Effect>) {
     }
 }
 
-fn epoch_ended(s: &mut State, ep: Epoch, e: &mut Vec<Effect>) {
+fn epoch_ended(s: &mut State, ep: Epoch, cause: EndCause, e: &mut Vec<Effect>) {
     if !s.epoch_is(ep) { row(e, "rule_R4_foreign"); return; }
     s.epoch_live = false;
     match s.phase {
         Phase::Restoring => {
             row(e, "out_restoring_epoch_ended");
-            answer_held(s, EndCause::SessionEnded, e);
+            answer_held(s, cause, e);
             s.phase = Phase::Ended;
         }
         Phase::Classified | Phase::Ready => {
-            broadcast(s, &Input::EpochEnded(ep), e);
+            broadcast(s, &Input::EpochEnded(ep, cause), e);
             s.phase = Phase::Ended;
         }
         Phase::NoOwner | Phase::Ended => {}
     }
-    local::broadcast(s, &Input::EpochEnded(ep), e);
+    local::broadcast(s, &Input::EpochEnded(ep, cause), e);
 }
 
 fn addressed(s: &mut State, op_id: OpId, i: &Input, e: &mut Vec<Effect>) {
@@ -255,7 +255,7 @@ fn route(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
                 s.ops.insert(id, op);
             }
         }
-        Input::EpochEnded(ep) => epoch_ended(s, *ep, e),
+        Input::EpochEnded(ep, cause) => epoch_ended(s, *ep, *cause, e),
         Input::Closing => {
             closing(s, e);
             local::broadcast(s, i, e);

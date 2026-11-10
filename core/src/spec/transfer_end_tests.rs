@@ -5,7 +5,7 @@ use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::owners::write::transfer::{NextStep, Shown, Source, TransferAnswer, TransferId, TransferInput, TransferStage, TransferTick};
-use crate::runtime::Time;
+use crate::runtime::{Cause, Time};
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
@@ -344,6 +344,20 @@ fn xfer_epoch_ended() {
     assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
     assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
     assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
+    assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
+}
+
+#[test]
+fn xfer_epoch_ended_close() {
+    let mut twin = Twin::new();
+    let (copying, accept_reply, _) = twin.accepting(KEY, 2);
+    twin.commit();
+    let uploading = twin.uploading(OTHER, 2);
+    let (waiting, _) = twin.outcome(uploading, 1);
+    let out = twin.end_epoch_by(Cause::Close);
+    assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
+    assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))], "an epoch ended by close answers the accept with Closed");
+    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)], "the outcome wait carries Closed");
     assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
 }
 

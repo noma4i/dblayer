@@ -495,9 +495,11 @@ impl Twin {
         self.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id, outcome, intent_removed })
     }
 
-    pub fn end_epoch(&mut self) -> Out {
+    pub fn end_epoch(&mut self) -> Out { self.end_epoch_by(Cause::SessionReset) }
+
+    pub fn end_epoch_by(&mut self, cause: Cause) -> Out {
         self.ended = true;
-        self.det.end_epoch(EPOCH, Cause::SessionReset);
+        self.det.end_epoch(EPOCH, cause);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
         self.collect()
     }

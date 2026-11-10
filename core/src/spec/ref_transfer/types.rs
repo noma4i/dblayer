@@ -135,7 +135,7 @@ pub enum Input {
     Online(bool),
     PowerSaving(bool),
     Tick { now: u64, kind: TickKind },
-    EpochEnded { epoch: u64 },
+    EpochEnded { epoch: u64, cause: EndCause },
     Closing,
     EpochStarted { epoch: u64, generation: u64 },
     ModelsReset { models: Vec<String>, generation: u64 },

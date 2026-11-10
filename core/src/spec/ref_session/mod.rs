@@ -27,6 +27,7 @@ pub fn author_of(owner: &Owner) -> Option<AuthorId> {
 pub enum EndCause {
     SessionReset,
     ServerEnded,
+    Close,
     Other,
 }
 
@@ -312,7 +313,7 @@ fn pending_of(state: &State) -> Option<Pending> {
     }
 }
 
-fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
+fn is_ended(cause: EndCause) -> bool { matches!(cause, EndCause::SessionReset | EndCause::ServerEnded) }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {

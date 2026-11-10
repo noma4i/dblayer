@@ -90,6 +90,7 @@ fn cause(cause: EndCause) -> Cause {
     match cause {
         EndCause::SessionReset => Cause::SessionReset,
         EndCause::ServerEnded => Cause::ServerEnded,
+        EndCause::Close => Cause::Close,
         EndCause::Other => Cause::IdentityChanged,
     }
 }

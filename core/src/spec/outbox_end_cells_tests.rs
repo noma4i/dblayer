@@ -46,10 +46,22 @@ fn out_epoch_ended() {
         let origin_transfer = state != St::MarkingRetry;
         let ctx = Ctx { online: state != St::Queued, transfer: origin_transfer, ..ready() };
         let (mut twin, id) = reach(state, &ctx);
-        let effects = input_of(&mut twin, id, &ctx, In::EpochEnded);
+        let effects = input_of(&mut twin, id, &ctx, In::EpochEnded(End::SessionEnded));
         assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), usize::from(state == St::Sending)), "{state:?}: EpochEnded ends the operation SessionEnded, the request is cancelled only when in flight");
         let want = if origin_transfer { vec![OutboxOutcome::Ended(cause.clone())] } else { Vec::new() };
         assert_eq!(transfer_outcomes(&effects), want, "{state:?}: a transfer operation gets the Ended outcome");
+    }
+}
+
+#[test]
+fn out_epoch_ended_close() {
+    for state in [St::Submitting, St::Queued, St::Sending, St::Landing, St::MarkingRetry] {
+        let ctx = Ctx { online: state != St::Queued, transfer: state != St::MarkingRetry, ..ready() };
+        let (mut twin, id) = reach(state, &ctx);
+        let effects = input_of(&mut twin, id, &ctx, In::EpochEnded(End::Closed));
+        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone()), (Some(St::Done), Some(OutboxOutcome::Ended(EndCause::Closed))), "{state:?}: an epoch ended by close ends the operation Closed, not SessionEnded");
+        let want = if state != St::MarkingRetry { vec![OutboxOutcome::Ended(EndCause::Closed)] } else { Vec::new() };
+        assert_eq!(transfer_outcomes(&effects), want, "{state:?}: the transfer outcome carries Closed");
     }
 }
 

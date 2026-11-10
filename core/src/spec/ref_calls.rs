@@ -29,6 +29,9 @@ pub enum Fail {
 
 pub type Answer = Result<String, Fail>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End { Session, Close }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     Run { epoch: u64, operation: String, reply: ReplyId },
@@ -43,7 +46,7 @@ pub enum Input {
     Online(bool),
     Snapshot(bool),
     EpochStarted(u64),
-    EpochEnded,
+    EpochEnded(End),
     Closing,
 }
 
@@ -169,7 +172,7 @@ impl Calls {
                 self.retries.clear();
                 out.effects.push(Effect::SnapshotRequest { epoch });
             }
-            Input::EpochEnded => self.interrupt(Fail::SessionEnded, &mut out),
+            Input::EpochEnded(end) => self.interrupt(match end { End::Session => Fail::SessionEnded, End::Close => Fail::Closed }, &mut out),
             Input::Closing => {
                 self.interrupt(Fail::Closed, &mut out);
                 if !self.drained {

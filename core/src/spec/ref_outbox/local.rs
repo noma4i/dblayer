@@ -95,7 +95,7 @@ pub fn broadcast(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
                 e.push(Effect::Drained("LocalWrites"));
             }
         }
-        Input::EpochEnded(_) => {
+        Input::EpochEnded(..) => {
             for (_, st) in &ids { row(e, if *st == LStage::Writing { "out_local_write_epoch_ended" } else { "out_local_attach_copy_waits" }); }
         }
         Input::Online(_) | Input::ModelsReset { .. } | Input::Tick { .. } => {

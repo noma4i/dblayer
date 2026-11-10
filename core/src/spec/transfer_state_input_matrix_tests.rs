@@ -355,7 +355,7 @@ impl RefRun {
             Step::OfflineThenOnline => { self.feed(RefInput::Online(false)); self.feed(RefInput::Online(true)); }
             Step::Offline => self.feed(RefInput::Online(false)),
             Step::MutationConfirmed => self.feed(RefInput::MutationOutcome(super::ref_transfer::MutTarget::Transfer { transfer_id: 1, outcome: MutOut::Confirmed { revision: 2 } })),
-            Step::EndEpoch => self.feed(RefInput::EpochEnded { epoch: 1 }),
+            Step::EndEpoch => self.feed(RefInput::EpochEnded { epoch: 1, cause: super::ref_transfer::EndCause::SessionEnded }),
             Step::Close => self.feed(RefInput::Closing),
         }
     }

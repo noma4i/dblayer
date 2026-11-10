@@ -144,7 +144,7 @@ pub enum Input {
     SelectedNone { reply: u64, version: u64 },
     SelectedTransfer { reply: u64, transfer_id: u64, version: u64 },
     Online(bool),
-    EpochEnded(Epoch),
+    EpochEnded(Epoch, EndCause),
     ModelsReset { models: Vec<String>, generations: BTreeMap<String, u64> },
     Closing,
     Tick { op_id: OpId, cycle_id: u64 },

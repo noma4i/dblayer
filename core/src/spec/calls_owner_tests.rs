@@ -1,6 +1,6 @@
 //! Owner-level tests of the `calls` machine: the owner `Calls` on `DetScheduler` against `ref_calls.rs`. Names are the `Test` column.
 
-use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, Fail, Input, Kind, Out};
+use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, End, Fail, Input, Kind, Out};
 use crate::owners::calls::{CallAnswer, CallError, CallKind, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
 use crate::owners::contract::Online;
 use crate::spec::support::{new_log, take, Log, Recorder};
@@ -283,7 +283,7 @@ impl Twin {
             Input::Online(online) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Online(Online(online))),
             Input::Snapshot(online) => self.det.post(self.addr, EpochStamp::Epoch(self.epoch), CallsInput::Snapshot(Online(online))),
             Input::EpochStarted(epoch) => { self.epoch = epoch; self.det.start_epoch(epoch) }
-            Input::EpochEnded => self.det.end_epoch(self.epoch, Cause::SessionReset),
+            Input::EpochEnded(end) => self.det.end_epoch(self.epoch, match end { End::Session => Cause::SessionReset, End::Close => Cause::Close }),
             Input::Closing => self.det.close(),
         }
         self.det.run_until_quiet(100).expect("the owner is quiet");
@@ -461,7 +461,7 @@ fn call_run_before_snapshot_waits() {
     assert_eq!(out.replies, vec![(2, Err(Fail::Offline))], "the snapshot without network answers the waiting call Offline");
     let mut ended = Twin::with(None);
     ended.feed(run(3));
-    let out = ended.feed(Input::EpochEnded);
+    let out = ended.feed(Input::EpochEnded(End::Session));
     assert_eq!(out.replies, vec![(3, Err(Fail::SessionEnded))], "the end of the epoch answers a waiting call");
 }
 
@@ -553,7 +553,7 @@ fn call_prop_second_epoch_orders() {
                     _ => Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 },
                 });
             }
-            twin.feed(Input::EpochEnded);
+            twin.feed(Input::EpochEnded(End::Session));
             let answers = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 1, .. })).count();
             let requests = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
             let cancels = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Cancel { .. })).count();
@@ -564,10 +564,27 @@ fn call_prop_second_epoch_orders() {
 }
 
 #[test]
-fn call_epoch_ended() { sending().feed(Input::EpochEnded); }
+fn call_epoch_ended() { sending().feed(Input::EpochEnded(End::Session)); }
 
 #[test]
 fn call_closing() { sending().feed(Input::Closing); }
+
+#[test]
+fn call_epoch_ended_close() {
+    let out = sending().feed(Input::EpochEnded(End::Close));
+    assert_eq!(out.replies, vec![(10, Err(Fail::Closed))], "an epoch ended by close answers the run with Closed");
+}
+
+#[test]
+fn call_epoch_ended_close_then_closing() {
+    let mut twin = sending();
+    twin.feed(Input::EpochEnded(End::Close));
+    let out = twin.feed(Input::Closing);
+    assert!(out.replies.is_empty(), "the run has exactly one answer");
+    let answers = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 10, .. })).count();
+    let drained = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Drained(_))).count();
+    assert_eq!((answers, drained), (1, 1), "one Closed answer, one Drained");
+}
 
 #[test]
 fn call_done_closing() {
@@ -588,7 +605,7 @@ fn call_done() {
     twin.feed(Input::Dropped { call_id: 1 });
     twin.feed(Input::TransportError { call_id: 1, error: Fail::Http });
     twin.feed(Input::Online(false));
-    twin.feed(Input::EpochEnded);
+    twin.feed(Input::EpochEnded(End::Session));
 }
 
 #[test]
@@ -599,7 +616,7 @@ fn call_wait_run() {
     }
     twin.feed(response(1));
     twin.feed(Input::Dropped { call_id: 2 });
-    twin.feed(Input::EpochEnded);
+    twin.feed(Input::EpochEnded(End::Session));
     let answered: Vec<u64> = twin.history.iter().filter_map(|e| match e { CallsEffect::Reply { id, .. } => Some(*id), _ => None }).collect();
     assert_eq!(answered, vec![1, 2, 3, 4], "each run is answered: success, drop, then interrupted");
 }
@@ -621,16 +638,16 @@ fn random_trace(seed: u64) -> Twin {
             4 => Input::Dropped { call_id: call },
             5 => Input::TransportError { call_id: call, error: Fail::Http },
             6 => Input::Online(next(&mut s).is_multiple_of(2)),
-            7 => Input::EpochEnded,
+            7 => Input::EpochEnded(End::Session),
             _ => Input::Closing,
         };
-        let over = matches!(input, Input::EpochEnded | Input::Closing);
+        let over = matches!(input, Input::EpochEnded(_) | Input::Closing);
         twin.feed(input);
         if over {
             return twin;
         }
     }
-    twin.feed(Input::EpochEnded);
+    twin.feed(Input::EpochEnded(End::Session));
     twin
 }
 
@@ -663,7 +680,7 @@ fn call_prop_epoch() {
         }
     }
     let mut twin = sending();
-    twin.feed(Input::EpochEnded);
+    twin.feed(Input::EpochEnded(End::Session));
     let out = twin.feed(response(1));
     assert!(out.replies.is_empty(), "no answer after Cancel");
 }
@@ -711,7 +728,7 @@ fn matrix_owner_state_input_calls() {
         ("Response body", response(1)), ("Response without body", Input::Response { call_id: 1, body: None, errors: vec![] }), ("Response errors", Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }), ("Response stray call", response(9)),
         ("TransportError network", Input::TransportError { call_id: 1, error: Fail::Network }), ("TransportError http", Input::TransportError { call_id: 1, error: Fail::Http }), ("TransportError stray", Input::TransportError { call_id: 9, error: Fail::Network }),
         ("Dropped", Input::Dropped { call_id: 1 }), ("Transient", Input::Transient { call_id: 1, reason: "temporary".into() }), ("RetryDue", Input::RetryDue { call_id: 1, attempt: 1 }), ("Deadline", Input::Deadline { call_id: 1 }), ("CallerCancel", Input::CallerCancel { reply: 10 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
-        ("EpochEnded", Input::EpochEnded), ("Closing", Input::Closing),
+        ("EpochEnded", Input::EpochEnded(End::Session)), ("Closing", Input::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
     matrix.finish();

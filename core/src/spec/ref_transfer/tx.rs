@@ -29,7 +29,7 @@ pub fn tx(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
         }
         Input::RoundStatus { refused, .. } => tx_round_status(g, t, refused, e),
         Input::Committed { .. } | Input::Rejected { .. } => tx_store(g, t, i, e),
-        Input::EpochEnded { .. } => tx_end(g, t, e, false),
+        Input::EpochEnded { cause, .. } => tx_end(g, t, e, *cause == EndCause::Closed),
         Input::Closing => tx_end(g, t, e, true),
         _ => row(e, "r2_unrouted_tx"),
     }

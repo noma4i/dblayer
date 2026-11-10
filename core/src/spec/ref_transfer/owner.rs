@@ -58,18 +58,18 @@ pub fn owner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
                 TickKind::MintedWrite { transfer_id, attempt_id } => minted_tick(s, *transfer_id, *attempt_id, e),
             }
         }
-        Input::EpochEnded { epoch } => {
+        Input::EpochEnded { epoch, cause } => {
             if *epoch != s.g.epoch { row(e, "r4_epoch_ended_other"); return; }
             if s.g.phase == Phase::Restoring {
                 row(e, "xfer_restoring_closing");
-                for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(EndCause::SessionEnded))); }
+                for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(*cause))); }
                 s.g.phase = Phase::Idle;
                 return;
             }
             broadcast(s, i, e);
-            for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(EndCause::SessionEnded))); }
+            for h in std::mem::take(&mut s.g.held) { reply(e, h.reply, Answer::Err(Fault::Ended(*cause))); }
             if !s.g.selecting.is_empty() { row(e, "xfer_select_epoch_end"); }
-            for (r, _) in std::mem::take(&mut s.g.selecting) { reply(e, r, Answer::Err(Fault::Ended(EndCause::SessionEnded))); }
+            for (r, _) in std::mem::take(&mut s.g.selecting) { reply(e, r, Answer::Err(Fault::Ended(*cause))); }
         }
         Input::Closing => closing(s, e),
         Input::RoundStatus { epoch, transfer_ids, refused } => {

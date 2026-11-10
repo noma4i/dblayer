@@ -37,7 +37,7 @@ impl Ctx {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum In { Committed, EpochEnded, Closing }
+pub(super) enum In { Committed, EpochEnded(End), Closing }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Ended(End) }
@@ -429,9 +429,9 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
 pub(super) fn input_of(twin: &mut Twin, id: OpId, _ctx: &Ctx, input: In) -> Vec<OutboxEffect> {
     match input {
         In::Committed => twin.committed(id),
-        In::EpochEnded => {
+        In::EpochEnded(end) => {
             take_fx(&twin.log, state_of(&twin.det));
-            twin.det.end_epoch(EPOCH, Cause::SessionReset);
+            twin.det.end_epoch(EPOCH, match end { End::SessionEnded => Cause::SessionReset, End::Closed => Cause::Close });
             twin.run();
             take_fx(&twin.log, state_of(&twin.det))
         }

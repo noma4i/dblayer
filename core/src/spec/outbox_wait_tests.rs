@@ -41,7 +41,7 @@ fn out_wait_submit() {
 
 #[test]
 fn out_wait_outcome() {
-    for (state, input, want) in [(St::Landing, In::Committed, Out::Confirmed), (St::Sending, In::EpochEnded, Out::Ended(End::SessionEnded)), (St::Queued, In::Closing, Out::Ended(End::Closed))] {
+    for (state, input, want) in [(St::Landing, In::Committed, Out::Confirmed), (St::Sending, In::EpochEnded(End::SessionEnded), Out::Ended(End::SessionEnded)), (St::Queued, In::Closing, Out::Ended(End::Closed))] {
         let ctx = if state == St::Queued { offline() } else { ready() };
         let (mut twin, id) = reach(state, &ctx);
         let effects = input_of(&mut twin, id, &ctx, input);

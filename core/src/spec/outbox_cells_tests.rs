@@ -949,7 +949,7 @@ fn out_closing_end_cause() {
     assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(closed.clone()))], vec![OutboxOutcome::Ended(closed.clone())]), "Closing ends Closed to the waiter and Transfer");
 
     let (mut twin, id) = reach(St::Sending, &Ctx { transfer: true, ..ready() });
-    let effects = input_of(&mut twin, id, &ready(), In::EpochEnded);
+    let effects = input_of(&mut twin, id, &ready(), In::EpochEnded(End::SessionEnded));
     assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(ended.clone()))], vec![OutboxOutcome::Ended(ended.clone())]), "EpochEnded ends SessionEnded to the waiter and Transfer");
 
     for (reason, cause) in [(RejectReason::Closed, closed.clone()), (RejectReason::NoSession, ended.clone())] {

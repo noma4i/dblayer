@@ -243,13 +243,13 @@ pub fn outcome(op: &mut Op, r: &Receipt, e: &mut Vec<Effect>) {
     }
 }
 
-pub fn epoch_ended(op: &mut Op, e: &mut Vec<Effect>) {
+pub fn epoch_ended(op: &mut Op, cause: EndCause, e: &mut Vec<Effect>) {
     if op.stage == Stage::Done { row(e, "out_done"); return; }
     row(e, "out_epoch_ended");
     if op.stage == Stage::Sending { e.push(Effect::Session { op: op.id, what: "Cancel{req_id}" }); }
-    interrupt_waiters(op, EndCause::SessionEnded, e);
-    transfer_outcome(op, Outcome::Ended(EndCause::SessionEnded), e);
-    finish(op, Outcome::Ended(EndCause::SessionEnded), e);
+    interrupt_waiters(op, cause, e);
+    transfer_outcome(op, Outcome::Ended(cause), e);
+    finish(op, Outcome::Ended(cause), e);
 }
 
 /// Closing for one operation. `Drained` is emitted once by the owner.
