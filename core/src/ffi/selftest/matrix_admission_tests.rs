@@ -151,6 +151,15 @@ fn expected(closed: bool, stale: bool, invalid: bool, missing: bool) -> &'static
     if closed { "Closed" } else if stale { "NoSession" } else if invalid { "Invalid" } else if missing { "NotFound" } else { "admitted" }
 }
 
+/// An upload on an absent row is admitted (D-287) and opens a transfer under that key: `fail_source` of the key then finds a transfer that waits for no source.
+fn upload_expected(name: &str, stale: bool, invalid: bool, missing: bool) -> &'static str {
+    match (name, stale || invalid, missing) {
+        ("upload", false, true) => "admitted",
+        ("fail_source", false, true) => "Invalid",
+        _ => expected(false, stale, invalid, missing),
+    }
+}
+
 async fn admission_group(group: usize) {
     let name = ["E-call-admission-0", "E-call-admission-1", "E-call-admission-2", "E-call-admission-3"][group];
     let mut matrix = Matrix::new(name);
@@ -298,7 +307,7 @@ async fn matrix_call_admission_uploads() {
             if missing { call.row = "absent-row".into(); }
             let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
             let result = invoke_bounded(name, &database, &call).await.expect("an upload call");
-            matrix.check(name, "open", &input, expected(false, stale, invalid, missing), observed(&result));
+            matrix.check(name, "open", &input, upload_expected(name, stale, invalid, missing), observed(&result));
         }
     }
     let _ = database.close_database().await;
@@ -309,7 +318,7 @@ async fn matrix_call_admission_uploads() {
     matrix.finish();
 }
 
-/// E isolation: an upload on a missing row answers `NotFound` and leaves the database open for the next call.
+/// E isolation: an upload on a missing row is admitted (D-287) and leaves the database open for the next call.
 #[tokio::test(flavor = "multi_thread")]
 async fn matrix_upload_missing_row_leaves_the_database_open() {
     let mut matrix = Matrix::new("E-upload-missing-row");
@@ -323,7 +332,7 @@ async fn matrix_upload_missing_row_leaves_the_database_open() {
     std::fs::write(&source, b"video").unwrap();
     let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() };
     let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
-    matrix.check("upload(missing row)", "first call", "missing_row", "NotFound", observed(&first.map(|_| ())));
+    matrix.check("upload(missing row)", "first call", "missing_row", "admitted", observed(&first.map(|_| ())));
     let next = database.peek_row(epoch, "Moment".into(), row.clone());
     matrix.check("peek_row(present row)", "next call on the same database", "after the refused upload", "admitted", observed(&next.map(|_| ())));
     let again = database.upload(epoch + 1000, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
