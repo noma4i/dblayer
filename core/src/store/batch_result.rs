@@ -47,6 +47,7 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
         combined.members.extend(result.members);
         combined.server_removed.extend(result.server_removed);
         combined.operations.extend(result.operations);
+        combined.uploads_changed |= result.uploads_changed;
         combined.queue_operations.extend(result.queue_operations);
         combined.replaced.extend(result.replaced);
         combined.unknown_operation_acks += result.unknown_operation_acks;

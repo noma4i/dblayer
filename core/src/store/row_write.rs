@@ -70,7 +70,9 @@ impl RowWrite<'_> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let mut envelope = BatchPlan::new(self.generation);
         envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(model), id });
-        super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
+        let mut result = super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))?;
+        result.uploads_changed = true;
+        Ok(result)
     }
 
     pub fn attach(&mut self, record: &crate::store::files::FileRecord) -> Result<CommitResult, StoreError> {

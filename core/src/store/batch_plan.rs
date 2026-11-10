@@ -326,6 +326,8 @@ pub struct CommitResult {
     pub scopes: BTreeSet<ScopeRef>,
     pub members: BTreeSet<RowRef>,
     pub operations: BTreeSet<i64>,
+    /// A transfer row of `sync_upload` changed: the queue view shows it.
+    pub uploads_changed: bool,
     pub(crate) queue_operations: BTreeMap<i64, Option<crate::owners::write::operation_status::Operation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     /// The rows a server delete (event or NOT_FOUND answer) removed, cascade children included.
@@ -347,6 +349,7 @@ impl CommitResult {
             scopes: BTreeSet::new(),
             members: BTreeSet::new(),
             operations: BTreeSet::new(),
+            uploads_changed: false,
             queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
             server_removed: Vec::new(),

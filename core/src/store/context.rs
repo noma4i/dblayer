@@ -38,7 +38,7 @@ impl CommittedBroadcast {
     /// The one notice of a commit: `rows` are exactly the changed rows of the tables named in `tables`.
     pub(crate) fn of_commit(result: &CommitResult) -> Self {
         let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).chain(result.replaced.iter().map(|(from, _)| from.model.as_str())).collect();
-        let queue = (!result.operations.is_empty()).then(|| crate::store::operation::QUEUE_TABLE.to_string());
+        let queue = (!result.operations.is_empty() || result.uploads_changed).then(|| crate::store::operation::QUEUE_TABLE.to_string());
         let tables: Vec<String> = models.iter().map(|model| table_name(model)).chain(queue).collect();
         let mut rows = super::changed_log::table_rows(result);
         rows.retain(|(table, _)| tables.contains(table));
