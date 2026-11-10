@@ -20,6 +20,89 @@ fn good() -> Value {
     json!({"userPhotoUpdate": {"moment": {"id": "m1"}, "userPhoto": {"reason": null, "status": "GOOD", "media": {"thumbUrl": "https://t/1"}}, "viewer": viewer()}})
 }
 
+fn document_answer() -> Value {
+    json!({"userPhotoUpdate": {"moment": {"id": "m1"}, "userPhoto": {"id":"p1","kind":"MAIN_PICTURE","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","reason":null,"status":"GOOD","media":{"thumbUrl":"https://t/1"}}, "viewer": {"user": {"id":"u1","fullName":"Ann","username":"ann","online":true,"shareUrl":"s","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","avatarUrl":"a","fullAvatarUrl":null,"age":null,"gender":null,"description":null,"story":null,"lastSeenAt":null,"distance":null,"relationship":null}}}})
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_forbidden_discard_and_next_upload() {
+    let mut cases = Vec::new();
+    for data_present in [false, true] {
+        for wait_before_failure in [false, true] {
+            for discard in [false, true] {
+                cases.push(tokio::spawn(async move {
+                    let stand = Stand::open().await;
+                    let epoch = stand.database.session_epoch();
+                    stand.answer("myProfile", json!({"viewer": viewer()}));
+                    bound(stand.database.refresh(epoch, "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+                    assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "u1".into())).await.unwrap().is_some());
+                    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+                    stand.answer("UserPhotoUpdate", document_answer());
+                    let mut refusal = json!({"errors":[{"message":"Please select a profile picture with a clearly visible face.","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]});
+                    if data_present { refusal["data"] = json!({"userPhotoUpdate":null}); }
+                    stand.answer_next("UserPhotoUpdate", refusal);
+                    stand.hold(&["UserPhotoUpdate"]);
+                    stand.script_put(200, Some("etag"));
+                    let directory = tempfile::tempdir().unwrap();
+                    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+                    arrived(&stand, "UserPhotoUpdate").await;
+                    let items = operations(&stand).await;
+                    assert_eq!(items.len(), 1);
+                    let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+                    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+                    assert!(copy.exists());
+                    let before = stand.database.life.waiting_calls();
+                    let waiting = if wait_before_failure {
+                        let db = stand.database.clone();
+                        let receipt = receipt.clone();
+                        Some(tokio::spawn(crate::runtime::counted(Some(db.life.launch()), async move { db.confirmed(receipt, discard).await })))
+                    } else { None };
+                    if waiting.is_some() { crate::test_wait::settled(&stand, "confirmed waits for refusal", || stand.database.life.waiting_calls() > before).await; }
+                    stand.release(&["UserPhotoUpdate"]);
+                    if waiting.is_none() { stand.settle().await; }
+                    let answer = if let Some(waiting) = waiting { bound(waiting).await.unwrap() } else { bound(stand.database.confirmed(receipt, discard)).await };
+                    let Err(DbError::Rejected { failure, kept }) = answer else { panic!("unexpected outcome: {answer:?}") };
+                    assert_eq!(failure.kind, "rejected");
+                    assert_eq!(failure.message, "Please select a profile picture with a clearly visible face.");
+                    let extensions = failure.extensions.unwrap();
+                    assert_eq!(extensions.code.as_deref(), Some("FORBIDDEN"));
+                    assert_eq!(extensions.fields.get("reasonCode").map(String::as_str), Some("\"no_face_detected\""));
+                    assert_eq!(kept, !discard, "data={data_present}, waiting={wait_before_failure}");
+                    assert_eq!(operations(&stand).await.len(), usize::from(!discard));
+                    assert_eq!(copy.exists(), !discard);
+                    if discard {
+                        stand.script_put(200, Some("etag"));
+                        let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+                        let outcome = bound(stand.database.confirmed(second, false)).await;
+                        assert!(outcome.is_ok(), "second upload: {outcome:?}");
+                        assert_eq!(stand.requests("UserPhotoUpdate"), 2);
+                    } else {
+                        let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await;
+                        assert!(matches!(second, Err(DbError::InFlight { .. })), "transfer.md:133: {second:?}");
+                        assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+                    }
+                    stand.database.close_now();
+                }));
+            }
+        }
+    }
+    for case in cases { bound(case).await.unwrap(); }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_document_response_lands_row() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer("UserPhotoUpdate", document_answer());
+    stand.script_put(200, Some("etag"));
+    let directory = tempfile::tempdir().unwrap();
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    let answer = bound(stand.database.confirmed(receipt, false)).await.unwrap();
+    assert!(matches!(answer.value, Some(ref row) if row.id == "u1"), "the document response landed the row: {:?}", answer.value);
+    stand.database.close_now();
+}
+
 fn photo(directory: &tempfile::TempDir) -> WireUploadRequest {
     let path = directory.path().join("avatar.jpg");
     std::fs::write(&path, b"jpeg-bytes").unwrap();
