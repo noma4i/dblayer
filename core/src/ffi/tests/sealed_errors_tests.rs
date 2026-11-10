@@ -66,13 +66,13 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
     for (wire, code) in TABLE {
         for confirmed in [false, true] {
             cases.push(tokio::spawn(async move {
-                let rig = Rig::new();
-                let database = signed_in(&rig).await;
-                let credential = rig.credentials.inner.value();
                 for entry in ["load", "refresh", "run query", "run mutation"] {
                     if wire == "REPLAYED_REQUEST" && entry != "run mutation" {
                         continue;
                     }
+                    let rig = Rig::new();
+                    let database = signed_in(&rig).await;
+                    let credential = rig.credentials.inner.value();
                     rig.server.refuse_next(wire, confirmed);
                     let error = match entry {
                         "load" => database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
@@ -84,7 +84,8 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     if code == SessionCode::Unauthenticated {
                         assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
                     } else if code == SessionCode::SessionEnded {
-                        assert!(matches!(error, DbError::NoSession { .. }), "{case}: a revoked answer ends the epoch of the author, the wait ends with NoSession (D-278, D-263): {error:?}");
+                        let expected_end = if entry == "load" || entry == "refresh" { matches!(error, DbError::NoSession { .. }) } else { matches!(error, DbError::Interrupted { .. }) };
+                        assert!(expected_end, "{case}: a revoked answer ends the epoch of the author: a load wait ends with NoSession, a call with Interrupted (D-278, D-263, calls.md:80): {error:?}");
                         let life = database.life_handle();
                         crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
                         assert_eq!(rig.credentials.inner.value(), None, "{case}: the published server end erases the session");
