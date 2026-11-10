@@ -173,9 +173,7 @@ async fn consumer_transfer_abort_debt_reset() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("multipart.jpg");
     std::fs::File::create(&source).unwrap().set_len(11 * crate::owners::write::upload::MEBIBYTE).unwrap();
-    stand.answer("MultipartUploadInit", json!({"multipartUploadInit":{"multipartUpload":{"key":"key-1","uploadId":"upload-1","signedId":"signed","blobId":"b1"}}}));
-    stand.answer("MultipartUploadPresignParts", json!({"multipartUploadPresign":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}));
-    stand.answer("MultipartUploadAbort", json!({"multipartUploadAbort":{"aborted":true}}));
+    stand.answer_multipart();
     stand.hold(&["MultipartUploadPresignParts", "MultipartUploadAbort"]);
     let receipt = bound(stand.database.send(CommandRequest {
         epoch, model: "Moment".into(), values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(), args_json: "{}".into(),
