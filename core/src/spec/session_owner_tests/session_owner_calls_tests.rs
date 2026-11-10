@@ -424,7 +424,8 @@ fn sess_landing_server_ended_mutate_answers() {
     twin.feed(input);
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
-    assert!(twin.reference.awaiting().is_none(), "a mutate answers at once");
+    assert!(!done.iter().any(|effect| matches!(effect, RefEffect::Answer { .. })), "the author of the pair learns the end from its epoch, no live answer (D-278): {done:?}");
+    assert!(twin.reference.awaiting().is_none(), "nothing waits for a publication");
 }
 
 #[test]

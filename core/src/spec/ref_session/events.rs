@@ -452,6 +452,7 @@ impl Session {
                                 self.after_publish = Some((reply, answer.clone(), Some(pending.epoch)));
                                 pending.reply = None;
                             }
+                            pending.author = None;
                         }
                         Self::finish(out, &pending, answer);
                     }
