@@ -164,6 +164,8 @@ async fn xfer_rowless_status_and_discover() {
     reopened.settle().await;
     assert_eq!(reopened.requests("UserPhotoUpdate"), 1, "the restored upload completes its mutation");
     assert!(operations(&reopened).await.is_empty(), "the completed upload leaves the queue");
+    let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "CurrentUser".into(), "u1".into())).await.unwrap();
+    assert!(row.is_some(), "the restored upload lands the server row");
     reopened.database.close_now();
 }
 
