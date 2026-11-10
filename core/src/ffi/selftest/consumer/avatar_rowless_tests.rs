@@ -78,6 +78,10 @@ async fn consumer_avatar_reopen_discards_orphan_and_sends_pending() {
     let epoch = first.database.session_epoch();
     let failed = bound(first.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     assert!(matches!(bound(first.database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
+    let failed_items = operations(&first).await;
+    let failed_url = failed_items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let failed_copy = std::path::PathBuf::from(failed_url.strip_prefix("file://").unwrap());
+    assert!(failed_copy.exists());
     first.hold(&["UserPhotoUpdate"]);
     first.script_put(200, Some("etag"));
     let _pending = bound(first.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), photo(&directory))).await.unwrap();
@@ -109,6 +113,7 @@ async fn consumer_avatar_reopen_discards_orphan_and_sends_pending() {
     reopened.settle().await;
     let items = operations(&reopened).await;
     assert!(items.is_empty(), "the orphan is removed and the pending upload completes: {items:?}");
+    assert!(!failed_copy.exists(), "the orphaned upload copy is removed");
     assert!(!copy.exists(), "the completed upload copy is removed");
     assert_eq!(reopened.requests("UserPhotoUpdate"), 1);
     let connection = rusqlite::Connection::open(&path).unwrap();
