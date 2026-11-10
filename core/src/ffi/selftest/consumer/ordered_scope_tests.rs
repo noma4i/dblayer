@@ -30,8 +30,9 @@ fn row(case: Case, number: i32) -> Value {
 
 fn answer(case: Case, numbers: &[i32], more: bool, cursor: &str) -> Value {
     let nodes: Vec<_> = numbers.iter().map(|number| row(case, *number)).collect();
-    let edges: Vec<_> = nodes.into_iter().map(|node| json!({"node":node})).collect();
-    let connection = json!({"edges": edges, "pageInfo": {"hasNextPage": more, "endCursor": cursor}});
+    let edges: Vec<_> = nodes.into_iter().enumerate().map(|(index, node)| if matches!(case.operation, "userMoments" | "myMoments") { json!({"cursor":format!("c{index}"), "node":node}) } else { json!({"node":node}) }).collect();
+    let mut connection = json!({"edges": edges, "pageInfo": {"hasNextPage": more, "endCursor": cursor}});
+    if case.operation == "chatMedia" { connection["totalCount"] = json!(numbers.len()); }
     match case.operation {
         "chatMedia" => json!({"node": {"messages": connection}}),
         "userMoments" => json!({"user": {"moments": connection}}),
