@@ -337,6 +337,8 @@ pub enum StoreKind {
     Shown,
     /// The marker of a temporary copy goes: a refusal of the Store fails the transfer.
     StagedCleared,
+    /// The old row is written back after a failed swap: the temporary file goes and the call is answered after `Committed`.
+    StagedRestored,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -482,6 +484,8 @@ pub struct Transfer {
     pub seeded: Option<(u64, String, crate::transport::AnswerKind)>,
     /// The saved answer the batch of the attempt removes from the Store with the attempt it starts.
     pub answer_saved: Option<u64>,
+    /// The call a failed swap answers and the fault it gets, after the old row is committed.
+    pub staged_failed: Option<(Option<ReplyId>, Fault)>,
     pub closing: bool,
 }
 

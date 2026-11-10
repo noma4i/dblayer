@@ -404,6 +404,7 @@ impl TransferState {
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
         for (id, columns) in &pending.written { self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), fx); }
+        if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], true, fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {
@@ -472,6 +473,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::StagedCleared { return; }
+        if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], false, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
                 (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
@@ -741,6 +743,7 @@ impl StateOwner for Transfers {
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
         StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
+        StoreKind::StagedRestored => UploadKind::Failed,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,

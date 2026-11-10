@@ -89,6 +89,7 @@ impl TransferState {
             restored: false,
             pending_step: None,
             answer_saved: None,
+            staged_failed: None,
             urgent,
             op_id: None,
             submitted: false,
@@ -356,8 +357,22 @@ impl TransferState {
 
     /// The rename of the temporary file failed: the old copy and its metadata stay, only the temporary file goes, the call that waits for the swap learns it.
     pub(super) fn staged_promote_failed(&mut self, id: TransferId, detail: String, fx: &mut Fx) {
-        self.source_rejected(id, Fault::Rejected(RejectReason::Storage(detail)), fx);
-        if self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed) { self.store(&[id], StoreKind::Failed, fx); }
+        let fault = Fault::Rejected(RejectReason::Storage(detail));
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let (Some(_), Some(previous)) = (transfer.supply_back.take(), transfer.previous.take()) else { return };
+        let rep = transfer.supply_reply.take();
+        *transfer = *previous;
+        transfer.staged_failed = Some((rep, fault));
+        self.store(&[id], StoreKind::Failed, fx);
+        if let Some(pending) = self.pending.get_mut(&(self.next_batch - 1)) { pending.kind = StoreKind::StagedRestored; }
+    }
+
+    /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.
+    pub(super) fn staged_restored(&mut self, id: TransferId, committed: bool, fx: &mut Fx) {
+        let Some((rep, fault)) = self.transfers.get_mut(&id).and_then(|transfer| transfer.staged_failed.take()) else { return };
+        if committed { run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) }); }
+        self.rounds_idle(id, fx);
+        if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Err(fault)); }
     }
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
