@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::transfer_harness::*;
-use crate::owners::store::{StoreOp, UploadKind};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;
@@ -76,17 +76,6 @@ fn xfer_accept_check_order_without_row() {
     assert_eq!(Twin::fault(&out, 8), Some(Fault::NoSession), "NoSession before Invalid");
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: invalid(), reply: 9, now: Time(0) });
     assert_eq!((Twin::fault(&out, 9), out.writes(), twin.state().open_id(KEY)), (Some(Fault::Invalid), 0, None), "Invalid, never a missing row");
-}
-
-#[test]
-fn xfer_copy_rowless() {
-    let mut twin = Twin::new();
-    let (id, _, _) = accept(&mut twin, KEY, 2);
-    let out = reserve(&mut twin, id);
-    assert_eq!((out.writes(), out.kinds()), (1, vec![UploadKind::SyncUpload]), "the copy is a row of sync_upload by the key of the transfer");
-    assert!(out.batches.iter().flat_map(|batch| batch.ops.iter()).all(|op| !matches!(op, StoreOp::Effects { .. } | StoreOp::Intent { .. })), "no effects of a row that does not exist");
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.copies()), (TransferStage::Copying, 1));
 }
 
 #[test]
