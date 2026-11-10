@@ -12,7 +12,6 @@ try await DB.sessionReset()
 DBlayer.sessionReset()
 ```
 
-
 A write applies to the local database at once, so every open stream updates immediately. Every write that reaches the server (`create`, `update`, `act`, `destroy`, a send and a media upload) is also placed in a durable queue in the same commit. The queue keeps it while the network is away and after the app closes.
 
 ```swift
@@ -43,7 +42,7 @@ moment.update(text = GraphQLNullable.Null)
 let message = try await Message.create(text: "hello", in: scope).optimisticValue
 ```
 
-```kotlin
+````kotlin
 val message = Message.create(text = "hello", account = scope).optimisticValue
 ``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
@@ -59,7 +58,7 @@ operation :create do
   parameter :file, :string, null: true
   parameter :attachedUserId, :id, null: true
 end
-```
+````
 
 ```swift
 let message = try await Note.create(groupId: group.id, body: "hi", attachedUserId: "42", file: signedId, in: scope).optimisticValue
@@ -80,11 +79,11 @@ A parameter goes into the queued change and is never stored in the row, so no re
 3. Observers see the change as one transition.
 4. Sync sends the queued mutation (see [server sync](server-sync.md)).
 
-| Call | Local effect | Queued action |
-| ---- | ------------ | ------------- |
-| `create` | new row with a temporary id (`temp-...`). A `create` with an id that already exists is an error (`AlreadyExists`), change an existing row with `update` | `create` |
-| `update` | patch merged into the current row, no commit if nothing changes | `update` |
-| `destroy` | row and its dependent children removed | `destroy` |
+| Call      | Local effect                                                                                                                                            | Queued action |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `create`  | new row with a temporary id (`temp-...`). A `create` with an id that already exists is an error (`AlreadyExists`), change an existing row with `update` | `create`      |
+| `update`  | patch merged into the current row, no commit if nothing changes                                                                                         | `update`      |
+| `destroy` | row and its dependent children removed                                                                                                                  | `destroy`     |
 
 `update` keeps attributes you did not mention. A patch that changes nothing creates no commit and no queue entry.
 
@@ -115,7 +114,7 @@ The result is retained while the receipt is held. A confirmed result contains th
 ```swift
 do {
   let confirmed = try await receipt.confirmed()
-  show(confirmed.value, confirmed.answerJSON)
+  show(confirmed.value, confirmed.answerJson)
 } catch let DbError.Rejected(failure, kept) {
   showRefusal(failure, kept: kept)
 }
@@ -336,7 +335,7 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 
 ## What the server answered
 
-`returns` declares the scalar attributes of the mutation payload that the app needs, such as a success message. The confirmed result contains them as `answerJSON` on Swift and `answerJson` on Kotlin.
+`returns` declares the scalar attributes of the mutation payload that the app needs, such as a success message. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin.
 
 ```ruby
 operation :send_reward do

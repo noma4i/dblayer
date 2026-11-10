@@ -90,7 +90,7 @@ extension DBModel {
 
 public struct Confirmed<Model: DBModel>: Sendable {
   public let value: Model?
-  public let answerJSON: String?
+  public let answerJson: String?
 }
 
 public struct MutationReceipt<Model: DBModel>: Sendable {
@@ -113,7 +113,7 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
   /// The one outcome of the receipt: the value, or the error of a refusal (`DbError.Rejected`, `kept` = the failed intent stays) or of the end of the wait.
   @concurrent public func confirmed() async throws -> Confirmed<Model> {
     let confirmed = try await database.confirmed(receipt: wire)
-    return Confirmed(value: try confirmed.value.map(Model.decode), answerJSON: confirmed.answerJson)
+    return Confirmed(value: try confirmed.value.map(Model.decode), answerJson: confirmed.answerJson)
   }
 }
 
