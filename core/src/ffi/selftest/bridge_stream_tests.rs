@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tests::lifecycle_tests::named;
-use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
+use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadValue, WireSyncState};
 use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
@@ -300,8 +300,8 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
 
     rig.database.set_online(true).unwrap();
-    let outcome = bound(rig.database.outcome(receipt.clone())).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m2"));
+    let outcome = bound(rig.database.confirmed(receipt.clone(), false)).await.unwrap();
+    assert!(matches!(outcome.value, Some(row) if row.id == "m2"));
     settled(&rig, "the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;
     settle(&rig).await;
 
@@ -399,7 +399,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     for (index, text) in ["six", "seven"].into_iter().enumerate() {
         let (before, mark) = (rig.database.db.counters().rows_delivered, reader.len());
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
-        bound(rig.database.outcome(receipt)).await.unwrap();
+        bound(rig.database.confirmed(receipt, false)).await.unwrap();
         settle(&rig).await;
         let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let ReadValue::Delta { edits, .. } = &delivery.value { Some(crate::ffi::RowEdit::carried(edits).len()) } else { None }).collect();
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");

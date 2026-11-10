@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use super::rig_tests::bound;
 use super::upload_tests::{executed, opened_with_row, request, Puts};
 use crate::ffi::tests::session_guards_tests::Rig as SessionRig;
-use crate::ffi::{CommandRequest, Database, WireOperationOutcome};
+use crate::ffi::{CommandRequest, Database};
 
 #[derive(Clone, Copy, Debug)]
 enum Path {
@@ -35,16 +35,14 @@ async fn drive(path: Path, database: &Arc<Database>, rig: &SessionRig, known: bo
         Path::OutboxMutation => {
             let request = CommandRequest { epoch, model: "Moment".into(), values_json: json!({"text": "hi"}).to_string(), args_json: "{}".into(), upload: None };
             let receipt = bound(database.send(request)).await.unwrap();
-            let outcome = bound(database.outcome(receipt)).await.unwrap();
-            assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
+            bound(database.confirmed(receipt, false)).await.unwrap();
         }
         Path::UploadFinalMutation => {
             let directory = tempfile::tempdir().unwrap();
             let source = directory.path().join("clip.mp4");
             std::fs::write(&source, b"abc").unwrap();
             let receipt = bound(database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-            let outcome = bound(database.outcome(receipt)).await.unwrap();
-            assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
+            bound(database.confirmed(receipt, false)).await.unwrap();
         }
         Path::CallsMutation => {
             let document = "mutation Ping { ping { id } }";

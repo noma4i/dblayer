@@ -5,7 +5,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Rig};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
-use crate::ffi::{CommandRequest, EndCause, ReadRequest, ReadValue, RowEdit, WireOperationOutcome, WireRow};
+use crate::ffi::{CommandRequest, EndCause, ReadRequest, ReadValue, RowEdit, WireRow};
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
 #[derive(Default)]
@@ -83,10 +83,7 @@ pub(super) fn group(name: &str) -> (String, String) { (json!({"name": name}).to_
 
 pub(super) async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args: String) -> WireRow {
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    match bound(rig.database.outcome(receipt)).await.unwrap() {
-        WireOperationOutcome::Confirmed { value: Some(row), .. } => row,
-        other => panic!("group create did not confirm: {other:?}"),
-    }
+    bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("group create did not return a row")
 }
 
 pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
