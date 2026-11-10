@@ -99,7 +99,7 @@ impl TransferState {
             let result = match outcome {
                 AuthorOutcome::Response { body, .. } => {
                     let answer: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                    let refused = answer.get("errors").and_then(serde_json::Value::as_array).is_some_and(|errors| !errors.is_empty()) || answer.get("data").and_then(|data| data.get(self.abort_root.as_str())).is_none_or(serde_json::Value::is_null);
+                    let refused = answer.get("errors").and_then(serde_json::Value::as_array).is_some_and(|errors| !errors.is_empty()) || answer.get("data").and_then(|data| crate::owners::read::codec::root_value(data, &self.abort_root)).is_none_or(serde_json::Value::is_null);
                     if refused { Err(AbortFault { temporary: false, status: None }) } else { Ok(()) }
                 }
                 AuthorOutcome::Error { class, error, .. } => Err(AbortFault { temporary: matches!(class, crate::owners::contract::ErrorClass::Network | crate::owners::contract::ErrorClass::Server), status: if let SessionError::Http { status } = error { Some(status) } else { None } }),
@@ -694,7 +694,7 @@ impl TransferState {
     /// A new epoch starts a new instance of the table: the declarations of the operations and the counters of ids stay, the rest of the state of the older epoch goes.
     fn begin_epoch(&mut self, epoch: Epoch) {
         let fresh = Self::new(epoch, self.slots, self.peers);
-        let kept = Self { orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, now: self.now, ..fresh };
+        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, now: self.now, ..fresh };
         *self = kept;
     }
 
