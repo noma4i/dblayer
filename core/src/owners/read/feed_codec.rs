@@ -102,6 +102,10 @@ impl SchemaFeedCodec {
             return delete(model, event_id);
         }
         let path = read.payload.as_deref().unwrap_or_default();
+        if read.relation == "node" && matches!(root_value(change, path), None | Some(Value::Null)) {
+            let Some(spec) = self.specs().find(|spec| spec.key.as_str() == model) else { return invalid(model, format!("unknown model {model}")) };
+            return event(model, json!({"op":"reread", "model":model, "id":event_id.as_str()}), self.reread_keys(spec, read, event_id));
+        }
         let Some(node) = root_value(change, path).and_then(Value::as_object) else { return invalid(model, format!("missing full payload {model}.{path}")) };
         if let Err(error) = self.specs().find(|spec| spec.key.as_str() == model).ok_or_else(|| format!("unknown model {model}")).and_then(|spec| spec.normalize(node).map_err(|error| error.to_string())) {
             return invalid(model, error);
