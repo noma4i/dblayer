@@ -104,12 +104,27 @@ pub(in super::super) fn apply_envelope_at(
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
     if let Some(originals) = originals {
         let reader = Reader::new(connection, models);
+        let mut wanted = BTreeMap::<String, Vec<String>>::new();
         for (model, id) in &synced_keys {
             if !models.contains_key(model) { continue; }
-            let Ok(id) = crate::identity::RowId::new(id) else { continue };
-            let row = RowRef::new(ModelKey::new(model), id);
-            if !originals.contains_key(&row) {
-                originals.insert(row.clone(), reader.point(model, row.id.as_str())?);
+            let Ok(row_id) = crate::identity::RowId::new(id) else { continue };
+            let row = RowRef::new(ModelKey::new(model), row_id);
+            if originals.contains_key(&row) { continue; }
+            if let Some((current, _)) = &feed_cache {
+                if let Some(stored) = current.get(&(model.clone(), id.clone())) {
+                    originals.insert(row, stored.as_ref().map(|stored| stored.row.clone()));
+                    continue;
+                }
+            }
+            wanted.entry(model.clone()).or_default().push(id.clone());
+        }
+        for (model, ids) in wanted {
+            let mut rows = reader.stored_rows_with_revisions(&model, &ids)?;
+            for id in ids {
+                let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                let stored = rows.remove(&id);
+                originals.insert(RowRef::new(ModelKey::new(&model), row_id), stored.as_ref().map(|row| row.row.clone()));
+                if let Some((current, _)) = &mut feed_cache { current.insert((model.clone(), id), stored); }
             }
         }
     }
