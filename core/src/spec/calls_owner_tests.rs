@@ -462,7 +462,7 @@ fn call_run_before_snapshot_waits() {
     let mut ended = Twin::with(None);
     ended.feed(run(3));
     let out = ended.feed(Input::EpochEnded);
-    assert_eq!(out.replies, vec![(3, Err(Fail::Interrupted))], "the end of the epoch answers a waiting call");
+    assert_eq!(out.replies, vec![(3, Err(Fail::SessionEnded))], "the end of the epoch answers a waiting call");
 }
 
 #[test]
