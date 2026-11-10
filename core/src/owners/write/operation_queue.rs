@@ -3,6 +3,12 @@
 use crate::owners::write::operation_status::{Operation, OperationStatus};
 use crate::value::sync::OperationFailure;
 
+#[cfg(test)]
+thread_local! { static COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+#[cfg(test)]
+pub(crate) fn take_comparisons() -> usize { COMPARISONS.with(|count| count.replace(0)) }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QueueStatus {
     Pending,
@@ -42,7 +48,10 @@ fn opened(operation: &Operation) -> Result<Option<QueuedOperation>, String> {
 /// The open operations in `seq` order. A row of the table that the queue cannot show is an error of the read.
 pub(crate) fn queue_of(operations: &[Operation]) -> Result<Vec<QueuedOperation>, String> {
     let mut open = operations.iter().filter_map(|operation| opened(operation).transpose()).collect::<Result<Vec<_>, _>>()?;
-    let blocked: Vec<Option<i64>> = open.iter().map(|item| open.iter().filter(|earlier| earlier.seq < item.seq && earlier.status == QueueStatus::Failed && earlier.model == item.model && earlier.row_id == item.row_id).map(|earlier| earlier.seq).max()).collect();
+    let blocked: Vec<Option<i64>> = open.iter().map(|item| open.iter().filter(|earlier| {
+        #[cfg(test)] COMPARISONS.with(|count| count.set(count.get() + 1));
+        earlier.seq < item.seq && earlier.status == QueueStatus::Failed && earlier.model == item.model && earlier.row_id == item.row_id
+    }).map(|earlier| earlier.seq).max()).collect();
     for (item, blocked_by) in open.iter_mut().zip(blocked) {
         item.blocked_by = blocked_by;
     }
