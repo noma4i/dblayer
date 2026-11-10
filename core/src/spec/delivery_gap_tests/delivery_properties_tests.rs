@@ -303,6 +303,24 @@ fn dlv_prop_gap_bounded() {
 }
 
 #[test]
+fn mem_events_flood_without_reader() {
+    use crate::runtime::StateOwner;
+    let mut state = d::DeliveriesState::new(EPOCH, peers());
+    drop(Deliveries::step(&mut state, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 }));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::Joined { stream: STREAM, position: 0 }));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::ModelReady { stream: STREAM }));
+    let payload = "x".repeat(1024);
+    let (_, peak) = crate::tests::peak_tests::measure_peak(|| {
+        for position in 1..=100_000u64 {
+            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelEvent { stream: STREAM, position, payload: payload.clone() }));
+            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelGap { stream: STREAM }));
+        }
+    });
+    let unread = d::JOURNAL_LIMIT * (payload.len() + 256);
+    assert!(peak < 2 * unread, "100 MB of unread events hold at most the journal limit: peak={peak} bound={}", 2 * unread);
+}
+
+#[test]
 fn dlv_prop_ready_once() {
     let mut twin = open_as(Kind::Events);
     twin.step(Input::ModelEvent { position: 1, payload: "c1".into() });
