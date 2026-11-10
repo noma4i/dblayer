@@ -3,7 +3,7 @@ use serde_json::json;
 use super::stand::{message, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadSource};
-use crate::ffi::{ReadRequest, ReadValue, WireOperationOutcome};
+use crate::ffi::{DbError, ReadRequest, ReadValue};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
@@ -55,10 +55,10 @@ async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
     }
     stand.release_put();
     bound(database.fail_source(epoch, "Message".into(), ids[0].clone(), "send_files".into(), "preparation".into())).await.unwrap();
-    assert!(matches!(bound(database.outcome(receipt.items[0].receipt.clone())).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "source_failed"));
+    assert!(matches!(bound(database.confirmed(receipt.items[0].receipt.clone())).await, Err(DbError::Rejected { failure, kept: true }) if failure.kind == "source_failed"));
     let retry = bound(database.retry(epoch, "Message".into(), ids[0].clone(), Some("send_files".into()), Some(source(&first_path)))).await.unwrap();
-    assert!(matches!(bound(database.outcome(retry)).await.unwrap(), WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m0"));
-    assert!(matches!(bound(database.outcome(receipt.items[2].receipt.clone())).await.unwrap(), WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m2"));
+    assert!(matches!(bound(database.confirmed(retry)).await.unwrap().value, Some(row) if row.id == "m0"));
+    assert!(matches!(bound(database.confirmed(receipt.items[2].receipt.clone())).await.unwrap().value, Some(row) if row.id == "m2"));
     assert_eq!(stand.requests("MessageAlbumSend"), 1);
     assert_eq!(stand.puts(), 2);
     database.close_now();
