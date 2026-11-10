@@ -145,10 +145,17 @@ async fn xfer_rowless_status_and_discover() {
     let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
     reopened.hold_put();
     reopened.script_put(200, Some("etag"));
+    reopened.answer("UserPhotoUpdate", good());
     reopened.sign_in().await;
     let items = operations(&reopened).await;
     assert_eq!(items.len(), 1, "the transfer is found once after the restart, with no row and no receipt: {items:?}");
     let restored = items[0].upload.clone().expect("the value of the restored transfer");
     assert_eq!((items[0].model.as_str(), items[0].row_id.as_str(), items[0].action.as_str(), restored.total_bytes), ("CurrentUser", "me", "update_photo", 10), "{items:?}");
+    reopened.put_started().await;
+    reopened.release_put();
+    arrived(&reopened, "UserPhotoUpdate").await;
+    reopened.settle().await;
+    assert_eq!(reopened.requests("UserPhotoUpdate"), 1, "the restored upload completes its mutation");
+    assert!(operations(&reopened).await.is_empty(), "the completed upload leaves the queue");
     reopened.database.close_now();
 }
