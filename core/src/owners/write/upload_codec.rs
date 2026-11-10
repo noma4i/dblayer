@@ -73,7 +73,10 @@ impl UploadCodec {
         let key = if step == UploadStage::Abort { RequestOwner::Orphan { upload_id: item.to_string() } } else { RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step } };
         let request = GraphQLRequest { owner: Some(key.clone()), ..GraphQLRequest::new(&document, name, variables) };
         let response = link.mutate(request, &key).await?;
-        let data = answered(name, &root, response)?;
+        let data = if step == UploadStage::Abort {
+            if !response.errors.is_empty() { return Err(TransportError::GraphqlAnswer { response: Box::new(response) }); }
+            Value::Null
+        } else { answered(name, &root, response)? };
         Ok(Answered { data, label: format!("{name}: {root}") })
     }
 
@@ -140,7 +143,7 @@ fn answered(name: &str, root: &str, response: Response) -> Result<Value, Transpo
     if !response.errors.is_empty() {
         return Err(TransportError::GraphqlAnswer { response: Box::new(response) });
     }
-    response.data.and_then(|data| root_value(&data, root).cloned()).filter(|value| !value.is_null()).ok_or_else(|| TransportError::Decode(format!("{name} answered without {root}")))
+    response.data.and_then(|data| root_value(&data, root).cloned()).filter(Value::is_object).ok_or_else(|| TransportError::Decode(format!("{name} answered without object at {root}")))
 }
 
 #[async_trait]
