@@ -10,7 +10,7 @@ use crate::identity::ModelKey;
 use crate::owners::read::codec::{extract, normalize_nodes, root_value};
 use crate::owners::store::RowValue;
 use crate::schema::{Coverage, RemoteShape};
-use crate::value::{read_id, read_scalar, ScalarKind};
+use crate::value::read_id;
 
 /// What the executor needs to read the answer of one operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,9 +64,9 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
     let root = root.as_str();
-    if let Some(declared) = declared.filter(|declared| !declared.result.is_empty()) {
+    if let Some((declared, returns)) = declared.and_then(|declared| declared.returns.as_ref().map(|returns| (declared, returns))) {
         if root_value(&data, root).is_none_or(Value::is_null) {
-            let result = match returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result) {
+            let result = match returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), returns) {
                 Ok(result) => result,
                 Err(detail) => return refused(detail),
             };
@@ -119,7 +119,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
-    let result = match declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result)).transpose() {
+    let result = match declared.and_then(|declared| declared.returns.as_ref().map(|returns| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), returns))).transpose() {
         Ok(result) => result,
         Err(detail) => return refused(detail),
     };
@@ -131,25 +131,10 @@ fn default_root_of(mutation_root: Option<String>, row_root: &str) -> String {
     mutation_root.unwrap_or_else(|| row_root.rsplit_once('.').map_or_else(|| row_root.to_string(), |(parent, _)| parent.to_string()))
 }
 
-/// The fields of the `returns` block read from the root of the answer: a field the answer lacks is null, an `id` is text.
-fn returns_of(data: &Value, container: String, fields: &BTreeMap<String, String>) -> Result<String, String> {
-    let source = root_value(data, &container);
-    let mut values = serde_json::Map::new();
-    for (name, kind) in fields {
-        let kind = match kind.as_str() {
-            "id" => ScalarKind::Id,
-            "int" => ScalarKind::Int,
-            "num" => ScalarKind::Num,
-            "bool" => ScalarKind::Bool,
-            _ => ScalarKind::Str,
-        };
-        let value = match source.and_then(|root| root.get(name)).filter(|value| !value.is_null()) {
-            Some(value) => read_scalar(value, kind).ok_or_else(|| format!("returns {name}: the value does not match the declaration"))?,
-            None => Value::Null,
-        };
-        values.insert(name.clone(), value);
-    }
-    Ok(Value::Object(values).to_string())
+/// The `returns` block read from the root of the answer by the normalizer of standalone operations: a field the answer lacks is null.
+fn returns_of(data: &Value, container: String, declared: &crate::schema::FieldSpec) -> Result<String, String> {
+    let source = root_value(data, &container).filter(|value| value.is_object()).cloned().unwrap_or_else(|| Value::Object(Default::default()));
+    crate::value::call_result::normalize(&source.to_string(), declared)
 }
 
 fn at<'a>(row: &'a serde_json::Map<String, Value>, path: &str) -> Option<&'a Value> {

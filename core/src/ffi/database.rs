@@ -351,7 +351,7 @@ impl Database {
             return Err(DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") });
         };
         let root = self.run(epoch, operation, variables_json).await?;
-        self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
+        self.offload(move || crate::value::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
         let (row_id, transfer) = self.operation_target(epoch, &model, &row_id, action.as_deref(), source.is_some()).await?;

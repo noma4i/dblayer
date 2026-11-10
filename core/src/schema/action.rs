@@ -62,8 +62,9 @@ pub struct ActionDeclaration {
     pub root: Option<String>,
     #[serde(default)]
     pub lands: Vec<ActionLanding>,
-    #[serde(default)]
-    pub result: BTreeMap<String, String>,
+    /// The `returns` block: an object of nullable fields read from the answer by the normalizer of standalone operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returns: Option<FieldSpec>,
     /// The server works on the file after `Confirmed`: the field, its terminal values and the field of the progress (M37).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing: Option<ProcessingDeclaration>,
@@ -180,7 +181,7 @@ impl ActionDeclaration {
             wrap: None,
             root: None,
             lands: Vec::new(),
-            result: BTreeMap::new(),
+            returns: None,
             processing: None,
             removes_receiver: false,
             copies_receiver_to: None,

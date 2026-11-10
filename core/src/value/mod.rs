@@ -11,6 +11,7 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::identity::{RowId, ListKey};
 
+pub(crate) mod call_result;
 mod fractional;
 mod numeric;
 pub mod sync;

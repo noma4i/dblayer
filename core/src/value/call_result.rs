@@ -1,11 +1,11 @@
 use serde_json::{Map, Value};
 
 use crate::schema::{FieldKind, FieldSpec};
-use crate::value::{read_enum, read_scalar};
+use super::{read_enum, read_scalar};
 
 const TYPENAME: &str = "__typename";
 
-pub(super) fn normalize(root: &str, declared: &FieldSpec) -> Result<String, String> {
+pub(crate) fn normalize(root: &str, declared: &FieldSpec) -> Result<String, String> {
     if matches!(declared.kind, FieldKind::Raw) { return Ok(root.to_string()); }
     let body: Value = serde_json::from_str(root).map_err(|error| format!("the answer is not JSON: {error}"))?;
     let name = declared.name.as_str();

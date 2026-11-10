@@ -340,7 +340,6 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -365,7 +364,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -575,7 +573,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "groupChatCreate.chat",
           "root_shape": "upsert",
           "upload": false,
@@ -604,7 +601,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "groupChatUpdate.chat",
           "root_shape": "upsert",
           "upload": false,
@@ -635,7 +631,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "destroy",
           "upload": false,
@@ -660,7 +655,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "groupChatCreate.chat",
           "root_shape": "upsert",
           "upload": true,
@@ -685,7 +679,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "groupChatUpdate.chat",
           "root_shape": "upsert",
           "upload": true,
@@ -717,7 +710,6 @@
             }
           },
           "refetch": [],
-          "result": {},
           "root": "chatMute.chat",
           "root_shape": "upsert",
           "upload": false,
@@ -750,7 +742,6 @@
             }
           },
           "refetch": [],
-          "result": {},
           "root": "chatPin.chat",
           "root_shape": "upsert",
           "upload": false,
@@ -781,7 +772,6 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {},
           "root": "chatRead.chat",
           "root_shape": "upsert",
           "upload": false,
@@ -813,7 +803,6 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -841,7 +830,6 @@
             "list"
           ],
           "removes_receiver": true,
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -870,7 +858,6 @@
           "refetch": [
             "User.chat_members"
           ],
-          "result": {},
           "root": "groupChatUpdate.chat",
           "root_shape": "upsert",
           "scope_effects": [
@@ -916,7 +903,6 @@
           "refetch": [
             "User.chat_members"
           ],
-          "result": {},
           "root": "groupChatUpdate.chat",
           "root_shape": "upsert",
           "scope_effects": [
@@ -2305,7 +2291,6 @@
           "refetch": [
             "profile"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -2356,13 +2341,172 @@
           "refetch": [
             "profile"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
           "variables": {
             "latitude": "latitude",
             "longitude": "longitude"
+          },
+          "wrap": "input"
+        },
+        {
+          "args": {
+            "createInitialMoment": "bool?",
+            "skipAssign": "bool?"
+          },
+          "client_mutation_id": true,
+          "correlate": [],
+          "has_cascade_dependents": false,
+          "has_optimistic": false,
+          "has_temp_row_retention": false,
+          "ignore_response": false,
+          "lands": [
+            {
+              "model": "Moment",
+              "root": "userPhotoUpdate.moment"
+            }
+          ],
+          "local": [],
+          "members": [],
+          "mutation": "UserPhotoUpdate",
+          "name": "update_photo",
+          "on_failure": "rollback",
+          "optimistic": {},
+          "refetch": [],
+          "returns": {
+            "app_type": "CurrentUserUpdatePhotoResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": "AvatarUploadMoment",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": null,
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "kind": "id",
+                      "type": "scalar"
+                    },
+                    "merge": null,
+                    "name": "id",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "type": "object"
+                },
+                "merge": null,
+                "name": "moment",
+                "nullable": true,
+                "optional": false
+              },
+              {
+                "app_type": "AvatarUploadPhoto",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": null,
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "kind": "str",
+                      "type": "scalar"
+                    },
+                    "merge": null,
+                    "name": "reason",
+                    "nullable": true,
+                    "optional": false
+                  },
+                  {
+                    "app_type": "UserPhotoStatus",
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "type": "enum",
+                      "values": [
+                        "BAD",
+                        "GOOD"
+                      ]
+                    },
+                    "merge": null,
+                    "name": "status",
+                    "nullable": true,
+                    "optional": false
+                  },
+                  {
+                    "app_type": "AvatarUploadMedia",
+                    "default": null,
+                    "fields": [
+                      {
+                        "app_type": null,
+                        "default": null,
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": {
+                          "kind": "str",
+                          "type": "scalar"
+                        },
+                        "merge": null,
+                        "name": "thumbUrl",
+                        "nullable": true,
+                        "optional": false
+                      }
+                    ],
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "type": "object"
+                    },
+                    "merge": null,
+                    "name": "media",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "type": "object"
+                },
+                "merge": null,
+                "name": "userPhoto",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "update_photo",
+            "nullable": false,
+            "optional": false
+          },
+          "root": "userPhotoUpdate.viewer",
+          "root_shape": "upsert",
+          "upload": true,
+          "variables": {
+            "createInitialMoment": "createInitialMoment",
+            "skipAssign": "skipAssign"
           },
           "wrap": "input"
         }
@@ -3801,7 +3945,27 @@
           "text_params": []
         }
       ],
-      "storage": "disk"
+      "storage": "disk",
+      "upload_steps": {
+        "create_blob": {
+          "name": "CreateBlob",
+          "root_path": "directUploadCreate.directUpload"
+        },
+        "multipart": {
+          "abort": {
+            "name": "MultipartUploadAbort"
+          },
+          "complete": {
+            "name": "MultipartUploadComplete"
+          },
+          "initiate": {
+            "name": "MultipartUploadInit"
+          },
+          "presign": {
+            "name": "MultipartUploadPresignParts"
+          }
+        }
+      }
     },
     {
       "actions": [],
@@ -5119,7 +5283,6 @@
           "on_failure": "keep",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageSend.message",
           "root_shape": "upsert",
           "upload": false,
@@ -5152,7 +5315,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageUpdate.message",
           "root_shape": "upsert",
           "upload": false,
@@ -5178,7 +5340,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "destroy",
           "upload": false,
@@ -5208,7 +5369,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageSend.message",
           "root_shape": "upsert",
           "upload": true,
@@ -5235,7 +5395,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageSend.message",
           "root_shape": "upsert",
           "upload": true,
@@ -5276,7 +5435,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageAlbumSend.messages",
           "root_shape": "upsert",
           "upload": true,
@@ -5312,7 +5470,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "messageForward.message",
           "root_shape": "upsert",
           "upload": false,
@@ -5340,7 +5497,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "giftOpen.gift.linkedMessage",
           "root_shape": "upsert",
           "upload": false,
@@ -5382,7 +5538,6 @@
             }
           },
           "refetch": [],
-          "result": {},
           "root": "messageReact.message",
           "root_shape": "upsert",
           "upload": false,
@@ -7713,7 +7868,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "destroy",
           "upload": false,
@@ -7738,7 +7892,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -7765,7 +7918,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "momentCreate.moment",
           "root_shape": "upsert",
           "upload": true,
@@ -7805,7 +7957,6 @@
             }
           },
           "refetch": [],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -7833,7 +7984,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "developerMomentUpdate.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7861,7 +8011,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "developerMomentUpdate.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7889,7 +8038,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "developerMomentUpdate.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7915,7 +8063,6 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [],
-          "result": {},
           "root": "developerMomentReanalyze.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7942,7 +8089,6 @@
           "refetch": [
             "in_shadow_ban"
           ],
-          "result": {},
           "root": "momentShadowBan.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7969,7 +8115,6 @@
           "refetch": [
             "in_shadow_ban"
           ],
-          "result": {},
           "root": "momentShadowBanRemove.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -7999,7 +8144,6 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {},
           "root": "compassRead.moment",
           "root_shape": "upsert",
           "upload": false,
@@ -10342,7 +10486,6 @@
             "Message.thread",
             "Chat.list"
           ],
-          "result": {},
           "root": "connectionUpdate.user",
           "root_shape": "upsert",
           "upload": false,
@@ -10381,8 +10524,36 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {
-            "successMessage": "string"
+          "returns": {
+            "app_type": "UserSendGiftResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": null,
+                "default": null,
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "kind": "str",
+                  "type": "scalar"
+                },
+                "merge": null,
+                "name": "successMessage",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "send_gift",
+            "nullable": false,
+            "optional": false
           },
           "root": "giftSend.user",
           "root_shape": "upsert",
@@ -10423,8 +10594,36 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {
-            "successMessage": "string"
+          "returns": {
+            "app_type": "UserSendGiftWithNoteResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": null,
+                "default": null,
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "kind": "str",
+                  "type": "scalar"
+                },
+                "merge": null,
+                "name": "successMessage",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "send_gift_with_note",
+            "nullable": false,
+            "optional": false
           },
           "root": "giftSend.user",
           "root_shape": "upsert",
@@ -10466,8 +10665,36 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {
-            "successMessage": "string"
+          "returns": {
+            "app_type": "UserSendGiftWithPromptResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": null,
+                "default": null,
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "kind": "str",
+                  "type": "scalar"
+                },
+                "merge": null,
+                "name": "successMessage",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "send_gift_with_prompt",
+            "nullable": false,
+            "optional": false
           },
           "root": "giftSend.user",
           "root_shape": "upsert",
@@ -10504,8 +10731,36 @@
           "refetch": [
             "CurrentUser.profile"
           ],
-          "result": {
-            "successMessage": "string"
+          "returns": {
+            "app_type": "UserSendIntroResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": null,
+                "default": null,
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "kind": "str",
+                  "type": "scalar"
+                },
+                "merge": null,
+                "name": "successMessage",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "send_intro",
+            "nullable": false,
+            "optional": false
           },
           "root": "introSend.user",
           "root_shape": "upsert",
@@ -10534,7 +10789,6 @@
           "refetch": [
             "blocked"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,
@@ -10561,7 +10815,6 @@
           "refetch": [
             "blocked"
           ],
-          "result": {},
           "root": null,
           "root_shape": "upsert",
           "upload": false,

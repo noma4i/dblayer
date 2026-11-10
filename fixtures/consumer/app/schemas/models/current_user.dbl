@@ -120,13 +120,13 @@ model CurrentUser do
     wrap "input"
     upsert Moment, from: "userPhotoUpdate.moment"
     returns do
-      attribute :moment, UserPhotoUpdateResultMoment do
+      attribute :moment, AvatarUploadMoment do
         attribute :id, :id
       end
-      attribute :userPhoto, UserPhotoUpdateResultUserPhoto do
+      attribute :userPhoto, AvatarUploadPhoto do
         attribute :reason, :string
         attribute :status, UserPhotoStatus
-        attribute :media, UserPhotoUpdateResultUserPhotoMedia do
+        attribute :media, AvatarUploadMedia do
           attribute :thumbUrl, :string
         end
       end

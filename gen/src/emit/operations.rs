@@ -28,6 +28,16 @@ fn returned(operation: &OperationCall, swift: bool) -> String {
     }
 }
 
+pub(super) fn emit_swift_returns(out: &mut String, root: &FieldSpec) {
+    let types = declared(root);
+    for declaration in &types { emit_swift_type(out, declaration, &types, false); }
+}
+
+pub(super) fn emit_kotlin_returns(out: &mut String, root: &FieldSpec) {
+    let types = declared(root);
+    for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
+}
+
 pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCall]) {
     if operations.is_empty() { return; }
     for operation in operations {

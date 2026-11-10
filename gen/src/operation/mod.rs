@@ -44,7 +44,7 @@ pub(crate) fn display_kind(kind: &str) -> String {
     }
 }
 
-pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
+pub(crate) fn resolve_result_enums((models, operations): (&mut [ModelSpec], &mut [OperationCall]), schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
     fn walk(field: &mut FieldSpec, schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
         if let (true, Some(name)) = (matches!(field.kind, FieldKind::Enum { .. } | FieldKind::List { .. }), field.app_type.clone()) {
             let Some(schema) = schema else { return Err(format!("result field `{}` names the schema enum `{name}`: pass --schema <schema.graphql> so the generator can read it", field.name)) };
@@ -56,7 +56,8 @@ pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Opt
         }
         field.fields.iter_mut().try_for_each(|inner| walk(inner, schema))
     }
-    operations.iter_mut().flat_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))
+    let action_results = models.iter_mut().flat_map(|model| model.actions.iter_mut()).flat_map(|action| action.returns.as_mut());
+    action_results.chain(operations.iter_mut().flat_map(|operation| operation.result.as_mut())).try_for_each(|root| walk(root, schema))
 }
 
 pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCall]) -> Vec<String> {
@@ -79,7 +80,7 @@ pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCal
     names
 }
 
-fn result_fields(attributes: &[AttributeDecl], file: usize, errors: &mut Vec<Found>) -> Vec<FieldSpec> {
+pub(crate) fn result_fields(attributes: &[AttributeDecl], file: usize, errors: &mut Vec<Found>) -> Vec<FieldSpec> {
     let mut fields: Vec<FieldSpec> = Vec::new();
     for attribute in attributes {
         let fail = |message: &str| (file, ParseError::new(attribute.pos.line, attribute.pos.column, message));

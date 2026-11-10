@@ -234,7 +234,7 @@ pub(super) fn validates(cx: &mut Cx, call: &Call) -> Option<LengthDecl> {
     Some(LengthDecl { pos: line.pos, attribute, minimum: minimum?, maximum: maximum? })
 }
 
-pub(super) fn returns(cx: &mut Cx, call: &Call, scalars_only: bool) -> Option<Vec<AttributeDecl>> {
+pub(super) fn returns(cx: &mut Cx, call: &Call, model_operation: bool) -> Option<Vec<AttributeDecl>> {
     let mut line = Line::of(call);
     line.no_args(cx);
     line.no_options(cx);
@@ -244,10 +244,8 @@ pub(super) fn returns(cx: &mut Cx, call: &Call, scalars_only: bool) -> Option<Ve
     }
     let owner = Owner(None);
     let found: Vec<AttributeDecl> = children.iter().filter_map(|child| attribute(cx, child, Site::Returns, &owner)).collect();
-    if scalars_only {
-        for decl in found.iter().filter(|decl| !matches!(decl.ty, TypeRef::Scalar(kind) if kind != ScalarKind::Date)) {
-            cx.fail(decl.pos, "a model operation returns :bool, :int, :num, :string or :id attributes");
-        }
+    if model_operation {
+        crate::operation::result_fields(&found, cx.file, cx.errors);
     }
     Some(found)
 }

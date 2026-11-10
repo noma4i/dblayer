@@ -356,10 +356,12 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         _ => refetch.scope.clone(),
     }).collect();
     action.lands = operation.upserts.iter().map(|upsert| ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect();
-    action.result = operation.returns.iter().flatten().map(|attribute| match &attribute.ty {
-        TypeRef::Scalar(kind) => (attribute.name.clone(), scalar_word(*kind).to_string()),
-        _ => unreachable!("lowering rejects a returns attribute of an action that is not a scalar"),
-    }).collect();
+    action.returns = operation.returns.as_ref().map(|attributes| {
+        let mut root = FieldSpec::object(&operation.name);
+        root.app_type = Some(format!("{owner}{}Result", crate::naming::camel(&operation.name)));
+        root.fields = crate::operation::result_fields(attributes, 0, &mut Vec::new());
+        root
+    });
     if let (Some(batch), Some(length)) = (&operation.batch, &operation.length) {
         action.batch = Some(dblayer::schema::UploadBatchDeclaration {
             min: length.minimum,
@@ -403,16 +405,6 @@ fn build_source(source: &SourceDecl) -> EffectSource {
     match source {
         SourceDecl::Owner(field) => EffectSource::Owner(field.clone()),
         SourceDecl::Row { model, row, field } => EffectSource::Row { model: model.clone(), row: row.clone(), field: field.clone() },
-    }
-}
-
-fn scalar_word(kind: ScalarKind) -> &'static str {
-    match kind {
-        ScalarKind::Bool => "bool",
-        ScalarKind::Int => "int",
-        ScalarKind::Num => "num",
-        ScalarKind::Id => "id",
-        _ => "string",
     }
 }
 

@@ -119,7 +119,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         vec![FileError { file: names[file].clone(), error: ParseError::new(pos.line, pos.column, message) }]
     };
     declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(failed)?;
-    operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(failed)?;
+    operation::resolve_result_enums((&mut declared.models, &mut declared.operations), loaded.as_ref()).map_err(failed)?;
     emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(failed)?;
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(locate(clashes)); }

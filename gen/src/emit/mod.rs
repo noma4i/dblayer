@@ -46,6 +46,11 @@ fn result_type(class: &str, action: &str) -> String {
     format!("{class}{}Result", camel(action))
 }
 
+/// The `returns` roots of the actions of every model: they declare types like the results of standalone operations.
+pub(crate) fn action_returns(models: &[ModelSpec]) -> impl Iterator<Item = &FieldSpec> {
+    models.iter().flat_map(|model| model.actions.iter()).flat_map(|action| action.returns.as_ref())
+}
+
 fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     match (kind, swift) {
         (ScalarKind::Bool, true) => "Bool",
@@ -118,7 +123,7 @@ pub(super) fn text_param(relation: &RelationSpec, key: &str, decls: &[EnumDecl],
 pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Result<Vec<EnumDecl>, String> {
     let mut found = schema_types.enums.clone();
     found.extend(declared_in(models).into_iter().map(|site| site.decl));
-    found.extend(operations.iter().flat_map(|operation| operation.result.as_ref()).flat_map(declared_in_field));
+    found.extend(operations.iter().flat_map(|operation| operation.result.as_ref()).chain(action_returns(models)).flat_map(declared_in_field));
     merge_enums(found)
 }
 
@@ -393,10 +398,11 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             writeln!(out, "    @concurrent public func {}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(self, action: \"{}\", request)\n    }}", identifier(&name(&action.name), true), action.name).unwrap();
         }
         out.push_str("}\n\n");
-        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || !action.result.is_empty()) {
-            writeln!(out, "public struct {}: Codable, Sendable {{", result_type(class, &action.name)).unwrap();
-            for (field, kind) in &action.result { writeln!(out, "    public let {}: {}?", identifier(field, true), arg_type(kind, true)).unwrap(); }
-            out.push_str("}\n\n");
+        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
+            match &action.returns {
+                Some(root) => operations::emit_swift_returns(&mut out, root),
+                None => writeln!(out, "public struct {}: Codable, Sendable {{\n}}\n", result_type(class, &action.name)).unwrap(),
+            }
         }
     }
     out.push_str(&edge_types);
@@ -529,10 +535,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("    }\n");
         }
         out.push_str("}\n\n");
-        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || !action.result.is_empty()) {
-            let fields = action.result.iter().map(|(field, kind)| format!("val {}: {}? = null", identifier(field, false), arg_type(kind, false))).collect::<Vec<_>>().join(", ");
-            let declaration = if fields.is_empty() { format!("class {}", result_type(class, &action.name)) } else { format!("data class {}({fields})", result_type(class, &action.name)) };
-            writeln!(out, "@Immutable\n@Serializable\n{declaration}\n").unwrap();
+        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
+            match &action.returns {
+                Some(root) => operations::emit_kotlin_returns(&mut out, root),
+                None => writeln!(out, "@Immutable\n@Serializable\nclass {}\n", result_type(class, &action.name)).unwrap(),
+            }
         }
     }
     out.push_str(&edge_types);

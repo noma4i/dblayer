@@ -18,7 +18,6 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 pub(crate) mod tests;
-mod call_result;
 #[cfg(test)]
 pub(crate) const EMPTY_SPECS: &str = r#"{"models":[]}"#;
 #[cfg(test)]
