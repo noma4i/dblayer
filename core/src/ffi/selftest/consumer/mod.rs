@@ -26,3 +26,4 @@ mod thread_pages_tests;
 mod ordered_scope_tests;
 mod group_reopen_tests;
 mod id_reuse_tests;
+mod references_batch_tests;
