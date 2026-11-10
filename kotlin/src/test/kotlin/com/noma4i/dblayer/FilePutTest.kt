@@ -45,4 +45,31 @@ class FilePutTest {
             assertEquals(RawOutcome.Response(200u, null, ""), put())
         }
     }
+
+    /** bridge.md HTTP of the platform (D-285): a part leaves the file in chunks, the request names its length. */
+    @Test
+    fun aPartOfTheFileIsSentInChunks() = bounded {
+        val megabyte = 1024 * 1024
+        val (offset, length) = megabyte.toLong() to 4L * megabyte
+        val file = File.createTempFile("part", ".bin").apply { deleteOnExit() }
+        file.outputStream().use { output -> repeat(6) { block -> output.write(ByteArray(megabyte) { index -> ((block.toLong() * megabyte + index) % 251).toByte() }) } }
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse())
+            server.start()
+            val reports = mutableListOf<Long>()
+            val progress = object : ByteProgress(NoHandle) {
+                override fun sent(bytes: ULong) { reports.add(bytes.toLong()) }
+                override fun isCancelled() = false
+            }
+            putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, offset.toULong(), length.toULong()), progress)
+            val request = server.takeRequest()
+            assertEquals(length.toString(), request.headers["Content-Length"])
+            val body = request.body.readByteArray()
+            assertEquals(length.toInt(), body.size)
+            assertEquals(null, body.indices.firstOrNull { index -> body[index] != ((offset + index) % 251).toByte() })
+            val steps = (listOf(0L) + reports).zipWithNext { before, after -> after - before }
+            assertEquals(length, reports.last())
+            assertEquals(true, steps.max() <= 64 * 1024)
+        }
+    }
 }
