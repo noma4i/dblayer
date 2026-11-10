@@ -18,10 +18,10 @@ class OkHttpTransport(
     override suspend fun openCable(url: String, headers: Map<String, String>, connectMs: ULong, events: CableEvents): CableOutcome = cable.open(url, headers, connectMs, events)
 
     override suspend fun put(target: PutTarget, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome =
-        putFile(client, target.url, target.headers, target.connectMs, target.requestMs, file, progress, routed = true)
+        putFile(client, target.url, target.headers, target.connectMs, target.requestMs, file, progress, target.responseLimit, routed = true)
 }
 
-internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, connectMs: ULong, requestMs: ULong, file: PutFile, progress: ByteProgress, routed: Boolean = false): RawOutcome {
+internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, connectMs: ULong, requestMs: ULong, file: PutFile, progress: ByteProgress, responseLimit: ULong, routed: Boolean = false): RawOutcome {
     val body = object : okhttp3.RequestBody() {
         override fun contentType() = null
         override fun contentLength() = file.length.toLong()
@@ -46,7 +46,7 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
         return RawOutcome.Failed(urlFailure())
     }
     return try {
-        (if (routed) UploadNetwork.route(client) else client).timed(connectMs, requestMs, total = false).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), it.body.string()) }
+        (if (routed) UploadNetwork.route(client) else client).timed(connectMs, requestMs, total = false).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), it.text(responseLimit)) }
     } catch (error: java.io.IOException) {
         RawOutcome.Failed(rawFailure(error))
     }

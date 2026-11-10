@@ -11,7 +11,22 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 
-internal fun rawFailure(error: Throwable): RawFailure = RawFailure(error.javaClass.name, null, error.message ?: error.toString())
+internal class ResponseLimitException(limit: ULong) : IOException("the answer is above the limit of $limit bytes")
+
+internal fun rawFailure(error: Throwable): RawFailure =
+    if (error is ResponseLimitException) RawFailure("DBlayer.ResponseLimit", 1L, error.message ?: "") else RawFailure(error.javaClass.name, null, error.message ?: error.toString())
+
+/** Reads the answer in pieces and stops at the first byte above `limit`: the body above the limit never sits in memory. */
+internal fun HttpResponse.text(limit: ULong): String {
+    val source = body.source()
+    val buffer = okio.Buffer()
+    val bound = limit.toLong()
+    if (body.contentLength() > bound) throw ResponseLimitException(limit)
+    while (source.read(buffer, 8192L) >= 0L) {
+        if (buffer.size > bound) throw ResponseLimitException(limit)
+    }
+    return buffer.readUtf8()
+}
 
 internal fun urlFailure(): RawFailure = RawFailure("url", null, "")
 
@@ -43,7 +58,7 @@ internal suspend fun OkHttpClient.run(request: HttpRequest): RawOutcome {
     }
     return try {
         val routed = if (request.purpose == NetworkPurpose.TRANSFER) UploadNetwork.route(this) else this
-        routed.timed(request.connectMs, request.requestMs).newCall(http).exchange { RawOutcome.Response(it.code.toUShort(), null, it.body.string()) }
+        routed.timed(request.connectMs, request.requestMs).newCall(http).exchange { RawOutcome.Response(it.code.toUShort(), null, it.text(request.responseLimit)) }
     } catch (error: IOException) {
         RawOutcome.Failed(rawFailure(error))
     }
