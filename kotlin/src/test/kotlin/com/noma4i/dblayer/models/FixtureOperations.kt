@@ -46,6 +46,8 @@ data class Clip(
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) this.put("widgets", jsonValue(widgets))
         }
+        suspend fun createFile(account: AccountScope, id: String, source: String, widgets: List<StickerWidgetInput>? = null): MutationReceipt<Clip> =
+            account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject { if (widgets != null) this.put("widgets", jsonValue(widgets)) }))
         suspend fun create(title: String? = null, account: AccountScope? = null): MutationReceipt<Clip> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 title?.let { this.put("title", jsonValue(it)) }
@@ -61,7 +63,7 @@ data class Clip(
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Clip> = Clip.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Clip> = Clip.destroy(id, account)
-    suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Clip> = account.upload(this, "create_file", request, Clip)
+    suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Clip> = account.upload(Clip, id, "create_file", request)
 }
 
 @Immutable

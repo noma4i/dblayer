@@ -296,6 +296,8 @@ data class Asset(
         val position = Column<Asset, Long>("position")
         fun where(condition: Condition) = Query("Asset", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Asset", this, ids)
+        suspend fun createFile(account: AccountScope, id: String, source: String): MutationReceipt<Asset> =
+            account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun create(clientKey: String, size: Long, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("clientKey", jsonValue(clientKey))
@@ -315,7 +317,7 @@ data class Asset(
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Asset> = Asset.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Asset> = Asset.destroy(id, account)
-    suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Asset> = account.upload(this, "create_file", request, Asset)
+    suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Asset> = account.upload(Asset, id, "create_file", request)
 }
 
 @Immutable
@@ -535,6 +537,10 @@ data class Container(
             var built_ = Query("Container", this, relation = "shelf", params = buildJsonObject { this.put("shelf", jsonValue(shelf)) })
             return built_
         }
+        suspend fun createPhoto(account: AccountScope, id: String, source: String): MutationReceipt<Container> =
+            account.upload(this, id, "create_photo", UploadRequest(source, variables = buildJsonObject {  }))
+        suspend fun updatePhoto(account: AccountScope, id: String, source: String): MutationReceipt<Container> =
+            account.upload(this, id, "update_photo", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun create(title: String, lastRecordAt: String? = null, lastRecordId: String? = null, shareUrl: String? = null, isPublic: Boolean? = null, shelves: List<ContainerShelf>? = null, account: AccountScope? = null): MutationReceipt<Container> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
@@ -560,8 +566,8 @@ data class Container(
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Container> = Container.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Container> = Container.destroy(id, account)
-    suspend fun createPhoto(account: AccountScope, request: UploadRequest): MutationReceipt<Container> = account.upload(this, "create_photo", request, Container)
-    suspend fun updatePhoto(account: AccountScope, request: UploadRequest): MutationReceipt<Container> = account.upload(this, "update_photo", request, Container)
+    suspend fun createPhoto(account: AccountScope, request: UploadRequest): MutationReceipt<Container> = account.upload(Container, id, "create_photo", request)
+    suspend fun updatePhoto(account: AccountScope, request: UploadRequest): MutationReceipt<Container> = account.upload(Container, id, "update_photo", request)
     object Relations {
         val records = Association<Container, Record>("records", Record)
         val lastRecord = Association<Container, Record>("lastRecord", Record)
@@ -999,6 +1005,8 @@ data class Moment(
             return built_
         }
         suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null): MomentVibeFeedEdge? = Moment.vibeFeed(vibeId).edgeValues(id, account)?.let { MomentVibeFeedEdge(it) }
+        suspend fun uploadClip(account: AccountScope, id: String, source: String): MutationReceipt<Moment> =
+            account.upload(this, id, "upload_clip", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun create(text: String? = null, media: JsonElement? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 text?.let { this.put("text", jsonValue(it)) }
@@ -1022,7 +1030,7 @@ data class Moment(
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Moment> = Moment.destroy(id, account)
     suspend fun like(account: AccountScope? = null): MutationReceipt<Moment> = this.act("like", JsonObject(parseJsonObject("""{"likedByMe":true}""") + mapOf()), JsonObject(mapOf()), Moment, account)
     suspend fun share(account: AccountScope? = null): MutationReceipt<Moment> = this.act("share", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf()), Moment, account)
-    suspend fun uploadClip(account: AccountScope, request: UploadRequest): MutationReceipt<Moment> = account.upload(this, "upload_clip", request, Moment)
+    suspend fun uploadClip(account: AccountScope, request: UploadRequest): MutationReceipt<Moment> = account.upload(Moment, id, "upload_clip", request)
     object Relations {
         val author = Association<Moment, User>("author", User)
         val vibes = Association<Moment, Vibe>("vibes", Vibe)

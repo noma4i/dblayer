@@ -48,8 +48,13 @@ public struct Clip: DBModel {
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
+    @concurrent public static func createFile(id: String, source: String, widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+        var variables_: [String: JSONValue] = [:]
+        if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
+        return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_))
+    }
     @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
-        try await scope_.upload(self, action: "create_file", request)
+        try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
 }
 
