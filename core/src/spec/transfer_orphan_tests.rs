@@ -95,6 +95,19 @@ fn xfer_orphan_abort_done() {
     assert!(twin.online(true).orphan_aborts().is_empty(), "an answered abort is not sent again");
 }
 
+/// transfer.md:13, lifecycle.md:525 (D-280): the answer of a restored abort pair comes as a step answer; Transfer finds the debt by the identity of the pair and settles it as AbortDone.
+#[test]
+fn xfer_restored_orphan_answer() {
+    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+    twin.online(true);
+    let request_id = crate::owners::write::wire::abort_request_id("", "u9");
+    let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: "{}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
+    assert_eq!(out.orphans_removed(), vec!["u9".to_string()], "the step answer of the abort pair removes the debt: {out:?}");
+    twin.commit();
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty(), "an answered abort is not sent again");
+}
+
 #[test]
 fn xfer_orphan_abort_retry_later() {
     for status in [Some(503u16), None] {
