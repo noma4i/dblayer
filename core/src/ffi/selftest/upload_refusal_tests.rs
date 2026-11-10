@@ -19,10 +19,12 @@ async fn until_state(database: &Database, id: &str, wanted: WireSyncState) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn out_response_limit_keeps_pending() {
-    let stand = Stand::new().keep_moment();
+    let mut stand = Stand::new().keep_moment();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("queue.sqlite");
-    let clock = crate::ffi::TestClock::new(1_000_000);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let clock = crate::ffi::TestClock::new(now);
+    stand.rig.server = crate::transport::encrypted::tests::fake_server_tests::FakeServer::new(clock.manual());
     let database = stand.open_with(Some(&path), &[CREATE_MOMENT], Some(clock.clone())).await;
     let limit = crate::transport::MAX_HTTP_RESPONSE_BYTES;
     for _ in 0..50 { stand.script.enqueue("CreateMoment", Answer::ResponseTooLarge(limit)); }
