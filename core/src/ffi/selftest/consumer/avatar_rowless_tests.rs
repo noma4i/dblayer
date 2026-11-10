@@ -24,6 +24,11 @@ fn document_answer() -> Value {
     json!({"userPhotoUpdate": {"moment": {"id": "m1"}, "userPhoto": {"id":"p1","kind":"MAIN_PICTURE","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","reason":null,"status":"GOOD","media":{"thumbUrl":"https://t/1"}}, "viewer": {"user": {"id":"u1","fullName":"Ann","username":"ann","online":true,"shareUrl":"s","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","avatarUrl":"a","fullAvatarUrl":null,"age":null,"gender":null,"description":null,"story":null,"lastSeenAt":null,"distance":null,"relationship":null}}}})
 }
 
+async fn seed_moment(stand: &Stand) {
+    stand.answer("MomentNode", json!({"node": super::stand::moment("m1", 0)}));
+    bound(stand.database.node(stand.database.session_epoch(), "Moment".into(), "node".into(), "m1".into(), true)).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
     let directory = tempfile::tempdir().unwrap();
@@ -129,6 +134,7 @@ async fn consumer_avatar_forbidden_discard_and_next_upload() {
 async fn consumer_avatar_document_response_lands_row() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
+    seed_moment(&stand).await;
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     stand.answer("UserPhotoUpdate", document_answer());
     stand.script_put(200, Some("etag"));
@@ -136,7 +142,7 @@ async fn consumer_avatar_document_response_lands_row() {
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     let answer = bound(stand.database.confirmed(receipt, false)).await.unwrap();
     assert!(answer.value.is_none(), "the incomplete target row is not created: {:?}", answer.value);
-    assert!(bound(stand.database.read_row(epoch, "User".into(), "u1".into())).await.unwrap().is_some(), "the nested user is written");
+    assert!(bound(stand.database.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().is_some(), "the declared moment is retained");
     stand.database.close_now();
 }
 
@@ -164,11 +170,11 @@ async fn consumer_avatar_rowless_upload() {
     let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
+    seed_moment(&stand).await;
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     stand.answer("UserPhotoUpdate", good());
     stand.script_put(200, Some("etag"));
     stand.hold(&["CreateBlob", "UserPhotoUpdate"]);
-    let rows = stand.entity("User", "u1", ReadFetch::Never);
     let (me, landed) = (crate::identity::RowId::new("me").unwrap(), crate::identity::RowId::new("u1").unwrap());
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none() && stand.database.db.find("CurrentUser", &me).unwrap().is_none(), "no CurrentUser row before the upload");
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
@@ -190,7 +196,7 @@ async fn consumer_avatar_rowless_upload() {
     assert!(confirmed.value.is_none(), "the incomplete target row is not created: {:?}", confirmed.value);
     stand.settle().await;
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none(), "the incomplete target is absent");
-    assert_eq!(stand.text_of(&rows, "User", "u1", "fullName").as_deref(), Some("Ann"), "the nested user is shown");
+    assert!(bound(stand.database.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().is_some(), "the declared moment is retained");
     assert!(operations(&stand).await.is_empty());
     let sent = stand.asked().into_iter().find(|(operation, _)| operation == "UserPhotoUpdate").unwrap().1;
     assert_eq!((sent["input"]["signedId"].as_str(), sent["input"]["createInitialMoment"].as_bool()), (Some("signed-avatar"), Some(true)), "the signed id of the file goes into the input: {sent}");
@@ -235,6 +241,7 @@ async fn consumer_rowless_retry_after_refusal() {
     let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
+    seed_moment(&stand).await;
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
     stand.answer("UserPhotoUpdate", good());
@@ -252,7 +259,7 @@ async fn consumer_rowless_retry_after_refusal() {
     assert!(retried.optimistic_value.is_none());
     let confirmed = bound(stand.database.confirmed(retried, false)).await.unwrap();
     assert!(confirmed.value.is_none());
-    assert!(bound(stand.database.read_row(epoch, "User".into(), "u1".into())).await.unwrap().is_some());
+    assert!(bound(stand.database.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().is_some());
     assert_eq!(stand.requests("UserPhotoUpdate"), 2);
     assert!(operations(&stand).await.is_empty());
     stand.database.close_now();
@@ -283,6 +290,7 @@ async fn xfer_rowless_status_and_discover() {
     let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
+    seed_moment(&stand).await;
     let stream = stand.database.subscribe_values(epoch, ReadRequest::Operations);
     assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "nothing is queued before the acceptance");
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
@@ -314,8 +322,8 @@ async fn xfer_rowless_status_and_discover() {
     reopened.settle().await;
     assert_eq!(reopened.requests("UserPhotoUpdate"), 1, "the restored upload completes its mutation");
     assert!(operations(&reopened).await.is_empty(), "the completed upload leaves the queue");
-    let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "User".into(), "u1".into())).await.unwrap();
-    assert!(row.is_some(), "the restored upload lands the nested user");
+    let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "Moment".into(), "m1".into())).await.unwrap();
+    assert!(row.is_some(), "the declared moment is retained");
     reopened.database.close_now();
 }
 
