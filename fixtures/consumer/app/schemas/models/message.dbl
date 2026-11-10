@@ -129,6 +129,8 @@ model Message do
   end
   attribute :transcribed, :bool, default: false
   attribute :transcript, :string, null: true
+  attribute :transcriptLanguage, :string, null: true
+  attribute :readCount, :int, default: 0
   attribute :prompt, MessagePromptContent, null: true do
     attribute :id, :id
     attribute :text, :string

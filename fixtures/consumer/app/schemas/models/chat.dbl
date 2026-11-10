@@ -13,6 +13,7 @@ model Chat do
   attribute :history, :enum, values: ["HIDDEN", "VISIBLE"], as: ChatHistory, optional: true
   attribute :pinned, :bool, from: "viewerState.pinned"
   attribute :muted, :bool, from: "viewerState.muted"
+  attribute :mutedUntil, :date, null: true, from: "viewerState.mutedUntil"
   attribute :read, :bool, from: "viewerState.read"
   attribute :unreadCount, :int, default: 0, from: "viewerState.unreadCount"
   attribute :serverRevision, :int, from: "revision"
@@ -106,7 +107,8 @@ model Chat do
   operation :mute do
     mutation "ChatMute"
     parameter :mute, :bool
-    variables chatId: :id, mute: :mute
+    parameter :duration, ChatMuteDuration, null: true
+    variables chatId: :id, mute: :mute, duration: :duration
     optimistic muted: :mute
     wrap "input"
     response from: "chatMute.chat"

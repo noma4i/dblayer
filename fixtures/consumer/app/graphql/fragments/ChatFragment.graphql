@@ -21,6 +21,7 @@ fragment ChatFragment on Chat {
     premium
     pinned
     muted
+    mutedUntil
     read
     unreadCount
     readMarks {

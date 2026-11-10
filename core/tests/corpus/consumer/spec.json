@@ -2,7 +2,19 @@
   "models": [
     {
       "actions": [],
-      "associations": [],
+      "associations": [
+        {
+          "dependent": null,
+          "foreign_key": "peerId",
+          "from": "call.peer",
+          "kind": "belongs_to",
+          "name": "peer",
+          "newer": [],
+          "sets": {},
+          "target": "User",
+          "touches_parent": false
+        }
+      ],
       "ephemeral": [],
       "expire_after": "30.seconds",
       "fields": [
@@ -135,7 +147,7 @@
           "default": null,
           "from": "call.peer.id",
           "id_from_parent": null,
-          "indexed": false,
+          "indexed": true,
           "kind": {
             "kind": "id",
             "type": "scalar"
@@ -684,6 +696,7 @@
         },
         {
           "args": {
+            "duration": "ChatMuteDuration?",
             "mute": "bool"
           },
           "client_mutation_id": true,
@@ -710,6 +723,7 @@
           "upload": false,
           "variables": {
             "chatId": "id",
+            "duration": "duration",
             "mute": "mute"
           },
           "wrap": "input"
@@ -1250,6 +1264,21 @@
           "merge": null,
           "name": "muted",
           "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "viewerState.mutedUntil",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "date",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "mutedUntil",
+          "nullable": true,
           "optional": false
         },
         {
@@ -4661,7 +4690,7 @@
               },
               "merge": null,
               "name": "requires",
-              "nullable": true,
+              "nullable": false,
               "optional": false
             },
             {
@@ -6052,6 +6081,36 @@
           "merge": null,
           "name": "transcript",
           "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "str",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "transcriptLanguage",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": 0,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "int",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "readCount",
+          "nullable": false,
           "optional": false
         },
         {
@@ -14080,6 +14139,210 @@
         },
         "merge": null,
         "name": "message_album_send",
+        "nullable": false,
+        "optional": false
+      }
+    },
+    {
+      "name": "messageReaders",
+      "returns": {
+        "app_type": "MessageReadersLoadResult",
+        "default": null,
+        "fields": [
+          {
+            "app_type": "MessageReadersResultReaders",
+            "default": null,
+            "fields": [
+              {
+                "app_type": "MessageReadersResultReadersEdges",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": null,
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "kind": "str",
+                      "type": "scalar"
+                    },
+                    "merge": null,
+                    "name": "cursor",
+                    "nullable": true,
+                    "optional": false
+                  },
+                  {
+                    "app_type": "MessageReadersResultReadersEdgesNode",
+                    "default": null,
+                    "fields": [
+                      {
+                        "app_type": null,
+                        "default": null,
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": {
+                          "kind": "str",
+                          "type": "scalar"
+                        },
+                        "merge": null,
+                        "name": "readAt",
+                        "nullable": true,
+                        "optional": false
+                      },
+                      {
+                        "app_type": "MessageReadersResultReadersEdgesNodeUser",
+                        "default": null,
+                        "fields": [
+                          {
+                            "app_type": null,
+                            "default": null,
+                            "from": null,
+                            "id_from_parent": null,
+                            "indexed": false,
+                            "kind": {
+                              "kind": "id",
+                              "type": "scalar"
+                            },
+                            "merge": null,
+                            "name": "id",
+                            "nullable": true,
+                            "optional": false
+                          },
+                          {
+                            "app_type": null,
+                            "default": null,
+                            "from": null,
+                            "id_from_parent": null,
+                            "indexed": false,
+                            "kind": {
+                              "kind": "str",
+                              "type": "scalar"
+                            },
+                            "merge": null,
+                            "name": "fullName",
+                            "nullable": true,
+                            "optional": false
+                          },
+                          {
+                            "app_type": null,
+                            "default": null,
+                            "from": null,
+                            "id_from_parent": null,
+                            "indexed": false,
+                            "kind": {
+                              "kind": "str",
+                              "type": "scalar"
+                            },
+                            "merge": null,
+                            "name": "avatarUrl",
+                            "nullable": true,
+                            "optional": false
+                          }
+                        ],
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": {
+                          "type": "object"
+                        },
+                        "merge": null,
+                        "name": "user",
+                        "nullable": true,
+                        "optional": false
+                      }
+                    ],
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "type": "object"
+                    },
+                    "merge": null,
+                    "name": "node",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "type": "array"
+                },
+                "merge": null,
+                "name": "edges",
+                "nullable": true,
+                "optional": false
+              },
+              {
+                "app_type": "MessageReadersResultReadersPageInfo",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": null,
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "kind": "bool",
+                      "type": "scalar"
+                    },
+                    "merge": null,
+                    "name": "hasNextPage",
+                    "nullable": true,
+                    "optional": false
+                  },
+                  {
+                    "app_type": null,
+                    "default": null,
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "kind": "str",
+                      "type": "scalar"
+                    },
+                    "merge": null,
+                    "name": "endCursor",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "type": "object"
+                },
+                "merge": null,
+                "name": "pageInfo",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "readers",
+            "nullable": true,
+            "optional": false
+          }
+        ],
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": {
+          "type": "object"
+        },
+        "merge": null,
+        "name": "message_readers_load",
         "nullable": false,
         "optional": false
       }

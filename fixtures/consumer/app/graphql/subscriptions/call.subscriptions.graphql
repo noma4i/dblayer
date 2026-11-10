@@ -8,7 +8,8 @@ subscription callEvents {
       mediaKind
       origin
       peer {
-        id
+        ...PublicUserFragment
+        country { name code }
       }
       direction
       createdAt

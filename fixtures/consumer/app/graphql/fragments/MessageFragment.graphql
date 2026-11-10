@@ -23,6 +23,8 @@ fragment MessageFragment on Message {
   }
   transcribed
   transcript
+  transcriptLanguage
+  readCount
   prompt {
     id
     text

@@ -6,6 +6,7 @@ model CallEvent, storage: :memory, expires_in: 30.seconds do
   attribute :callOrigin, :enum, values: ["ADMIN_TEST", "APP"], as: CallEventOrigin, from: "call.origin"
   attribute :callDirection, :enum, values: ["INCOMING", "OUTGOING"], as: CallEventDirection, from: "call.direction"
   attribute :peerId, :id, null: true, from: "call.peer.id"
+  belongs_to :peer, class_name: User, foreign_key: :peerId, from: "call.peer"
   attribute :createdAt, :date, from: "call.createdAt"
   attribute :answeredAt, :date, null: true, from: "call.answeredAt"
   attribute :endedAt, :date, null: true, from: "call.endedAt"

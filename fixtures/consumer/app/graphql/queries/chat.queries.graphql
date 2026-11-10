@@ -48,3 +48,24 @@ query chatMemberCandidates($chatId: ID!, $userIds: [ID!]!) {
     }
   }
 }
+
+query messageReaders($messageId: ID!, $first: Int, $after: Cursor) {
+  node(id: $messageId) {
+    ... on Message {
+      readers(first: $first, after: $after) {
+        edges {
+          cursor
+          node {
+            readAt
+            user {
+              ...UserMinimalFragment
+            }
+          }
+        }
+        pageInfo {
+          ...PageInfoFragment
+        }
+      }
+    }
+  }
+}
