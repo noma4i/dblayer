@@ -126,7 +126,9 @@ async fn consumer_avatar_reopen_discards_pending_behind_failed() {
     assert_eq!(connection.execute("UPDATE sync_upload SET row_id = 'singleton' WHERE model = 'CurrentUser' AND row_id = 'other'", []).unwrap(), 1);
     connection.execute("UPDATE op_row SET row_id = 'singleton' WHERE row_id = 'other'", []).unwrap();
     connection.execute("UPDATE op SET temp_id = 'singleton' WHERE temp_id = 'other'", []).unwrap();
-    connection.execute("UPDATE op SET status = 'pending', attempts = 0 WHERE transfer_id = (SELECT transfer_id FROM sync_upload WHERE model = 'CurrentUser')", []).unwrap();
+    assert_eq!(connection.execute("UPDATE op SET status = 'pending', attempts = 0 WHERE transfer_id = (SELECT transfer_id FROM sync_upload WHERE model = 'CurrentUser')", []).unwrap(), 1, "the pending mutation is saved in the image");
+    let saved: (i64, i64) = connection.query_row("SELECT completed, op_id FROM sync_upload WHERE model = 'CurrentUser'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(saved.0, 1, "the saved upload reached its mutation: {saved:?}");
     connection.execute("DELETE FROM encrypted_pending", []).unwrap();
     drop(connection);
     let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
