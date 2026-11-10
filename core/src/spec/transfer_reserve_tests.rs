@@ -154,10 +154,10 @@ fn xfer_accept_replaces_failed() {
     let out = twin.post(accept_input(KEY, 90));
     assert!(out.replies(90).is_empty(), "the replacement must not be refused: {:?}", out.replies(90));
     let new = out.outbox.iter().find_map(|input| match input {
-        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
+        OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
         _ => None,
     }).expect("the replacement reserves its operation");
-    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    let out = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     assert_eq!(out.writes(), 1, "removal and acceptance must share a Store batch");
     assert_eq!(out.removed(), vec![KEY.to_string()]);
     assert_eq!(rolled_back(&out), vec![OP_ID]);
@@ -183,10 +183,10 @@ fn xfer_accept_replaces_failed_without_operation_after_open() {
     let out = twin.post(accept_input(KEY, 90));
     assert!(out.replies(90).is_empty(), "failed upload without operation must not block: {:?}", out.replies(90));
     let new = out.outbox.iter().find_map(|input| match input {
-        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != 1 => Some(*id),
+        OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } if *id != 1 => Some(*id),
         _ => None,
     }).expect("the replacement reserves its operation");
-    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    let out = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     assert_eq!(out.writes(), 1);
     assert_eq!(out.removed(), vec![KEY.to_string()]);
     assert!(rolled_back(&out).is_empty());
@@ -203,7 +203,7 @@ fn xfer_accept_batch_replaces_failed_single() {
     let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 91, now: Time(0) });
     assert!(out.replies(91).is_empty(), "the failed key must not reject the batch: {:?}", out.replies(91));
     let ids: Vec<_> = out.outbox.iter().filter_map(|input| match input {
-        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } => Some(*id),
+        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } | OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } => Some(*id),
         _ => None,
     }).collect();
     let group = out.outbox.iter().find_map(|input| match input {
@@ -211,7 +211,7 @@ fn xfer_accept_batch_replaces_failed_single() {
         _ => None,
     }).expect("the batch reserves its operation");
     assert_eq!(ids.len(), 2);
-    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(ids[0]), result: Ok(8) });
+    twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(ids[0]), result: Ok((8, None)) });
     twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(ids[1]), result: Ok(9) });
     let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(10) });
     assert_eq!(out.writes(), 1);
@@ -228,7 +228,7 @@ fn replacing_failed() -> (Twin, TransferId, TransferId) {
     twin.commit();
     let out = twin.post(accept_input(KEY, 90));
     let new = out.outbox.iter().find_map(|input| match input {
-        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
+        OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
         _ => None,
     }).expect("the replacement reserves its operation");
     (twin, old, new)
@@ -240,7 +240,7 @@ fn xfer_replace_interval_refuses() {
     for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
         assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before reservation");
     }
-    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
         assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before Store answers");
     }
@@ -249,7 +249,7 @@ fn xfer_replace_interval_refuses() {
 #[test]
 fn xfer_replace_rejected_keeps_failed() {
     let (mut twin, old, new) = replacing_failed();
-    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     let out = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!(Twin::fault(&out, 90), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
     assert_eq!(twin.stage(old), TransferStage::Failed);
