@@ -124,7 +124,7 @@ impl Store {
         let (logged, journal, notified, reset_journal) = (replaced.clone(), changed.clone(), commits.clone(), changed.clone());
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
-                logged.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
+                logged.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.model.to_string(), from.id.clone(), to.clone())));
                 journal.log_commit(result);
             }
         }))?;

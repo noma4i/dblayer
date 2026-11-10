@@ -153,6 +153,21 @@ impl Store {
         })
     }
 
+    /// The temporary ids of the rows of the read that were swapped after `after`: the pairs of the log for the model and the models its rows link to; when the log dropped the range, the pairs of `row_alias` for the rows of the result.
+    fn replaced_of(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey], after: i64, seen: i64) -> Result<Vec<(RowId, RowId)>, CoreError> {
+        let models: Vec<String> = std::iter::once(model.to_string()).chain(super::plan::nested_ref::link_targets(self.spec(model)?)).collect();
+        if let Some(pairs) = self.replaced().replaced_between(&models, after, seen) { return Ok(pairs); }
+        let mut statement = reader.connection().prepare_cached(include_str!("sql/lookup/read_aliases_of.sql"))?;
+        let mut pairs = Vec::new();
+        for (id, _) in keys {
+            let real = RowId::new(id).map_err(|error| CoreError::Internal(error.to_string()))?;
+            for temp in statement.query_map([model, id.as_str()], |row| row.get::<_, String>(0))? {
+                pairs.push((RowId::new(&temp?).map_err(|error| CoreError::Internal(error.to_string()))?, real.clone()));
+            }
+        }
+        Ok(pairs)
+    }
+
     /// The row `id` and the revision of the snapshot that shows it, in one read not older than `floor`.
     pub(crate) fn read_row(&self, model: &str, id: &RowId, floor: i64) -> Result<(i64, Option<Row>), CoreError> {
         self.spec(model)?;
@@ -213,7 +228,8 @@ impl Store {
                 _ => None,
             };
             let stamped = wanted.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect();
-            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, self.replaced().replaced_between(after, seen)))
+            let replaced = self.replaced_of(reader, model, &keys, after, seen)?;
+            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, replaced))
         })
     }
 }
