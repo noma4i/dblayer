@@ -22,7 +22,8 @@ impl Reader for History {
 
 fn page(first: i32, last: i32, more: bool) -> Value {
     let nodes: Vec<Value> = (first..=last).map(|n| json!({"id":format!("m{n}"),"chatId":"c1","body":format!("message {n}"),"kind":"TEXT","status":"SENT","sequenceNumber":n,"createdAt":"2026-10-27T00:00:00Z","updatedAt":"2026-10-27T00:00:00Z"})).collect();
-    json!({"node":{"messages":{"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
+    let edges: Vec<_> = nodes.into_iter().map(|node| json!({"node":node})).collect();
+    json!({"node":{"messages":{"edges":edges,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
 }
 
 async fn three_pages() -> (Stand, Arc<History>, Arc<crate::ffi::tape::Watched>) {
@@ -82,7 +83,7 @@ async fn consumer_thread_event_adds_after_three_pages() {
 async fn consumer_thread_refresh_removes_deleted_head_row() {
     let (stand, history, _stream) = three_pages().await;
     let mut answer = page(41, 65, true);
-    answer["node"]["messages"]["nodes"].as_array_mut().unwrap().retain(|row| row["id"] != "m50");
+    answer["node"]["messages"]["edges"].as_array_mut().unwrap().retain(|edge| edge["node"]["id"] != "m50");
     stand.answer("chatThread", answer);
     bound(stand.database.refresh(stand.database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     stand.settle().await;
