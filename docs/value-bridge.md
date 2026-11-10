@@ -110,7 +110,7 @@ One owner in the core serves each stream. The Swift and Kotlin bindings keep no 
 
 A stream knows its own relation. A stream without a relation fails both calls with `Invalid`.
 
-A call that outlives its epoch ends as `Interrupted`.
+A call that outlives its epoch ends with `NoSession`.
 Server work without a session or transport fails with `NoSession`.
 Its late answer changes nothing, and a request of the stream does not start in the next epoch.
 A delivery that was prepared and not yet handed over is withdrawn by the cancel of the reader and by the end of the epoch.
@@ -123,7 +123,7 @@ It works without a network and after the app closed.
 The row shows in the stream with its sync state.
 The server confirms it and the temporary id becomes the real id at the same position.
 The receipt carries the optimistic row and the revision of the local commit.
-`outcome()` waits for the one result of that operation: confirmed, rejected or interrupted.
+`outcome()` waits for the one result of that operation: confirmed, rejected or ended with a cause.
 
 ```swift
 let sent = try await scope.send(Message.self, values: ["text": .string("hi")])
@@ -144,7 +144,7 @@ An operation that declares `expires_after:` is rolled back with the outcome `rej
 ## Commands of an account
 
 Every command, one-off read and blob call carries the epoch of an account.
-Pass the scope of the account: a call of an account that left ends as `Interrupted` and changes nothing for the next account.
+Pass the scope of the account: a call of an account that left ends with `NoSession` and changes nothing for the next account.
 Without the argument the call belongs to the account that is signed in when it is called.
 A create that the server answers, such as a new group, returns a receipt with the optimistic row. Its `outcome()` carries the confirmed row.
 

@@ -144,9 +144,9 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 
 | Event | What the app sees | Credential and data |
 | ----- | ----------------- | ------------------- |
-| `sessionReset()` | Returns after the clearing. Work of the old session ends: a call gets `Interrupted` or `NoSession`, a stream of the old `AccountScope` ends with `ended(sessionEnded)`, a receipt `outcome()` is `interrupted` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
+| `sessionReset()` | Returns after the clearing. Old-session calls end with `NoSession`; streams and receipts end with `SessionEnded` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
 | The `logout` session operation, answer `revoked` | `sessionCall("logout", ...)` returns the answer. The session ends as after `sessionReset()` | The stored state is cleared first, the credential second |
-| Any other call, answer `revoked` | The call fails with the session code `sessionEnded`. The session ends | Cleared as above |
+| Any other call, answer `revoked` | The session ends and the call fails with `NoSession` | Cleared as above |
 | HTTP 401 or 403 on a call | The call fails with `Unauthorized`. The session stays | Kept |
 
 `Unauthorized` means the server refused this request. `Revoked` means the server ended the session. After a revoked answer the app signs in again with a new `AccountScope`.

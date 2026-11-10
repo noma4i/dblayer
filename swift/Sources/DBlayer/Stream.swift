@@ -15,7 +15,7 @@ public struct ValueStream: AsyncSequence, Sendable {
     public mutating func next() async -> ReadValue? { await lease.next() }
   }
 
-  /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation.
+  /// Loads the relation of the stream again. Throws `NoSession` when the session ended and `Invalid` when the stream has no relation.
   public func refresh() async throws { try await reader.refresh() }
 
   public func loadMore() async throws -> LoadMoreResult { try await reader.loadMore() }
@@ -406,7 +406,7 @@ public struct AccountScope: Sendable {
     try await database.discard(epoch: epoch, model: model, rowId: id, action: action)
   }
 
-  /// Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.
+  /// Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `NoSession` when the session of this scope ended.
   @concurrent public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> MutationReceipt<Model> {
     let receipt = try await database.send(request: CommandRequest(epoch: epoch, model: Model.modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text, upload: try upload.map { CommandUpload(action: $0.action, request: try $0.request.wire) }))
     return try MutationReceipt(database: database, wire: receipt)

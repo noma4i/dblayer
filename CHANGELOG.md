@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Calls report `NoSession` after session end and `Closed` after database close.
 - `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
 - `RetrySnapshot.waiting` replaces `activeCalls` and `lastAttempt`.
 - `RetryEntry` replaces `RetryAttempt` in retry snapshots.

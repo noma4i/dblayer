@@ -998,7 +998,7 @@ val groups = Group.nodes(ids)
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
 - `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
-- An answer that arrives after a session reset or a cache reset of the model ends the read with `Interrupted`. Nothing is written.
+- A read waiting across a session reset ends with `NoSession`. An answer after a model cache reset ends the read with `Interrupted`. Nothing is written.
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 

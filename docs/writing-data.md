@@ -108,7 +108,7 @@ val receipt = user.update(name = name)
 val outcome = receipt.outcome()
 ```
 
-The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `interrupted`.
+The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `ended` with cause `SessionEnded`.
 
 ```swift
 let receipt = try await Note.create(groupId: group.id, body: "hi", in: scope)
@@ -288,12 +288,12 @@ Every write is queued durably. It writes the row at once, queues the request, an
 
 ```swift
 let sent = try await Message.create(chatId: chat.id, text: "hi", in: scope)
-let outcome = try await sent.outcome()   // .confirmed, .rejected, .interrupted
+let outcome = try await sent.outcome()   // .confirmed, .rejected, .ended
 ```
 
 ```kotlin
 val sent = Message.create(chatId = chat.id, text = "hi", account = scope)
-val outcome = sent.outcome()             // Confirmed, Rejected, Interrupted
+val outcome = sent.outcome()             // Confirmed, Rejected, Ended
 ```
 
 Every queued write shows in `operations()` with its status, and a refused write is retried from that list: see [the queue of operations](sync-state.md#the-queue-of-operations).

@@ -18,7 +18,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Network`, `Http` | The request failed on the network, or the server answered with a status (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
 | `RequestTooLarge` | The request exceeds the local limit (`size`, `limit`). |
 | `Graphql` | The server answered with GraphQL errors (`messages`, `extensions`). |
-| `Interrupted` | The session, the reset or the close of the call ended its epoch before it finished. A late answer changes nothing. |
+| `Interrupted` | The caller cancelled the wait or its deadline expired. The detail identifies the cause. |
 | `Dropped` | The request left and its answer did not come. |
 | `InFlight` | The operation is on its way and cannot be dropped or cancelled now. |
 | `Storage` | The database could not save its state. |
@@ -33,7 +33,7 @@ A call that fails in order reports the first failing check. For `upload` the ord
 | Where | Result |
 | ----- | ------ |
 | A call (`create`, `load`, `read`, `sessionCall`) | It throws the error. |
-| A receipt `outcome()` | `confirmed`, `rejected` with an `OperationFailure`, or `interrupted`. See [writing data](writing-data.md#what-the-server-answered). |
+| A receipt `outcome()` | `confirmed`, `rejected` with an `OperationFailure`, or `ended` with a cause. See [writing data](writing-data.md#what-the-server-answered). |
 | `sync.error` and `uploads[action].error` | An `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions`, in this order. |
 | A stream | It never throws. The state carries the last load `error`. The last value is `ended` with a cause: `SessionEnded`, `Closed`, `Cancelled`, `Invalid`, `Storage` or `Internal`. |
 | A transfer or an operations stream | The last item is `ended` with the cause. |

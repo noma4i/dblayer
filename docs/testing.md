@@ -52,7 +52,7 @@ A test opens its database and closes it. There is no reset between tests: close 
 
 A database opened without a session keeps the rows of local models only, and `MockTransport` alone does not give it one. A send, a load and a create of a server model are refused there with `NoSession`. To test a server model, sign in with `openSigned` from `DBlayerTesting` (Swift) or `testFixtures` (Kotlin). It signs in over `SealedServer` and `EncryptedCablePeer`, bridges every query and mutation to the `MockTransport` you pass and returns the open database. Give the model its rows with the replies of that mock. `openSignedClocked` does the same on a test clock, `openSignedOffline` signs in and then reports no network, `loginAgain` signs in again after `sessionReset()`, and `closeForCleanup` closes a database a test may already have closed.
 
-After `sessionReset()` the credential and the data of the account are gone. A test signs in again with `sessionCall`. A call of the epoch before the reset ends as `Interrupted` or `NoSession`.
+After `sessionReset()` the credential and the data of the account are gone. A test signs in again with `sessionCall`. A call of the epoch before the reset ends with `NoSession`.
 
 A second `close` returns success. Any other call on a closed database fails with `Closed`, and any call before the first `open` fails with `NotOpen`.
 

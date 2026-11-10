@@ -12,7 +12,7 @@ Each piece of mutable state in the core has one owner with one queue. The owner 
 - Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. A projection decodes rows off the main thread and assigns ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
 - A stream delivers values from library threads. A Kotlin `Projected` publishes its `StateFlow` from `Dispatchers.Default`, and a Swift `Projected` applies values on the main actor.
 - A delivery touches only the rows it carries. The bindings hold no lock for it.
-- A call waits for the outcome of its owner and nothing else. A session end, a reset, a close or the cancellation of your task or coroutine gives every waiting call a defined end (`Interrupted`, `Closed` or `NoSession`).
+- A session end or reset ends a waiting call with `NoSession`. Close gives `Closed`. Cancellation or a deadline gives `Interrupted` with its cause.
 - Await `discard(action)` and `sessionReset()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations is asynchronous. A live query attaches off the caller thread when it is collected.
 - Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`) run on a background thread of the library, never on the caller thread.
