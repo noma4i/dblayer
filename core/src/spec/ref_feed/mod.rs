@@ -47,6 +47,10 @@ pub(super) enum Reread {
     Set(Vec<String>),
 }
 
+pub(super) fn absent_payload(via_node: bool, incomplete_object: bool) -> Option<Reread> {
+    if via_node && !incomplete_object { Some(Reread::Set(vec!["node".into()])) } else { None }
+}
+
 impl Reread {
     fn union(self, other: &Reread) -> Reread {
         match (self, other) {

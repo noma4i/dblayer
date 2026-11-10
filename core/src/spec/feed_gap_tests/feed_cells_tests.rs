@@ -709,6 +709,25 @@ fn feed_changed_by_forms() {
 }
 
 #[test]
+fn feed_missing_payload_reference() {
+    for (via_node, incomplete, accepted) in [(true, false, true), (true, true, false), (false, false, false)] {
+        let mut twin = live_immediate();
+        match crate::spec::ref_feed::absent_payload(via_node, incomplete) {
+            Some(keys) => {
+                assert!(accepted);
+                twin.reread = keys;
+                assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
+                assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }]);
+            }
+            None => {
+                assert!(!accepted);
+                twin.step(Input::Refused { model: "Chat".into() });
+            }
+        }
+    }
+}
+
+#[test]
 fn feed_changed_by_two_forms() {
     let mut twin = live_immediate();
     twin.reread = Reread::All;

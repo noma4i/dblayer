@@ -74,9 +74,11 @@ fn feed_changed_by_node() {
 
 #[test]
 fn feed_payload_missing_uses_node() {
-    for (relation, payload, accepted) in [("node", Value::Null, true), ("node", json!({}), false), ("", Value::Null, false)] {
+    for (relation, payload, accepted) in [("node", Some(Value::Null), true), ("node", None, true), ("node", Some(json!({})), false), ("", Some(Value::Null), false)] {
         let codec = codec(vec![json!({"area":"CHAT", "relation":relation, "payload":"chat"})]);
-        let response = Response::data(json!({"changes":[{"topic":"CHAT", "action":"UPDATED", "recordId":"c1", "chat":payload}]}));
+        let mut change = json!({"topic":"CHAT", "action":"UPDATED", "recordId":"c1"});
+        if let Some(payload) = payload { change["chat"] = payload; }
+        let response = Response::data(json!({"changes":[change]}));
         let events = codec.events("Changes", response);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].refused, !accepted);
