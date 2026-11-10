@@ -47,6 +47,7 @@ async fn reference_batch(size: usize) -> BTreeMap<u64, usize> {
     node["visitors"] = json!({"edges":visitors});
     stand.answer("MomentNode", json!({"node":node}));
     let first = bound(stand.database.node(epoch, "Moment".into(), "node".into(), "root".into(), true)).await.unwrap().unwrap();
+    stand.settle().await;
     let ids = |prefix: &str| Cell::Seq { items: (0..size).map(|i| Cell::Text { value: format!("{prefix}{i}") }).collect() };
     let visitor_ids = Cell::Seq { items: (0..2).map(|i| Cell::Text { value: format!("u{i}") }).collect() };
     assert_eq!(stand.cell("Moment", &first, "visitorIds"), visitor_ids);
