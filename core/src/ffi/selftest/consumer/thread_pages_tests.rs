@@ -257,3 +257,26 @@ async fn consumer_queued_operation_server_delete() {
     assert!(matches!(value, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "{value:?}");
     assert_eq!(stand.requests("MessageUpdate"), 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_temp_parent_swap() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    stand.database.set_online(false).unwrap();
+    let values = json!({"uuid":"local-chat","kind":"GROUP","status":"PRIMARY","lists":["PRIMARY"],"premium":false,"pinned":false,"muted":false,"read":true,"serverRevision":1,"messagesCount":0,"membersCount":2,"lastActivityAt":"2026-11-08T00:00:00Z","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","name":"group"});
+    let receipt = bound(stand.database.create(epoch, "Chat".into(), values.to_string(), r#"{"userIds":[]}"#.into())).await.unwrap();
+    let temporary = receipt.optimistic_value.expect("the optimistic chat").id;
+    assert!(temporary.starts_with("temp-"), "{temporary}");
+    let query = QuerySpec::json(json!({"model":"Message","relation":"thread","params":{"chatId":temporary}}).to_string());
+    let history = Arc::new(History::default());
+    let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
+    stand.settle().await;
+    assert_eq!(stand.requests("chatThread"), 0);
+    stand.answer("ChatGroupCreate", json!({"groupChatCreate":{"chat":super::stand::chat("c1", "group")}}));
+    stand.answer("chatThread", page(1, 2, false));
+    stand.database.set_online(true).unwrap();
+    settled(&stand, "the thread of the confirmed chat", || history.rows.len() == 2).await;
+    assert_eq!(ids(&history), ["m1", "m2"]);
+    assert_eq!(stand.requests_with("chatThread", "chatId", "c1"), 1);
+    assert_eq!(stand.requests_with("chatThread", "chatId", &temporary), 0);
+}
