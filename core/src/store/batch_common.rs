@@ -53,6 +53,11 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             let cycle_id = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
             results.push(writer.transitions(vec![crate::store::OperationTransition::Attempt { seq, attempts: i64::from(*attempts), cycle_id, cause: *cause }])?);
         }
+        StoreOp::Cause { op_id, cause } => {
+            let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+            let (kind, limit) = cause.and_then(|cause| cause.cause_columns()).map_or((None, None), |(kind, limit)| (Some(kind), Some(limit)));
+            writer.connection.execute(include_str!("sql/batch_common/op_cause.sql"), rusqlite::params![seq, kind, limit])?;
+        }
         StoreOp::Requeue { op_id } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
             results.push(writer.transitions(vec![crate::store::OperationTransition::Requeue { seq }])?);

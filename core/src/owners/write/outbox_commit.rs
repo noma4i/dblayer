@@ -34,6 +34,7 @@ impl OutboxState {
 
     pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
+        if kind == CommitKind::Cause { return; }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.into_iter().last().flatten(); }
             if let Some(reply) = self.submit_replies.remove(&op_id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(op_id, revision))); }
@@ -224,6 +225,7 @@ impl OutboxState {
 
     pub(super) fn operation_rejected(&mut self, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
+        if kind == CommitKind::Cause { return; }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             self.submit_refused(op_id, reason, fx);
             self.ops.remove(&op_id);

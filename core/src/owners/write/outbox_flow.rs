@@ -40,7 +40,7 @@ impl OutboxState {
         }
         if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         if let Some(temporary) = errors {
-            return self.transport_failed(op_id, temporary, fx);
+            return self.transport_failed(op_id, temporary, None, fx);
         }
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Landing;
@@ -55,12 +55,17 @@ impl OutboxState {
         self.drain(fx);
     }
 
-    pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, fx: &mut Effects<Outbox>) {
+    /// The outcome of an attempt that did not answer: its cause replaces the kept one in memory and, when it differs from the row, in a Store batch before the wait of the Backoff.
+    pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, cause: Option<crate::value::sync::FailureKind>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
-        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; operation.cause = cause; }
+        if self.ops.get(&op_id).is_some_and(|operation| operation.cause != operation.cause_stored) {
+            if let Some(operation) = self.ops.get_mut(&op_id) { operation.cause_stored = operation.cause; }
+            self.store(op_id, CommitKind::Cause, fx);
+        }
         if !temporary {
             self.reject_or_keep(op_id, fx);
             return self.drain(fx);
@@ -285,7 +290,7 @@ impl OutboxState {
     }
 
     pub(super) fn remove_row_operation(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
-        if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, .. } if *id == op_id)) { return; }
+        if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, kind } if *id == op_id && *kind != CommitKind::Cause)) { return; }
         self.removing.insert(op_id);
         self.store(op_id, CommitKind::RemoveRow, fx);
     }
@@ -392,7 +397,7 @@ impl OutboxState {
         match outcome {
             AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. } } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }
-                self.transport_failed(op_id, true, fx);
+                self.transport_failed(op_id, true, None, fx);
             }
             AuthorOutcome::Response { body, .. } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
@@ -408,11 +413,12 @@ impl OutboxState {
                     operation.pending_owned = pending_retained;
                     operation.reject_error = Some(super::failure::of_session(&error, class));
                 }
-                self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), fx);
+                let cause = if let crate::owners::session::SessionError::ResponseTooLarge { limit } = &error { Some(crate::value::sync::FailureKind::ResponseTooLarge { limit: *limit }) } else { None };
+                self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), cause, fx);
             }
             AuthorOutcome::Dropped => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; }
-                self.transport_failed(op_id, true, fx);
+                self.transport_failed(op_id, true, None, fx);
             }
         }
     }
