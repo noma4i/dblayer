@@ -34,8 +34,8 @@ async fn dlv_deferred_parent_swap_wakes() {
     let query = |relation: &str| crate::ffi::QuerySpec::json(json!({"model":"Message", "relation":relation, "params":{"chatId":temporary}}).to_string());
     let list_reader = Reader::open();
     let count_reader = Reader::open();
-    let list = rig.database.subscribe_reading(epoch, ReadRequest::List { query: query("thread") }, list_reader.clone());
-    let count = rig.database.subscribe_reading(epoch, ReadRequest::Count { query: query("thread_count") }, count_reader.clone());
+    let _list = rig.database.subscribe_reading(epoch, ReadRequest::List { query: query("thread") }, list_reader.clone());
+    let _count = rig.database.subscribe_reading(epoch, ReadRequest::Count { query: query("thread_count") }, count_reader.clone());
     settled(&rig, "both temporary streams open empty", || !list_reader.deliveries().is_empty() && !count_reader.deliveries().is_empty()).await;
     assert_eq!((rig.world.count("Thread"), rig.world.count("ThreadCount")), (0, 0));
     let reply = json!({"data":{"thread":[{"id":"child-1", "chatId":"g1", "text":"child", "at":1}]}});
@@ -49,7 +49,6 @@ async fn dlv_deferred_parent_swap_wakes() {
     assert_eq!((requests.iter().filter(|entry| entry.operation == "Thread").count(), requests.iter().filter(|entry| entry.operation == "ThreadCount").count()), (1, 1));
     assert!(requests.iter().all(|entry| entry.body.contains(&real) && !entry.body.contains(&temporary)));
     settled(&rig, "both streams show the returned child", || list_reader.rows().iter().any(|row| row.id == "child-1") && count_reader.deliveries().iter().any(|delivery| matches!(delivery.value, ReadValue::Count { count: 1, .. }))).await;
-    drop((list, count));
     rig.database.close_now();
 }
 
