@@ -6,7 +6,7 @@ use std::task::{Context, Wake, Waker};
 
 use super::rig_tests::{bound, Rig, BOUND};
 use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
-use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadStream, ReadValue, WireOperationOutcome};
+use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadStream, ReadValue};
 use crate::test_matrix::Matrix;
 use crate::test_wait::within_named;
 
@@ -46,15 +46,6 @@ fn cause_tag(cause: &EndCause) -> String {
 fn result_tag<T>(result: Result<T, DbError>) -> String {
     match result {
         Ok(_) => "value (no end)".into(),
-        Err(error) => err_tag(&error),
-    }
-}
-
-fn outcome_tag(result: Result<WireOperationOutcome, DbError>) -> String {
-    match result {
-        Ok(WireOperationOutcome::Ended { cause }) => cause_tag(&cause),
-        Ok(WireOperationOutcome::Confirmed { .. }) => "value (no end)".into(),
-        Ok(WireOperationOutcome::Rejected { .. }) => "Rejected".into(),
         Err(error) => err_tag(&error),
     }
 }
@@ -169,7 +160,7 @@ async fn write_outcome(end: End) -> String {
         End::Discard => bound(rig.database.discard(epoch, "Message".into(), id, None)).await.unwrap(),
         End::Cancel => unreachable!("a write has no cancel"),
     }
-    let observed = outcome_tag(bound(rig.database.outcome(receipt)).await);
+    let observed = result_tag(bound(rig.database.confirmed(receipt, false)).await);
     rig.database.close_now();
     observed
 }
@@ -191,7 +182,7 @@ async fn upload_outcome(end: End) -> String {
         End::Cancel => { let _ = bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await; }
         End::Discard => bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap(),
     }
-    let observed = outcome_tag(bound(database.outcome(receipt)).await);
+    let observed = result_tag(bound(database.confirmed(receipt, false)).await);
     database.close_now();
     observed
 }
@@ -331,12 +322,12 @@ async fn outcome_after_answer() -> String {
     let receipt = bound(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3))).await.unwrap();
     let row = receipt.optimistic_value.as_ref().unwrap().id.clone();
     let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
-    let mut call = Box::pin(rig.database.outcome(receipt));
+    let mut call = Box::pin(rig.database.confirmed(receipt, false));
     poll_pending(call.as_mut(), &wake);
     bound(rig.database.discard(epoch, "Message".into(), row, None)).await.unwrap();
     answer_woke(&wake).await;
     rig.database.close_now();
-    outcome_tag(bound(call).await)
+    result_tag(bound(call).await)
 }
 
 #[tokio::test(flavor = "multi_thread")]
