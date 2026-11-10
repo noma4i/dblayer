@@ -99,6 +99,9 @@ impl OutboxState {
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
+                if let Some((_, error)) = self.confirmed_discards.get(&op_id).cloned() {
+                    self.answer_discarded_outcome(op_id, OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }), fx);
+                }
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Ok);
                 }
@@ -267,6 +270,13 @@ impl OutboxState {
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
+            }
+            RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.confirmed_discards.contains_key(&op_id) => {
+                let error = self.confirmed_discards[&op_id].1.clone();
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                let fault = Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")));
+                self.answer_discarded_outcome(op_id, OutboxAnswer::Err(fault.clone()), fx);
+                for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
             }
             RejectReason::Storage(_) => self.retry_timer(op_id, fx),
             RejectReason::NoSession | RejectReason::Closed if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),

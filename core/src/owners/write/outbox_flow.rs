@@ -203,12 +203,16 @@ impl OutboxState {
             }
             Stage::Queued | Stage::Failed => {
                 self.discard_waiters.push((op_id, reply));
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
-                self.store(op_id, CommitKind::Rollback, fx);
+                self.start_discard(op_id, fx);
             }
             Stage::RollingBack(_) => self.discard_waiters.push((op_id, reply)),
             Stage::Done => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
         }
+    }
+
+    pub(super) fn start_discard(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
+        self.store(op_id, CommitKind::Rollback, fx);
     }
 
     /// The server removed the row: each of its open operations ends `Discarded`, a request on its way is released.
@@ -311,6 +315,11 @@ impl OutboxState {
         }
         match operation.stage {
             Stage::Done => match operation.outcome.clone() { Some(outcome) => Self::reply(fx, reply, OutboxAnswer::Outcome(outcome)), None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal)) },
+            Stage::Failed if discard_on_failure && receipt.cycle_id == operation.cycle_id => {
+                let error = operation.error.clone().unwrap_or_else(|| "refused".into());
+                self.outcome_waiters.push((receipt.op_id, receipt.cycle_id, reply, true));
+                self.discard_failed_outcome(receipt.op_id, receipt.cycle_id, error, fx);
+            }
             Stage::Failed => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) })),
             _ => self.outcome_waiters.push((receipt.op_id, receipt.cycle_id, reply, discard_on_failure)),
         }

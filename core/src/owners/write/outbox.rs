@@ -64,6 +64,7 @@ pub struct OutboxState {
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
     pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
+    pub(super) confirmed_discards: BTreeMap<OpId, (u64, String)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
     pub(super) resets: BTreeMap<(String, String, String), (ScheduleId, u64)>,
@@ -118,6 +119,7 @@ impl OutboxState {
             retry_waiters: Vec::new(),
             discard_waiters: Vec::new(),
             outcome_waiters: Vec::new(),
+            confirmed_discards: BTreeMap::new(),
             ephemeral: BTreeMap::new(),
             expiry: BTreeMap::new(),
             resets: BTreeMap::new(),
@@ -364,6 +366,19 @@ impl OutboxState {
         }
     }
 
+    pub(super) fn answer_discarded_outcome(&mut self, op_id: OpId, answer: OutboxAnswer, fx: &mut Effects<Outbox>) {
+        let Some((cycle, _)) = self.confirmed_discards.remove(&op_id) else { return };
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outcome_waiters).into_iter().partition(|(id, waits, _, _)| *id == op_id && *waits == cycle);
+        self.outcome_waiters = rest;
+        for (_, _, reply, _) in mine { Self::reply(fx, reply, answer.clone()); }
+    }
+
+    pub(super) fn discard_failed_outcome(&mut self, op_id: OpId, cycle: u64, error: String, fx: &mut Effects<Outbox>) {
+        if self.confirmed_discards.contains_key(&op_id) { return; }
+        self.confirmed_discards.insert(op_id, (cycle, error));
+        self.start_discard(op_id, fx);
+    }
+
     /// The rows the landing batch shows: one per member of a group under its real id, otherwise the row that landed.
     pub(super) fn landing_shows_of(operation: &QueuedOperation) -> Vec<StoreOp> {
         let model = operation.op.model.clone();
@@ -503,7 +518,11 @@ impl OutboxState {
         operation.failed_errors.insert(cycle, error.clone());
         let failed = OutboxOutcome::Failed { error };
         self.tell_transfer(op_id, &failed, false, fx);
-        self.give_outcome(op_id, &failed, fx);
+        if self.outcome_waiters.iter().any(|(id, waits, _, discard)| *id == op_id && *waits == cycle && *discard) {
+            if let OutboxOutcome::Failed { error } = failed { self.discard_failed_outcome(op_id, cycle, error, fx); }
+        } else {
+            self.give_outcome(op_id, &failed, fx);
+        }
     }
 
     /// A permanent refusal of the server: `on_failure` of the action decides.
