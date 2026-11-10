@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.25.2 - 2026-11-11
+
+### Fixed
+
+- Never reuse an upload identity after the database reopens.
+- Read the outcome of the right upload after a reopen, so a refused upload is discarded.
+- Remove an upload left without its transfer when the database opens.
+
 ## 6.25.1 - 2026-11-11
 
 ### Fixed
