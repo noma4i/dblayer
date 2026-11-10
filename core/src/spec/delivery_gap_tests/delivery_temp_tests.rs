@@ -31,7 +31,7 @@ fn dlv_open_entity_temp() {
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
     let journal = twin.state().journal(STREAM);
-    assert!(matches!(journal.as_slice(), [d::Value::Snapshot { rows, state, .. }] if rows[0].id == "temp-1" && state.phase == WindowPhase::Idle && state.error.is_none()), "{journal:?}");
+    assert!(matches!(journal.as_slice(), [d::Value::Snapshot { rows, state, .. }] if rows[0].id == "temp-1" && state.phase == WindowPhase::Loaded && state.settled && state.error.is_none()), "{journal:?}");
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn dlv_entity_temp_rollback() {
     commit(&mut twin, 1);
     rows(&mut twin, 1, vec![], vec![]);
     let journal = twin.state().journal(STREAM);
-    assert!(journal.iter().any(|value| matches!(value, d::Value::Snapshot { rows, state, .. } if rows.is_empty() && state.phase == WindowPhase::Idle)), "{journal:?}");
+    assert!(journal.iter().any(|value| matches!(value, d::Value::Snapshot { rows, state, .. } if rows.is_empty() && state.phase == WindowPhase::Loaded && state.settled && state.error.is_none())), "{journal:?}");
     assert!(!Twin::modelled(take(&twin.log)).contains(&Effect::InterestPlus));
     twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 });
     assert!(!Twin::modelled(take(&twin.log)).contains(&Effect::InterestMinus));
