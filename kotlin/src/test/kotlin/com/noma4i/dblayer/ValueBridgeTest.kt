@@ -271,6 +271,24 @@ class ValueBridgeTest {
         }
     }
 
+    @Test
+    fun bridge_reader_release_parity_c9() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val stream = AccountScope.current().stream(User.profile)
+            val first = awaitWithin("the first list value") { stream.values.first() }
+            assertTrue("the first reader receives a snapshot: $first", first is ReadValue.Snapshot)
+            val next = awaitWithin("the released stream ends closed") { stream.values.first() }
+            assertTrue("the released stream ends closed: $next", next is ReadValue.Ended && next.cause is EndCause.Closed)
+            val another = awaitWithin("another reader sees the closed stream") { stream.values.first() }
+            assertTrue("the next reader sees closed: $another", another is ReadValue.Ended && another.cause is EndCause.Closed)
+            stream.close()
+        } finally {
+            closeForCleanup()
+        }
+    }
+
     /** B07: a change of one row decodes one row, and the subscriptions are the readers. */
     @Test
     fun aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders() = bounded {
