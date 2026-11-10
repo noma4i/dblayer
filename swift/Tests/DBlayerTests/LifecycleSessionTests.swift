@@ -84,6 +84,24 @@ extension BridgeProbeTests {
   private static let account = SignedAccount()
   private static let alreadyAuthenticated = OneShot()
 
+  @Test @MainActor
+  func bridge_prop_session_state_parity_c9() async throws {
+    do { _ = try DB.sessionStatus(); Issue.record("status before open succeeded") }
+    catch DbError.NotOpen(_) {} catch { Issue.record("before open: \(error)") }
+    _ = try await Self.openSealedSession()
+    let initial = try DB.sessionStatus()
+    #expect(initial.phase == .none && initial.identity == nil)
+    try await Self.startSealedSession("A")
+    let active = try DB.sessionStatus()
+    #expect(active.phase == .active && active.identity != nil && active.epoch > initial.epoch)
+    try await DB.sessionReset()
+    let reset = try DB.sessionStatus()
+    #expect(reset.phase == .none && reset.identity == nil && reset.epoch > active.epoch)
+    try await DB.close()
+    do { _ = try DB.sessionStatus(); Issue.record("status after close succeeded") }
+    catch DbError.Closed(_) {} catch { Issue.record("after close: \(error)") }
+  }
+
   @MainActor
   static func openSealedSession() async throws -> SealedServer {
     await DB.closeForCleanup()

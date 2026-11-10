@@ -71,6 +71,26 @@ class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
     private val alreadyAuthenticated = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    @Test
+    fun bridge_prop_session_state_parity_c9() = bounded {
+        assertTrue(runCatching { DBlayer.sessionStatus() }.exceptionOrNull() is DbException.NotOpen)
+        openSession()
+        val initial = DBlayer.sessionStatus()
+        assertEquals(SessionStanding.NONE, initial.phase)
+        assertNull(initial.identity)
+        startSession("A")
+        val active = DBlayer.sessionStatus()
+        assertEquals(SessionStanding.ACTIVE, active.phase)
+        assertTrue(active.identity != null && active.epoch > initial.epoch)
+        DBlayer.sessionReset()
+        val reset = DBlayer.sessionStatus()
+        assertEquals(SessionStanding.NONE, reset.phase)
+        assertNull(reset.identity)
+        assertTrue(reset.epoch > active.epoch)
+        DBlayer.close()
+        assertTrue(runCatching { DBlayer.sessionStatus() }.exceptionOrNull() is DbException.Closed)
+    }
+
     private suspend fun holdList(history: RowHistory): HeldList = HeldList(AccountScope.current().stream(Query(User.modelName, User)), history)
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
