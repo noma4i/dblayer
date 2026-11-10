@@ -130,12 +130,13 @@ async fn xfer_put_response_limit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_confirmed_discard_exact_op() {
     let rig = rig().await;
+    rig.land("Chat", chat_row("c2", 0)).await;
     let chat = entity(&rig, "Chat", "c1");
     settled(&rig, "the chat is visible", || chat.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
-    let other = bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
+    let other = bound(rig.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
     let upload = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     let held = rig.world.hold_next("ChatPin");
     rig.world.fail_next("PUT", Fault::Http(400));
