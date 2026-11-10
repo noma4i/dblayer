@@ -44,7 +44,7 @@ extension BridgeProbeTests {
     let sending = try #require(await queue.first("the update is sending") { $0.first?.status == .sending })
     #expect(sending[0].attempts == 1)
     hold.release()
-    if case .confirmed = try await receipt.outcome() {} else { Issue.record("the update was not confirmed") }
+    if case .confirmed = try await receipt.settled() {} else { Issue.record("the update was not confirmed") }
     #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
   }
 

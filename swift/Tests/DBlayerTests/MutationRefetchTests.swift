@@ -34,7 +34,7 @@ extension BridgeProbeTests {
     let mutationFinished = Task {
       do {
         let receipt = try await removing.value
-        if case .confirmed = try await receipt.outcome() { signal.yield(3) }
+        if case .confirmed = try await receipt.settled() { signal.yield(3) }
         else { signal.yield(8) }
       } catch { signal.yield(8) }
     }

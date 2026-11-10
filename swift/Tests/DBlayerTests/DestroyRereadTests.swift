@@ -30,7 +30,7 @@ extension BridgeProbeTests {
     let outcome = Task {
       do {
         let receipt = try await row.destroy()
-        if case .confirmed = try await receipt.outcome() { signal.yield(2) }
+        if case .confirmed = try await receipt.settled() { signal.yield(2) }
         else { signal.yield(9) }
       } catch { signal.yield(9) }
     }

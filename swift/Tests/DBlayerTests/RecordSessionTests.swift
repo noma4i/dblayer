@@ -29,12 +29,12 @@ extension BridgeProbeTests {
     let optimistic = try #require(secondReceipt.optimisticValue)
     #expect(optimistic.reactions.map(\.userId) == ["u2"])
     first.release()
-    let earlier = Task { try await firstReceipt.outcome() }
+    let earlier = Task { try await firstReceipt.settled() }
     let earlierOutcome = try await valueBeforeDeadline(earlier) { first.release(); second.release() }
     if case .confirmed = earlierOutcome {} else { Issue.record("react was not confirmed") }
     try #require(await entered(second), "undo did not reach the transport after react ended")
     second.release()
-    let later = Task { try await secondReceipt.outcome() }
+    let later = Task { try await secondReceipt.settled() }
     let laterOutcome = try await valueBeforeDeadline(later) { first.release(); second.release() }
     if case .confirmed = laterOutcome {} else { Issue.record("undo was not confirmed") }
     let final = try #require(await Record.find(record.id).current())
@@ -56,7 +56,7 @@ extension BridgeProbeTests {
   static func settledRecord() async throws -> Record {
     let sending = Task { try await Record.create(containerId: "c1", authorId: "u1", text: "hello", in: DB.account()) }
     let receipt = try await valueBeforeDeadline(sending) {}
-    let waiting = Task { try await receipt.outcome() }
+    let waiting = Task { try await receipt.settled() }
     guard case .confirmed = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
     return try #require(try await Query<Record>().read().first)
   }
@@ -77,7 +77,7 @@ extension BridgeProbeTests {
     #expect(during.sync.state != .synced, "the row was synced before the server answered")
     #expect(during.reactions.map(\.body) == ["C"])
     hold.release()
-    let waiting = Task { try await receipt.outcome() }
+    let waiting = Task { try await receipt.settled() }
     guard case .confirmed = try await valueBeforeDeadline(waiting, release: { hold.release() }) else { throw WaitFailure.unexpectedOutcome }
     let after = try #require(await Record.find(record.id).current())
     #expect(after.sync.state == .synced)

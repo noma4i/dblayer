@@ -67,7 +67,7 @@ extension BridgeProbeTests {
     Task { @MainActor in
       started.continuation.yield(())
       do {
-        if case .ended(cause: .sessionEnded) = try await sent.outcome() { result.continuation.yield(true) } else { result.continuation.yield(false) }
+        if case .ended(cause: .sessionEnded) = try await sent.settled() { result.continuation.yield(true) } else { result.continuation.yield(false) }
       } catch { result.continuation.yield(false) }
     }
     _ = try #require(await Cursor(started.stream).next("the wait starts"))

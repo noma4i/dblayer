@@ -84,7 +84,7 @@ private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLet
 
 class ClubTest {
     @Test
-    fun anOperationOutcomeCanBeReadTwiceFromItsReceipt() = bounded {
+    fun aReceiptCanBeConfirmedTwice() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateClub", CLUB_CREATED)
         transport.enqueue("AddClubMember", clubAnswer("addClubMember"))

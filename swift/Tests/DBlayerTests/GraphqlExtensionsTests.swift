@@ -24,8 +24,13 @@ extension BridgeProbeTests {
       let extensions: GraphqlExtensions?
       if queued {
         let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
-        guard case let .rejected(failure) = try await database.outcome(receipt: receipt) else { Issue.record("the refused purchase was not rejected"); continue }
-        extensions = failure.extensions
+        do {
+          _ = try await database.confirmed(receipt: receipt)
+          Issue.record("the refused purchase was not rejected")
+          continue
+        } catch let DbError.Rejected(failure, _) {
+          extensions = failure.extensions
+        }
       } else {
         do {
           _ = try await database.call(epoch: database.sessionEpoch(), operation: operation, variablesJson: "{}")

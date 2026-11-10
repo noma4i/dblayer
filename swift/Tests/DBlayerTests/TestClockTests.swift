@@ -62,7 +62,7 @@ extension BridgeProbeTests {
     let mutation = Task {
       do {
         let receipt = try await row.like()
-        if case .confirmed = try await receipt.outcome() { signal.yield(3) } else { signal.yield(9) }
+        if case .confirmed = try await receipt.settled() { signal.yield(3) } else { signal.yield(9) }
       } catch { signal.yield(9) }
     }
     defer { mutation.cancel() }
@@ -106,7 +106,7 @@ extension BridgeProbeTests {
     let outcome = Task {
       do {
         let receipt = try await row.like()
-        if case .confirmed = try await receipt.outcome() { signal.yield(2) } else { signal.yield(9) }
+        if case .confirmed = try await receipt.settled() { signal.yield(2) } else { signal.yield(9) }
       }
       catch { signal.yield(9) }
     }

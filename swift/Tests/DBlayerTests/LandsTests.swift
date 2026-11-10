@@ -11,7 +11,7 @@ extension BridgeProbeTests {
     let database = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: specs(schema), transport: transport)
     try await registerStandOperations(database, defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]"#)
     let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Record", valuesJson: "{}", argsJson: "{}", upload: nil))
-    guard case .confirmed = try await database.outcome(receipt: receipt) else { Issue.record("the create was not confirmed"); return }
+    guard (try? await database.confirmed(receipt: receipt)) != nil else { Issue.record("the create was not confirmed"); return }
     #expect(try await database.readRow(epoch: database.sessionEpoch(), model: "Record", rowId: "r2")?.id == "r2")
   }
 

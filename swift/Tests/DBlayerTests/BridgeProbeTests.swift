@@ -62,7 +62,7 @@ struct BridgeProbeTests {
     #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.isEmpty, "a request left while the network was away")
     try DB.database.setOnline(online: true)
-    _ = try await receipt.confirmed(discardOnFailure: false)
+    _ = try await receipt.confirmed()
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 1)
   }
 
@@ -135,7 +135,7 @@ struct BridgeProbeTests {
 
     let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
     #expect(sent.optimisticValue?.id.hasPrefix("temp") == true)
-    #expect(try await sent.confirmed(discardOnFailure: false).value?.id == "m77")
+    #expect(try await sent.confirmed().value?.id == "m77")
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -147,7 +147,7 @@ struct BridgeProbeTests {
 
     let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
     let ids = try await withThrowingTaskGroup(of: String.self) { group in
-      for _ in 0..<8 { group.addTask { try #require(await sent.confirmed(discardOnFailure: false).value).id } }
+      for _ in 0..<8 { group.addTask { try #require(await sent.confirmed().value).id } }
       return try await group.reduce(into: [String]()) { $0.append($1) }
     }
 
@@ -161,7 +161,7 @@ struct BridgeProbeTests {
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
-    let confirmed = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1", in: DB.account()).confirmed(discardOnFailure: false)
+    let confirmed = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1", in: DB.account()).confirmed()
     let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
     #expect(try await Record.find(#require(confirmed.value).id).current()?.text == "hi")
@@ -220,7 +220,7 @@ struct BridgeProbeTests {
 
     #expect(local.id.hasPrefix("temp"))
     #expect(local.uploads["upload_clip"] != nil)
-    #expect(try await sent.confirmed(discardOnFailure: false).value?.id == "m77")
+    #expect(try await sent.confirmed().value?.id == "m77")
     let create = transport.calls.first { $0.operationName == "CreateMoment" }
     #expect(create?.variablesJson.contains("\"signedId\":\"sid\"") == true)
     #expect(create?.variablesJson.contains("blobId") == false)
@@ -254,7 +254,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
-    let id = try #require(await Moment.create(text: "hello", media: nil, in: DB.account()).confirmed(discardOnFailure: false).value).id
+    let id = try #require(await Moment.create(text: "hello", media: nil, in: DB.account()).confirmed().value).id
     return try #require(await Moment.find(id).current())
   }
 

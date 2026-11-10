@@ -7,7 +7,7 @@ import Testing
 func confirmedPairs<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [(key: String, id: String)?] {
   var pairs: [(key: String, id: String)?] = []
   for item in receipt.items {
-    if case let .confirmed(value?, _) = try await item.receipt.outcome() { pairs.append((item.item.value, value.id)) } else { pairs.append(nil) }
+    if case let .confirmed(value?, _)? = try? await item.receipt.settled() { pairs.append((item.item.value, value.id)) } else { pairs.append(nil) }
   }
   return pairs
 }
@@ -218,7 +218,7 @@ extension BridgeProbeTests {
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let receipt = try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(receipt.optimisticValue)
-    guard case .rejected = try await receipt.outcome() else { throw DbError.Invalid(detail: "the refused photo reported success") }
+    guard case .rejected = try await receipt.settled() else { throw DbError.Invalid(detail: "the refused photo reported success") }
     let failed = try #require(try await Moment.find(row.id).current())
     #expect(failed.sync.state == .failed)
     try await failed.discard(action: nil)
@@ -319,8 +319,8 @@ extension BridgeProbeTests {
     let refused = try #require(try await Asset.find(rows[0].id).current())
     #expect(refused.sync.state == .failed && refused.sync.error != nil)
     let retried = try await rows[0].retry(action: "create_files")
-    guard case .rejected = try await receipt.items[0].receipt.outcome() else { throw DbError.Invalid(detail: "the refused cycle changed its outcome") }
-    #expect(try await retried.confirmed(discardOnFailure: false).value?.id == "a0")
+    guard case .rejected = try await receipt.items[0].receipt.settled() else { throw DbError.Invalid(detail: "the refused cycle changed its outcome") }
+    #expect(try await retried.confirmed().value?.id == "a0")
     #expect(try await confirmedIds(receipt).dropFirst() == ["a1", "a2"])
     let call = try #require(transport.calls.first { $0.operationName == "CreateAssets" })
     let variables = try JSONSerialization.jsonObject(with: Data(call.variablesJson.utf8)) as! [String: Any]
@@ -398,7 +398,7 @@ extension BridgeProbeTests {
     let refusedComplete = try #require(try await Moment.find(row.id).current())
     #expect(refusedComplete.sync.state == .failed && refusedComplete.sync.error != nil)
     let retried = try await row.retry(action: "upload_clip")
-    let confirmed = try await retried.confirmed(discardOnFailure: false)
+    let confirmed = try await retried.confirmed()
     #expect(confirmed.value?.id == "m1")
     #expect(try await Moment.find("m1").current()?.sync.state == .synced)
     let names = transport.mock.calls.map(\.operationName)

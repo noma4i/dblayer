@@ -148,12 +148,18 @@ private func fetchOf(_ name: String) -> ReadFetch? {
   }
 }
 
-private func outcomeName(_ outcome: WireOperationOutcome) -> String {
-  switch outcome {
-  case .confirmed: return "confirmed"
-  case .rejected: return "rejected"
-  case let .ended(cause): return "ended \(causeName(cause))"
-  }
+private func outcomeName(_ database: Database, _ receipt: WireOperationReceipt) async -> String {
+  do {
+    _ = try await database.confirmed(receipt: receipt)
+    return "confirmed"
+  } catch DbError.Rejected { return "rejected"
+  } catch DbError.NoSession { return "ended session_ended"
+  } catch DbError.Closed { return "ended closed"
+  } catch DbError.Invalid { return "ended invalid"
+  } catch DbError.Storage { return "ended storage"
+  } catch DbError.Internal { return "ended internal"
+  } catch let DbError.Interrupted(detail) { return "ended \(detail.lowercased())"
+  } catch { return "failed \(error)" }
 }
 
 private func moreName(_ result: LoadMoreResult) -> String {
@@ -384,7 +390,7 @@ private final class DatabaseRunner {
       guard let label = text("receipt") else { return failure("arguments") }
       guard let receipt = receipts[label] else { return failure("unknown_receipt") }
       spawn {
-        do { return done("outcome", ["receipt": label, "result": outcomeName(try await database.outcome(receipt: receipt))]) } catch { return failed(error) }
+        do { return done("outcome", ["receipt": label, "result": await outcomeName(database, receipt)]) } catch { return failed(error) }
       }
     case "begin_load":
       guard let label = text("as"), let relation = text("relation") else { return failure("arguments") }

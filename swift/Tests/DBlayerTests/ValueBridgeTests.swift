@@ -142,7 +142,7 @@ extension BridgeProbeTests {
     #expect(server.operationRequests("CreateMoment") == 0)
 
     try DB.database.setOnline(online: true)
-    #expect(try await sent.confirmed(discardOnFailure: false).value?.id == "m1")
+    #expect(try await sent.confirmed().value?.id == "m1")
     await eventually("the thread shows the confirmed message") { thread.rows.first?.id == "m1" }
 
     #expect(thread.rows.count == 1, "one message, not a temporary row and a confirmed row")
@@ -229,13 +229,13 @@ extension BridgeProbeTests {
     try await thread.loaded()
     var first: [MutationReceipt<Moment>] = []
     for number in 1...5 { first.append(try await scope.send(Moment.self, values: ["text": .string("m\(number)")])) }
-    for sent in first { _ = try await sent.outcome() }
+    for sent in first { _ = try await sent.settled() }
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
     #expect(try await DB.subscriptionCensus().subscriptions == 1)
 
     let extra = try await scope.send(Moment.self, values: ["text": .string("m6")])
     await eventually("the sixth row shows") { thread.rows.count == 6 }
-    _ = try await extra.outcome()
+    _ = try await extra.settled()
     await eventually("the sixth row is confirmed") { thread.rows.last?.sync.state == .synced }
 
     #expect(thread.rows.count == 6, "a row of the list was lost")
@@ -251,13 +251,13 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     try DB.database.setOnline(online: false)
     let sent = try await scope.send(Moment.self, values: ["text": .string("queued")])
-    let waiting = Task { try await sent.outcome() }
+    let waiting = Task { try await sent.settled() }
 
     try await DB.sessionReset()
     guard case .ended(cause: .sessionEnded) = try await waiting.value else { Issue.record("the outcome did not end with the session"); return }
     try DB.database.setOnline(online: true)
     try await Self.signIn("B")
-    guard case .ended(cause: .sessionEnded) = try await sent.outcome() else { Issue.record("a receipt of A answered in the epoch of B"); return }
+    guard case .ended(cause: .sessionEnded) = try await sent.settled() else { Issue.record("a receipt of A answered in the epoch of B"); return }
   }
 
   /// B12: a stream whose source cannot be connected ends once with the invalid outcome and leaves nothing open.
