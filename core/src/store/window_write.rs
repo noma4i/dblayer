@@ -79,14 +79,15 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         _ => None,
     };
     let model_key = ModelKey::new(model);
+    let local_order = match &declared.sort { crate::schema::Sort::Fields(fields) => Some(fields.clone()), _ => None };
     let covers_nothing = accepted.is_empty() && page.cursor.is_some() && !page.replace_all;
     let plan = if covers_nothing {
         crate::owners::read::codec::LandingPlan { entity_ops: Vec::new(), scope_ops: Vec::new() }
-    } else if plans_first || start_after.is_some() {
+    } else if plans_first || start_after.is_some() || local_order.is_some() {
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
         request.replace_all = to_end;
         request.start_after = start_after;
-        request.local_order = matches!(declared.sort, crate::schema::Sort::Fields(_));
+        request.local_order = local_order;
         replace_plan(&reader, &request, &accepted, page.base_revision).map_err(fault)?
     } else {
         let ids: Vec<String> = incoming_ids(&accepted).iter().map(ToString::to_string).collect();

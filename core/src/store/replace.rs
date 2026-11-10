@@ -7,8 +7,9 @@ use crate::owners::read::diff::longest_increasing;
 use crate::store::CoreError;
 use crate::identity::RowId;
 use crate::owners::read::codec::LandingPlan;
-use crate::schema::Coverage;
-use crate::value::{fractional_between, read_id};
+use crate::schema::{Coverage, SortField};
+use crate::value::{fractional_between, read_id, SortDirection};
+use rusqlite::types::Value as SqlValue;
 
 use super::Reader;
 
@@ -18,11 +19,11 @@ pub(crate) struct ReplaceRequest {
     pub coverage: Coverage,
     pub replace_all: bool,
     pub start_after: Option<String>,
-    pub local_order: bool,
+    pub local_order: Option<Vec<SortField>>,
 }
 
 impl ReplaceRequest {
-    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None, local_order: false } }
+    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, start_after: None, local_order: None } }
 }
 
 struct Member {
@@ -54,12 +55,8 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
         }
     }
     let membership = scope_membership(reader, model.as_str(), scope_key, base_revision)?;
-    if request.local_order && request.start_after.is_some() {
-        let mut full: Vec<String> = whole.iter().map(|member| member.id.clone()).collect();
-        let mut present: HashSet<String> = full.iter().cloned().collect();
-        for id in incoming_ids { if membership.get(&id) != Some(&false) && present.insert(id.clone()) { full.push(id); } }
-        let entity_ops = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
-        return Ok(LandingPlan { entity_ops, scope_ops: order_ops(&request.scope, &whole, &full)? });
+    if let Some(fields) = &request.local_order {
+        return ordered_plan(reader, request, fields, &whole, incoming, &membership, base_revision);
     }
     incoming_ids.retain(|id| membership.get(id) != Some(&false) && !before_ids.contains(id.as_str()));
     let anchor = (request.coverage == Coverage::Page && !request.replace_all)
@@ -83,6 +80,55 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
     for member in removed { scope_ops.push(ScopeOp::Detach { scope: request.scope.clone(), row: RowId::new(&member.id)? }); }
     let full: Vec<String> = before.iter().map(|member| member.id.clone()).chain(result).collect();
     scope_ops.extend(order_ops(&request.scope, &whole, &full)?);
+    Ok(LandingPlan { entity_ops, scope_ops })
+}
+
+fn ordered_key(spec: &crate::schema::ModelSpec, fields: &[SortField], row: &Map<String, Value>) -> Result<String, CoreError> {
+    let mut cells = Vec::new();
+    let mut descending = Vec::new();
+    for field in fields {
+        let value = if field.column == "id" {
+            row.get("id").and_then(read_id).map_or(SqlValue::Null, |id| SqlValue::Text(id.to_string()))
+        } else {
+            let declared = spec.field(&field.column).ok_or_else(|| CoreError::UnknownField { model: spec.key.to_string(), field: field.column.clone() })?;
+            let kind = crate::store::ddl::column_type(&declared.kind).ok_or_else(|| CoreError::Internal(format!("{} is not a scalar", field.column)))?;
+            super::rows::column_value(kind, row.get(&field.column))
+        };
+        match field.direction {
+            SortDirection::AscNullsLast => { cells.push(SqlValue::Integer(i64::from(value == SqlValue::Null))); descending.push(false); }
+            SortDirection::DescNullsFirst => { cells.push(SqlValue::Integer(i64::from(value != SqlValue::Null))); descending.push(false); }
+            _ => {}
+        }
+        cells.push(value);
+        descending.push(matches!(field.direction, SortDirection::Desc | SortDirection::DescNullsFirst));
+    }
+    Ok(crate::store::query::place_of(&cells, &descending))
+}
+
+fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortField], whole: &[Member], incoming: Vec<(RowId, Map<String, Value>)>, membership: &HashMap<String, bool>, base_revision: i64) -> Result<LandingPlan, CoreError> {
+    let model = &request.scope.model;
+    let info = reader.models().get(model.as_str()).ok_or_else(|| CoreError::UnknownModel(model.to_string()))?;
+    let mut keys = incoming.iter().map(|(_, row)| ordered_key(&info.spec, fields, row)).collect::<Result<Vec<_>, _>>()?;
+    keys.sort();
+    let bounds = keys.first().zip(keys.last());
+    let orders = fields.iter().map(|field| crate::store::query::Order::new(&field.column, field.direction)).collect();
+    let query = crate::store::query::Query::new(model.as_str()).ordered(orders).in_scope(request.scope.key.clone());
+    let ranked = crate::store::query::compile_ranked(&query, &info.spec, None)?;
+    let rows = crate::store::query::fetch_ranked(reader.connection(), &ranked.statement)?;
+    let seen: HashSet<String> = incoming.iter().map(|(id, _)| id.to_string()).collect();
+    let mut removed = HashSet::new();
+    for row in rows {
+        let key = crate::store::query::place_of(&row.cells, &ranked.descending);
+        if bounds.is_some_and(|(low, high)| &key >= low && &key <= high) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
+            removed.insert(row.id);
+        }
+    }
+    let mut full: Vec<String> = whole.iter().filter(|member| !removed.contains(&member.id)).map(|member| member.id.clone()).collect();
+    let mut present: HashSet<String> = full.iter().cloned().collect();
+    for (id, _) in &incoming { let id = id.to_string(); if membership.get(&id) != Some(&false) && present.insert(id.clone()) { full.push(id); } }
+    let mut scope_ops = whole.iter().filter(|member| removed.contains(&member.id)).map(|member| Ok(ScopeOp::Detach { scope: request.scope.clone(), row: RowId::new(&member.id)? })).collect::<Result<Vec<_>, CoreError>>()?;
+    scope_ops.extend(order_ops(&request.scope, whole, &full)?);
+    let entity_ops = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
     Ok(LandingPlan { entity_ops, scope_ops })
 }
 
