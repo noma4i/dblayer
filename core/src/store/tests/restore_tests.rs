@@ -24,3 +24,14 @@ fn store_discard_restore_failed() {
     assert_eq!(remaining.iter().map(|row| (row.table.as_str(), row.key.as_str(), row.reason.as_str())).collect::<Vec<_>>(), vec![("op", "second", "type")]);
     assert_eq!(store.open_report(), &report, "the open report does not change after the commit");
 }
+
+/// lifecycle.md:519 (D-280): the held abort pair of a multipart debt survives a restart with its Orphan owner.
+#[test]
+fn store_pending_orphan_owner_round_trip() {
+    let db = crate::store::Store::open_models(None, Vec::new(), None).unwrap();
+    let pending = crate::store::session_state::Pending { credential_digest: "d".into(), request_id: "r".into(), response_key: "k".into(), sequence: 7, path: "/p".into(), body: "{}".into(), document: None, owner: Some(crate::transport::RequestOwner::Orphan { upload_id: "u1".into() }), purpose: crate::transport::NetworkPurpose::Transfer, req_id: 11 };
+    let inner = db.lock();
+    crate::store::session_state::start(&inner.connection, "d").unwrap();
+    crate::store::session_state::store_pending(&inner.connection, &pending).unwrap();
+    assert_eq!(crate::store::session_state::pending(&inner.connection).unwrap(), Some(pending), "the Orphan owner is read back as stored");
+}

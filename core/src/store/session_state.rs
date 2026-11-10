@@ -81,6 +81,7 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                     (Some(kind), Some(seq), None, None) if kind == "operation" => Some(crate::transport::RequestOwner::Operation { seq }),
                     (Some(kind), Some(operation_id), None, None) if kind == "unmatched" => Some(crate::transport::RequestOwner::Unmatched { operation_id }),
                     (Some(kind), Some(operation_id), Some(item_id), Some(step)) if kind == "transfer" => Some(crate::transport::RequestOwner::Transfer { operation_id, item_id, step: crate::store::operation::enum_from(&step)? }),
+                    (Some(kind), None, Some(upload_id), None) if kind == "orphan" => Some(crate::transport::RequestOwner::Orphan { upload_id }),
                     (Some(kind), None, None, None) if kind == "detached" => Some(crate::transport::RequestOwner::Detached),
                     (None, None, None, None) => None,
                     _ => return Err(rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Null, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "incomplete pending request owner")))),
@@ -98,6 +99,7 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
         Some(crate::transport::RequestOwner::Operation { seq }) => (Some("operation"), Some(*seq), None, None),
         Some(crate::transport::RequestOwner::Unmatched { operation_id }) => (Some("unmatched"), Some(*operation_id), None, None),
         Some(crate::transport::RequestOwner::Transfer { operation_id, item_id, step }) => (Some("transfer"), Some(*operation_id), Some(item_id.as_str()), crate::store::operation::enum_text(step)),
+        Some(crate::transport::RequestOwner::Orphan { upload_id }) => (Some("orphan"), None, Some(upload_id.as_str()), None),
         Some(crate::transport::RequestOwner::Detached) => (Some("detached"), None, None, None),
         None => (None, None, None, None),
     };

@@ -154,6 +154,24 @@ fn sess_restored_transfer_pending() {
     assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1), "Session drives the held transfer pair itself: {effects:?}");
 }
 
+fn orphan_owner() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Orphan { upload_id: "u1".into() } }
+
+/// lifecycle.md:308, 524-525 (D-280): the held abort pair of a multipart debt is restored like a transfer pair and answered to the Transfer author.
+#[test]
+fn sess_restored_orphan() {
+    let mut twin = Twin::new();
+    let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(orphan_owner()), 5, 1)) });
+    assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
+    assert!(twin.reference.restored_transfer.as_ref().is_some_and(|pending| pending.request_id == 5 && pending.author == Some(super::super::ref_session::TRANSFER_AUTHOR) && pending.reply.is_none()), "the orphan pair is held for the Transfer author");
+    let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1 && pending.reply.is_none()), "the stored abort pair goes out byte for byte: {effects:?}");
+    let input = twin.response(1);
+    twin.feed(input);
+    let committed = twin.feed(committed());
+    assert_eq!(committed, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into()))], "the abort answer reaches the Transfer author as the debt outcome, not a call reply");
+    assert!(twin.replies.is_empty());
+}
+
 #[test]
 fn sess_restore_ready_transfer_pending() {
     let mut twin = Twin::new();

@@ -223,7 +223,7 @@ async fn a_held_entity_ends_its_load_wait_after_session_reset() {
         }
     }).await;
     assert_eq!(reader.ended(), vec![EndCause::SessionEnded]);
-    assert!(matches!(bound(rig.database.loaded(stream)).await, Err(DbError::Interrupted { .. })));
+    assert!(matches!(bound(rig.database.loaded(stream)).await, Err(DbError::NoSession { .. })), "D-279: a load wait ended by the session reset reports NoSession");
     rig.database.close_now();
 }
 

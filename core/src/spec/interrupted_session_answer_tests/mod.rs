@@ -124,7 +124,7 @@ fn sess_resume_end() {
     rig.send(ask_answer(1));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 2, cause: Cause::SessionReset })).is_empty());
     let effects = rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
-    assert!(effects.contains(&answer(1, Err(SessionError::Interrupted))));
+    assert!(effects.contains(&answer(1, Err(SessionError::NoSession))), "D-279: a resume waiter learns the end of the epoch as NoSession: {effects:?}");
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     let mut closed = Rig::new();
     closed.restore();

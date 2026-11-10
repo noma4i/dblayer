@@ -13,6 +13,8 @@ pub enum NetworkPurpose {
 pub enum RequestOwner {
     Operation { seq: i64 },
     Transfer { operation_id: i64, item_id: String, step: crate::owners::write::upload::UploadStage },
+    /// The abort of a multipart debt: the pair lives after the transfer is gone (D-280).
+    Orphan { upload_id: String },
     Unmatched { operation_id: i64 },
     Detached,
 }

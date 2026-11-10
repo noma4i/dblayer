@@ -22,7 +22,7 @@ pub type MutateOwner = crate::transport::RequestOwner;
 pub fn author_of(owner: &MutateOwner) -> Option<AuthorId> {
     match owner {
         MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } => Some(OUTBOX_AUTHOR),
-        MutateOwner::Transfer { .. } => Some(TRANSFER_AUTHOR),
+        MutateOwner::Transfer { .. } | MutateOwner::Orphan { .. } => Some(TRANSFER_AUTHOR),
         MutateOwner::Detached => None,
     }
 }

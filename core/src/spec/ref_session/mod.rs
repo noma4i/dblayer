@@ -18,7 +18,7 @@ pub const TRANSFER_AUTHOR: AuthorId = 2;
 pub fn author_of(owner: &Owner) -> Option<AuthorId> {
     match owner {
         Owner::Operation { .. } | Owner::Unmatched { .. } => Some(OUTBOX_AUTHOR),
-        Owner::Transfer { .. } => Some(TRANSFER_AUTHOR),
+        Owner::Transfer { .. } | Owner::Orphan { .. } => Some(TRANSFER_AUTHOR),
         Owner::Detached => None,
     }
 }

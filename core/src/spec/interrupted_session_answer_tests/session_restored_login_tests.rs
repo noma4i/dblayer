@@ -89,7 +89,7 @@ fn sess_published_restored_login() {
 #[test]
 fn sess_published_restored_login_failed() {
     let not_saved = || SessionError::Storage("the session could not be saved".into());
-    for (state, expected) in [(PublishedState::StorageFailed, not_saved()), (PublishedState::EndingFailed, not_saved()), (PublishedState::Ending, SessionError::Interrupted)] {
+    for (state, expected) in [(PublishedState::StorageFailed, not_saved()), (PublishedState::EndingFailed, not_saved()), (PublishedState::Ending, SessionError::NoSession)] {
         let mut rig = Rig::new();
         let attempt = restored_login(&mut rig);
         rig.send(ask_answer(1));

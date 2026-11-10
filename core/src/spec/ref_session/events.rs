@@ -63,7 +63,7 @@ impl Session {
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None => self.restored_direct = Some(Pending { epoch, ..pending }),
-                        Some(Owner::Transfer { .. }) => self.restored_transfer = Some(Pending { epoch, ..pending }),
+                        Some(Owner::Transfer { .. } | Owner::Orphan { .. }) => self.restored_transfer = Some(Pending { epoch, ..pending }),
                         Some(Owner::Detached) => self.restored_detached = Some(Pending { epoch, ..pending }),
                         Some(_) => {}
                     }

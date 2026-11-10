@@ -137,7 +137,7 @@ pub(crate) struct Watched {
     settled: Settled,
     pump: tokio::task::JoinHandle<()>,
     request: ReadRequest,
-    ended: Arc<std::sync::atomic::AtomicBool>,
+    ended: Arc<Mutex<Option<EndCause>>>,
     stopped: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -146,8 +146,8 @@ impl Watched {
     pub(crate) async fn wait_for_initial_load(&self) -> Result<u64, DbError> {
         let mut settled = self.settled.clone();
         let seen = settled.wait_for(Option::is_some).await.map_err(|_| DbError::Interrupted { detail: "the stream is gone".into() })?.clone();
-        if self.ended.load(std::sync::atomic::Ordering::SeqCst) && !matches!(seen, Some(Err(DbError::Invalid { .. }))) {
-            return Err(DbError::Interrupted { detail: "the stream ended".into() });
+        if let Some(cause) = self.ended.lock().unwrap().clone() {
+            if !matches!(seen, Some(Err(DbError::Invalid { .. }))) { return Err(super::cause_error(&cause)); }
         }
         seen.unwrap_or_else(|| Err(DbError::Interrupted { detail: "the stream is gone".into() }))
     }
@@ -159,7 +159,7 @@ impl Watched {
         if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
             self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
             self.pump.abort();
-            self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            *self.ended.lock().unwrap() = Some(EndCause::Cancelled);
             tokio::task::block_in_place(|| handle.block_on(async move { stream.cancel().await }));
         } else {
             drop(tokio::spawn(async move { stream.cancel().await }));
@@ -192,7 +192,7 @@ impl Database {
         let stream = self.subscribe_values(epoch, request.clone());
         let (outcome, settled) = tokio::sync::watch::channel(None);
         let pulled = stream.clone();
-        let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ended: Arc<Mutex<Option<EndCause>>> = Arc::new(Mutex::new(None));
         let flag = ended.clone();
         let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let halt = stopped.clone();
@@ -203,7 +203,7 @@ impl Database {
                     Some(value) => {
                         if halt.load(std::sync::atomic::Ordering::SeqCst) { return; }
                         seq += 1;
-                        if matches!(value, ReadValue::Ended { .. }) { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
+                        if let ReadValue::Ended { cause } = &value { *flag.lock().unwrap() = Some(cause.clone()); }
                         let done = settled_by(&value, seq);
                         reader.delivered(StreamDelivery { stream: pulled.id(), epoch, seq, value });
                         if let Some(done) = done {
@@ -249,7 +249,7 @@ impl Database {
 
     /// Loads the relation of the stream again from the server.
     pub(crate) async fn refresh_stream(&self, id: u64) -> Result<(), DbError> {
-        let Some(watched) = self.watched_by(id).filter(|watched| !watched.ended.load(std::sync::atomic::Ordering::SeqCst)) else { return Err(DbError::Interrupted { detail: "the stream is gone".into() }) };
+        let Some(watched) = self.watched_by(id).filter(|watched| watched.ended.lock().unwrap().is_none()) else { return Err(DbError::Interrupted { detail: "the stream is gone".into() }) };
         if let ReadRequest::Entity { model, id, .. } = &watched.request {
             let spec = self.db.spec(model)?;
             let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).map(|relation| relation.name.clone()).ok_or_else(|| DbError::Invalid { detail: format!("{model} declares no node read") })?;
