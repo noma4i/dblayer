@@ -302,10 +302,13 @@ class ValueBridgeTest {
             val waiting = launch { stream.values.collect { first.complete(it) } }
             assertTrue(awaitWithin("the first snapshot") { first.await() } is ReadValue.Snapshot)
             awaitWithin("the pending collection ends after cancellation") { waiting.cancelAndJoin() }
+            val closed = awaitWithin("the cancelled stream ends closed") { stream.values.first() }
+            assertTrue("the cancelled stream ends closed: $closed", closed is ReadValue.Ended && closed.cause is EndCause.Closed)
+            val reopened = scope.stream(Moment.recent)
             val values = Channel<ReadValue>(Channel.UNLIMITED)
-            val next = launch { stream.values.collect { values.send(it) } }
-            val initial = awaitWithin("the new reader receives the current value") { values.receive() }
-            assertTrue("the new reader receives a snapshot: $initial", initial is ReadValue.Snapshot)
+            val next = launch { reopened.values.collect { values.send(it) } }
+            val initial = awaitWithin("the new stream receives the current value") { values.receive() }
+            assertTrue("the new stream receives a snapshot: $initial", initial is ReadValue.Snapshot)
             var projection = requireNotNull(ListProjection<Moment>().apply(initial, Moment))
             DBlayer.database.setOnline(false)
             val sent = scope.send(Moment, buildJsonObject { put("text", "after cancellation") })
@@ -314,6 +317,7 @@ class ValueBridgeTest {
             projection = requireNotNull(projection.apply(changed, Moment))
             assertTrue("the new reader receives the written row", projection.rows.any { it.id == id })
             next.cancelAndJoin()
+            reopened.close()
             stream.close()
         } finally {
             closeForCleanup()

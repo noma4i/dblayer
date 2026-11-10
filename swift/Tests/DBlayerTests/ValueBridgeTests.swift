@@ -253,8 +253,10 @@ extension BridgeProbeTests {
     if let ended {
       guard case .ended(.closed) = ended else { Issue.record("the cancelled reader must end closed: \(ended)"); return }
     }
-    let next = Cursor(stream)
-    guard let initial = await next.next("the new reader receives the current value"), case .snapshot = initial else { Issue.record("the new reader did not receive a snapshot"); return }
+    let closed = Cursor(stream)
+    guard case .ended(.closed)? = await closed.next("the cancelled stream ends closed") else { Issue.record("the cancelled stream did not end closed"); return }
+    let next = Cursor(try scope.stream(Moment.recent))
+    guard let initial = await next.next("the new stream receives the current value"), case .snapshot = initial else { Issue.record("the new stream did not receive a snapshot"); return }
     var projection = ListProjection<Moment>()
     _ = try projection.apply(initial)
     try DB.database.setOnline(online: false)
