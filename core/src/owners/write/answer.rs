@@ -133,7 +133,11 @@ fn default_root_of(mutation_root: Option<String>, row_root: &str) -> String {
 
 /// The `returns` block read from the root of the answer by the normalizer of standalone operations: a field the answer lacks is null.
 fn returns_of(data: &Value, container: String, declared: &crate::schema::FieldSpec) -> Result<String, String> {
-    let source = root_value(data, &container).filter(|value| value.is_object()).cloned().unwrap_or_else(|| Value::Object(Default::default()));
+    let source = match root_value(data, &container) {
+        None | Some(Value::Null) => Value::Object(Default::default()),
+        Some(object @ Value::Object(_)) => object.clone(),
+        Some(_) => return Err(format!("{container}: the root of the returns is not an object")),
+    };
     crate::value::call_result::normalize(&source.to_string(), declared)
 }
 
