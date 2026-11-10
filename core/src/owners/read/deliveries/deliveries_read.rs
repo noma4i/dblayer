@@ -213,39 +213,26 @@ impl Delivery {
         self.settle_read(read_id, revision, data, fx);
     }
 
-    /// The server id of the subject when the data tells its temporary id was swapped.
-    fn swapped_subject(&self, data: &Whole) -> Option<String> {
+    /// The view with the server ids when the data tells that a temporary id of the request was swapped and none is left.
+    fn swapped_view(&self, data: &Whole) -> Option<View> {
         let Whole::Rows { replaced, .. } = data else { return None };
-        self.deferred.as_ref()?;
-        replaced.iter().find(|(from, _)| *from == self.view.subject).map(|(_, to)| to.clone())
+        let deferred = self.deferred.as_ref()?;
+        replaced.iter().any(|(from, _)| deferred.temps.contains(from)).then(|| (deferred.rebind.0)()).flatten()
     }
 
-    /// The subject was swapped for `real`: the stream reads and watches the server row, and its window opens once.
-    fn rebind(&mut self, real: String, fx: &mut Vec<Emit>) {
-        let (Some(deferred), Kind::Entity { fetch }) = (self.deferred.take(), self.view.kind) else { return };
-        let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(real.clone()))]);
-        self.view.window = WindowKey::relation(&self.view.model, &deferred.relation, &params);
-        self.view.scoped = std::sync::Arc::new(deferred.scoped.call(&real));
-        self.view.subject = real;
-        self.view.remote = true;
-        self.view.live = deferred.live;
+    /// The temporary ids of the request have server ids: the stream reads and watches the server rows, and its window opens once.
+    fn rebind(&mut self, view: View, fx: &mut Vec<Emit>) {
+        self.deferred = None;
+        self.view = view;
         self.window = WindowState::idle();
         self.held_state = None;
-        if deferred.live {
-            fx.push(Emit::WantPlus);
-            self.wants = true;
-        }
-        fx.push(if fetch == Fetch::IfMissing { Emit::InterestPassive } else { Emit::InterestPlus });
-        self.interested = true;
-        if fetch == Fetch::Force {
-            fx.push(Emit::Load { force: true });
-        }
+        self.watch(fx);
         fx.push(self.new_read(self.read_revision));
     }
 
     pub(super) fn settle_read(&mut self, read_id: u64, revision: i64, data: Whole, fx: &mut Vec<Emit>) {
-        if let Some(real) = self.swapped_subject(&data) {
-            self.rebind(real, fx);
+        if let Some(view) = self.swapped_view(&data) {
+            self.rebind(view, fx);
             return;
         }
         if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {

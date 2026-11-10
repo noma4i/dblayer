@@ -100,25 +100,23 @@ pub struct View {
     pub query: Option<std::sync::Arc<crate::store::query::Query>>,
 }
 
-/// The scoped channels of the node read of a row id.
+/// The view of a stream once its temporary ids have server ids: `None` while one of them has none.
 #[derive(Clone)]
-pub struct ScopedOf(std::sync::Arc<dyn Fn(&str) -> Vec<ScopedChannel> + Send + Sync>);
+pub struct Rebind(std::sync::Arc<dyn Fn() -> Option<View> + Send + Sync>);
 
-impl ScopedOf {
-    pub fn call(&self, id: &str) -> Vec<ScopedChannel> { (self.0)(id) }
-    pub fn new(of: impl Fn(&str) -> Vec<ScopedChannel> + Send + Sync + 'static) -> Self { Self(std::sync::Arc::new(of)) }
+impl Rebind {
+    pub fn new(view: impl Fn() -> Option<View> + Send + Sync + 'static) -> Self { Self(std::sync::Arc::new(view)) }
 }
 
-impl std::fmt::Debug for ScopedOf {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str("ScopedOf") }
+impl std::fmt::Debug for Rebind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str("Rebind") }
 }
 
-/// The node read of a stream on a temporary id: no window and no request exist until the id is swapped for the server id.
+/// The read of a stream whose request names temporary ids that have no server id yet: no window and no request exist until a swap gives them.
 #[derive(Clone, Debug)]
 pub struct Deferred {
-    pub relation: String,
-    pub live: bool,
-    pub scoped: ScopedOf,
+    pub temps: Vec<String>,
+    pub rebind: Rebind,
 }
 
 #[derive(Clone, Debug, PartialEq)]

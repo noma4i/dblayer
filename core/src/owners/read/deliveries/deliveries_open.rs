@@ -71,23 +71,28 @@ impl Delivery {
             }
             Kind::List | Kind::Count | Kind::Operations | Kind::Entity { .. } => {
                 fx.push(machine.new_read(revision));
-                if machine.view.live {
-                    fx.push(Emit::WantPlus);
-                    machine.wants = true;
-                }
-                let watches = machine.view.remote
-                    && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
-                if watches {
-                    fx.push(if kind == (Kind::Entity { fetch: Fetch::IfMissing }) { Emit::InterestPassive } else { Emit::InterestPlus });
-                    if machine.view.reload { fx.push(Emit::ReloadOnConnect); }
-                    machine.interested = true;
-                    if kind == (Kind::Entity { fetch: Fetch::Force }) {
-                        fx.push(Emit::Load { force: true });
-                    }
-                }
+                machine.watch(fx);
             }
         }
         machine
+    }
+
+    /// The subscription of the model and the interest in the window of the view, once.
+    pub(super) fn watch(&mut self, fx: &mut Vec<Emit>) {
+        let kind = self.view.kind;
+        if self.view.live {
+            fx.push(Emit::WantPlus);
+            self.wants = true;
+        }
+        let watches = self.view.remote && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
+        if watches {
+            fx.push(if kind == (Kind::Entity { fetch: Fetch::IfMissing }) { Emit::InterestPassive } else { Emit::InterestPlus });
+            if self.view.reload { fx.push(Emit::ReloadOnConnect); }
+            self.interested = true;
+            if kind == (Kind::Entity { fetch: Fetch::Force }) {
+                fx.push(Emit::Load { force: true });
+            }
+        }
     }
 
     pub(super) fn ended(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<Emit>) -> Self {

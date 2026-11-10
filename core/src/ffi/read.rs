@@ -325,20 +325,7 @@ impl Database {
     /// The view of a request: what the owner reads, and the window it watches.
     fn view_of(&self, request: &ReadRequest) -> Result<View, DbError> {
         match request {
-            ReadRequest::List { query: asked } | ReadRequest::Count { query: asked } => {
-                let (query, remote) = self.parsed_query(asked)?;
-                let model = query.model.as_str().to_string();
-                let spec = self.db.spec(&model)?;
-                let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
-                let live = !spec.listens.is_empty() || !spec.changes.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
-                let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
-                let scoped = remote.as_ref().map(|(relation, params)| crate::owners::read::scoped_channels(spec, relation, params)).unwrap_or_default().into();
-                let window = match &remote {
-                    Some((relation, params)) => WindowKey::relation(&model, relation, params),
-                    None => WindowKey { model: model.clone(), name: String::new() },
-                };
-                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, scoped, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) })
-            }
+            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(request).map(|(view, _)| view),
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
@@ -346,33 +333,67 @@ impl Database {
             ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
-            ReadRequest::Entity { model, id, fetch } => self.entity_view(model, id, fetch_of(*fetch)).map(|(view, _)| view),
         }
     }
 
-    /// The view of an entity read. The id passes `resolve` first: a temporary id that has no server id yet opens no window and sends no request, the stream reads the local row and opens its window at the swap (`Deferred`).
-    fn entity_view(&self, model: &str, id: &str, fetch: Fetch) -> Result<(View, Option<crate::owners::read::deliveries::Deferred>), DbError> {
-        let spec = self.db.spec(model)?;
-        let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
-        if fetch != Fetch::Never && node.is_none() {
-            return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
+    /// The stream waits for the swap of `waiting`: `rebind` builds its view again from the same request.
+    fn deferred_of(&self, request: &ReadRequest, waiting: Vec<String>) -> Option<crate::owners::read::deliveries::Deferred> {
+        if waiting.is_empty() { return None; }
+        let (me, request) = (self.me.clone(), request.clone());
+        Some(crate::owners::read::deliveries::Deferred { temps: waiting, rebind: crate::owners::read::deliveries::Rebind::new(move || me.upgrade()?.row_view(&request).ok().filter(|(_, waiting)| waiting.is_empty()).map(|(view, _)| view)) })
+    }
+
+    /// The view of a read of rows and the temporary ids of its request that have no server id yet. Every id passes `resolve` first: a request with such an id opens no window and sends no request, the stream reads the local rows and opens its window when a swap gives the server ids (`Deferred`).
+    pub(super) fn row_view(&self, request: &ReadRequest) -> Result<(View, Vec<String>), DbError> {
+        match request {
+            ReadRequest::List { query: asked } | ReadRequest::Count { query: asked } => {
+                let mut asked = asked.clone();
+                let mut waiting = Vec::new();
+                if asked.relation.is_some() && asked.params_json.contains(crate::identity::TEMP_ID_PREFIX) {
+                    let mut params: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&asked.params_json).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+                    waiting = super::loading::resolve_params(&self.db, &asked.model, &mut params)?;
+                    asked.params_json = serde_json::Value::Object(params).to_string();
+                }
+                let (query, remote) = self.parsed_query(&asked)?;
+                let model = query.model.as_str().to_string();
+                let spec = self.db.spec(&model)?;
+                let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
+                let live = !spec.listens.is_empty() || !spec.changes.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
+                let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
+                let waits = !waiting.is_empty();
+                let scoped = remote.as_ref().filter(|_| !waits).map(|(relation, params)| crate::owners::read::scoped_channels(spec, relation, params)).unwrap_or_default().into();
+                let window = match &remote {
+                    Some((relation, params)) if !waits => WindowKey::relation(&model, relation, params),
+                    _ => WindowKey { model: model.clone(), name: String::new() },
+                };
+                let remote = remote.is_some() && !waits;
+                Ok((View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote, live: live && !waits, scoped, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) }, waiting))
+            }
+            ReadRequest::Entity { model, id, fetch } => {
+                let fetch = fetch_of(*fetch);
+                let spec = self.db.spec(model)?;
+                let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
+                if fetch != Fetch::Never && node.is_none() {
+                    return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
+                }
+                let row = crate::identity::RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+                let row = self.db.resolve(model, &row)?;
+                let id = row.as_str();
+                let waits = row.is_temp() && fetch != Fetch::Never;
+                let remote = fetch != Fetch::Never && !waits;
+                let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.to_string()))]);
+                let window = match node {
+                    Some(relation) if remote => WindowKey::relation(model, &relation.name, &params),
+                    _ => WindowKey { model: model.clone(), name: String::new() },
+                };
+                let scoped = match node {
+                    Some(relation) if remote => crate::owners::read::scoped_channels(spec, &relation.name, &params).into(),
+                    _ => Default::default(),
+                };
+                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), query: None }, if waits { vec![id.to_string()] } else { Vec::new() }))
+            }
+            _ => Err(DbError::Internal { detail: "a stream of this kind reads no rows".into() }),
         }
-        let row = crate::identity::RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        let row = self.db.resolve(model, &row)?;
-        let id = row.as_str();
-        let waits = row.is_temp() && fetch != Fetch::Never;
-        let window = match node {
-            Some(relation) if !waits => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.to_string()))])),
-            _ => WindowKey { model: model.to_string(), name: String::new() },
-        };
-        let scoped = match node {
-            Some(relation) if fetch != Fetch::Never && !waits => crate::owners::read::node_scoped(spec, &relation.name).call(id).into(),
-            _ => Default::default(),
-        };
-        let remote = fetch != Fetch::Never && !waits;
-        let live = spec.is_live();
-        let deferred = node.filter(|_| waits).map(|relation| crate::owners::read::deliveries::Deferred { relation: relation.name.clone(), live, scoped: crate::owners::read::node_scoped(spec, &relation.name) });
-        Ok((View { kind: Kind::Entity { fetch }, model: model.to_string(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && live, scoped, reload: false, window, subject: id.to_string(), query: None }, deferred))
     }
 }
 
@@ -385,7 +406,7 @@ impl Database {
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
         let (view, valid, deferred) = match match &request {
-            ReadRequest::Entity { model, id, fetch } => self.entity_view(model, id, fetch_of(*fetch)),
+            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(&request).map(|(view, waiting)| (view, self.deferred_of(&request, waiting))),
             _ => self.view_of(&request).map(|view| (view, None)),
         } {
             Ok((view, deferred)) => (view, true, deferred),

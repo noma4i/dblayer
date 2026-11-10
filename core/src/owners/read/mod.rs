@@ -16,7 +16,7 @@ mod snapshots;
 mod window_io;
 
 pub use delivery_io::DeliveryIo;
-pub use feed_codec::{channels_of, node_scoped, scoped_channels, SchemaFeedCodec};
+pub use feed_codec::{channels_of, scoped_channels, SchemaFeedCodec};
 pub use feed_io::{FeedCodec, FeedIo};
 pub(crate) use feed_io::CLOSE_DRAIN;
 pub use ports::{Admit, Refused, Rest};

@@ -113,6 +113,20 @@ impl Drop for LeaveLoad {
     }
 }
 
+/// Swaps the temporary ids among the params for server ids with `resolve(model of the param, id)`, the model is the declared link of the field the param names. A param without a declared link is no row id. Returns the temporary ids that have no server id yet.
+pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut Map<String, Value>) -> Result<Vec<String>, DbError> {
+    let spec = db.spec(model)?;
+    let mut waiting = Vec::new();
+    for (name, value) in params.iter_mut() {
+        let Some(temp) = value.as_str().filter(|text| crate::identity::is_temp_id(text)) else { continue };
+        let Some(target) = spec.fields.iter().find_map(|field| field.link.as_ref().filter(|link| link.id == *name)).map(|link| link.model.as_str()) else { continue };
+        let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let real = db.resolve(target, &temp)?;
+        if real.is_temp() { waiting.push(temp.as_str().to_string()); } else { *value = Value::String(real.as_str().to_string()); }
+    }
+    Ok(waiting)
+}
+
 /// A call without a relation has nothing to load.
 pub(super) fn relation_named(model: &str, relation: Option<String>) -> Result<String, DbError> {
     relation.ok_or_else(|| DbError::Invalid { detail: format!("{model} query has no relation to load") })
@@ -130,7 +144,7 @@ impl Database {
     pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> {
         self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await?;
+        let Some(call) = self.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await? else { return Ok(()) };
         self.finish_load(call).await.map(drop)
     }
 
@@ -144,7 +158,7 @@ impl Database {
     pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await?;
+        let Some(call) = self.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await? else { return Ok(LoadMoreResult::NoMore) };
         self.finish_load(call).await
     }
 
@@ -159,7 +173,7 @@ impl Database {
             return Ok(row.map(|row| wire.row(&row)));
         }
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(id.as_str()))]);
-        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await?;
+        let Some(call) = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await? else { return Ok(None) };
         self.finish_load(call).await?;
         let row = self.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
@@ -209,11 +223,13 @@ impl Database {
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = match this.prepare_load(&model, &relation, &params_json).await {
-                Ok(params) => this.start_window(epoch, slot, WindowKey::relation(&model, &relation, &params), (goal, force), None),
+                Ok(Some(params)) => this.start_window(epoch, slot, WindowKey::relation(&model, &relation, &params), (goal, force), None).map(Some),
+                Ok(None) => Ok(None),
                 Err(error) => Err(error),
             };
             let result = match started {
-                Ok(call) => this.finish_load(call).await.map(drop),
+                Ok(Some(call)) => this.finish_load(call).await.map(drop),
+                Ok(None) => Ok(()),
                 Err(error) => Err(error),
             };
             crate::lock::effect(|| sender.send_if_modified(|seen| seen.is_none().then(|| *seen = Some(result)).is_some()));
@@ -240,46 +256,23 @@ impl Database {
     }
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
-    async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
+    async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<Option<LoadCall>, DbError> {
         let slot = self.reserve_load(epoch);
-        let params = self.prepare_load(model, relation, params_json).await?;
-        self.start_window(epoch, slot, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
+        let Some(params) = self.prepare_load(model, relation, params_json).await? else { return Ok(None) };
+        self.start_window(epoch, slot, WindowKey::relation(model, relation, &params), (goal, force), no_wait).map(Some)
     }
 
-    /// The params with the temporary ids swapped for server ids: a call on a row that has no server id yet waits for the swap, and no key and no request exist before it.
-    async fn swapped_params(&self, model: &str, params_json: &str) -> Result<String, DbError> {
-        if !params_json.contains(crate::identity::TEMP_ID_PREFIX) { return Ok(params_json.to_string()); }
-        loop {
-            let mut swaps = self.db.swaps();
-            let (db, found, asked) = (self.db.clone(), model.to_string(), params_json.to_string());
-            let resolved = super::database::blocking(move || {
-                let spec = db.spec(&found)?;
-                let mut params: Map<String, Value> = serde_json::from_str(&asked).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-                for (name, value) in params.iter_mut() {
-                    let Some(temp) = value.as_str().filter(|text| crate::identity::is_temp_id(text)) else { continue };
-                    let target = spec.fields.iter().find_map(|field| field.link.as_ref().filter(|link| link.id == *name)).map_or(found.as_str(), |link| link.model.as_str());
-                    let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-                    let real = db.resolve(target, &temp)?;
-                    if real.is_temp() { return Ok(None); }
-                    *value = Value::String(real.as_str().to_string());
-                }
-                Ok(Some(params))
-            }).await?;
-            if let Some(params) = resolved { return Ok(Value::Object(params).to_string()); }
-            swaps.changed().await.map_err(|_| super::cause_error(&super::EndCause::Closed))?;
-        }
-    }
-
-    async fn prepare_load(&self, model: &str, relation: &str, params_json: &str) -> Result<Map<String, Value>, DbError> {
+    /// The params of a load, or `None` when one names a temporary id that has no server id yet: such a call sends no request and opens no window.
+    async fn prepare_load(&self, model: &str, relation: &str, params_json: &str) -> Result<Option<Map<String, Value>>, DbError> {
         self.remote()?;
-        let params_json = &self.swapped_params(model, params_json).await?;
         let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let prepared = super::database::blocking(move || {
-            let params: Map<String, Value> = serde_json::from_str(&text)?;
+            let mut params: Map<String, Value> = serde_json::from_str(&text)?;
+            if !resolve_params(&db, &found, &mut params)?.is_empty() { return Ok(None); }
             let params = db.spec(&found)?.selection_values(&name, &params).map_err(crate::store::CoreError::from)?;
             db.check_window(&found, &name, &params)?;
-            Ok(params)
+            Ok(Some(params))
         }).await;
         crate::runtime::release_holds();
         prepared

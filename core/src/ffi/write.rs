@@ -257,10 +257,12 @@ impl Database {
 
     /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.
     pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> {
+        self.account_call(epoch)?;
+        let source_path = local_source(&source_path)?;
         let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
         let files = self.db.files().clone();
         let copied = files.clone();
-        let copy = self.offload(move || crate::store::files::copy_attachment(&copied, std::path::Path::new(&source_path)).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
+        let copy = self.offload(move || crate::store::files::copy_attachment(&copied, &source_path).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
         let id = copy.id.clone();
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone(), self.life.now());
         let answer = self.outbox_answer(epoch, waiter, "attach").await;
@@ -308,6 +310,26 @@ impl Database {
             _ => Err(super::database::foreign_reply()),
         }
     }
+}
+
+/// The local path of a source: an absolute path or a `file://` address. Another scheme and a relative path are `Invalid`.
+fn local_source(source: &str) -> Result<std::path::PathBuf, DbError> {
+    let invalid = || DbError::Invalid { detail: "the source of a file must be an absolute path or a file:// address".into() };
+    let path = match source.strip_prefix("file://") {
+        Some(rest) => {
+            let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+            let mut bytes = Vec::with_capacity(rest.len());
+            let mut raw = rest.bytes();
+            while let Some(byte) = raw.next() {
+                if byte != b'%' { bytes.push(byte); continue; }
+                let (high, low) = (raw.next().and_then(|digit| (digit as char).to_digit(16)), raw.next().and_then(|digit| (digit as char).to_digit(16)));
+                bytes.push(u8::try_from(high.zip(low).map(|(high, low)| high * 16 + low).ok_or_else(invalid)?).map_err(|_| invalid())?);
+            }
+            String::from_utf8(bytes).map_err(|_| invalid())?
+        }
+        None => source.to_string(),
+    };
+    if path.starts_with('/') { Ok(path.into()) } else { Err(invalid()) }
 }
 
 impl Database {
