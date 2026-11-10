@@ -22,19 +22,21 @@ A call with no queued reply fails at once with `Invalid` that names the operatio
 
 The test doubles follow the rules of the real server, and the core decides them for `MockTransport` and `SealedServer` through one `ServerContract` object. A request that repeats a pair (author and request id) gets the reply of the first send. A second body under one pair is refused like a call with no queued reply. An unscripted request is refused. A hash-only request for a document the server does not know gets `PERSISTED_QUERY_NOT_FOUND` without a sequence, and the library sends the full document under the same number. A request with a wrong sequence number gets `SEQUENCE_CONFLICT`.
 
-The double refuses a request whose document the server does not know. `registerStandOperations` registers the documents of an operation list on the server and in the database before the first request, also for operations declared late. With `SealedServer` register them with `registerDocuments`.
+A hash-only request for a document the server does not know is refused. A request with the full document needs no earlier registration. `openSigned` registers the documents of its `operations` list on the server. For operations declared after the open, `registerStandOperations` registers the list on the server of the stand, when the test opened one, and in the database. Pass it the `Database` that the open returned. With `SealedServer` alone register documents with `registerDocuments`.
 
 ```swift
-try await registerStandOperations(DB.database, defsJson: operationsJSON)
-try server.registerDocuments(operationsJSON)
+let database = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operationsJSON)
+try await registerStandOperations(database, defsJson: lateOperationsJSON)
+try server.registerDocuments(lateOperationsJSON)
 ```
 
 ```kotlin
-registerStandOperations(DBlayer.database, operationsJson)
-server.registerDocuments(operationsJson)
+val database = openSigned(config, modelsJson, transport, operations = operationsJson)
+registerStandOperations(database, lateOperationsJson)
+server.registerDocuments(lateOperationsJson)
 ```
 
-A test that calls `ServerContract` directly gets `Invalid` from `admit` and `settle` for a request that is not valid JSON of the form `requestId`, `sequence`, `body`. `admit` returns `stored`, `refused`, `twoBodies` or `fresh`. `registerDocument` adds a document and `document(hash)` finds it, `nil` or `null` when it is unknown.
+A test that calls `ServerContract` directly gets `Invalid` from `admit` and `settle` for text that is not valid JSON. A valid object with missing members is read with an empty request id, no sequence and no body. `admit` returns `stored`, `refused`, `twoBodies` or `fresh`. `registerDocument` adds a document and `document(hash)` finds it, `nil` or `null` when it is unknown.
 
 When two windows of one operation differ only in their variables, answer them by content with `respondWith`. The responder gets the request and returns the reply, or `nil` to take the next reply queued with `enqueue`. A repeat of the same request gets the same reply.
 

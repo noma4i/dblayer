@@ -89,7 +89,7 @@ An action with an `optimistic` line shows its change at once as unsent and ends 
 
 ## Claiming a reader
 
-Apps read a `ValueStream`. A direct user of the bridge calls `claimReader()` on a read stream once. It returns `Claimed` with the reader number for `pull`, or `Ended` with an `EndCause` when the stream is already claimed or ended.
+Apps read a `ValueStream`. A direct user of the bridge calls `claimReader()` on a read stream once. It returns `Claimed` with the reader number for `pull`, or `Ended` with the cause `invalid` when another reader already holds the stream. A stream that ended by itself still returns `Claimed`: `pull` then returns the `ended` value.
 
 ```swift
 switch await reader.claimReader() {
