@@ -9,7 +9,7 @@ use crate::ffi::{ReadRequest, ReadStream, ReadValue, RowEdit};
 fn seeded() -> Value {
     let mut row = message("m1", "c1", "hi");
     row["reactions"] = json!([{"id": "r2", "body": "x", "user": {"id": "u2"}}]);
-    json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "message": row})
+    json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "parentId": "c1", "message": row})
 }
 
 fn reactions(stand: &Stand, row: &WireRow) -> Vec<(String, String)> {
