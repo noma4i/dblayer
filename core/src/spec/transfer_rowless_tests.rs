@@ -108,7 +108,9 @@ fn xfer_rowless_steps() {
     let mut twin = Twin::new();
     let (id, _) = uploading(&mut twin, KEY, 2);
     let first = twin.attempt(id);
-    let mut steps = twin.step_ok(id, 1, Some("u1")).steps();
+    let out = twin.step_ok(id, 1, Some("u1"));
+    assert_eq!(out.writes(), 1);
+    let mut steps = out.steps();
     assert_eq!(twin.t(id).cycle_id, 1);
     steps.extend(twin.commit().steps());
     steps.extend(twin.commit().steps());
