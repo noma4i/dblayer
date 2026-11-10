@@ -11,8 +11,6 @@ use crate::value::sync::{fold_entries, SyncEntry, SyncInfo, SyncState};
 
 pub type SyncKey = (String, String);
 
-const CHUNK: usize = 500;
-
 const SELECT_STORED_WITH_ID: &str = include_str!("../sql/sync_state/statement_select_row_sync.sql");
 
 const SELECT_STORED: &str = include_str!("../sql/sync_state/statement_select_row_sync_2.sql");
@@ -82,11 +80,11 @@ type Uploads = std::collections::BTreeMap<String, crate::owners::write::upload::
 
 fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, (Uploads, BTreeSet<String>)>> {
     let mut found: HashMap<String, (Uploads, BTreeSet<String>)> = HashMap::new();
-    for chunk in ids.chunks(CHUNK) {
-        let marks = vec!["?"; chunk.len()].join(", ");
+    if !ids.is_empty() {
+        let marks = "SELECT value FROM json_each(?)";
         let mut statement = connection.prepare_cached(&format!(include_str!("../sql/sync_state/read_uploads.sql"), marks = marks))?;
-        let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
-        let mut rows = statement.query(params_from_iter(arguments))?;
+        let ids = serde_json::to_string(ids).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let mut rows = statement.query(params![model, ids])?;
         while let Some(row) = rows.next()? {
             if let Some(mut info) = info_at(row, 2)? {
                 let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
@@ -112,16 +110,28 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
 
 pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, SyncInfo>> {
     let mut found = HashMap::new();
-    for chunk in ids.chunks(CHUNK) {
-        let marks = vec!["?"; chunk.len()].join(", ");
-        let sql = format!("{SELECT_STORED_WITH_ID} WHERE model = ? AND row_id IN ({marks})");
+    if !ids.is_empty() {
+        let encoded = serde_json::to_string(ids).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let sql = format!("{SELECT_STORED_WITH_ID} WHERE model = ? AND row_id IN (SELECT value FROM json_each(?))");
         let mut statement = connection.prepare_cached(&sql)?;
-        let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
-        let mut rows = statement.query(params_from_iter(arguments))?;
+        let mut rows = statement.query(params![model, encoded])?;
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;
-            let info = stored_info(connection, &(model.to_string(), id.clone()), row, 1)?;
+            let info = SyncInfo { state: SyncState::from_sql(&row.get::<_, String>(1)?)?, actions: Vec::new(), dirty_fields: Vec::new(), error: failure_at(row, 2)?, attempts: row.get(4)?, since: row.get(5)?, uploads: Default::default() };
             found.insert(id, info);
+        }
+        for table in ["sync_action", "sync_field"] {
+            let sql = format!("SELECT row_id, name FROM {table} WHERE model = ? AND row_id IN (SELECT value FROM json_each(?)) ORDER BY row_id, pos");
+            let mut statement = connection.prepare_cached(&sql)?;
+            let names = statement.query_map(params![model, encoded], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            for pair in names {
+                let (id, name) = pair?;
+                if let Some(info) = found.get_mut(&id) { if table == "sync_action" { info.actions.push(name); } else { info.dirty_fields.push(name); } }
+            }
+        }
+        let args = [SqlValue::Text(model.to_string()), SqlValue::Text(encoded)];
+        for (owner, extensions) in read_extensions(connection, "sync_row_error", &["model", "row_id"], "model = ?1 AND row_id IN (SELECT value FROM json_each(?2))", &args)? {
+            if let Some(SqlValue::Text(id)) = owner.get(1) { if let Some(info) = found.get_mut(id) { attach_extensions(&mut info.error, Some(extensions)); } }
         }
     }
     for (id, (uploads, batched)) in read_uploads(connection, model, ids)? {
