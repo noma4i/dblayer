@@ -7,6 +7,48 @@ use crate::ffi::ReadFetch;
 fn page() -> serde_json::Value { json!({"user": {"moments": {"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}) }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_profile_refresh_failure_does_not_reread_without_gap() {
+    use crate::ffi::{DbError, ReadPhase};
+    use crate::ffi::selftest::rig_tests::bound;
+    use crate::ffi::tape::Rows;
+    use std::sync::Arc;
+
+    let stand = Stand::prepare().await;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../tests/corpus/consumer/my_profile.json")).unwrap();
+    stand.answer("myProfile", fixture["data"].clone());
+    stand.sign_in().await;
+    let epoch = stand.database.session_epoch();
+    let rows = Arc::new(Rows::default());
+    let _stream = stand.database.watch_query(r#"{"model":"CurrentUser","relation":"profile","params":{}}"#, rows.clone());
+    bound(stand.database.refresh(epoch, "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    stand.settle().await;
+    assert_eq!(stand.requests("myProfile"), 1);
+    assert_eq!(rows.len(), 1);
+    let original = rows.0.lock().unwrap()[0].id.clone();
+    stand.fail_next("myProfile", DbError::Network { detail: "offline".into() });
+    stand.fail_next("myProfile", DbError::Http { status: 400, detail: "refused".into() });
+    let database = stand.database.clone();
+    let mut armed = stand.clock.armed();
+    let mut refresh = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { database.refresh(epoch, "CurrentUser".into(), Some("profile".into()), "{}".into()).await }));
+    let result = bound(async {
+        loop {
+            tokio::select! {
+                result = &mut refresh => break result.unwrap(),
+                () = stand.clock.await_armed(armed) => { armed = stand.clock.armed(); stand.clock.advance(5_000); }
+            }
+        }
+    }).await;
+    assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}");
+    stand.settle().await;
+    assert_eq!(stand.requests("myProfile"), 3);
+    assert_eq!(rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>(), vec![original]);
+    let state = rows.last().expect("profile snapshot");
+    assert_eq!(state.phase, Some(ReadPhase::Loaded));
+    assert!(matches!(state.error, Some(DbError::Http { status: 400, .. })), "{:?}", state.error);
+    stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_cable_drop_resubscribes_and_reloads_only_observed() {
     let stand = Stand::open().await;
     stand.answer("userMoments", page());

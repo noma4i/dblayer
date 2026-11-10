@@ -45,6 +45,7 @@ impl FakeTransport for Cable {
 struct Server {
     answers: StdMutex<HashMap<String, Value>>,
     next_answers: StdMutex<HashMap<String, std::collections::VecDeque<Value>>>,
+    next_failures: StdMutex<HashMap<String, std::collections::VecDeque<DbError>>>,
     asked: StdMutex<Vec<(String, Value)>>,
     sequenced: StdMutex<Vec<(String, i64)>>,
     contract: StdMutex<Contract<Value>>,
@@ -56,7 +57,7 @@ struct Server {
 
 impl Default for Server {
     fn default() -> Self {
-        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), contract: StdMutex::new(Contract::adopting()), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), next_failures: StdMutex::default(), contract: StdMutex::new(Contract::adopting()), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -105,6 +106,8 @@ impl FakeHttp for Server {
                 if refusal["error"] == SEQUENCE_CONFLICT { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
             }
+            let failure = self.next_failures.lock().unwrap().get_mut(&operation).and_then(|queue| queue.pop_front());
+            if let Some(failure) = failure { return Err(failure); }
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
             let queued = self.next_answers.lock().unwrap().get_mut(&operation).and_then(|queue| queue.pop_front());
@@ -189,6 +192,7 @@ impl Stand {
 
     /// The next request of the operation gets `answer` (the whole body, `data` or `errors`) once, then the standing answer again.
     pub(super) fn answer_next(&self, operation: &str, answer: Value) { self.server.next_answers.lock().unwrap().entry(operation.into()).or_default().push_back(answer); }
+    pub(super) fn fail_next(&self, operation: &str, failure: DbError) { self.server.next_failures.lock().unwrap().entry(operation.into()).or_default().push_back(failure); }
 
     /// Every request the server received, in order: the operation and its `sequence`.
     pub(super) fn sequenced(&self) -> Vec<(String, i64)> { self.server.sequenced.lock().unwrap().clone() }
