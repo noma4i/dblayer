@@ -54,9 +54,7 @@ async fn universal_properties_on_seeded_traces() {
                     if bound(stand.database.set_local(epoch, "Moment".into(), id.clone(), "localPreviewUrl".into(), json!(value).to_string())).await.is_ok() { local[which] = Some(value); }
                 }
                 _ => {
-                    let mut answer = moment(&id, visits);
-                    answer["reacted"] = json!(true);
-                    stand.answer("MomentReact", json!({"momentReact": {"moment": answer}}));
+                    stand.answer("MomentReact", json!({"momentReact": {"moment": {"id": id, "reacted": true, "updatedAt": "2026-11-08T00:00:00Z", "user": null}}}));
                     let _ = bound(stand.database.act(epoch, "Moment".into(), id.clone(), "react".into(), "{}".into(), "{}".into())).await;
                 }
             }
