@@ -53,6 +53,7 @@ pub(super) enum Fault {
     Refuse { code: &'static str, confirmed: bool },
     Http(u16),
     ResponseTooLarge(u64),
+    AppliedResponseTooLarge(u64),
     Business,
     Answer(Value),
     /// The server answers 200 with a body that is no sealed answer.
@@ -308,6 +309,7 @@ impl World {
         match pass_gate(fault).await {
             Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
             Some(Fault::ResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
+            Some(Fault::AppliedResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
             Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
             Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
             Some(Fault::Unreadable) => return Ok("not json".into()),
@@ -338,7 +340,13 @@ impl FakeHttp for World {
         }
         let admission = self.state.lock().unwrap().contract.admit(&contract_request);
         match admission {
-            Admission::Stored(stored) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) }),
+            Admission::Stored(stored) => {
+                let mut state = self.state.lock().unwrap();
+                let account = state.account.clone();
+                let marks_before = state.marks.len();
+                state.log.push(Entry { operation: operation.clone(), account, label: self.label.clone(), sequence, request_id: Some(contract_request.request_id.clone()), body: request["body"].to_string(), marks_before });
+                return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) });
+            }
             Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
             Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
             Admission::Fresh => {}
@@ -350,6 +358,12 @@ impl FakeHttp for World {
         match pass_gate(fault).await {
             Some(Fault::Http(status)) => return Ok(EncryptedReply { status, body: String::new() }),
             Some(Fault::ResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
+            Some(Fault::AppliedResponseTooLarge(limit)) => {
+                let mut state = self.state.lock().unwrap();
+                state.contract.settle(&contract_request, answer.clone());
+                *state.calls.entry(operation.clone()).or_default() += 1;
+                return Err(DbError::ResponseTooLarge { limit });
+            }
             Some(Fault::Business) => answer = json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
             Some(Fault::Answer(value)) => answer = value,
             Some(Fault::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),

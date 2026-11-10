@@ -18,7 +18,7 @@ async fn call_response_limit_unknown_pair() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let limit = crate::transport::MAX_HTTP_RESPONSE_BYTES;
-    for _ in 0..100 { rig.world.fail_next("UnregisterDevice", Fault::ResponseTooLarge(limit)); }
+    rig.world.fail_next("UnregisterDevice", Fault::AppliedResponseTooLarge(limit));
     let database = rig.database.clone();
     let epoch = database.session_epoch();
     let mut call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
@@ -29,11 +29,12 @@ async fn call_response_limit_unknown_pair() {
             () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
         }
     };
-    assert!(matches!(result, Err(DbError::ResponseTooLarge { limit: seen }) if seen == limit), "{result:?}");
+    assert!(result.is_ok(), "the replay returns the stored server answer: {result:?}");
     let sends: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect();
     assert!(sends.len() >= 2);
     assert!(sends[0].request_id.is_some() && sends[0].sequence.is_some());
     assert!(sends.iter().all(|send| send.request_id == sends[0].request_id && send.sequence == sends[0].sequence));
+    assert_eq!(rig.world.count("UnregisterDevice"), 1);
     rig.database.close_now();
 }
 

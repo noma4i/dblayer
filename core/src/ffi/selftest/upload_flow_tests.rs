@@ -65,13 +65,9 @@ async fn xfer_put_response_limit() {
     let limit = crate::transport::MAX_PUT_RESPONSE_BYTES;
     rig.world.fail_next("PUT", Fault::ResponseTooLarge(limit));
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    let operation = receipt.operation.unwrap();
     let result = bound(rig.database.confirmed(receipt)).await;
-    assert!(matches!(result, Err(crate::ffi::DbError::Rejected { .. })), "{result:?}");
+    assert!(matches!(result, Err(crate::ffi::DbError::Rejected { failure, kept: true }) if failure.kind == "response_too_large" && failure.response_limit == Some(limit)), "the upload keeps the typed response limit");
     settled(&rig, "the upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
-    let queue = crate::ffi::tests::queue_view_tests::queued(&rig.database);
-    let failure = queue.iter().find(|entry| entry.id.0 == operation).and_then(|entry| entry.error.as_ref()).expect("the failed operation keeps its error");
-    assert!(matches!(failure.kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
     assert_eq!(puts(&rig), 1);
     rig.database.close_now();
 }
