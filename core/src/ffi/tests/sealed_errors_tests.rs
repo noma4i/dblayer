@@ -84,9 +84,10 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     if code == SessionCode::Unauthenticated {
                         assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
                     } else if code == SessionCode::SessionEnded {
-                        let (got, detail) = session(error);
-                        assert_eq!((got, detail.contains(wire)), (SessionCode::SessionEnded, true), "{case}: a revoked answer is Session(SessionEnded) with the body (lifecycle.md sess_calling_revoked)");
-                        assert_eq!(rig.credentials.inner.value(), None, "{case}: the server end erases the session");
+                        assert!(matches!(error, DbError::NoSession { .. }), "{case}: a revoked answer ends the epoch of the author, the wait ends with NoSession (D-278, D-263): {error:?}");
+                        let life = database.life_handle();
+                        crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+                        assert_eq!(rig.credentials.inner.value(), None, "{case}: the published server end erases the session");
                         continue;
                     } else {
                         let (got, detail) = session(error);
