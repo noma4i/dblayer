@@ -264,6 +264,7 @@ impl Stand {
     /// The server pushes one entry of `viewerChanges.changes` on the open subscription.
     pub(super) fn push(&self, token: &str, mut entry: Value) {
         for field in ["parentId", "chat", "message"] { entry.as_object_mut().unwrap().entry(field).or_insert(Value::Null); }
+        if let Some(message) = entry["message"].as_object_mut() { message.entry("clientKey").or_insert(Value::Null); }
         assert!(self.cable.peer.event(token, json!({"data": {"viewerChanges": {"changes": [entry]}}})), "the subscription is open");
     }
 
@@ -294,7 +295,7 @@ pub(super) fn chat(id: &str, name: &str) -> Value {
 }
 
 pub(super) fn message(id: &str, chat_id: &str, text: &str) -> Value {
-    json!({"__typename": "Message", "id": id, "chatId": chat_id, "kind": "TEXT", "body": text, "status": "SENDING", "oneTime": false, "expired": false, "isSystem": false, "isForwarded": false, "isReply": false, "unread": false, "sequenceNumber": null, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
+    json!({"__typename": "Message", "id": id, "chatId": chat_id, "kind": "TEXT", "body": text, "status": "SENDING", "oneTime": false, "expired": false, "expiresAt": null, "isSystem": false, "systemKind": null, "isForwarded": false, "isReply": false, "unread": false, "sequenceNumber": null, "modifiedAt": null, "mediaGroup": null, "transcribed": false, "transcript": null, "transcriptLanguage": null, "readCount": 0, "prompt": null, "author": null, "forwardedFrom": null, "media": null, "attachment": null, "location": null, "replyTo": null, "reactions": [], "mentions": [], "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
 }
 
 pub(super) fn moment(id: &str, visits: i64) -> Value {
