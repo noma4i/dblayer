@@ -155,17 +155,17 @@ Declare a named operation for each content mutation, with `upload MutationName` 
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 let receipt = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request))
 receipt.optimisticValue?.uploads["upload_clip"]?.progress
-let outcome = try await receipt.outcome()
+let confirmed = try await receipt.confirmed()
 ```
 
 ```kotlin
 val request = UploadRequest(path = file.path, variables = variables)
 val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
 receipt.optimisticValue?.uploads?.get("upload_clip")?.progress
-val outcome = receipt.outcome()
+val confirmed = receipt.confirmed()
 ```
 
-Each generated upload method returns a receipt. Its outcome includes the declared response fields as JSON after the transfer and final mutation.
+Each generated upload method returns a receipt. Its confirmed result includes the declared response fields as JSON after the transfer and final mutation.
 
 ### Create several records with uploads
 

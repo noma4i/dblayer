@@ -161,7 +161,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.call(_:variables:)` and generated `Operations.*` calls (`DBlayer.call` in Kotlin) | the call got the sealed refusal |
-| Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
+| Mutation receipt `confirmed()` | the queued mutation got the sealed refusal. `Rejected` carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
 `retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `revoked` answer. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.

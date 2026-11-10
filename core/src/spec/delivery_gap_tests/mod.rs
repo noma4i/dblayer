@@ -18,6 +18,7 @@ mod delivery_operations_tests;
 mod delivery_more_tests;
 mod delivery_read_tests;
 mod delivery_revision_cells;
+mod delivery_temp_tests;
 
 const STREAM: d::StreamId = 1;
 const EPOCH: u64 = 1;

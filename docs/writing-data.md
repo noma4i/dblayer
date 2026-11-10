@@ -336,7 +336,7 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 
 ## What the server answered
 
-`returns` declares the scalar attributes of the mutation payload that the app needs, such as a success message. The confirmed outcome contains them as `answerJSON` on Swift and `answerJson` on Kotlin.
+`returns` declares the scalar attributes of the mutation payload that the app needs, such as a success message. The confirmed result contains them as `answerJSON` on Swift and `answerJson` on Kotlin.
 
 ```ruby
 operation :send_reward do

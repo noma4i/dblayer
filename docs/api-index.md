@@ -55,7 +55,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `SyncInfo`, `SyncState`, `OperationFailure` | [what a record exposes](sync-state.md#what-a-record-exposes), [errors](errors.md#where-an-error-arrives) |
 | `create`, `update`, `act`, `destroy`, `AccountScope.send` | [what a write does](writing-data.md#what-a-write-does), [writing without a network](writing-data.md#writing-without-a-network) |
 | `set` (ephemeral values), `setLocal` (local fields) | [ephemeral fields](models.md#ephemeral-fields), [local fields](models.md#local-fields) |
-| `MutationReceipt`, `ItemReceipt`, `OperationReceipt`, `OperationOutcome` (`confirmed`, `rejected`, `ended`) | [what the server answered](writing-data.md#what-the-server-answered) |
+| `MutationReceipt`, `ItemReceipt`, `OperationReceipt`, `Confirmed` | [what the server answered](writing-data.md#what-the-server-answered) |
 | `retry`, `discard`, `OperationInfo`, `OperationQueueItem`, `OperationQueueStatus` | [the queue of operations](sync-state.md#the-queue-of-operations) |
 
 ## Files and uploads

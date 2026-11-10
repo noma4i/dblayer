@@ -76,7 +76,7 @@ val unsent = Query("Moment", Moment).where(Condition.inList("sync", listOf(JsonP
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
 
-`retry(action)` resets the one failed operation and returns a new receipt; read its `outcome()` for the result of the retry. It throws errors to the caller.
+`retry(action)` resets the one failed operation and returns a new receipt; read its `confirmed()` for the result of the retry. It throws errors to the caller.
 
 ## The queue of operations
 

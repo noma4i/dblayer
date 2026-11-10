@@ -141,16 +141,16 @@ It works without a network and after the app closed.
 The row shows in the stream with its sync state.
 The server confirms it and the temporary id becomes the real id at the same position.
 The receipt carries the optimistic row and the revision of the local commit.
-`outcome()` waits for the one result of that operation: confirmed, rejected or ended with a cause.
+`confirmed()` waits for the one result of that operation: the value, `Rejected`, or the error of the end of the wait.
 
 ```swift
 let sent = try await scope.send(Message.self, values: ["text": .string("hi")])
-let outcome = try await sent.outcome()
+let confirmed = try await sent.confirmed()
 ```
 
 ```kotlin
 val sent = scope.send(Message, buildJsonObject { put("text", "hi") })
-val outcome = sent.outcome()
+val confirmed = sent.confirmed()
 ```
 
 A command for an epoch that has gone is refused.
@@ -164,15 +164,15 @@ An operation that declares `expires_after:` is rolled back with the outcome `rej
 Every command, one-off read and blob call carries the epoch of an account.
 Pass the scope of the account: a call of an account that left ends with `NoSession` and changes nothing for the next account.
 Without the argument the call belongs to the account that is signed in when it is called.
-A create that the server answers, such as a new group, returns a receipt with the optimistic row. Its `outcome()` carries the confirmed row.
+A create that the server answers, such as a new group, returns a receipt with the optimistic row. Its `confirmed()` carries the confirmed row.
 
 ```swift
-let group = try await Chat.create(name: "Friends", userIds: ids, in: scope).outcome().confirmedValue
+let group = try await Chat.create(name: "Friends", userIds: ids, in: scope).confirmed().value
 let rows = try await Chat.list.read(in: scope)
 ```
 
 ```kotlin
-val group = Chat.create(name = "Friends", userIds = ids, account = scope).outcome().confirmedValue
+val group = Chat.create(name = "Friends", userIds = ids, account = scope).confirmed().value
 val rows = Chat.list.read(scope)
 ```
 
