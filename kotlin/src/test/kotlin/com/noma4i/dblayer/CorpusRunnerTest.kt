@@ -118,7 +118,7 @@ private fun fetchOf(name: String?): ReadFetch? = when (name) {
 }
 
 private suspend fun outcomeName(database: Database, receipt: WireOperationReceipt): String = try {
-    database.confirmed(receipt)
+    database.confirmed(receipt, false)
     "confirmed"
 } catch (_: DbException.Rejected) {
     "rejected"

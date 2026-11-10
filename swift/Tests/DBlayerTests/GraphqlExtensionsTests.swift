@@ -25,7 +25,7 @@ extension BridgeProbeTests {
       if queued {
         let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
         do {
-          _ = try await database.confirmed(receipt: receipt)
+          _ = try await database.confirmed(receipt: receipt, discardOnFailure: false)
           Issue.record("the refused purchase was not rejected")
           continue
         } catch let DbError.Rejected(failure, _) {

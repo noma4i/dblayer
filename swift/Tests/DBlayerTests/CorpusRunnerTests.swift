@@ -151,7 +151,7 @@ private func fetchOf(_ name: String) -> ReadFetch? {
 
 private func outcomeName(_ database: Database, _ receipt: WireOperationReceipt) async -> String {
   do {
-    _ = try await database.confirmed(receipt: receipt)
+    _ = try await database.confirmed(receipt: receipt, discardOnFailure: false)
     return "confirmed"
   } catch DbError.Rejected { return "rejected"
   } catch DbError.NoSession { return "ended session_ended"
