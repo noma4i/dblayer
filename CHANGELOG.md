@@ -9,9 +9,8 @@
 
 ### Changed
 
-- Waits report `Closed` after database close and `NoSession` after session end.
-- Outcomes and streams carry the same end causes as values.
-- Calls, outcomes, uploads, streams, and loads end with one cause each.
+- Pending calls and loads fail with `Closed` after close and `NoSession` after session end.
+- Outcomes and streams deliver the end cause as a value, `Ended(Closed)` or `Ended(SessionEnded)`.
 - An owner answer given before close reaches the caller unchanged.
 - `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
 - `RetrySnapshot.waiting` replaces `activeCalls` and `lastAttempt`.
@@ -22,12 +21,12 @@
 - `ReadStream.claimReader` returns `ReadClaim` with a reader or an end cause.
 - `WireUploadRequest` and `WireUploadItem` carry `WireSource` instead of separate file fields.
 - `ServerContract.admit` and `settle` reject invalid JSON requests.
-- `SealedServer` requires declared documents and exposes registration for later operations.
+- `SealedServer` refuses hash-only requests for undeclared documents and exposes registration for later operations.
 - `bridgeToTransport` no longer accepts an operations argument.
 
 ### Fixed
 
-- Multipart aborts use upload IDs and resume after session end, close, or restart.
+- Multipart aborts use upload IDs and resume after session end or close.
 - Revoked responses end the session and preserve the appropriate call and load errors.
 - Call deadlines start when requests are accepted, including while awaiting network state.
 - Resolved outcomes retain their values when the session ends.
