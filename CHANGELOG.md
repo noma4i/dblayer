@@ -26,7 +26,7 @@
 
 ### Fixed
 
-- Multipart aborts use upload IDs and resume after session end or close.
+- Multipart aborts use upload IDs and resume after session end, close, or restart.
 - Revoked responses end the session and preserve the appropriate call and load errors.
 - Call deadlines start when requests are accepted, including while awaiting network state.
 - Resolved outcomes retain their values when the session ends.
