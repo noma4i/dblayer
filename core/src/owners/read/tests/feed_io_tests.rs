@@ -329,6 +329,87 @@ fn feed_io_close_cancels_handshake() {
     pump(&mut det, |_| seen.load(Ordering::SeqCst) >= 1);
 }
 
+struct HeldSocket {
+    incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<crate::transport::SocketEvent>>,
+    closed: AtomicUsize,
+    read: AtomicUsize,
+}
+
+#[async_trait]
+impl crate::transport::CableSocket for HeldSocket {
+    async fn send(&self, _: String) -> Result<(), TransportError> { Ok(()) }
+    async fn next(&self) -> Option<crate::transport::SocketEvent> {
+        self.read.fetch_add(1, Ordering::SeqCst);
+        crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await
+    }
+    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
+    async fn cancel(&self) { self.closed.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
+}
+
+struct HeldOpen {
+    socket: Arc<HeldSocket>,
+    started: AtomicUsize,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl crate::transport::Upstream for HeldOpen {
+    async fn open_cable(&self, _: &str) -> Result<Arc<dyn crate::transport::CableSocket>, TransportError> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        crate::runtime::wake_pumps();
+        crate::test_wait::within(self.release.notified()).await;
+        Ok(self.socket.clone())
+    }
+    async fn query(&self, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
+    async fn mutate(&self, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
+    async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutReply, TransportError> { unreachable!() }
+}
+
+fn abandoned_socket_case(case: &str) {
+    let (frames, incoming) = mpsc::unbounded_channel();
+    let socket = Arc::new(HeldSocket { incoming: tokio::sync::Mutex::new(incoming), closed: AtomicUsize::new(0), read: AtomicUsize::new(0) });
+    let platform = Arc::new(HeldOpen { socket: socket.clone(), started: AtomicUsize::new(0), release: tokio::sync::Notify::new() });
+    let lines = crate::transport::EncryptedLines::new(platform.clone(), crate::transport::encrypted::tests::protocol_tests::config(), Arc::new(|| Ok("credential".into())));
+    let runtime = runtime();
+    let batches = Batches::default();
+    let (_, rest) = collector();
+    let gate = super::rig::open_gate(EPOCH);
+    let io = FeedIo::new(Arc::new(lines), Arc::new(Models), runtime.handle().clone(), rest, gate.clone(), Arc::new(|| 0));
+    let mut det = DetScheduler::new(1);
+    let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
+    let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
+    let peers = f::FeedPeers { store: Address::new(store.index()), windows: Address::new(windows.index()), deliveries: Address::new(deliveries.index()) };
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
+    det.start_epoch(EPOCH);
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
+    pump(&mut det, |_| platform.started.load(Ordering::SeqCst) == 1);
+    let input = match case {
+        "epoch" => { gate.close(EPOCH); FeedInput::EpochEnded(crate::owners::contract::EpochEnded { epoch: EPOCH, cause: crate::runtime::Cause::SessionReset }) },
+        "offline" => FeedInput::Online { online: Online(false), online_seq: 2, now: crate::runtime::Time(0) },
+        "close" => FeedInput::Closing,
+        "want" => FeedInput::WantMinus { model: "Chat".into(), id: 1, now: crate::runtime::Time(0) },
+        _ => unreachable!(),
+    };
+    det.post(feed, EpochStamp::Epoch(EPOCH), input);
+    det.run_until_quiet(10_000).unwrap();
+    assert_eq!(socket.closed.load(Ordering::SeqCst), 0, "{case}: outcome is still held");
+    frames.send(crate::transport::SocketEvent::Text("late frame".into())).unwrap();
+    platform.release.notify_one();
+    pump(&mut det, |_| socket.closed.load(Ordering::SeqCst) != 0);
+    det.run_until_quiet(10_000).unwrap();
+    assert_eq!(socket.closed.load(Ordering::SeqCst), 1, "{case}: exactly one close and no open socket");
+    assert_eq!(socket.read.load(Ordering::SeqCst), 0, "{case}: no late frame is read");
+    assert!(batches.all().is_empty(), "{case}: no late frame reaches the store");
+}
+
+#[test]
+fn feed_open_socket_cancel_orders() {
+    let cases: Vec<_> = ["epoch", "offline", "close", "want"].into_iter().map(|case| std::thread::spawn(move || abandoned_socket_case(case))).collect();
+    for case in cases { case.join().unwrap(); }
+}
+
 #[test]
 fn feed_io_foreign_subscription_is_ignored() {
     let (line, peer) = line();
