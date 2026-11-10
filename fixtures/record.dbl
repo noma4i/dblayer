@@ -97,6 +97,19 @@ model CurrentUser do
   scope :current do
     query "CurrentUserQuery"
   end
+  operation :update_photo, upload: true do
+    optimistic false
+    mutation "UserPhotoUpdate"
+    returns do
+      attribute :userPhoto, FixturePhoto do
+        attribute :reason, :string
+        attribute :media, FixturePhotoMedia do
+          attribute :thumbUrl, :string
+        end
+      end
+    end
+    response from: "userPhotoUpdate.viewer.user"
+  end
 end
 
 model CurrentRegion do

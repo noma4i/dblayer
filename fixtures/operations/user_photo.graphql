@@ -1,0 +1,6 @@
+mutation UserPhotoUpdate {
+  userPhotoUpdate {
+    userPhoto { reason media { thumbUrl } }
+    viewer { user { id name } }
+  }
+}
