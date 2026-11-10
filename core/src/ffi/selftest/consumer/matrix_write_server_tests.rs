@@ -102,7 +102,7 @@ async fn run(path: &'static str, name: &'static str) {
                     let seed = stand.entity("Moment", &id, ReadFetch::Force);
                     stand.settle().await;
                     drop(seed);
-                    stand.answer("MomentReact", json!({"momentReact": {"moment": moment}}));
+                    stand.answer("MomentReact", json!({"momentReact": {"moment": {"id": id, "reacted": moment.get("reacted").cloned().unwrap_or(json!(false)), "updatedAt": moment["updatedAt"], "user": null}}}));
                     let _ = bound(stand.database.act(epoch, "Moment".into(), id.clone(), "react".into(), "{}".into(), "{}".into())).await;
                     stand.settle().await;
                 }
