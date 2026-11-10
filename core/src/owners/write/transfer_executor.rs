@@ -27,7 +27,7 @@ pub struct Link {
     /// The cycle and the part of the step the link serves: with the key and the step they give the request id.
     identity: (u64, u64, u32),
     /// The answer of the saved pair of a restored step: the first request under its id gets it without the network.
-    seeded: Option<(u64, Result<Response, crate::owners::session::SessionError>)>,
+    seeded: Option<(u64, Result<Response, TransportError>)>,
     seed_used: std::sync::atomic::AtomicBool,
 }
 
@@ -49,7 +49,7 @@ impl Link {
         if let Some((seeded_id, response)) = self.seeded.as_ref().filter(|(seeded_id, _)| *seeded_id == id) {
             if !self.seed_used.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 let _ = seeded_id;
-                return response.clone().map_err(crate::transport::encrypted::exchange::session_failure);
+                return response.clone();
             }
         }
         let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
@@ -102,14 +102,13 @@ type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
 
 /// What a step asks of the codec.
 /// The saved answer of the pair of a restored step as the response its first request gets.
-fn seeded_response(seeded: Option<super::transfer_types::SeededAnswer>) -> Option<(u64, Result<Response, crate::owners::session::SessionError>)> {
+fn seeded_response(seeded: Option<super::transfer_types::SeededAnswer>) -> Option<(u64, Result<Response, TransportError>)> {
     let (id, answer) = seeded?;
-    let (body, kind) = match answer {
-        Ok(answer) => answer,
-        Err(error) => return Some((id, Err(error))),
-    };
-    let body = serde_json::from_str(&body).ok()?;
-    Some((id, Ok(crate::transport::encrypted::response_from_answer_with_kind(crate::transport::Answer { sequence: None, body }, kind).ok()?)))
+    let response = answer.map_err(crate::transport::encrypted::exchange::session_failure).and_then(|(body, kind)| {
+        let body = serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))?;
+        crate::transport::encrypted::response_from_answer_with_kind(crate::transport::Answer { sequence: None, body }, kind)
+    });
+    Some((id, response))
 }
 
 struct StepAsk {
