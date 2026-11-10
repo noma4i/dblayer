@@ -129,7 +129,7 @@ pub(super) fn mark_stale(connection: &Connection, models: &[String], keys: &[Str
     let since = max_sequence(connection)? + 1;
     let mut by_prefix = connection.prepare_cached(include_str!("sql/windows/mark_families.sql"))?;
     for model in models {
-        by_prefix.execute(params![like_prefix(&ListKey::compose(&[model]).as_str().to_string()), since])?;
+        by_prefix.execute(params![like_prefix(ListKey::compose(&[model]).as_str()), since])?;
     }
     let mut by_key = connection.prepare_cached(include_str!("sql/windows/mark_key.sql"))?;
     for key in keys {

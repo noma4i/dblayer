@@ -35,6 +35,9 @@ pub(crate) struct HeldVersion {
 }
 
 
+/// The revision of a snapshot, what the query read in it and the temporary ids swapped for server ids up to it.
+pub(crate) type ViewSnapshot = (i64, ViewRead, Vec<(RowId, RowId)>);
+
 impl Store {
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, CoreError> {
         let stored = reader.stored_rows(model, ids)?;
@@ -165,7 +168,7 @@ impl Store {
     }
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot and the temporary ids swapped for server ids after `after` up to it.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead, Vec<(RowId, RowId)>), CoreError> {
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<ViewSnapshot, CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
         let model = query.model.as_str();
