@@ -151,17 +151,6 @@ impl Store {
         Ok((query, remote))
     }
 
-    /// The open operations of the queue in one snapshot that is not older than `floor`; gives the revision of the snapshot.
-    pub(crate) fn read_operations(&self, floor: i64) -> Result<(i64, Vec<crate::owners::write::operation_status::Operation>), CoreError> {
-        self.read_models(&[], |reader| {
-            let seen = reader.revision_seq()?;
-            if seen < floor {
-                return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
-            }
-            Ok((seen, crate::store::operation::open_operations(reader.connection())?))
-        })
-    }
-
     /// The temporary ids of the rows of the read that were swapped after `after`: the pairs of the log for the model and the models its rows link to; when the log dropped the range, the pairs of `row_alias` for the rows of the result.
     fn replaced_of(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey], after: i64, seen: i64) -> Result<Vec<(RowId, RowId)>, CoreError> {
         let models: Vec<String> = std::iter::once(model.to_string()).chain(super::plan::nested_ref::link_targets(self.spec(model)?)).collect();
