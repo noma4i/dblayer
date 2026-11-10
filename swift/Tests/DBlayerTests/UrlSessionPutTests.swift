@@ -134,7 +134,7 @@ struct UrlSessionPutTests {
   func aStoppedPartEndsTheCallAndLeavesNoOpenFile(serverFails: Bool) async throws {
     let megabyte = 1024 * 1024
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    #expect(FileManager.default.createFile(atPath: file.path, contents: Data(count: 8 * megabyte)))
+    try #require(FileManager.default.createFile(atPath: file.path, contents: Data(count: 8 * megabyte)))
     defer { try? FileManager.default.removeItem(at: file) }
     let (events, started) = AsyncStream<Void>.makeStream()
     (StallProtocol.started, StallProtocol.failsEarly) = (started, serverFails)
