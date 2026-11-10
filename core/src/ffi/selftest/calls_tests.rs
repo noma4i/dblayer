@@ -200,13 +200,13 @@ async fn call_prop_mutation_against_end_any_order_public() {
                     let db = rig.database.clone();
                     let logout = rig.spawn(async move { db.session_call("logout".into(), "{}".into()).await });
                     crate::test_wait::settled(&rig, "logout waits behind the mutation", || rig.database.life.waiting_calls() > before).await;
-                    assert_eq!(rig.world.count("logout"), 0);
+                    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "logout").count(), 0);
                     gate.unwrap().release();
                     assert!(bound(call.unwrap()).await.unwrap().is_ok());
                     assert!(bound(logout).await.unwrap().is_ok());
                     rig.settle().await;
                     assert_eq!(rig.world.count("UnregisterDevice"), 1);
-                    assert_eq!(rig.world.count("logout"), 1);
+                    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "logout").count(), 1);
                     rig.database.close_now();
                     return;
                 }
