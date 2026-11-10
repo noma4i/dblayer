@@ -11,6 +11,25 @@ fn stored(op_id: u64, row: &str) -> StoredOp {
     StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None }
 }
 
+#[test]
+fn out_restore_discards_only_orphaned_transfer_intents() {
+    use crate::owners::write::outbox::OpSource;
+    let mut twin = Twin::bare();
+    declare(&mut twin);
+    twin.post(OutboxInput::OrphanTransfers { op_ids: vec![1] });
+    let mut orphan = stored(1, "r");
+    orphan.error_mark = true;
+    orphan.op.origin = OpSource::Transfer { transfer_id: 1, cycle_id: 1 };
+    let mut live = stored(2, "other");
+    live.error_mark = true;
+    live.op.origin = OpSource::Transfer { transfer_id: 2, cycle_id: 1 };
+    restore(&mut twin, vec![orphan, live]);
+    let effects = ready(&mut twin);
+    assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "{effects:?}");
+    assert_eq!(twin.stage(2), Some(St::Failed));
+    assert!(twin.store_text.contains("RetireTransferOutcome") && twin.store_text.contains("Discarded"), "{}", twin.store_text);
+}
+
 fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
 
 fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
