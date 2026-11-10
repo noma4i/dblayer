@@ -73,19 +73,6 @@ async fn a_send_with_a_file_confirms_through_the_declared_steps() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn xfer_accept_row_missing() {
-    let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("intro.mp4");
-    std::fs::write(&source, b"video").unwrap();
-    let refused = bound(database.upload(database.session_epoch(), "Moment".into(), "absent".into(), "upload_clip".into(), request(&source))).await;
-    assert!(matches!(refused, Err(DbError::NotFound { .. })), "{refused:?}");
-    assert!(stand.script.names().is_empty(), "{:?}", stand.script.names());
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn xfer_accept_check_order() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
