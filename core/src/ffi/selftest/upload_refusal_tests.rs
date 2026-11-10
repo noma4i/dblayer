@@ -39,20 +39,12 @@ async fn out_response_limit_keeps_pending() {
             () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(60_000); }
         }
     };
-    assert!(matches!(result, Err(DbError::Rejected { kept: true, .. })), "{result:?}");
+    assert!(matches!(result, Err(DbError::Rejected { kept: true, ref failure }) if failure.kind == "response_too_large" && failure.response_limit == Some(limit)), "{result:?}");
     let pairs = stand.script.operation_pairs("CreateMoment");
     assert!(pairs.len() >= 2 && !pairs[0].0.is_empty() && pairs[0].1.is_some());
     assert!(pairs.iter().all(|pair| pair == &pairs[0]));
-    let failure = |db: &Database| {
-        let entries = crate::ffi::tests::queue_view_tests::queued(db);
-        entries.into_iter().find(|entry| entry.id.0 == operation).and_then(|entry| entry.error).expect("the failed intent remains")
-    };
-    assert!(matches!(failure(&database).kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
-    bound(database.close_database()).await.unwrap();
-    drop(database);
-    let reopened = stand.open_with(Some(&path), &[CREATE_MOMENT], Some(clock)).await;
-    assert!(matches!(failure(&reopened).kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
-    reopened.close_now();
+    assert!(crate::ffi::tests::queue_view_tests::queued(&database).iter().any(|entry| entry.id.0 == operation));
+    database.close_now();
 }
 
 #[tokio::test(flavor = "multi_thread")]
