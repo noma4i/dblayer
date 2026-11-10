@@ -6,24 +6,30 @@
 
 - Wait for a receipt with `confirmed`, which returns the value or throws `Rejected`.
 - Read the session with `sessionStatus`: epoch, identity and phase.
-- Fail with `ResponseTooLarge` when the answer of the server exceeds 16 MiB, or 64 KiB for a file upload.
-- Read the limit of a failed operation from `responseLimit` when its `kind` is `response_too_large`.
+- Fail with `ResponseTooLarge` when an HTTP response exceeds its size limit.
+- Read an oversized response limit from `OperationFailure.responseLimit`.
+- Expose response limits in HTTP and upload requests.
 
 ### Changed
 
 - Attach file fields from a local file path.
 - Read file fields through their local URLs.
+- Reject socket frames exceeding the inbound size limit.
+- Report receipt termination causes as errors from `confirmed`.
+- Return confirmed model values in `Confirmed.value`.
+- Rename Swift `answerJSON` to `answerJson` in confirmed results.
 
 ### Fixed
 
-- Stream and load calls on a temporary row id send no request until the id is swapped for the server id.
+- Defer stream and load requests until temporary row IDs become server IDs.
 - A stream on a temporary row id switches to the server row after the swap.
 
 ### Removed
 
 - Removed file-field reads that returned an in-memory byte array.
 - Removed file attachment from in-memory byte arrays.
-- Removed the receipt method `outcome` and the type `OperationOutcome`: use `confirmed`.
+- Remove the receipt method `outcome`.
+- Remove the type `OperationOutcome`.
 
 ## 6.22.0 - 2026-11-10
 
