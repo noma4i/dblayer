@@ -1493,6 +1493,8 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func interruptedSessionAnswer() async throws  -> String?
     
+    func retryProgress()  -> RetryProgress
+    
     func sessionCall(operation: String, bodyJson: String) async throws  -> String
     
     /**
@@ -1530,6 +1532,8 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
      * One row read from SQLite once, off the calling thread.
      */
     func readRow(epoch: UInt64, model: String, rowId: String) async throws  -> WireRow?
+    
+    func cableCloses()  -> ReadStream
     
     /**
      * The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
@@ -1875,6 +1879,15 @@ open func interruptedSessionAnswer()async throws  -> String?  {
         )
 }
     
+open func retryProgress() -> RetryProgress  {
+    return try!  FfiConverterTypeRetryProgress_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_retry_progress(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
 open func sessionCall(operation: String, bodyJson: String)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
@@ -2047,6 +2060,15 @@ open func readRow(epoch: UInt64, model: String, rowId: String)async throws  -> W
             liftFunc: FfiConverterOptionTypeWireRow.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+open func cableCloses() -> ReadStream  {
+    return try!  FfiConverterTypeReadStream_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_cable_closes(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -3729,9 +3751,9 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
     func cancel() async 
     
     /**
-     * Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
+     * Takes the stream for one reader and returns its number or the reason the claim ended.
      */
-    func claimReader() async throws  -> UInt64
+    func claimReader() async  -> ReadClaim
     
     /**
      * Loads the next page of the relation of this stream.
@@ -3744,7 +3766,7 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
     func pull(reader: UInt64) async  -> ReadValue?
     
     /**
-     * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
+     * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `NoSession` when its session ended.
      */
     func refresh() async throws 
     
@@ -3833,21 +3855,22 @@ open func cancel()async   {
 }
     
     /**
-     * Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
+     * Takes the stream for one reader and returns its number or the reason the claim ended.
      */
-open func claimReader()async throws  -> UInt64  {
+open func claimReader()async  -> ReadClaim  {
     return
-        try  await uniffiRustCallAsync(
+        try!  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_readstream_claim_reader(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_dblayer_rust_future_poll_u64,
-            completeFunc: ffi_dblayer_rust_future_complete_u64,
-            freeFunc: ffi_dblayer_rust_future_free_u64,
-            liftFunc: FfiConverterUInt64.lift,
-            errorHandler: FfiConverterTypeDbError_lift
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeReadClaim_lift,
+            errorHandler: nil
+            
         )
 }
     
@@ -3891,7 +3914,7 @@ open func pull(reader: UInt64)async  -> ReadValue?  {
 }
     
     /**
-     * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
+     * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `NoSession` when its session ended.
      */
 open func refresh()async throws   {
     return
@@ -4512,15 +4535,19 @@ public protocol ServerContractProtocol: AnyObject, Sendable {
     /**
      * `request_json`: `{"requestId": text, "sequence": number or null, "body": {"operationName", "variables", "query"?, "extensions"?}}`.
      */
-    func admit(scope: String, requestJson: String)  -> ContractAdmission
+    func admit(scope: String, requestJson: String) throws  -> ContractAdmission
     
     func cacheEverything() 
+    
+    func document(hash: String)  -> String?
     
     func forget() 
     
     func last()  -> Int64
     
     func register(hash: String) 
+    
+    func registerDocument(document: String) 
     
     func script(operation: String, token: String) 
     
@@ -4529,7 +4556,7 @@ public protocol ServerContractProtocol: AnyObject, Sendable {
     /**
      * The answer of the token reached the client: the pair is remembered and a sequence is spent.
      */
-    func settle(scope: String, requestJson: String, token: String) 
+    func settle(scope: String, requestJson: String, token: String) throws 
     
     func standing(token: String) 
     
@@ -4617,8 +4644,8 @@ public static func adopting() -> ServerContract  {
     /**
      * `request_json`: `{"requestId": text, "sequence": number or null, "body": {"operationName", "variables", "query"?, "extensions"?}}`.
      */
-open func admit(scope: String, requestJson: String) -> ContractAdmission  {
-    return try!  FfiConverterTypeContractAdmission_lift(try! rustCall() {
+open func admit(scope: String, requestJson: String)throws  -> ContractAdmission  {
+    return try  FfiConverterTypeContractAdmission_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_servercontract_admit(
             self.uniffiCloneHandle(),
@@ -4634,6 +4661,16 @@ open func cacheEverything()  {try! rustCall() {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+    
+open func document(hash: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_document(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hash),uniffiCallStatus
+    )
+})
 }
     
 open func forget()  {try! rustCall() {
@@ -4662,6 +4699,15 @@ open func register(hash: String)  {try! rustCall() {
 }
 }
     
+open func registerDocument(document: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_servercontract_register_document(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(document),uniffiCallStatus
+    )
+}
+}
+    
 open func script(operation: String, token: String)  {try! rustCall() {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_servercontract_script(
@@ -4684,7 +4730,7 @@ open func setLast(sequence: Int64)  {try! rustCall() {
     /**
      * The answer of the token reached the client: the pair is remembered and a sequence is spent.
      */
-open func settle(scope: String, requestJson: String, token: String)  {try! rustCall() {
+open func settle(scope: String, requestJson: String, token: String)throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_servercontract_settle(
             self.uniffiCloneHandle(),
@@ -5440,6 +5486,76 @@ public func FfiConverterTypeWireReceiptTicket_lower(_ value: WireReceiptTicket) 
 }
 
 
+
+
+public struct CableClose: Equatable, Hashable {
+    public var connectionId: UInt64
+    public var code: UInt16?
+    public var reason: String?
+    public var failure: RawFailure?
+    public var initiator: CableCloseInitiator
+    public var intended: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: UInt64, code: UInt16?, reason: String?, failure: RawFailure?, initiator: CableCloseInitiator, intended: Bool) {
+        self.connectionId = connectionId
+        self.code = code
+        self.reason = reason
+        self.failure = failure
+        self.initiator = initiator
+        self.intended = intended
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CableClose: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCableClose: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CableClose {
+        return
+            try CableClose(
+                connectionId: FfiConverterUInt64.read(from: &buf), 
+                code: FfiConverterOptionUInt16.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf), 
+                failure: FfiConverterOptionTypeRawFailure.read(from: &buf), 
+                initiator: FfiConverterTypeCableCloseInitiator.read(from: &buf), 
+                intended: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CableClose, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.connectionId, into: &buf)
+        FfiConverterOptionUInt16.write(value.code, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+        FfiConverterOptionTypeRawFailure.write(value.failure, into: &buf)
+        FfiConverterTypeCableCloseInitiator.write(value.initiator, into: &buf)
+        FfiConverterBool.write(value.intended, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCableClose_lift(_ buf: RustBuffer) throws -> CableClose {
+    return try FfiConverterTypeCableClose.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCableClose_lower(_ value: CableClose) -> RustBuffer {
+    return FfiConverterTypeCableClose.lower(value)
+}
 
 
 public struct CellEntry: Equatable, Hashable {
@@ -7274,17 +7390,21 @@ public func FfiConverterTypeReadState_lower(_ value: ReadState) -> RustBuffer {
 }
 
 
-public struct RetryAttempt: Equatable, Hashable {
-    public var attempt: UInt64
+public struct RetryEntry: Equatable, Hashable {
+    public var owner: RetryOwner
+    public var kind: RetryPolicy
+    public var id: UInt64
+    public var attempt: UInt32
     public var delayMs: UInt64
-    public var reason: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(attempt: UInt64, delayMs: UInt64, reason: String) {
+    public init(owner: RetryOwner, kind: RetryPolicy, id: UInt64, attempt: UInt32, delayMs: UInt64) {
+        self.owner = owner
+        self.kind = kind
+        self.id = id
         self.attempt = attempt
         self.delayMs = delayMs
-        self.reason = reason
     }
 
     
@@ -7293,26 +7413,30 @@ public struct RetryAttempt: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension RetryAttempt: Sendable {}
+extension RetryEntry: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRetryAttempt: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetryAttempt {
+public struct FfiConverterTypeRetryEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetryEntry {
         return
-            try RetryAttempt(
-                attempt: FfiConverterUInt64.read(from: &buf), 
-                delayMs: FfiConverterUInt64.read(from: &buf), 
-                reason: FfiConverterString.read(from: &buf)
+            try RetryEntry(
+                owner: FfiConverterTypeRetryOwner.read(from: &buf), 
+                kind: FfiConverterTypeRetryPolicy.read(from: &buf), 
+                id: FfiConverterUInt64.read(from: &buf), 
+                attempt: FfiConverterUInt32.read(from: &buf), 
+                delayMs: FfiConverterUInt64.read(from: &buf)
         )
     }
 
-    public static func write(_ value: RetryAttempt, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.attempt, into: &buf)
+    public static func write(_ value: RetryEntry, into buf: inout [UInt8]) {
+        FfiConverterTypeRetryOwner.write(value.owner, into: &buf)
+        FfiConverterTypeRetryPolicy.write(value.kind, into: &buf)
+        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterUInt32.write(value.attempt, into: &buf)
         FfiConverterUInt64.write(value.delayMs, into: &buf)
-        FfiConverterString.write(value.reason, into: &buf)
     }
 }
 
@@ -7320,27 +7444,25 @@ public struct FfiConverterTypeRetryAttempt: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRetryAttempt_lift(_ buf: RustBuffer) throws -> RetryAttempt {
-    return try FfiConverterTypeRetryAttempt.lift(buf)
+public func FfiConverterTypeRetryEntry_lift(_ buf: RustBuffer) throws -> RetryEntry {
+    return try FfiConverterTypeRetryEntry.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRetryAttempt_lower(_ value: RetryAttempt) -> RustBuffer {
-    return FfiConverterTypeRetryAttempt.lower(value)
+public func FfiConverterTypeRetryEntry_lower(_ value: RetryEntry) -> RustBuffer {
+    return FfiConverterTypeRetryEntry.lower(value)
 }
 
 
 public struct RetrySnapshot: Equatable, Hashable {
-    public var activeCalls: UInt32
-    public var lastAttempt: RetryAttempt?
+    public var waiting: [RetryEntry]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(activeCalls: UInt32, lastAttempt: RetryAttempt?) {
-        self.activeCalls = activeCalls
-        self.lastAttempt = lastAttempt
+    public init(waiting: [RetryEntry]) {
+        self.waiting = waiting
     }
 
     
@@ -7359,14 +7481,12 @@ public struct FfiConverterTypeRetrySnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetrySnapshot {
         return
             try RetrySnapshot(
-                activeCalls: FfiConverterUInt32.read(from: &buf), 
-                lastAttempt: FfiConverterOptionTypeRetryAttempt.read(from: &buf)
+                waiting: FfiConverterSequenceTypeRetryEntry.read(from: &buf)
         )
     }
 
     public static func write(_ value: RetrySnapshot, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.activeCalls, into: &buf)
-        FfiConverterOptionTypeRetryAttempt.write(value.lastAttempt, into: &buf)
+        FfiConverterSequenceTypeRetryEntry.write(value.waiting, into: &buf)
     }
 }
 
@@ -8454,18 +8574,14 @@ public func FfiConverterTypeWireUploadEntry_lower(_ value: WireUploadEntry) -> R
 
 public struct WireUploadItem: Equatable, Hashable {
     public var valuesJson: String
-    public var path: String?
-    public var name: String?
-    public var mime: String?
+    public var source: WireSource
     public var variablesJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(valuesJson: String, path: String?, name: String?, mime: String?, variablesJson: String) {
+    public init(valuesJson: String, source: WireSource, variablesJson: String) {
         self.valuesJson = valuesJson
-        self.path = path
-        self.name = name
-        self.mime = mime
+        self.source = source
         self.variablesJson = variablesJson
     }
 
@@ -8486,18 +8602,14 @@ public struct FfiConverterTypeWireUploadItem: FfiConverterRustBuffer {
         return
             try WireUploadItem(
                 valuesJson: FfiConverterString.read(from: &buf), 
-                path: FfiConverterOptionString.read(from: &buf), 
-                name: FfiConverterOptionString.read(from: &buf), 
-                mime: FfiConverterOptionString.read(from: &buf), 
+                source: FfiConverterTypeWireSource.read(from: &buf), 
                 variablesJson: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: WireUploadItem, into buf: inout [UInt8]) {
         FfiConverterString.write(value.valuesJson, into: &buf)
-        FfiConverterOptionString.write(value.path, into: &buf)
-        FfiConverterOptionString.write(value.name, into: &buf)
-        FfiConverterOptionString.write(value.mime, into: &buf)
+        FfiConverterTypeWireSource.write(value.source, into: &buf)
         FfiConverterString.write(value.variablesJson, into: &buf)
     }
 }
@@ -8519,17 +8631,13 @@ public func FfiConverterTypeWireUploadItem_lower(_ value: WireUploadItem) -> Rus
 
 
 public struct WireUploadRequest: Equatable, Hashable {
-    public var path: String?
-    public var name: String?
-    public var mime: String?
+    public var source: WireSource
     public var variablesJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(path: String?, name: String?, mime: String?, variablesJson: String) {
-        self.path = path
-        self.name = name
-        self.mime = mime
+    public init(source: WireSource, variablesJson: String) {
+        self.source = source
         self.variablesJson = variablesJson
     }
 
@@ -8549,17 +8657,13 @@ public struct FfiConverterTypeWireUploadRequest: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireUploadRequest {
         return
             try WireUploadRequest(
-                path: FfiConverterOptionString.read(from: &buf), 
-                name: FfiConverterOptionString.read(from: &buf), 
-                mime: FfiConverterOptionString.read(from: &buf), 
+                source: FfiConverterTypeWireSource.read(from: &buf), 
                 variablesJson: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: WireUploadRequest, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.path, into: &buf)
-        FfiConverterOptionString.write(value.name, into: &buf)
-        FfiConverterOptionString.write(value.mime, into: &buf)
+        FfiConverterTypeWireSource.write(value.source, into: &buf)
         FfiConverterString.write(value.variablesJson, into: &buf)
     }
 }
@@ -8805,6 +8909,79 @@ public func FfiConverterTypeAuthor_lift(_ buf: RustBuffer) throws -> Author {
 #endif
 public func FfiConverterTypeAuthor_lower(_ value: Author) -> RustBuffer {
     return FfiConverterTypeAuthor.lower(value)
+}
+
+
+
+
+public enum CableCloseInitiator: Equatable, Hashable {
+    
+    case server
+    case client
+    case network
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CableCloseInitiator: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCableCloseInitiator: FfiConverterRustBuffer {
+    typealias SwiftType = CableCloseInitiator
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CableCloseInitiator {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .server
+        
+        case 2: return .client
+        
+        case 3: return .network
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CableCloseInitiator, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .server:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .client:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .network:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCableCloseInitiator_lift(_ buf: RustBuffer) throws -> CableCloseInitiator {
+    return try FfiConverterTypeCableCloseInitiator.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCableCloseInitiator_lower(_ value: CableCloseInitiator) -> RustBuffer {
+    return FfiConverterTypeCableCloseInitiator.lower(value)
 }
 
 
@@ -9647,6 +9824,116 @@ public func FfiConverterTypeEncryptedOperationClass_lower(_ value: EncryptedOper
 
 
 
+public enum EndCause: Equatable, Hashable {
+    
+    case sessionEnded
+    case closed
+    case cancelled
+    case discarded
+    case invalid(detail: String
+    )
+    case storage(error: String
+    )
+    case `internal`(detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension EndCause: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEndCause: FfiConverterRustBuffer {
+    typealias SwiftType = EndCause
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EndCause {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .sessionEnded
+        
+        case 2: return .closed
+        
+        case 3: return .cancelled
+        
+        case 4: return .discarded
+        
+        case 5: return .invalid(detail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 6: return .storage(error: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 7: return .`internal`(detail: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: EndCause, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .sessionEnded:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .closed:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .cancelled:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .discarded:
+            writeInt(&buf, Int32(4))
+        
+        
+        case let .invalid(detail):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .storage(error):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(error, into: &buf)
+            
+        
+        case let .`internal`(detail):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(detail, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEndCause_lift(_ buf: RustBuffer) throws -> EndCause {
+    return try FfiConverterTypeEndCause.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEndCause_lower(_ value: EndCause) -> RustBuffer {
+    return FfiConverterTypeEndCause.lower(value)
+}
+
+
+
+
 public enum LoadMoreResult: Equatable, Hashable {
     
     case loaded(hasMore: Bool
@@ -10091,15 +10378,11 @@ public func FfiConverterTypeRawOutcome_lower(_ value: RawOutcome) -> RustBuffer 
 
 
 
-public enum ReadEnd: Equatable, Hashable {
+public enum ReadClaim: Equatable, Hashable {
     
-    case sessionEnded
-    case closed
-    case cancelled
-    case invalid
-    case storage(error: String
+    case claimed(reader: UInt64
     )
-    case `internal`(detail: String
+    case ended(cause: EndCause
     )
 
 
@@ -10109,65 +10392,41 @@ public enum ReadEnd: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension ReadEnd: Sendable {}
+extension ReadClaim: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeReadEnd: FfiConverterRustBuffer {
-    typealias SwiftType = ReadEnd
+public struct FfiConverterTypeReadClaim: FfiConverterRustBuffer {
+    typealias SwiftType = ReadClaim
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReadEnd {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReadClaim {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .sessionEnded
-        
-        case 2: return .closed
-        
-        case 3: return .cancelled
-        
-        case 4: return .invalid
-        
-        case 5: return .storage(error: try FfiConverterString.read(from: &buf)
+        case 1: return .claimed(reader: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 6: return .`internal`(detail: try FfiConverterString.read(from: &buf)
+        case 2: return .ended(cause: try FfiConverterTypeEndCause.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: ReadEnd, into buf: inout [UInt8]) {
+    public static func write(_ value: ReadClaim, into buf: inout [UInt8]) {
         switch value {
         
         
-        case .sessionEnded:
+        case let .claimed(reader):
             writeInt(&buf, Int32(1))
-        
-        
-        case .closed:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .cancelled:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .invalid:
-            writeInt(&buf, Int32(4))
-        
-        
-        case let .storage(error):
-            writeInt(&buf, Int32(5))
-            FfiConverterString.write(error, into: &buf)
+            FfiConverterUInt64.write(reader, into: &buf)
             
         
-        case let .`internal`(detail):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(detail, into: &buf)
+        case let .ended(cause):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeEndCause.write(cause, into: &buf)
             
         }
     }
@@ -10177,15 +10436,15 @@ public struct FfiConverterTypeReadEnd: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeReadEnd_lift(_ buf: RustBuffer) throws -> ReadEnd {
-    return try FfiConverterTypeReadEnd.lift(buf)
+public func FfiConverterTypeReadClaim_lift(_ buf: RustBuffer) throws -> ReadClaim {
+    return try FfiConverterTypeReadClaim.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeReadEnd_lower(_ value: ReadEnd) -> RustBuffer {
-    return FfiConverterTypeReadEnd.lower(value)
+public func FfiConverterTypeReadClaim_lower(_ value: ReadClaim) -> RustBuffer {
+    return FfiConverterTypeReadClaim.lower(value)
 }
 
 
@@ -10367,6 +10626,7 @@ public enum ReadRequest: Equatable, Hashable {
      */
     case events(model: String
     )
+    case cableCloses
     /**
      * The status of the transfer of `uploads[action]` of a row.
      */
@@ -10410,12 +10670,14 @@ public struct FfiConverterTypeReadRequest: FfiConverterRustBuffer {
         case 4: return .events(model: try FfiConverterString.read(from: &buf)
         )
         
-        case 5: return .blob(model: try FfiConverterString.read(from: &buf), id: try FfiConverterString.read(from: &buf), action: try FfiConverterString.read(from: &buf)
+        case 5: return .cableCloses
+        
+        case 6: return .blob(model: try FfiConverterString.read(from: &buf), id: try FfiConverterString.read(from: &buf), action: try FfiConverterString.read(from: &buf)
         )
         
-        case 6: return .operations
+        case 7: return .operations
         
-        case 7: return .changes
+        case 8: return .changes
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -10447,19 +10709,23 @@ public struct FfiConverterTypeReadRequest: FfiConverterRustBuffer {
             FfiConverterString.write(model, into: &buf)
             
         
-        case let .blob(model,id,action):
+        case .cableCloses:
             writeInt(&buf, Int32(5))
+        
+        
+        case let .blob(model,id,action):
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(model, into: &buf)
             FfiConverterString.write(id, into: &buf)
             FfiConverterString.write(action, into: &buf)
             
         
         case .operations:
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
         
         
         case .changes:
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(8))
         
         }
     }
@@ -10512,6 +10778,8 @@ public enum ReadValue: Equatable, Hashable {
      */
     case event(position: UInt64, area: String, kind: String, id: String, before: WireRow?, after: WireRow?
     )
+    case cableClose(position: UInt64, event: CableClose
+    )
     case lost(first: UInt64, last: UInt64
     )
     case gap
@@ -10522,7 +10790,7 @@ public enum ReadValue: Equatable, Hashable {
     /**
      * The last value of a stream, exactly one.
      */
-    case ended(cause: ReadEnd
+    case ended(cause: EndCause
     )
 
 
@@ -10568,18 +10836,21 @@ public struct FfiConverterTypeReadValue: FfiConverterRustBuffer {
         case 8: return .event(position: try FfiConverterUInt64.read(from: &buf), area: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), id: try FfiConverterString.read(from: &buf), before: try FfiConverterOptionTypeWireRow.read(from: &buf), after: try FfiConverterOptionTypeWireRow.read(from: &buf)
         )
         
-        case 9: return .lost(first: try FfiConverterUInt64.read(from: &buf), last: try FfiConverterUInt64.read(from: &buf)
+        case 9: return .cableClose(position: try FfiConverterUInt64.read(from: &buf), event: try FfiConverterTypeCableClose.read(from: &buf)
         )
         
-        case 10: return .gap
-        
-        case 11: return .status(revision: try FfiConverterInt64.read(from: &buf), state: try FfiConverterString.read(from: &buf), waitReason: try FfiConverterOptionString.read(from: &buf), progress: try FfiConverterUInt64.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf), localUrl: try FfiConverterOptionString.read(from: &buf), processing: try FfiConverterOptionTypeWireProcessing.read(from: &buf)
+        case 10: return .lost(first: try FfiConverterUInt64.read(from: &buf), last: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 12: return .retry(attempts: try FfiConverterUInt32.read(from: &buf), phase: try FfiConverterString.read(from: &buf)
+        case 11: return .gap
+        
+        case 12: return .status(revision: try FfiConverterInt64.read(from: &buf), state: try FfiConverterString.read(from: &buf), waitReason: try FfiConverterOptionString.read(from: &buf), progress: try FfiConverterUInt64.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf), localUrl: try FfiConverterOptionString.read(from: &buf), processing: try FfiConverterOptionTypeWireProcessing.read(from: &buf)
         )
         
-        case 13: return .ended(cause: try FfiConverterTypeReadEnd.read(from: &buf)
+        case 13: return .retry(attempts: try FfiConverterUInt32.read(from: &buf), phase: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 14: return .ended(cause: try FfiConverterTypeEndCause.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10645,18 +10916,24 @@ public struct FfiConverterTypeReadValue: FfiConverterRustBuffer {
             FfiConverterOptionTypeWireRow.write(after, into: &buf)
             
         
-        case let .lost(first,last):
+        case let .cableClose(position,event):
             writeInt(&buf, Int32(9))
+            FfiConverterUInt64.write(position, into: &buf)
+            FfiConverterTypeCableClose.write(event, into: &buf)
+            
+        
+        case let .lost(first,last):
+            writeInt(&buf, Int32(10))
             FfiConverterUInt64.write(first, into: &buf)
             FfiConverterUInt64.write(last, into: &buf)
             
         
         case .gap:
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(11))
         
         
         case let .status(revision,state,waitReason,progress,error,localUrl,processing):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(12))
             FfiConverterInt64.write(revision, into: &buf)
             FfiConverterString.write(state, into: &buf)
             FfiConverterOptionString.write(waitReason, into: &buf)
@@ -10667,14 +10944,14 @@ public struct FfiConverterTypeReadValue: FfiConverterRustBuffer {
             
         
         case let .retry(attempts,phase):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(13))
             FfiConverterUInt32.write(attempts, into: &buf)
             FfiConverterString.write(phase, into: &buf)
             
         
         case let .ended(cause):
-            writeInt(&buf, Int32(13))
-            FfiConverterTypeReadEnd.write(cause, into: &buf)
+            writeInt(&buf, Int32(14))
+            FfiConverterTypeEndCause.write(cause, into: &buf)
             
         }
     }
@@ -10766,6 +11043,211 @@ public func FfiConverterTypeRecreateReason_lift(_ buf: RustBuffer) throws -> Rec
 #endif
 public func FfiConverterTypeRecreateReason_lower(_ value: RecreateReason) -> RustBuffer {
     return FfiConverterTypeRecreateReason.lower(value)
+}
+
+
+
+
+public enum RetryOwner: Equatable, Hashable {
+    
+    case bootstrap
+    case session
+    case window
+    case calls
+    case outbox
+    case transfer
+    case feed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RetryOwner: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRetryOwner: FfiConverterRustBuffer {
+    typealias SwiftType = RetryOwner
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetryOwner {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .bootstrap
+        
+        case 2: return .session
+        
+        case 3: return .window
+        
+        case 4: return .calls
+        
+        case 5: return .outbox
+        
+        case 6: return .transfer
+        
+        case 7: return .feed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RetryOwner, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .bootstrap:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .session:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .window:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .calls:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .outbox:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .transfer:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .feed:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRetryOwner_lift(_ buf: RustBuffer) throws -> RetryOwner {
+    return try FfiConverterTypeRetryOwner.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRetryOwner_lower(_ value: RetryOwner) -> RustBuffer {
+    return FfiConverterTypeRetryOwner.lower(value)
+}
+
+
+
+/**
+ * The one place of the retry rules: how many sends a policy allows and how long it waits before the next one.
+ */
+
+public enum RetryPolicy: Equatable, Hashable {
+    
+    case http
+    case queryNetwork
+    case queryServer
+    case outbox
+    case upload
+    case cable
+    case bootstrap
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RetryPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRetryPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = RetryPolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetryPolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .http
+        
+        case 2: return .queryNetwork
+        
+        case 3: return .queryServer
+        
+        case 4: return .outbox
+        
+        case 5: return .upload
+        
+        case 6: return .cable
+        
+        case 7: return .bootstrap
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RetryPolicy, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .http:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .queryNetwork:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .queryServer:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .outbox:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .upload:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .cable:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .bootstrap:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRetryPolicy_lift(_ buf: RustBuffer) throws -> RetryPolicy {
+    return try FfiConverterTypeRetryPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRetryPolicy_lower(_ value: RetryPolicy) -> RustBuffer {
+    return FfiConverterTypeRetryPolicy.lower(value)
 }
 
 
@@ -11414,7 +11896,8 @@ public enum WireOperationOutcome: Equatable, Hashable {
     )
     case rejected(failure: WireFailure
     )
-    case interrupted
+    case ended(cause: EndCause
+    )
 
 
 
@@ -11442,7 +11925,8 @@ public struct FfiConverterTypeWireOperationOutcome: FfiConverterRustBuffer {
         case 2: return .rejected(failure: try FfiConverterTypeWireFailure.read(from: &buf)
         )
         
-        case 3: return .interrupted
+        case 3: return .ended(cause: try FfiConverterTypeEndCause.read(from: &buf)
+        )
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -11463,9 +11947,10 @@ public struct FfiConverterTypeWireOperationOutcome: FfiConverterRustBuffer {
             FfiConverterTypeWireFailure.write(failure, into: &buf)
             
         
-        case .interrupted:
+        case let .ended(cause):
             writeInt(&buf, Int32(3))
-        
+            FfiConverterTypeEndCause.write(cause, into: &buf)
+            
         }
     }
 }
@@ -11483,6 +11968,77 @@ public func FfiConverterTypeWireOperationOutcome_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeWireOperationOutcome_lower(_ value: WireOperationOutcome) -> RustBuffer {
     return FfiConverterTypeWireOperationOutcome.lower(value)
+}
+
+
+
+
+public enum WireSource: Equatable, Hashable {
+    
+    case file(path: String, name: String?, mime: String?
+    )
+    case pending
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension WireSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWireSource: FfiConverterRustBuffer {
+    typealias SwiftType = WireSource
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireSource {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .file(path: try FfiConverterString.read(from: &buf), name: try FfiConverterOptionString.read(from: &buf), mime: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        case 2: return .pending
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: WireSource, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .file(path,name,mime):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(path, into: &buf)
+            FfiConverterOptionString.write(name, into: &buf)
+            FfiConverterOptionString.write(mime, into: &buf)
+            
+        
+        case .pending:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireSource_lift(_ buf: RustBuffer) throws -> WireSource {
+    return try FfiConverterTypeWireSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireSource_lower(_ value: WireSource) -> RustBuffer {
+    return FfiConverterTypeWireSource.lower(value)
 }
 
 
@@ -12085,30 +12641,6 @@ fileprivate struct FfiConverterOptionTypeRawFailure: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeRetryAttempt: FfiConverterRustBuffer {
-    typealias SwiftType = RetryAttempt?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeRetryAttempt.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeRetryAttempt.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeRetrySnapshot: FfiConverterRustBuffer {
     typealias SwiftType = RetrySnapshot?
 
@@ -12590,6 +13122,31 @@ fileprivate struct FfiConverterSequenceTypeQueryOrder: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeQueryOrder.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRetryEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [RetryEntry]
+
+    public static func write(_ value: [RetryEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRetryEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RetryEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RetryEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRetryEntry.read(from: &buf))
         }
         return seq
     }
@@ -13134,10 +13691,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_platformsocket_cancel() != 64921) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_servercontract_admit() != 55575) {
+    if (uniffi_dblayer_checksum_method_servercontract_admit() != 50898) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_servercontract_cache_everything() != 24971) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_servercontract_document() != 32110) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_servercontract_forget() != 6253) {
@@ -13149,13 +13709,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_servercontract_register() != 2309) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_servercontract_register_document() != 13253) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_servercontract_script() != 19786) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_servercontract_set_last() != 8307) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_servercontract_settle() != 42816) {
+    if (uniffi_dblayer_checksum_method_servercontract_settle() != 12066) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_servercontract_standing() != 20873) {
@@ -13215,6 +13778,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_interrupted_session_answer() != 28550) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_retry_progress() != 45185) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_session_call() != 15531) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13243,6 +13809,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_read_row() != 33119) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_cable_closes() != 53534) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_session_epoch() != 41109) {
@@ -13362,7 +13931,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_readstream_cancel() != 53433) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_readstream_claim_reader() != 16793) {
+    if (uniffi_dblayer_checksum_method_readstream_claim_reader() != 56197) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_load_more() != 27067) {
@@ -13371,7 +13940,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_readstream_pull() != 31191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_readstream_refresh() != 22747) {
+    if (uniffi_dblayer_checksum_method_readstream_refresh() != 18194) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_release_reader() != 23746) {
