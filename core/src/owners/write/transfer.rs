@@ -647,7 +647,7 @@ impl TransferState {
             }
             TransferInput::ModelsReset(_) => {}
             TransferInput::Tick { now, kind } => self.tick(now, kind, fx),
-            TransferInput::EpochEnded(_) => self.epoch_ended(fx),
+            TransferInput::EpochEnded(ended) => self.epoch_ended(ended.cause, fx),
             TransferInput::Closing => self.close(fx),
             TransferInput::Clock(now) => self.now = self.now.max(now),
         }
@@ -682,10 +682,9 @@ impl TransferState {
                 self.answer_held(Fault::Closed, fx);
                 self.close(fx);
             }
-            TransferInput::EpochEnded(_) => {
+            TransferInput::EpochEnded(ended) => {
                 self.ended = true;
-                self.answer_held(Fault::SessionEnded, fx);
-                self.epoch_ended(fx);
+                self.epoch_ended(ended.cause, fx);
             }
             other => self.handle(other, fx),
         }

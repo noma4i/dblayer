@@ -411,9 +411,10 @@ impl TransferState {
 
     fn open_ids(&self) -> Vec<TransferId> { self.scan().filter(|transfer| transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id).collect() }
 
-    pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
+    pub(super) fn epoch_ended(&mut self, cause: crate::runtime::Cause, fx: &mut Fx) {
         self.ended = true;
-        for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))); }
+        let end = crate::ffi::EndCause::of(cause);
+        for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(end.clone()))); }
         let unanswered: Vec<(String, String)> = self.pending.values().filter(|pending| matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan)).filter_map(|pending| match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
             (Some(orphan), _) => Some(orphan.clone()),
             (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
@@ -424,9 +425,9 @@ impl TransferState {
         let owed: Vec<(String, String)> = self.minted.iter().filter(|(upload_id, _)| !self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(written, _)| written == *upload_id))).map(|(upload_id, debt)| (upload_id.clone(), debt.key.clone())).collect();
         for (upload_id, key) in owed { self.write_control_orphan(upload_id, key, fx); }
         for id in self.open_ids() {
-            self.interrupt(id, crate::ffi::EndCause::SessionEnded, fx);
+            self.interrupt(id, end.clone(), fx);
         }
-        self.answer_held(Fault::SessionEnded, fx);
+        self.answer_held(Fault::of_end(cause), fx);
     }
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
