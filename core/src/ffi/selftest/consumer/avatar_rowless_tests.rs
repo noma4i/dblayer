@@ -211,6 +211,7 @@ async fn rowless_upload_session_reset_clears_pending_work() {
     assert!(receipt.optimistic_value.is_none());
     stand.put_started().await;
     assert_eq!(operations(&stand).await.len(), 1);
+    stand.settle().await;
     let requests_before_reset = stand.asked().len();
     bound(stand.database.session_reset()).await.unwrap();
     stand.release_put();
@@ -344,37 +345,34 @@ async fn consumer_rowless_accept_order() {
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_rowless_multipart_steps() {
     use std::io::{Read, Seek, SeekFrom, Write};
+    use super::super::upload_stand::{request, Stand as UploadStand, CREATE_MOMENT};
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.sqlite");
-    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
-    stand.sign_in().await;
+    let stand = UploadStand::new();
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
     let source = directory.path().join("large.jpg");
     let part_size = crate::owners::write::upload::UploadConfig::default().part_size as usize;
     let mut file = std::fs::File::create(&source).unwrap();
     file.write_all(&vec![b'a'; part_size]).unwrap();
     file.write_all(&vec![b'b'; part_size]).unwrap();
     drop(file);
-    stand.answer("MultipartUploadInit", json!({"multipartUploadInit": {"multipartUpload": {"key": "key", "uploadId": "upload", "signedId": "s", "blobId": "b"}}}));
-    stand.answer("MultipartUploadPresignParts", json!({"multipartUploadPresign": {"parts": [{"partNumber": 1, "url": "https://storage/1"}, {"partNumber": 2, "url": "https://storage/2"}]}}));
-    stand.answer("MultipartUploadComplete", json!({"multipartUploadComplete": {"signedId": "multipart-signed", "blobId": "b"}}));
-    stand.answer("UserPhotoUpdate", good());
-    stand.script_put(200, Some("part-one"));
-    stand.script_put(200, Some("part-two"));
-    stand.hold(&["UserPhotoUpdate"]);
-    stand.hold_put();
-    let mut input = UploadFile::new(source.to_str().unwrap());
-    input.variables = json!({"createInitialMoment": true}).as_object().unwrap().clone();
-    let epoch = stand.database.session_epoch();
-    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), WireUploadRequest::of(&input))).await.unwrap();
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"}]}}}"#);
+    stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"}]}}}"#);
+    stand.script.data("CompleteMultipart", r#"{"data":{"completeMultipart":{"signedId":"multipart-signed","blobId":"b"}}}"#);
+    let final_mutation = stand.script.hold("CreateMoment", r#"{"data":{"createMoment":{"id":"42","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#);
+    let first = stand.puts.hold_next();
+    let epoch = database.session_epoch();
+    let receipt = bound(database.upload(epoch, "Moment".into(), "42".into(), "upload_clip".into(), request(&source))).await.unwrap();
     assert!(receipt.optimistic_value.is_none());
     tokio::select! {
-        () = stand.put_started() => {},
-        outcome = bound(stand.database.confirmed(receipt.clone())) => panic!("multipart ended before the first part: {outcome:?}"),
+        () = first.entered() => {},
+        outcome = bound(database.confirmed(receipt.clone())) => panic!("multipart ended before the first part: {outcome:?}"),
     }
-    assert_eq!(stand.puts(), 1);
-    stand.release_put();
-    arrived(&stand, "UserPhotoUpdate").await;
-    let parts = stand.put_files();
+    assert_eq!(stand.puts.seen.lock().unwrap().len(), 1);
+    first.release();
+    final_mutation.entered().await;
+    let parts = stand.puts.seen.lock().unwrap().clone();
     assert_eq!(parts.len(), 2);
     for (index, part) in parts.iter().enumerate() {
         assert_eq!((part.offset, part.length), ((index * part_size) as u64, part_size as u64));
@@ -384,17 +382,17 @@ async fn consumer_rowless_multipart_steps() {
         copy.read_exact(&mut byte).unwrap();
         assert_eq!(byte[0], [b'a', b'b'][index]);
     }
-    let presigns: Vec<_> = stand.asked().into_iter().filter(|(name, _)| name == "MultipartUploadPresignParts").collect();
+    let presigns = stand.script.variables("PresignParts");
     assert_eq!(presigns.len(), 2);
-    assert_eq!((presigns[0].1["uploadId"].as_str(), &presigns[0].1["partNumbers"]), (Some("upload"), &json!([1])));
-    assert_eq!((presigns[1].1["uploadId"].as_str(), &presigns[1].1["partNumbers"]), (Some("upload"), &json!([2])));
-    assert_eq!(stand.requests("MultipartUploadComplete"), 1);
-    let final_request = stand.asked().into_iter().find(|(name, _)| name == "UserPhotoUpdate").unwrap().1;
-    assert_eq!(final_request["input"]["signedId"].as_str(), Some("multipart-signed"));
-    assert_eq!(stand.requests("UserPhotoUpdate"), 1);
-    stand.release(&["UserPhotoUpdate"]);
-    bound(stand.database.confirmed(receipt)).await.unwrap();
-    stand.database.close_now();
+    assert_eq!((presigns[0]["uploadId"].as_str(), &presigns[0]["partNumbers"]), (Some("upload"), &json!([1])));
+    assert_eq!((presigns[1]["uploadId"].as_str(), &presigns[1]["partNumbers"]), (Some("upload"), &json!([2])));
+    assert_eq!(stand.script.count("CompleteMultipart"), 1);
+    let final_requests = stand.script.variables("CreateMoment");
+    assert_eq!(final_requests.len(), 1);
+    assert!(final_requests[0].to_string().contains("multipart-signed"));
+    final_mutation.release();
+    bound(database.confirmed(receipt)).await.unwrap();
+    database.close_now();
 }
 
 #[tokio::test(flavor = "multi_thread")]

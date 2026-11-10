@@ -173,6 +173,8 @@ pub(super) struct Put {
     pub(super) item: String,
     pub(super) step: crate::transport::TransferStep,
     pub(super) path: String,
+    pub(super) offset: u64,
+    pub(super) length: u64,
 }
 
 #[derive(Default)]
@@ -197,7 +199,7 @@ impl FakeTransport for Puts {
     async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.tokens.lock().unwrap().push(progress);
         let held = self.held.lock().unwrap().pop_front();
-        self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path });
+        self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path, offset: file.offset, length: file.length });
         if let Some(hold) = held {
             hold.entered.store(true, Ordering::SeqCst);
             crate::lock::effect(|| hold.signal.notify_waiters());
