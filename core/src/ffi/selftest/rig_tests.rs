@@ -52,6 +52,7 @@ pub(super) enum Fault {
     HoldThen(Arc<Gate>, Box<Fault>),
     Refuse { code: &'static str, confirmed: bool },
     Http(u16),
+    ResponseTooLarge(u64),
     Business,
     Answer(Value),
     /// The server answers 200 with a body that is no sealed answer.
@@ -305,6 +306,7 @@ impl World {
         };
         match pass_gate(fault).await {
             Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
+            Some(Fault::ResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
             Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
             Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
             Some(Fault::Unreadable) => return Ok("not json".into()),
@@ -346,6 +348,7 @@ impl FakeHttp for World {
         let mut sealed_sequence = sequence;
         match pass_gate(fault).await {
             Some(Fault::Http(status)) => return Ok(EncryptedReply { status, body: String::new() }),
+            Some(Fault::ResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
             Some(Fault::Business) => answer = json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
             Some(Fault::Answer(value)) => answer = value,
             Some(Fault::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),

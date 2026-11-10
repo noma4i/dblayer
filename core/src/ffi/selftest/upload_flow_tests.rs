@@ -55,6 +55,27 @@ fn local_url(rows: &Rows, id: &str, action: &str) -> Option<String> {
 
 fn puts(rig: &Rig) -> usize { rig.world.log().iter().filter(|entry| entry.operation == "PUT").count() }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_put_response_limit() {
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    settled(&rig, "the chat is visible", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    let limit = crate::transport::MAX_PUT_RESPONSE_BYTES;
+    rig.world.fail_next("PUT", Fault::ResponseTooLarge(limit));
+    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    let operation = receipt.operation.unwrap();
+    let result = bound(rig.database.confirmed(receipt)).await;
+    assert!(matches!(result, Err(crate::ffi::DbError::Rejected { .. })), "{result:?}");
+    settled(&rig, "the upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    let queue = crate::ffi::tests::queue_view_tests::queued(&rig.database);
+    let failure = queue.iter().find(|entry| entry.id.0 == operation).and_then(|entry| entry.error.as_ref()).expect("the failed operation keeps its error");
+    assert!(matches!(failure.kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
+    assert_eq!(puts(&rig), 1);
+    rig.database.close_now();
+}
+
 /// P-APP-08: the photo of a group goes through the steps of the project, the chat shows `uploads["update_photo"]` from the commit that queued it until the commit that ends it, and the logo of the answer after it.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_photo_upload() {
