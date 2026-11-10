@@ -78,19 +78,24 @@ impl RowWrite<'_> {
         Ok(result)
     }
 
+    pub fn admit(&mut self, model: &str, patch: &Map<String, Value>, kind: RowKind, admission: Admission) -> Result<Option<Map<String, Value>>, StoreError> {
+        let Some(id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
+        if kind == RowKind::Local { return Ok(Some(patch.clone())); }
+        self.prefetch(model, &[id.to_string()])?;
+        let mut stored = BTreeMap::new();
+        if let Some(row) = self.stored(model, id.as_str())? { stored.insert(id.to_string(), row); }
+        let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+        let reader = Reader::new(self.connection, self.models);
+        let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
+        admitted_with_fields(&reader, kind, admission, model, patch, spec, guards, self.feed_fields.get(model), self.feed_tombstones.get(model), Some(&stored))
+    }
+
     pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {
         let id = RowId::new(&row.row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let value: Value = serde_json::from_str(&row.values)?;
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
         let kind = if local { RowKind::Local } else { RowKind::Server };
-        let Some(patch_id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
-        self.prefetch(model, &[patch_id.to_string()])?;
-        let mut stored = BTreeMap::new();
-        if let Some(row) = self.stored(model, patch_id.as_str())? { stored.insert(patch_id.to_string(), row); }
-        let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
-        let reader = Reader::new(self.connection, self.models);
-        let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted_with_fields(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards, self.feed_fields.get(model), self.feed_tombstones.get(model), Some(&stored))? else { return Ok(None) };
+        let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: self.closing })? else { return Ok(None) };
         let mut envelope = BatchPlan::new(self.generation);
         envelope.response_rows = response;
         envelope.writes_local = local;

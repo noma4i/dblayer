@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::schema::{AssociationKind, PageDirection, RemoteShape};
 use crate::value::{fractional_between, read_id};
 
-use super::merge::{admitted_with_fields, unconfirmed_fields, Admission, RowKind};
+use super::merge::{unconfirmed_fields, Admission, RowKind};
 use super::row_write::RowWrite;
 use super::{Reader, StoreError};
 
@@ -64,7 +64,9 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         overlay.push((model.to_string(), id.to_string(), values));
         return Ok(None);
     }
-    let reader = Reader::new(writer.connection, writer.models);
+    let connection = writer.connection;
+    let models = writer.models;
+    let reader = Reader::new(connection, models);
     let mut envelope = BatchPlan::from_server(writer.generation);
     if op == "delete" {
         let owner = RowRef::new(ModelKey::new(model), id.clone());
@@ -76,15 +78,9 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
             envelope.operation_transitions.push(crate::store::OperationTransition::Remove { seq, expected: None });
         }
     } else if op == "upsert" {
-        let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
-        let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
         let key = (model.to_string(), id.to_string());
-        let mut stored = BTreeMap::new();
-        if let Some(Some(row)) = writer.current.get(&key) { stored.insert(id.to_string(), row.clone()); }
-        let fields = writer.feed_fields.get(model);
-        let tombstones = writer.feed_tombstones.get(model);
-        let Some(row) = admitted_with_fields(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, model, patch, spec, guards, fields, tombstones, Some(&stored))? else { return Ok(None) };
+        let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { return Ok(None) };
         let old = writer.current.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone());
         let owner = RowRef::new(ModelKey::new(model), id.clone());
         let rows: Vec<_> = std::iter::once(&row).chain(old.as_ref()).collect();
@@ -92,9 +88,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
-            let spec = &writer.models.get(related_model).ok_or_else(|| StoreError::UnknownModel(related_model.to_string()))?.spec;
-            let guards = writer.guards.get(related_model).map(Vec::as_slice).unwrap_or_default();
-            let Some(row) = super::merge::admitted(&reader, RowKind::Server, Admission { base: Some(writer.revision), closing: None }, related_model, patch, spec, guards)? else { continue };
+            let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
         let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
@@ -134,6 +128,11 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
     let mut wanted = BTreeMap::<String, Vec<String>>::new();
     for (model, payload) in &parsed {
         if let Some(id) = payload.get("id").and_then(Value::as_str) { wanted.entry((*model).clone()).or_default().push(id.to_string()); }
+        for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
+            if let (Some(model), Some(id)) = (related.get("model").and_then(Value::as_str), related.get("row").and_then(|row| row.get("id")).and_then(Value::as_str)) {
+                wanted.entry(model.to_string()).or_default().push(id.to_string());
+            }
+        }
     }
     let mut before = EventRows::new();
     for (model, ids) in wanted {

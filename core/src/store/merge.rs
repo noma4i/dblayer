@@ -53,10 +53,6 @@ pub(crate) enum RowKind {
     Server,
 }
 
-pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
-    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None, None, None)
-}
-
 pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
