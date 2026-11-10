@@ -36,6 +36,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `ChangeItem`, `ChangedRow`, `ChangeStream` (Swift), `AccountScope.changes` as a `Flow` (Kotlin)                                                               | [streams](live-data.md#streams)                                                                                                      |
 | `ModelDecoder` (Kotlin: the companion of a generated model)                                              | [streams](live-data.md#streams)                                                                                                      |
 | `DBSingleton` (Swift: a model with one record)                                                           | [streams](live-data.md#streams)                                                                                                      |
+| Reconnect after lost subscription events                                                                | [subscriptions](server-sync.md#subscriptions)                                                                                      |
 
 ## Queries
 
@@ -46,6 +47,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `load`, `beginLoad`, `LoadRequest`, `refresh`, `loadMore`, `loadAll`, `LoadMoreResult` | [remote relations are live too](live-data.md#remote-relations-are-live-too)         |
 | `edgeValues`, generated `<name>Edge`                                                   | [edge values](models.md#edge-values)                                                |
 | `readNode`, `readNodes` (Swift), generated node reads (Swift and Kotlin)                                          | [node reads](models.md#node-reads)                                                  |
+| `marker`, `tail`, prefix counts and sequence                                         | [media library marker and tail](models.md#media-library-marker-and-tail)            |
 
 ## Records and writes
 
@@ -56,6 +58,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `create`, `update`, `act`, `destroy`, `AccountScope.send`                           | [what a write does](writing-data.md#what-a-write-does), [writing without a network](writing-data.md#writing-without-a-network) |
 | `set` (ephemeral values), `setLocal` (local fields)                                 | [ephemeral fields](models.md#ephemeral-fields), [local fields](models.md#local-fields)                                         |
 | `MutationReceipt`, `ItemReceipt`, `OperationReceipt`, `Confirmed`, `Confirmed.value`, `Confirmed.answerJson`                 | [what the server answered](writing-data.md#what-the-server-answered)                                                           |
+| `confirmed(discardOnFailure:)` (Swift), `confirmed(discardOnFailure)` (Kotlin)      | [what the server answered](writing-data.md#what-the-server-answered)                                                           |
 | `retry`, `discard`, `OperationInfo`, `OperationQueueItem`, `OperationQueueStatus`   | [the queue of operations](sync-state.md#the-queue-of-operations)                                                               |
 | `OperationInfo.upload`, `OperationInfo.uploadInfo`                                  | [the queue of operations](sync-state.md#the-queue-of-operations)                                                               |
 
@@ -69,6 +72,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `AccountScope.upload(_:id:action:_:)` (Swift), `AccountScope.upload(decoder, id, action, request)` (Kotlin)             | [upload to a row that does not exist](files.md#upload-to-a-row-that-does-not-exist)                                                      |
 | `UploadRequest.pending`, `UploadSource`, `supplySource`, `failSource`                                                   | [deferred source](files.md#deferred-source)                                                                                              |
 | `UploadInfo`, `UploadStatus`, `UploadProcessing`                                                                        | [state](files.md#state)                                                                                                                  |
+| `multipart`, `roots` for `initiate`, `presign`, `complete`                                                             | [uploads of a record](files.md#uploads-of-a-record)                                                                                       |
 | `TransferProgress`, `TransferItem`, `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                | [rules](files.md#rules-1)                                                                                                                |
 | `cancelUpload`                                                                                                          | [rules](files.md#rules-1)                                                                                                                |
 
