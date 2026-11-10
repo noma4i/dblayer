@@ -18,6 +18,11 @@ struct Origins {
     invalid_groups: std::collections::BTreeSet<u64>,
 }
 
+#[cfg(test)]
+pub(super) fn restored_origin_count(connection: &rusqlite::Connection) -> Result<usize, super::StoreError> {
+    Ok(read_origins(connection)?.valid.len())
+}
+
 fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::StoreError> {
     let rows = connection.prepare(include_str!("sql/restore_read/read_origins_select_op.sql"))?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut origins = Origins::default();

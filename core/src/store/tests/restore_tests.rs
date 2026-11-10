@@ -1,6 +1,36 @@
 use super::fixtures::{booted_store, exec};
 use crate::owners::store::StoreOp;
 
+thread_local! { static ORIGIN_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn count_origin_query(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.trim_start().to_ascii_uppercase().starts_with("SELECT") { ORIGIN_QUERIES.with(|count| count.set(count.get() + 1)); }
+    }
+}
+
+fn origin_work(size: usize) -> usize {
+    let (store, _) = booted_store();
+    let connection = store.lock();
+    for index in 1..=size {
+        connection.connection.execute("INSERT INTO op (seq, action_key, status, created_at, since, origin_kind, transfer_id) VALUES (?1, 'messages:upload', 'pending', 0, 0, 'transfer', ?1)", [index as i64]).unwrap();
+        connection.connection.execute("INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id, cycle_id) VALUES ('messages', ?1, 'upload', 'queued', 'prepare', 0, 1, 0, ?2, ?2, 1)", rusqlite::params![format!("r{index}"), index as i64]).unwrap();
+    }
+    ORIGIN_QUERIES.with(|count| count.set(0));
+    connection.connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_origin_query));
+    let count = super::restore_read::restored_origin_count(&connection.connection).unwrap();
+    connection.connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    assert_eq!(count, size);
+    ORIGIN_QUERIES.with(|queries| queries.get())
+}
+
+#[test]
+fn store_restore_origins_work_linear() {
+    let small = origin_work(2);
+    let large = origin_work(40);
+    assert_eq!(small, large, "SQL query count must not grow with restored transfers");
+}
+
 fn discard(table: &str, key: &str) -> StoreOp {
     StoreOp::DiscardRestoreFailed { table: table.into(), key: key.into() }
 }
