@@ -190,3 +190,33 @@ fn win_page_admission_query_work() {
     };
     assert_eq!(measure(2), measure(40), "admission queries must not grow with page size");
 }
+
+thread_local! { static PAGE_TOMBSTONE_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn count_page_tombstones(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.starts_with("SELECT seq FROM tombstone") { PAGE_TOMBSTONE_QUERIES.with(|count| count.set(count.get() + 1)); }
+    }
+}
+
+#[test]
+fn win_page_tombstone_query_work() {
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreOp};
+    use serde_json::json;
+    let measure = |size: usize| {
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None).unwrap();
+        let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
+        let key = WindowKey::relation("messages", "thread", &params);
+        let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();
+        let page = StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        PAGE_TOMBSTONE_QUERIES.with(|count| count.set(0));
+        db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_page_tombstones));
+        db.write_queue_ops(&[page]).unwrap();
+        db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+        let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
+        assert_eq!(db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().len(), size);
+        PAGE_TOMBSTONE_QUERIES.with(|count| count.get())
+    };
+    assert_eq!(measure(2), measure(40), "tombstone queries must not grow with page size");
+}
