@@ -35,22 +35,24 @@ fn store_ordered_page_open_interval() {
     use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{RowValue, StoreOp};
     use serde_json::json;
-    for (seed, page_rows, expected) in [
-        (vec![("old", 2)], vec![("new1", 2), ("new2", 2)], vec!["new1", "new2", "old"]),
-        (vec![("low", 1), ("middle", 2), ("high", 3)], vec![("new_low", 1), ("new_high", 3)], vec!["high", "low", "new_high", "new_low"]),
-        (vec![("old", 2)], vec![("new", 2)], vec!["new", "old"]),
+    for (seed, page_rows, number, cursor, expected) in [
+        (vec![("old", 2)], vec![("new1", 2), ("new2", 2)], 1, Some("next"), vec!["new1", "new2", "old"]),
+        (vec![("low", 1), ("middle", 2), ("high", 3)], vec![("new_low", 1), ("new_high", 3)], 1, Some("next"), vec!["high", "low", "new_high", "new_low"]),
+        (vec![("old", 2)], vec![("new", 2)], 1, Some("next"), vec!["new", "old"]),
+        (vec![("old", 2)], vec![("new", 2)], 1, None, vec!["new"]),
+        (vec![("old", 2)], vec![("new", 2)], 2, None, vec!["new", "old"]),
     ] {
         let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
-        let page = |rows: &[(&str, i64)]| StoreOp::Window {
-            key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: Some("next".into()),
+        let page = |rows: &[(&str, i64)], page, cursor: Option<&str>| StoreOp::Window {
+            key: key.name.clone(), model: key.model.clone(), page, replace_all: false, cursor: cursor.map(str::to_string),
             roots: rows.iter().map(|(id, seq)| RowValue { row_id: (*id).into(), values: json!({"id": id, "chatId":"c1", "sequenceNumber":seq}).to_string() }).collect(),
             related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
         };
-        db.write_queue_ops(&[page(&seed)]).unwrap();
-        db.write_queue_ops(&[page(&page_rows)]).unwrap();
+        db.write_queue_ops(&[page(&seed, 1, Some("next"))]).unwrap();
+        db.write_queue_ops(&[page(&page_rows, number, cursor)]).unwrap();
         let mut members: Vec<_> = db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect();
         members.sort();
         assert_eq!(members, expected, "seed={seed:?}, page={page_rows:?}");
