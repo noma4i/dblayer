@@ -26,6 +26,41 @@ private extension OperationQueueStream {
 /// The queue of operations through its public API: `operations()` shows each write with its status, and `retry` takes the fields of an `OperationInfo`.
 extension BridgeProbeTests {
   @Test @MainActor
+  func bridge_discard_same_action_parity_c9() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: queueFeed)
+    transport.enqueue("UpdateMoment", reply: #"{"errors":[{"message":"refused","extensions":{"code":"FORBIDDEN"}}]}"#)
+    let held = transport.hold("UpdateMoment", reply: queueUpdated.replacingOccurrences(of: "edited", with: "second"))
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: try momentsKeepingUpdates(), transport: transport)
+    try await registerStandOperations(DB.database, defsJson: queueDefs)
+    let changes = Cursor(try await Moment.recent.live.stream())
+    try await Moment.feed.load()
+    let moment = try #require(await changes.first("the loaded moment") { $0.map(\.text) == ["m"] }?.first)
+    let scope = try DB.account()
+    let queue = Cursor(scope.operations().queues)
+    let first = try await moment.update(text: "first")
+    do {
+      _ = try await first.confirmed()
+      Issue.record("the first update was not refused")
+    } catch let DbError.Rejected(_, kept) {
+      #expect(kept)
+    }
+    try DB.database.setOnline(online: false)
+    let second = try await moment.update(text: "second")
+    #expect(await queue.first("both updates are present") { $0.count == 2 && $0.contains { $0.status == .failed } } != nil)
+    try await moment.discard(action: "update", in: scope)
+    let remaining = try #require(await queue.first("the failed update is gone") { $0.count == 1 && $0[0].status == .pending })
+    #expect(remaining[0].action == "update")
+    #expect(await changes.first("the waiting value remains") { $0.first?.text == "second" } != nil)
+    try DB.database.setOnline(online: true)
+    await held.entered()
+    held.release()
+    #expect(try await second.confirmed().value?.text == "second")
+    #expect(await changes.first("the confirmed value") { $0.first?.text == "second" } != nil)
+    #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
+  }
+
+  @Test @MainActor
   func anOfflineUpdateShowsInTheQueueAndLeavesItWhenTheNetworkReturns() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: queueFeed)
