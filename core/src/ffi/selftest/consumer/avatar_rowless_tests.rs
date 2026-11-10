@@ -108,6 +108,36 @@ async fn consumer_avatar_rowless_rejected() {
     stand.database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_retry_after_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+    stand.sign_in().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+    stand.answer("UserPhotoUpdate", good());
+    stand.script_put(200, Some("etag"));
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(receipt.optimistic_value.is_none());
+    assert!(matches!(bound(stand.database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
+    let items = operations(&stand).await;
+    assert_eq!(items.len(), 1);
+    let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+    assert_eq!(std::fs::read(&copy).unwrap(), b"jpeg-bytes");
+    assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "me".into())).await.unwrap().is_none());
+    let retried = bound(stand.database.retry(epoch, "CurrentUser".into(), "me".into(), Some("update_photo".into()), None)).await.unwrap();
+    assert!(retried.optimistic_value.is_none());
+    let confirmed = bound(stand.database.confirmed(retried)).await.unwrap();
+    assert!(matches!(confirmed.value, Some(ref row) if row.id == "u1"));
+    assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "u1".into())).await.unwrap().is_some());
+    assert_eq!(stand.requests("UserPhotoUpdate"), 2);
+    assert!(operations(&stand).await.is_empty());
+    stand.database.close_now();
+}
+
 /// The server has received the first request of `operation`.
 async fn arrived(stand: &Stand, operation: &str) {
     while stand.requests(operation) == 0 { stand.received(stand.asked().len() + 1).await; }
