@@ -10,7 +10,7 @@ fn user(id: &str) -> Value {
 }
 
 fn blocked(ids: &[&str]) -> Value {
-    let edges: Vec<Value> = ids.iter().map(|id| json!({"node": user(id)})).collect();
+    let edges: Vec<Value> = ids.iter().map(|id| { let mut node = user(id); node["country"] = Value::Null; json!({"node": node}) }).collect();
     json!({"viewer": {"blockedUsers": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": ids.len()}}})
 }
 
