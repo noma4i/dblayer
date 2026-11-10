@@ -22,7 +22,7 @@ pub(in super::super) fn apply_envelope_at(
     let mut followed = planned.clone();
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
-    super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed)?;
+    super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _)| &mut **current))?;
     let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {
         let reader = Reader::new(connection, models);

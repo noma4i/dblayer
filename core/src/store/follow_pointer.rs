@@ -24,17 +24,25 @@ struct Ops<'a> {
     entities: &'a mut Vec<EntityOp>,
     written: HashMap<RowRef, usize>,
     doomed: HashSet<RowRef>,
+    current: Option<&'a mut super::apply::Prefetched>,
 }
 
 impl Ops<'_> {
-    fn current(&self, reader: &Reader<'_>, parents: &Parents, parent: &RowRef) -> Result<Option<Row>, StoreError> {
+    fn current(&mut self, reader: &Reader<'_>, parents: &Parents, parent: &RowRef) -> Result<Option<Row>, StoreError> {
         if let Some(after) = parents.rows.get(parent) {
             return Ok(Some(after.clone()));
         }
         if let Some(EntityOp::Upsert { row, .. }) = self.written.get(parent).map(|index| &self.entities[*index]) {
             return Ok(Some(row.clone()));
         }
-        reader.point(parent.model.as_str(), parent.id.as_str())
+        self.load(reader, parent)
+    }
+
+    fn load(&mut self, reader: &Reader<'_>, row: &RowRef) -> Result<Option<Row>, StoreError> {
+        let Some(cache) = self.current.as_deref_mut() else { return reader.point(row.model.as_str(), row.id.as_str()) };
+        let key = (row.model.to_string(), row.id.to_string());
+        if !cache.contains_key(&key) { cache.insert(key.clone(), reader.stored_row(row.model.as_str(), row.id.as_str())?); }
+        Ok(cache.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone()))
     }
 
     fn set(&mut self, parents: &mut Parents, parent: RowRef, merged: Row) {
@@ -54,13 +62,13 @@ fn pointer_associations(models: &BTreeMap<String, ModelInfo>, model: &ModelKey) 
 }
 
 /// A parent row names its newest child in `sets`: a landing child advances the pointer, a replaced child renames it, a destroyed child hands it to the previous sibling.
-pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan) -> Result<(), StoreError> {
+pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, current: Option<&mut super::apply::Prefetched>) -> Result<(), StoreError> {
     let reader = Reader::new(connection, models);
     let mut parents = Parents::default();
     let written = envelope.entity_ops.iter().enumerate().filter(|(_, op)| matches!(op, EntityOp::Upsert { .. })).map(|(index, op)| (op.row_ref(), index)).collect();
     let doomed = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { .. })).map(EntityOp::row_ref).collect();
     let changes = envelope.entity_ops.clone();
-    let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed };
+    let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed, current };
     for op in changes {
         match op {
             EntityOp::Upsert { model, row, .. } => advance(models, &reader, &model, &row, &mut ops, &mut parents)?,
@@ -105,7 +113,7 @@ fn rename(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mod
     if associations.is_empty() {
         return Ok(());
     }
-    let Some(child) = reader.point(model.as_str(), id.as_str())? else { return Ok(()) };
+    let Some(child) = ops.load(reader, &RowRef::new(model.clone(), id.clone()))? else { return Ok(()) };
     for association in associations {
         let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id) else { continue };
         let Some(pointer) = association.pointer_field() else { continue };
@@ -129,7 +137,7 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
     if associations.is_empty() {
         return Ok(());
     }
-    let Some(child) = reader.point(model.as_str(), id.as_str())? else { return Ok(()) };
+    let Some(child) = ops.load(reader, &RowRef::new(model.clone(), id.clone()))? else { return Ok(()) };
     let child_spec = &models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     for association in associations {
         let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id).filter(|_| !association.newer.is_empty()) else { continue };
@@ -154,7 +162,7 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
             if ops.doomed.contains(&sibling) {
                 continue;
             }
-            previous = reader.point(model.as_str(), &sibling_id)?;
+            previous = ops.load(reader, &sibling)?;
             break;
         }
         let mut merged = current.clone();
