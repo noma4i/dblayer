@@ -534,6 +534,62 @@ fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usiz
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn call_prop_mutation_against_end_any_order() {
+    let mut permutations = Vec::new();
+    orders(&mut Vec::new(), &mut vec![0, 1, 2, 3, 4], &mut permutations);
+    let mut tasks = Vec::new();
+    for end in [End::Session, End::Close] {
+        for order in &permutations {
+            let order = order.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut twin = Twin::new();
+                let started = twin.feed(run_mutate(1));
+                assert!(matches!(started.effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]));
+                let mut answer = None;
+                let mut cancelled = false;
+                for event in &order {
+                    let input = match event {
+                        0 => response(1),
+                        1 => Input::Deadline { call_id: 1 },
+                        2 => Input::CallerCancel { reply: 1 },
+                        3 => Input::EpochEnded(end),
+                        _ => Input::Online(false),
+                    };
+                    let out = twin.feed(input);
+                    if answer.is_none() && !cancelled {
+                        if let Some((_, result)) = out.replies.first() {
+                            let expected = match event {
+                                0 => Ok("{}".to_string()),
+                                1 => Err(Fail::Network),
+                                3 if end == End::Close => Err(Fail::Closed),
+                                3 => Err(Fail::SessionEnded),
+                                _ => panic!("unexpected reply for order {order:?}"),
+                            };
+                            assert_eq!(*result, expected, "order {order:?}, end {end:?}");
+                            answer = Some(result.clone());
+                        } else if *event == 2 {
+                            cancelled = true;
+                        }
+                    } else {
+                        assert!(out.replies.is_empty(), "duplicate answer for order {order:?}");
+                    }
+                    if *event == 3 {
+                        assert!(out.effects.iter().all(|effect| !matches!(effect, RefEffect::Request { .. })), "request after end for order {order:?}");
+                        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } });
+                        twin.det.post(twin.addr, EpochStamp::Control, CallsInput::Online(Online(true)));
+                        twin.det.run_until_quiet(100).unwrap();
+                        assert!(take(&twin.log).iter().all(|effect| !matches!(effect, CallsEffect::Request { .. } | CallsEffect::Reply { .. })), "late input after end for order {order:?}");
+                        break;
+                    }
+                }
+                assert!(answer.is_some() || cancelled, "missing outcome for order {order:?}");
+            }));
+        }
+    }
+    for task in tasks { task.await.unwrap(); }
+}
+
 /// call_prop_second_epoch_orders: every order of EpochStarted (0), its addressed snapshot (1), the broadcast (2) and a run of the new epoch (3). The snapshot follows its request.
 #[test]
 fn call_prop_second_epoch_orders() {
