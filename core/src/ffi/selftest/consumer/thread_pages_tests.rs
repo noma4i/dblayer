@@ -234,3 +234,26 @@ async fn consumer_ordered_page_old_answer_after_delete() {
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(stand.requests("chatThread"), 4);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_queued_operation_server_delete() {
+    let (stand, history, _stream) = three_pages().await;
+    let (events, token) = stand.events("Message").await;
+    stand.hold(&["MessageUpdate"]);
+    let received = stand.asked().len();
+    let epoch = stand.database.session_epoch();
+    let receipt = bound(stand.database.update(epoch, "Message".into(), "m50".into(), r#"{"body":"edited"}"#.into(), "{}".into())).await.unwrap();
+    stand.received(received + 1).await;
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50"}));
+    let event = bound(events.pull_next()).await;
+    assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
+    let outcome = bound(stand.database.confirmed(receipt, false)).await;
+    assert!(matches!(outcome, Err(crate::ffi::DbError::Interrupted { ref detail }) if detail.to_lowercase().contains("discard")), "{outcome:?}");
+    stand.release(&["MessageUpdate"]);
+    stand.settle().await;
+    assert!(!ids(&history).contains(&"m50".to_string()));
+    let operations = stand.database.subscribe_values(epoch, ReadRequest::Operations);
+    let value = bound(operations.pull_next()).await;
+    assert!(matches!(value, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "{value:?}");
+    assert_eq!(stand.requests("MessageUpdate"), 1);
+}
