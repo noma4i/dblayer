@@ -48,12 +48,14 @@ suspend inline fun <reified Answer> MutationReceipt<*>.answer(): Answer {
     return dbJson.decodeFromString<Answer>(requireNotNull(confirmed().answerJson) { "the operation has no answer" })
 }
 
-suspend fun MutationReceipt<*>.refusal(): WireFailure = try {
+suspend fun MutationReceipt<*>.rejection(): DbException.Rejected = try {
     confirmed()
     error("the operation was not refused")
 } catch (rejected: DbException.Rejected) {
-    rejected.failure
+    rejected
 }
+
+suspend fun MutationReceipt<*>.refusal(): WireFailure = rejection().failure
 
 suspend fun MutationReceipt<*>.isRefused(): Boolean = try {
     confirmed()

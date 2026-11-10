@@ -359,7 +359,7 @@ class ClubTest {
             else transport.enqueue("CreateClub", DbException.Http(422.toUShort(), "refused"))
             openClubSession(transport, clubModels(keep))
             val receipt = Club.create(name = "friends")
-            withTimeout(5000) { receipt.refusal() }
+            assertEquals(keep, withTimeout(5000) { receipt.rejection() }.kept)
             assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
             assertEquals(if (keep) 1 else 0, Query("Club", Club).read().size)
         }

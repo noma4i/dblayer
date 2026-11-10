@@ -360,7 +360,7 @@ extension BridgeProbeTests {
     try await Self.openClubSession(transport, models: clubModels(keep: keep))
     let receipt = try await Club.create(name: "friends")
     let outcome = try await receipt.settled()
-    if case .rejected = outcome {} else { Issue.record("create was not rejected") }
+    if case let .rejected(_, kept) = outcome { #expect(kept == keep) } else { Issue.record("create was not rejected") }
     #expect(transport.calls.filter { $0.operationName == "CreateClub" }.count == 1)
     #expect(try await Query<Club>().read().count == (keep ? 1 : 0))
   }
