@@ -36,7 +36,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 ## 5. Writes
 
 - `Model.create(..., in: scope)` (`account = scope` in Kotlin) returns a receipt with the optimistic value, the revision and `confirmed()`. Every write waits in the queue while the network is away, so the app handles no offline error of a write. See [writing data](writing-data.md#writing-without-a-network).
-- `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions`, in this order.
+- `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order.
 - `FileInfo.size` is `UInt64` in Swift and `ULong` in Kotlin.
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a missing row fails with `NotFound`. See [files](files.md#rules-1).

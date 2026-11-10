@@ -299,7 +299,7 @@ The final content mutation does not hold a file permit.
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
 | `progress`                | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown                                                                                                                           |
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
-| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions`                                                                                                      |
+| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`                                                                                                      |
 | `localUrl`                | the file URL of the copy of the library while the transfer holds it, `nil` otherwise                                                                                                                         |
 | `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                           |
 
