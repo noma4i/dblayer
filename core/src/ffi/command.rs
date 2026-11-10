@@ -33,9 +33,7 @@ impl Database {
     /// Runs work admitted in the caller's epoch.
     pub(super) async fn in_epoch<T>(&self, epoch: u64, _target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         self.account_call(epoch)?;
-        let result = work.await;
-        self.close_after(epoch)?;
-        result
+        work.await
     }
 
     /// Reads the local database after admission in the caller's epoch.

@@ -401,17 +401,10 @@ impl Database {
         let mut cancel = CancelCall { life: self.life.clone(), reply: waiter.id().raw(), armed: true };
         let result = self.await_life(waiter).await;
         cancel.armed = false;
-        match result {
-            Err(error) => Err(error),
-            Ok(LifeReply::Call(Err(error @ (crate::owners::calls::CallError::SessionEnded | crate::owners::calls::CallError::Closed)))) => Err(call_failure(error)),
-            Ok(reply) => {
-                self.close_after(epoch)?;
-                match reply {
-                    LifeReply::Call(Ok(answer)) => Ok(answer),
-                    LifeReply::Call(Err(error)) => Err(call_failure(error)),
-                    _ => Err(foreign_reply()),
-                }
-            }
+        match result? {
+            LifeReply::Call(Ok(answer)) => Ok(answer),
+            LifeReply::Call(Err(error)) => Err(call_failure(error)),
+            _ => Err(foreign_reply()),
         }
     }
     /// Runs the blocking part of a call. The owners barrier counts the job until the call wakes.

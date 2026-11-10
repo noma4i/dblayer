@@ -294,7 +294,6 @@ impl Database {
             Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket).await,
             Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket).await,
         };
-        self.close_after(epoch)?;
         result
     }
 
