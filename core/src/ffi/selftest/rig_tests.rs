@@ -26,16 +26,18 @@ pub(super) async fn bound<T>(work: impl std::future::Future<Output = T>) -> T { 
 pub(super) struct Gate {
     account: Mutex<Option<String>>,
     entered: Notify,
+    has_entered: std::sync::atomic::AtomicBool,
     release: Semaphore,
 }
 
 impl Gate {
-    pub(super) fn new() -> Arc<Self> { Arc::new(Self { account: Mutex::new(None), entered: Notify::new(), release: Semaphore::new(0) }) }
+    pub(super) fn new() -> Arc<Self> { Arc::new(Self { account: Mutex::new(None), entered: Notify::new(), has_entered: std::sync::atomic::AtomicBool::new(false), release: Semaphore::new(0) }) }
     pub(super) async fn pass(&self) {
+        self.has_entered.store(true, std::sync::atomic::Ordering::SeqCst);
         self.entered.notify_one();
         self.release.acquire().await.unwrap().forget();
     }
-    pub(super) async fn entered(&self) { within_secs(BOUND, self.entered.notified()).await }
+    pub(super) async fn entered(&self) { crate::test_wait::signalled(&self.entered, "the request enters the gate", || self.has_entered.load(std::sync::atomic::Ordering::SeqCst)).await }
     pub(super) fn release(&self) { self.release.add_permits(1) }
     /// The held request carries rows of this account, whatever the server shows to the others.
     pub(super) fn as_account(self: &Arc<Self>, account: &str) -> Arc<Self> {

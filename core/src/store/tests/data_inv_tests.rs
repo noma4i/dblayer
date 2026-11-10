@@ -36,9 +36,9 @@ fn dlv_deferred_alias_after_log_evicted() {
     let baseline = db.read_view(&Query::new("moments"), false, 0, 0, None, None).unwrap().0;
     write(&db, BatchAuthor::Outbox, landed, swaps);
     for query in [Query::new("moments").filtered(Where::equal("id", json!("real-0"))), Query::new("moments")] {
-        let (_, _, replaced) = db.read_view(&query, false, baseline, baseline, None, None).unwrap();
+        let (_, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None).unwrap();
+        assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "real-0")), "the view must contain the real row");
         assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
-        assert!(db.find("moments", &crate::identity::RowId::new("real-0").unwrap()).unwrap().is_some());
     }
 }
 
@@ -48,7 +48,8 @@ fn dlv_swap_same_id_other_model() {
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"temp-1", "userId":"u1"}).to_string()), ("users".into(), json!({"id":"temp-1"}).to_string())], vec![]);
     let baseline = db.read_view(&Query::new("users"), false, 0, 0, None, None).unwrap().0;
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }]);
-    let (_, _, replaced) = db.read_view(&Query::new("users"), false, baseline, baseline, None, None).unwrap();
+    let (_, view, replaced) = db.read_view(&Query::new("users"), false, baseline, baseline, None, None).unwrap();
+    assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "temp-1")), "the other model keeps its row");
     assert!(replaced.is_empty(), "another model's alias must not be returned: {replaced:?}");
 }
 
