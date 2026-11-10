@@ -109,7 +109,7 @@ async fn chain_rig() -> (Rig, std::sync::Arc<ChainRows>, std::sync::Arc<crate::f
     let stream = rig.database.watch(crate::ffi::ReadRequest::List { query }, rows.clone());
     crate::test_wait::settled(&rig, "three media pages", || rows.rows.len() == 6).await;
     assert_eq!(*rows.has_more.lock().unwrap(), Some(false));
-    assert_eq!(rig.world.count("chatMedia"), 3);
+    assert_eq!(requests(&rig, "chatMedia"), 3);
     (rig, rows, stream)
 }
 
@@ -126,7 +126,7 @@ async fn win_chain_refresh_keeps_tail() {
     assert_eq!(*rows.has_more.lock().unwrap(), Some(false));
     let result = bound(rig.database.load_more(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     assert!(matches!(result, crate::ffi::LoadMoreResult::NoMore), "{result:?}");
-    assert_eq!(rig.world.count("chatMedia"), 3);
+    assert_eq!(requests(&rig, "chatMedia"), 3);
     let calls: Vec<Value> = rig.world.log().into_iter().filter(|entry| entry.operation == "chatMedia").map(|entry| serde_json::from_str::<Value>(&entry.body).unwrap()["variables"].clone()).collect();
     assert!(calls[0].get("after").is_none_or(Value::is_null), "{calls:?}");
     assert_eq!(calls[1]["after"], "2");
