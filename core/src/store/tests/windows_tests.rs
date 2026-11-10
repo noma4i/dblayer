@@ -195,7 +195,7 @@ thread_local! { static PAGE_TOMBSTONE_QUERIES: std::cell::Cell<usize> = const { 
 
 fn count_page_tombstones(event: rusqlite::trace::TraceEvent<'_>) {
     if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
-        if sql.starts_with("SELECT seq FROM tombstone") { PAGE_TOMBSTONE_QUERIES.with(|count| count.set(count.get() + 1)); }
+        if sql.starts_with("SELECT") && sql.contains("FROM tombstone WHERE model") { PAGE_TOMBSTONE_QUERIES.with(|count| count.set(count.get() + 1)); }
     }
 }
 
