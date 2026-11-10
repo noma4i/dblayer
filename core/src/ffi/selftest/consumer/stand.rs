@@ -48,6 +48,7 @@ struct Server {
     next_failures: StdMutex<HashMap<String, std::collections::VecDeque<DbError>>>,
     asked: StdMutex<Vec<(String, Value)>>,
     sequenced: StdMutex<Vec<(String, i64)>>,
+    request_ids: StdMutex<Vec<(String, Value)>>,
     contract: StdMutex<Contract<Value>>,
     conflicts: std::sync::atomic::AtomicUsize,
     held: tokio::sync::watch::Sender<HashSet<String>>,
@@ -57,7 +58,7 @@ struct Server {
 
 impl Default for Server {
     fn default() -> Self {
-        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), next_failures: StdMutex::default(), contract: StdMutex::new(Contract::adopting()), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
+        Server { answers: StdMutex::default(), next_answers: StdMutex::default(), next_failures: StdMutex::default(), contract: StdMutex::new(Contract::adopting()), conflicts: 0.into(), asked: StdMutex::default(), sequenced: StdMutex::default(), request_ids: StdMutex::default(), held: tokio::sync::watch::channel(HashSet::new()).0, answered: tokio::sync::watch::channel(0).0, received: tokio::sync::watch::channel(0).0 }
     }
 }
 
@@ -102,6 +103,7 @@ impl FakeHttp for Server {
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
             crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
             self.sequenced.lock().unwrap().push((operation.clone(), sequence.unwrap_or(0)));
+            self.request_ids.lock().unwrap().push((operation.clone(), request["requestId"].clone()));
             if let Admission::Refused(refusal) = admission {
                 if refusal["error"] == SEQUENCE_CONFLICT { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
@@ -196,6 +198,8 @@ impl Stand {
 
     /// Every request the server received, in order: the operation and its `sequence`.
     pub(super) fn sequenced(&self) -> Vec<(String, i64)> { self.server.sequenced.lock().unwrap().clone() }
+
+    pub(super) fn request_ids(&self) -> Vec<(String, Value)> { self.server.request_ids.lock().unwrap().clone() }
 
     /// How many times the core asked the server for the operation.
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
