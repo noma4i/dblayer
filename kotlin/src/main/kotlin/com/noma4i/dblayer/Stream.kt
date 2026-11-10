@@ -299,3 +299,6 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
         }
     }
 }
+
+/** The value `uploads[action]` of the active transfer this entry shows: the same value a row shows. `null` for an operation that is no transfer. */
+val OperationInfo.uploadInfo: UploadInfo? get() = upload?.let { UploadInfo.of(it) }

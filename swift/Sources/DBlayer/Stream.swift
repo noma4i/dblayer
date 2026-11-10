@@ -428,3 +428,8 @@ extension DB {
   public static func account() throws -> AccountScope { try AccountScope() }
 
 }
+
+extension OperationInfo {
+  /// The value `uploads[action]` of the active transfer this entry shows: the same value a row shows. `nil` for an operation that is no transfer.
+  public var uploadInfo: UploadInfo? { upload.map(UploadInfo.init(wire:)) }
+}
