@@ -678,6 +678,8 @@ async fn send_photo(stand: &Stand, request: WireUploadRequest) -> Result<crate::
 async fn consumer_second_upload_after_confirmed() {
     let stand = Stand::open().await;
     let directory = tempfile::tempdir().unwrap();
+    stand.answer("myProfile", json!({"viewer": viewer()}));
+    bound(stand.database.refresh(stand.database.session_epoch(), "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
     stand.answer_next("UserPhotoUpdate", json!({"data": photo_answer("First")}));
     stand.answer("UserPhotoUpdate", photo_answer("Second"));
