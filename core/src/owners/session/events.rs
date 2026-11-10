@@ -138,6 +138,7 @@ impl SessionState {
             },
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 if epoch != self.epoch { self.phase = phase; return; }
+                if cause == Cause::Close { self.phase = phase; return; }
                 if cause != Cause::SessionStarted || self.resume_published.is_none() {
                     self.end_resume(SessionError::NoSession, fx);
                 }
