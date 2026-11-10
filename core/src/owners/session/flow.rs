@@ -267,7 +267,7 @@ impl SessionState {
             let digest = self.credential.as_ref().map(|credential| credential.digest);
             if state == PublishedState::Session && identity.is_some() && identity == digest { self.deliver_resume(Ok(body), fx); }
             else if matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed) { self.deliver_resume(Err(SessionError::Storage("the session could not be saved".into())), fx); }
-            else if state == PublishedState::Ending { self.deliver_resume(Err(SessionError::Interrupted), fx); }
+            else if state == PublishedState::Ending { self.deliver_resume(Err(SessionError::NoSession), fx); }
             else { self.resume_published = Some(body); }
         }
         let Some(held) = self.after_publish.take() else { return };
@@ -276,7 +276,7 @@ impl SessionState {
         match held.wait {
             _ if failed => reply(fx, held.reply, Err(SessionError::Storage("the session could not be saved".into()))),
             PublishWait::Identity if state == PublishedState::Session && identity.is_some() && identity == digest => reply(fx, held.reply, held.result),
-            PublishWait::Identity if state == PublishedState::Ending => reply(fx, held.reply, Err(SessionError::Interrupted)),
+            PublishWait::Identity if state == PublishedState::Ending => reply(fx, held.reply, Err(SessionError::NoSession)),
             PublishWait::EpochAfter(ended) if matches!(state, PublishedState::Session | PublishedState::NoSession) && epoch > ended => reply(fx, held.reply, held.result),
             _ => self.after_publish = Some(held),
         }

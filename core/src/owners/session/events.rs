@@ -139,7 +139,7 @@ impl SessionState {
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 if epoch != self.epoch { self.phase = phase; return; }
                 if cause != Cause::SessionStarted || self.resume_published.is_none() {
-                    self.end_resume(SessionError::Interrupted, fx);
+                    self.end_resume(SessionError::NoSession, fx);
                 }
                 self.restored_direct = None;
                 self.restored_detached = None;
@@ -149,7 +149,7 @@ impl SessionState {
                 self.restore_error = None;
                 if is_ended(cause) {
                     if self.after_publish.as_ref().is_some_and(|held| held.wait == PublishWait::Identity) {
-                        if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Interrupted)); }
+                        if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::NoSession)); }
                     }
                     self.held = None;
                 }
@@ -163,8 +163,7 @@ impl SessionState {
     pub(super) fn on_epoch_ended(&mut self, phase: SessionPhase, epoch: Epoch, cause: Cause, fx: &mut Vec<SessionEffect>) {
         match phase {
             SessionPhase::Sealing { pending, .. } => {
-                let error = if pending.author.is_some() { SessionError::NoSession } else { SessionError::Interrupted };
-                finish(fx, &pending, Err(error));
+                finish(fx, &pending, Err(SessionError::NoSession));
                 self.refuse_queue(fx, SessionError::NoSession);
                 if is_ended(cause) { self.credential = None; }
                 self.phase = SessionPhase::Idle;
@@ -174,14 +173,14 @@ impl SessionState {
                 self.phase = SessionPhase::Idle;
             }
             SessionPhase::Generating { call, .. } if is_ended(cause) => {
-                refuse(fx, call.into(), SessionError::Interrupted);
+                refuse(fx, call.into(), SessionError::NoSession);
                 self.refuse_queue(fx, SessionError::NoSession);
                 self.credential = None;
                 self.phase = SessionPhase::Idle;
             }
             SessionPhase::Storing { call, credential_new, op, after } if is_ended(cause) => {
                 self.credential = None;
-                let after = if matches!(after, AfterStore::Drain) { AfterStore::Drain } else { AfterStore::Clear(SessionError::Interrupted) };
+                let after = if matches!(after, AfterStore::Drain) { AfterStore::Drain } else { AfterStore::Clear(SessionError::NoSession) };
                 self.phase = SessionPhase::Storing { call, credential_new, op, after };
             }
             SessionPhase::ClearingSecret { call, reason, op, after } => {
@@ -198,7 +197,7 @@ impl SessionState {
                     self.phase = phase;
                     return;
                 };
-                finish(fx, &pending, Err(SessionError::Interrupted));
+                finish(fx, &pending, Err(SessionError::NoSession));
                 if let SessionPhase::Calling { phase: AttemptPhase::InFlight(attempt_id), .. } = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
                 self.refuse_queue(fx, SessionError::NoSession);
                 self.credential = None;
