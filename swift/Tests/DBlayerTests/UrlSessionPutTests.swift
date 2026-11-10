@@ -3,13 +3,16 @@ import Testing
 @testable import DBlayer
 
 private final class AnswerProtocol: URLProtocol, @unchecked Sendable {
-  nonisolated(unsafe) static var body = Data()
+  private static let lock = NSLock()
+  private nonisolated(unsafe) static var bodies: [String: Data] = [:]
+  static func setBody(_ body: Data, for key: String) { lock.withLock { bodies[key] = body } }
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
     let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-    client?.urlProtocol(self, didLoad: Self.body)
+    let body = Self.lock.withLock { Self.bodies.removeValue(forKey: request.url!.absoluteString) ?? Data() }
+    client?.urlProtocol(self, didLoad: body)
     client?.urlProtocolDidFinishLoading(self)
   }
   override func stopLoading() {}
@@ -94,12 +97,13 @@ struct UrlSessionPutTests {
   func thePutAnswerBodyReachesTheCore(body: String) async throws {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [AnswerProtocol.self]
-    AnswerProtocol.body = Data(body.utf8)
+    let url = "https://example.com/\(UUID().uuidString)"
+    AnswerProtocol.setBody(Data(body.utf8), for: url)
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("0123".utf8).write(to: file)
     defer { try? FileManager.default.removeItem(at: file) }
     let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
-    let outcome = await transport.put(target: PutTarget(url: "https://example.com/part", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+    let outcome = await transport.put(target: PutTarget(url: url, headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 64 * 1024), file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
     #expect(outcome == .response(status: 200, etag: nil, body: body))
   }
 

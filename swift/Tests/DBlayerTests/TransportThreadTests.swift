@@ -6,10 +6,9 @@ import Testing
 struct TransportThreadTests {
   @Test(arguments: [false, true]) @MainActor
   func urlSessionTransportLoadsOffTheCallerThread(mutation: Bool) async throws {
-    let url = try #require(URL(string: "https://example.test/"))
+    let url = try #require(URL(string: "https://example.test/\(UUID().uuidString)"))
     let session = ThreadProbeProtocol.session()
     defer { session.invalidateAndCancel() }
-    ThreadProbeProtocol.reset()
     let transport = UrlSessionTransport(headers: { [:] }, session: session)
 
     let body = #"{"query":"\#(mutation ? "mutation" : "query") Ping { ping }","operationName":"Ping","variables":{}}"#
@@ -17,24 +16,18 @@ struct TransportThreadTests {
     let outcome = await transport.send(request: request)
 
     #expect(outcome == .response(status: 200, etag: nil, body: #"{"data":{"ping":"pong"}}"#))
-    #expect(ThreadProbeProtocol.loadedOnMain == [false])
+    #expect(ThreadProbeProtocol.loadedOnMain(url: url) == [false])
   }
 }
 
 private final class ThreadProbeProtocol: URLProtocol, @unchecked Sendable {
   private static let lock = NSLock()
-  private nonisolated(unsafe) static var main: [Bool] = []
+  private nonisolated(unsafe) static var main: [URL: [Bool]] = [:]
 
-  static var loadedOnMain: [Bool] {
+  static func loadedOnMain(url: URL) -> [Bool] {
     lock.lock()
     defer { lock.unlock() }
-    return main
-  }
-
-  static func reset() {
-    lock.lock()
-    defer { lock.unlock() }
-    main = []
+    return main.removeValue(forKey: url) ?? []
   }
 
   static func session() -> URLSession {
@@ -48,7 +41,7 @@ private final class ThreadProbeProtocol: URLProtocol, @unchecked Sendable {
 
   override func startLoading() {
     Self.lock.lock()
-    Self.main.append(Thread.isMainThread)
+    if let url = request.url { Self.main[url, default: []].append(Thread.isMainThread) }
     Self.lock.unlock()
     let body = Data(#"{"data":{"ping":"pong"}}"#.utf8)
     guard let url = request.url, let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:]) else { return }
