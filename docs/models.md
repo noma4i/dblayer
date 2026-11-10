@@ -590,12 +590,14 @@ val audio = Message.audioSince(chatId, afterSequence = 120)
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |
 | `preload`, `preload channel: ["lobby", "stage"]`, `preload vibeId: { from: "Vibe.list" }, limit: 40` | Automatically after session, reset, network return and leaving power saving. For `from`, a positive `limit` is required. The limit applies to unique windows of the parameter product. Parameters follow declaration order, ids follow the source scope. SQLite reads a bounded prefix, and source changes add incoming windows and cancel unneeded requests. Fresh windows are not requested again, errors go to the snapshot | no preload |
 | `scope :chat_members, members_complete: true do` | Automatic page chain, without `max_pages`. `settled` with `hasMore == false` only after the final `hasNextPage == false`. Full membership is stored in SQLite. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, the list is not complete | ordinary paged loading |
-| `refresh_on_foreground: true` (on the `scope` line, needs `query`) | a window that has a reader reloads on every foreground event, fresh or not | reloads only when stale |
+| `refresh_on_foreground: true` (on the `scope` line, needs `query`) | an online idle window with a reader reloads on foreground, whether fresh or stale | foreground alone does not reload the window |
 | `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
 | `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND | every row of the `where` columns |
 | `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts | none |
+
+`loadAll()` uses the window freshness and the pages already stored, then reads the remaining pages. `loadAll(force: true)` (Kotlin `force = true`) reloads the first page even when the window is fresh, then reads the remaining pages. Concurrent calls for the same window can share one request in flight. Offline, the load waits for the network.
 
 An operation name is a string like `"MomentsFeed"` or `"feed"`.
 
