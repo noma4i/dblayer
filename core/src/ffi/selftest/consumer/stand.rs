@@ -297,7 +297,7 @@ pub(super) fn message(id: &str, chat_id: &str, text: &str) -> Value {
 }
 
 pub(super) fn moment(id: &str, visits: i64) -> Value {
-    json!({"__typename": "Moment", "id": id, "uuid": format!("u-{id}"), "visitsCount": visits, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
+    json!({"__typename": "Moment", "id": id, "uuid": format!("u-{id}"), "kind": "BASIC", "status": "DRAFTED", "contentKind": "SAFE", "compassTitle": "", "compassUpdatedAt": null, "reacted": false, "shadowBanned": false, "shareUrl": "", "visitsCount": visits, "similarMomentsCount": 0, "unreadCount": null, "unreadSimilarMomentsCount": 0, "user": null, "media": null, "widgets": [], "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
 }
 
 impl crate::test_wait::Quiet for Stand {
