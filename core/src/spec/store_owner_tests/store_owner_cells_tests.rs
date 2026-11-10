@@ -95,6 +95,33 @@ fn store_commit_no_basis() {
     assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
 }
 
+/// store_commit_control (D-277, store.md): a Control batch of owner data (UploadOrphan, RemoveOrphan, no rows) is written whatever the epoch, and its reply keeps the Control stamp.
+#[test]
+fn store_commit_control() {
+    for stale in [false, true] {
+        let mut twin = Twin::live();
+        if stale { twin.send(StoreInput::EpochEnded(crate::owners::contract::EpochEnded { epoch: 1, cause: crate::runtime::Cause::ServerEnded })); }
+        let effects = twin.send(StoreInput::Commit(StoreBatch {
+            author: BatchAuthor::Transfer, id: 9, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
+            ops: vec![crate::owners::store::StoreOp::UploadOrphan { upload_id: "u1".into(), key: "Moment:r1:upload".into() }],
+        }));
+        assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Write { batch, .. } if batch.id == 9 && batch.stamp == crate::runtime::EpochStamp::Control)), "stale={stale}: the Control batch is written without an epoch check: {effects:?}");
+        assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(_), .. })), "stale={stale}: no refusal: {effects:?}");
+    }
+}
+
+/// store_commit_control_invalid (D-277): a Control batch with rows or an op outside UploadOrphan/RemoveOrphan is refused as Invalid.
+#[test]
+fn store_commit_control_invalid() {
+    let mut twin = Twin::live();
+    let effects = twin.send(StoreInput::Commit(StoreBatch {
+        author: BatchAuthor::Transfer, id: 9, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
+        ops: vec![crate::owners::store::StoreOp::RemoveUpload { key: "Moment:r1:upload".into() }],
+    }));
+    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { stamp: crate::runtime::EpochStamp::Control, reply: StoreReply::Rejected(RejectReason::Invalid), .. })), "an op of the epoch under a Control stamp is refused: {effects:?}");
+    assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
+}
+
 #[test]
 fn store_commit_arms_expiry() {
     let mut twin = Twin::live();
