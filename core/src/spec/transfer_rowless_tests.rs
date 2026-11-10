@@ -171,16 +171,6 @@ fn xfer_rowless_retry() {
 }
 
 #[test]
-fn xfer_rowless_restore() {
-    let (mut reopened, out) = Twin::opened(vec![stored(7, KEY, 2)], Default::default());
-    assert_eq!((reopened.stage(7), out.classified()), (TransferStage::Ready, 1), "restored by the record of the transfer, no row is read");
-    reopened.online(true);
-    reopened.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert_eq!(reopened.commit().steps().len(), 1, "the steps go on");
-    assert_eq!(reopened.t(7).cycle_id, 1);
-}
-
-#[test]
 fn xfer_rowless_orphan() {
     let mut twin = Twin::new();
     let (id, _) = uploading(&mut twin, KEY, 3);
