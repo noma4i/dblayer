@@ -21,3 +21,4 @@ mod matrix_window_landing_tests;
 mod session_end_tests;
 mod operations_mirror_tests;
 mod transcode_event_tests;
+mod avatar_rowless_tests;

@@ -2,7 +2,7 @@ use super::*;
 use crate::ffi::{OperationInfo, OperationQueueStatus};
 
 fn info(seq: i64, status: OperationQueueStatus) -> OperationInfo {
-    OperationInfo { seq, model: "Moment".into(), row_id: "r".into(), action: "update".into(), status, attempts: 0, error: None, created_at: 1, blocked_by: None }
+    OperationInfo { seq, model: "Moment".into(), row_id: "r".into(), action: "update".into(), status, attempts: 0, error: None, created_at: 1, blocked_by: None, upload: None }
 }
 
 fn queue_view() -> d::View {

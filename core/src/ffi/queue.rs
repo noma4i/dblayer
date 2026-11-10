@@ -11,7 +11,7 @@ pub enum OperationQueueStatus {
 }
 
 /// An operation of the queue. `model`, `row_id` and `action` are the arguments of `retry` and `discard`.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct OperationInfo {
     pub seq: i64,
     pub model: String,
@@ -23,6 +23,8 @@ pub struct OperationInfo {
     pub created_at: i64,
     /// The failed operation of the same row that this one waits behind.
     pub blocked_by: Option<i64>,
+    /// The value of `uploads[action]` of an active transfer, the same value the row shows.
+    pub upload: Option<super::wire::WireUpload>,
 }
 
 impl From<QueuedOperation> for OperationInfo {
@@ -32,6 +34,6 @@ impl From<QueuedOperation> for OperationInfo {
             QueueStatus::Sending => OperationQueueStatus::Sending,
             QueueStatus::Failed => OperationQueueStatus::Failed,
         };
-        Self { seq: queued.seq, model: queued.model, row_id: queued.row_id, action: queued.action, status, attempts: queued.attempts, error: queued.error.as_ref().map(failure), created_at: queued.created_at, blocked_by: queued.blocked_by }
+        Self { seq: queued.seq, model: queued.model, row_id: queued.row_id, action: queued.action, status, attempts: queued.attempts, error: queued.error.as_ref().map(failure), created_at: queued.created_at, blocked_by: queued.blocked_by, upload: None }
     }
 }
