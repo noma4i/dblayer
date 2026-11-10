@@ -265,7 +265,7 @@ async fn consumer_avatar_rowless_rejected() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN", "reasonCode": "no_face_detected"}}], "data": null}));
+    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN", "reasonCode": "no_face_detected"}}], "data": {"userPhotoUpdate": null}}));
     stand.script_put(200, Some("etag"));
     let directory = tempfile::tempdir().unwrap();
     let rows = stand.entity("CurrentUser", "u1", ReadFetch::Never);
@@ -300,7 +300,7 @@ async fn consumer_rowless_retry_after_refusal() {
     let epoch = stand.database.session_epoch();
     seed_moment(&stand).await;
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN", "reasonCode": "no_face_detected"}}], "data": {"userPhotoUpdate": null}}));
     stand.answer("UserPhotoUpdate", good());
     stand.script_put(200, Some("etag"));
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
@@ -495,7 +495,7 @@ async fn consumer_rowless_failed_expiry_removes_copy() {
     stand.sign_in().await;
     let epoch = stand.database.session_epoch();
     stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+    stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN", "reasonCode": "no_face_detected"}}], "data": {"userPhotoUpdate": null}}));
     stand.script_put(200, Some("etag"));
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     assert!(matches!(bound(stand.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
@@ -522,7 +522,7 @@ async fn consumer_rowless_upload_rejected_and_expired() {
         stand.sign_in().await;
         let epoch = stand.database.session_epoch();
         stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-        stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN"}}], "data": null}));
+        stand.answer_next("UserPhotoUpdate", json!({"errors": [{"message": "no face", "extensions": {"code": "FORBIDDEN", "reasonCode": "no_face_detected"}}], "data": {"userPhotoUpdate": null}}));
         stand.script_put(200, Some("etag"));
         let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
         assert!(matches!(bound(stand.database.confirmed(receipt.clone(), false)).await, Err(DbError::Rejected { kept: true, .. })));
