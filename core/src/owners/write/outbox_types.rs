@@ -255,7 +255,7 @@ pub enum CommitKind {
     Rollback,
     ErrorMark,
     ClearMark,
-    AttemptFailed,
+    Cause,
     Requeue,
     LocalWrite,
     RemoveRow,
@@ -343,10 +343,9 @@ pub struct QueuedOperation {
     pub failed_errors: BTreeMap<u64, String>,
     pub retry_uploads: Vec<crate::owners::store::UploadRow>,
     pub reject_error: Option<String>,
-    /// The cause of the last failed attempt the operation row records.
+    /// The cause of the last failed attempt and the one the operation row keeps.
     pub cause: Option<crate::value::sync::FailureKind>,
-    /// The failure of an attempt that the batch in flight records, with its cause.
-    pub failing: Option<Option<crate::value::sync::FailureKind>>,
+    pub cause_stored: Option<crate::value::sync::FailureKind>,
     /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
     pub cancels: Option<OpId>,
     pub before_cancel: Option<Stage>,
