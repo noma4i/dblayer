@@ -46,7 +46,7 @@ fn xfer_retry_source_marks_the_swap_in_the_row() {
     assert!(!out.rows().is_empty() && out.rows().iter().all(|(row, _)| row.staged), "the commit of the metadata carries the marker");
     twin.commit();
     let out = twin.post(TransferInput::StagedPromoted { transfer_id: id });
-    assert_eq!(out.staged_cleared(), vec![format!("{KEY}")], "after the rename the marker goes");
+    assert_eq!(out.staged_cleared(), vec![KEY.to_string()], "after the rename the marker goes");
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn xfer_restored_staged_finishes_the_swap() {
     let id = 1;
     assert_eq!((out.promotions(), out.deleted(), twin.stage(id) == TransferStage::Failed), (1, Vec::<String>::new(), false), "a crash between Committed and the rename does not end as missing_file");
     let out = twin.post(TransferInput::StagedPromoted { transfer_id: id });
-    assert_eq!(out.staged_cleared(), vec![format!("{KEY}")]);
+    assert_eq!(out.staged_cleared(), vec![KEY.to_string()]);
 }
 
 #[test]

@@ -74,6 +74,34 @@ async fn refresh_profile(database: &Database, epoch: u64) -> String {
     result_tag(database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await)
 }
 
+#[derive(Clone, Copy)]
+enum Wait { Run, SessionCall }
+
+/// D-279 (bridge.md:65, calls.md:80, lifecycle.md:573): a call and a session_call held at the server end with the cause of the end, like every other wait.
+async fn call_ended(wait: Wait, end: End) -> String {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let operation = match wait { Wait::Run => "MyProfile", Wait::SessionCall => "login_link" };
+    let gate = rig.world.hold_next(operation);
+    let database = rig.database.clone();
+    let call = rig.spawn(async move {
+        match wait {
+            Wait::Run => result_tag(database.run(epoch, "MyProfile".into(), "{}".into()).await),
+            Wait::SessionCall => result_tag(database.session_call("login_link".into(), serde_json::json!({"account":"B"}).to_string()).await),
+        }
+    });
+    gate.entered().await;
+    match end {
+        End::Close => rig.database.close_now(),
+        _ => bound(rig.database.session_reset()).await.unwrap(),
+    }
+    gate.release();
+    let observed = bound(call).await.unwrap();
+    if !matches!(end, End::Close) { rig.database.close_now(); }
+    observed
+}
+
 // --- load wait ---------------------------------------------------------------
 
 async fn load_closed() -> String {
@@ -224,6 +252,11 @@ async fn boundary_end_cause_per_wait() {
     matrix.check("stream pull", kind, "Closed", &cause_tag(&EndCause::Closed), &stream_closed().await);
     matrix.check("stream pull", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &stream_session_ended().await);
     matrix.check("stream pull", kind, "Cancelled", &cause_tag(&EndCause::Cancelled), &stream_cancelled().await);
+
+    matrix.check("call wait", kind, "Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::Run, End::Close).await);
+    matrix.check("call wait", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::Run, End::SessionEnd).await);
+    matrix.check("session_call wait", kind, "Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::SessionCall, End::Close).await);
+    matrix.check("session_call wait", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::SessionCall, End::SessionEnd).await);
 
     matrix.finish();
 }

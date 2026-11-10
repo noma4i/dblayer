@@ -147,7 +147,7 @@ fn xfer_orphan_abort_retry_later() {
     for status in [Some(503u16), None] {
         let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
         twin.online(true);
-        let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(super::ref_transfer::AbortFault { temporary: true, status }).map_err(Into::into) });
+        let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(super::ref_transfer::AbortFault { temporary: true, status }.into()) });
         assert!(Twin::quiet(&out), "{status:?}: a temporary failure writes nothing and sets no timer: {out:?}");
         twin.online(false);
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "{status:?}: the next network sends it again");
