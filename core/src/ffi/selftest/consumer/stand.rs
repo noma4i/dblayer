@@ -17,7 +17,7 @@ pub(super) const OPERATIONS: &str = include_str!("../../../../tests/corpus/consu
 
 struct Cable {
     peer: CablePeer,
-    puts: StdMutex<Vec<String>>,
+    puts: StdMutex<Vec<crate::transport::PutFile>>,
     put_script: StdMutex<VecDeque<(u16, Option<String>)>>,
     hold_put: std::sync::atomic::AtomicBool,
     put_started: tokio::sync::watch::Sender<usize>,
@@ -30,7 +30,7 @@ impl FakeTransport for Cable {
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, progress: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> {
-        self.puts.lock().unwrap().push(file.path.clone());
+        self.puts.lock().unwrap().push(file.clone());
         progress.sent(2);
         crate::lock::effect(|| self.put_started.send_modify(|count| *count += 1));
         if self.hold_put.swap(false, std::sync::atomic::Ordering::SeqCst) { self.put_release.notified().await; }
@@ -205,6 +205,8 @@ impl Stand {
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
 
     pub(super) fn puts(&self) -> usize { self.cable.puts.lock().unwrap().len() }
+
+    pub(super) fn put_files(&self) -> Vec<crate::transport::PutFile> { self.cable.puts.lock().unwrap().clone() }
 
     /// The next PUT the storage receives answers with `status` and `etag`; an unscripted PUT fails the test.
     pub(super) fn script_put(&self, status: u16, etag: Option<&str>) { self.cable.put_script.lock().unwrap().push_back((status, etag.map(str::to_string))); }
