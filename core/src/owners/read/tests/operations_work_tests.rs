@@ -149,3 +149,28 @@ fn dlv_evicted_alias_work_linear() {
     let large = alias_work(40);
     assert_eq!(small, large, "SQL query count must not grow with the prior rows");
 }
+
+fn restore_work(size: usize) -> usize {
+    let db = Store::open_models(None, all_specs(), None).unwrap();
+    {
+        let inner = db.lock();
+        for index in 0..size {
+            let mut op = operation(0, &format!("r{index}"), "update", OperationStatus::Pending);
+            crate::store::operation::append_operation(&inner.connection, &mut op, &json!({"text":"value"})).unwrap();
+        }
+    }
+    SQL.with(|count| count.set(0));
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
+    let entries = db.read(&[], crate::store::plan::read_outbox).unwrap();
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    assert_eq!(entries.len(), size);
+    assert!(entries.iter().all(|entry| entry.input == json!({"text":"value"}) && entry.rollback.is_none()));
+    SQL.with(|count| count.get())
+}
+
+#[test]
+fn dlv_restore_outbox_work_linear() {
+    let small = restore_work(2);
+    let large = restore_work(40);
+    assert_eq!(small, large, "SQL query count must not grow with restored operations");
+}
