@@ -159,3 +159,24 @@ async fn xfer_rowless_status_and_discover() {
     assert!(operations(&reopened).await.is_empty(), "the completed upload leaves the queue");
     reopened.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rowless_upload_session_reset_clears_pending_work() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.hold_put();
+    stand.script_put(200, Some("etag"));
+    let directory = tempfile::tempdir().unwrap();
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(receipt.optimistic_value.is_none());
+    stand.put_started().await;
+    assert_eq!(operations(&stand).await.len(), 1);
+    bound(stand.database.session_reset()).await.unwrap();
+    stand.release_put();
+    stand.settle().await;
+    assert_eq!(stand.requests("UserPhotoUpdate"), 0, "the old upload cannot send its final mutation");
+    stand.sign_in().await;
+    assert!(operations(&stand).await.is_empty(), "the old upload is removed after reset");
+    stand.database.close_now();
+}
