@@ -150,9 +150,6 @@ impl TransferState {
         if items.iter().any(|item| self.open_id(&item.key).is_some()) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
-        if let Some(index) = items.iter().position(|item| !item.row_exists) {
-            return reply(fx, rep, TransferAnswer::Err(Fault::NotFoundAt(index)));
-        }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
             self.create(item, group, now, TransferStage::Reserving)
         }).collect();

@@ -214,8 +214,6 @@ pub struct BatchItem {
     pub source: Option<Source>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
-    /// The row the action targets exists: an element of a batch with an update action needs it, a create action brings its own row.
-    pub row_exists: bool,
 }
 
 /// The refusal of an `abort`: `status` is the HTTP status of the answer, `None` when the call dropped before an answer.
