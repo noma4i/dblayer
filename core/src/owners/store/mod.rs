@@ -209,6 +209,13 @@ impl StoreState {
             StoreInput::Commit(batch) => {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::Commit(batch));
+                } else if batch.stamp == crate::runtime::EpochStamp::Control {
+                    if batch.rows.is_empty() && batch.ops.iter().all(|op| matches!(op, StoreOp::UploadOrphan { .. } | StoreOp::RemoveOrphan { .. })) {
+                        self.writing = Some(batch.clone());
+                        fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
+                    } else {
+                        fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid) });
+                    }
                 } else if batch.stamp != crate::runtime::EpochStamp::Epoch(self.epoch) {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::NoSession) });
                 } else if batch.models().iter().any(|model| !batch.basis.contains_key(model)) {

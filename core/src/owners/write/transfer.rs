@@ -243,6 +243,15 @@ impl TransferState {
         }
     }
 
+    /// The debt of a minted `upload_id` is data of the owner: it is written under `Control`, whatever epoch refused the write. `Closed` leaves the debt in memory, the next open writes it again.
+    fn write_control_orphan(&mut self, upload_id: String, key: String, fx: &mut Fx) {
+        let id = self.next_batch;
+        self.next_batch += 1;
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::ControlOrphan, orphan: Some((upload_id.clone(), key.clone())), written: BTreeMap::new() });
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::UploadOrphan { upload_id, key }] };
+        fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
     pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> Option<crate::owners::contract::BatchId> {
         if ops.is_empty() {
             return None;
@@ -419,7 +428,7 @@ impl TransferState {
             }
             return self.maybe_drained(fx);
         }
-        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
             self.minted.retain(|upload_id, debt| debt.transfer.is_none_or(|id| !pending.ids.contains(&id)) && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id));
             if let Some((upload_id, key)) = pending.orphan {
                 self.orphans.insert(upload_id, key);
@@ -479,7 +488,7 @@ impl TransferState {
         }
         if pending.kind == StoreKind::StagedCleared { return; }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
-        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
             let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
                 (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
                 (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
@@ -488,9 +497,12 @@ impl TransferState {
             let rescheduled = !matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession);
             if rescheduled {
                 self.owe_minted(&pending, fx);
-            } else if let (StoreKind::UploadId, Some((upload_id, key))) = (pending.kind, minted) {
-                self.orphans.insert(upload_id, key);
-                self.send_orphans(false, fx);
+            } else if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
+                let attempt_id = self.next_attempt;
+                self.next_attempt += 1;
+                self.minted.insert(upload_id, MintedDebt { transfer: None, key, attempts: 1, attempt_id });
+            } else if let (false, Some((upload_id, key))) = (pending.kind == StoreKind::ControlOrphan, minted) {
+                self.write_control_orphan(upload_id, key, fx);
             }
             return;
         }
@@ -752,7 +764,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
         StoreKind::StagedRestored => UploadKind::Failed,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,

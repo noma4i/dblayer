@@ -336,6 +336,8 @@ pub enum StoreKind {
     UploadId,
     /// The orphan record of a multipart upload minted after its transfer was removed.
     LateOrphan,
+    /// The orphan record of a minted `upload_id` written as data of the owner: the batch carries `Control`, so the end of the session does not refuse it.
+    ControlOrphan,
     /// The record of an orphan whose abort the server answered: it goes after `Committed`.
     OrphanRemoved,
     /// The shown value of a row: readers get it after `Committed`.
