@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `cableCloses` streams connection closures and their causes on Swift and Kotlin.
+
+### Changed
+
+- `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
+- `EndCause` replaces `ReadEnd` for stream termination.
+- `OperationOutcome.Ended` replaces `Interrupted` and carries the termination cause.
+- Swift `OperationOutcome.confirmed` names its value `confirmedValue`.
+
+### Fixed
+
+- Multipart abort debt survives session termination and database close.
+- Revoked responses end the session and preserve the appropriate call and load errors.
+- Call deadlines start when requests are accepted, including while awaiting network state.
+- Resolved outcomes retain their values when the session ends.
+- Uploads apply saved step refusals after a restart without sending the step again.
+- Upload retries preserve the previous copy when replacement fails.
+- Uploads resume retained request pairs after a restart without duplicating requests.
+- Upload outcomes from previous cycles cannot finish a newer cycle.
+- Removing one upload from a group preserves the other members and their mutation.
+- Retry and discard select the correct operation across upload group members.
+- Destroying an unsent creation discards its dependent queued operations.
+- Server responses cannot restore rows deleted after the request started.
+- Queued operations preserve server refusal details after a restart.
+- Queries retry replayed requests with a new request identifier.
+- Unauthenticated responses reach callers as `Unauthorized`.
+- Subscription errors close only the affected channel.
+- Empty pages with a continuation cursor preserve existing list members.
+- A source awaiting upload preparation no longer expires.
+- Stream and operation outcomes preserve their termination causes.
+
 ## 6.21.0 - 2026-11-09
 
 ### Changed
