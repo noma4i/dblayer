@@ -625,7 +625,7 @@ impl TransferState {
         match input {
             TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
             TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(*joint), reply, now, fx),
-            TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
+            TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } | TransferInput::ReservedFloor { .. } => {}
             TransferInput::AbortDone { upload_id, result } => self.abort_done(upload_id, result, fx),
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),
@@ -688,6 +688,7 @@ impl TransferState {
     /// `Restoring`: the calls on the keys of the base wait for `Restored`, the rest of the table works as in the other phases.
     fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
         match input {
+            TransferInput::ReservedFloor { transfer_id } => self.next_id = self.next_id.max(transfer_id.saturating_add(1)),
             TransferInput::Restored { uploads, outcomes, orphans, batches, held_orphan } if !self.ended => {
                 let owned: std::collections::BTreeSet<&String> = uploads.iter().filter_map(|row| row.upload_id.as_ref()).collect();
                 let (live, orphans): (Vec<_>, Vec<_>) = orphans.into_iter().partition(|(upload_id, _)| owned.contains(upload_id));

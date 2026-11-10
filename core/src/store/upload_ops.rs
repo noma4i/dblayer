@@ -35,6 +35,8 @@ fn error_columns(error: Option<&str>) -> (Option<&'static str>, Option<&str>) {
 }
 
 pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadKind) -> Result<(), StoreError> {
+    let transfer_id = i64::try_from(row.transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+    connection.execute(include_str!("sql/upload_ops/reserve_transfer_id.sql"), params![crate::store::ddl::TRANSFER_ID_KEY, transfer_id])?;
     let [model, id, action] = key_parts(&row.key)?;
     let (status, stage) = match kind {
         UploadKind::AwaitingSource => ("waiting", "prepare"),

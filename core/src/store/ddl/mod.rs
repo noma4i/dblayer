@@ -15,7 +15,8 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
-pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
+pub(crate) const TRANSFER_ID_KEY: &str = "transfer_id";
+pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 4] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY, TRANSFER_ID_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
 pub(crate) const CARRIED_TABLES: [&str; 16] = ["op", "op_transfer", "transfer_outcome", "op_row", "op_value", "op_error", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "local_pending", "restore_failed", "upload_orphan", "sync_upload_batch", "row_alias"];
 

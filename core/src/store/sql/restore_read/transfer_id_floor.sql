@@ -1,0 +1,1 @@
+SELECT MAX(id) FROM (SELECT CAST(value AS INTEGER) AS id FROM manifest WHERE key = ?1 UNION ALL SELECT transfer_id FROM sync_upload UNION ALL SELECT transfer_id FROM transfer_outcome UNION ALL SELECT transfer_id FROM op WHERE transfer_id IS NOT NULL UNION ALL SELECT transfer_id FROM op_transfer)

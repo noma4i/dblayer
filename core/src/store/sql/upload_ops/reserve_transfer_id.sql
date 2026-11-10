@@ -1,0 +1,1 @@
+INSERT INTO manifest (key, value) VALUES (?1, CAST(?2 AS TEXT)) ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), ?2) AS TEXT)
