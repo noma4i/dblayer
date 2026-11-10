@@ -55,7 +55,7 @@ struct RefusingHttp {
 impl super::FakeHttp for RefusingHttp {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<super::EncryptedReply, super::DbError> {
         let request = crate::transport::encrypted::tests::fake_server_tests::decrypt_request(&body).unwrap();
-        if request["body"]["operationName"].as_str().is_none() {
+        if path != "/api/ticket" && request["body"]["operationName"].as_str().is_none() {
             return super::FakeHttp::post(&self.session, path, body, purpose).await;
         }
         let status = if self.fatal.load(std::sync::atomic::Ordering::SeqCst) { 400 } else { 503 };
@@ -75,7 +75,8 @@ async fn wire_prop_retry_progress_one_source() {
     let server = FakeServer::new(clock.manual());
     let credentials = Arc::new(MemoryCredentials::default());
     let http = Arc::new(RefusingHttp { session: super::encrypted_tests::ThroughServer(server.clone()), fatal: std::sync::atomic::AtomicBool::new(false) });
-    let encrypted = super::EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
+    let mut encrypted = super::EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
+    encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
     let ports = super::OpenPorts {
         transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)),
         encrypted: Some(encrypted),
@@ -97,18 +98,17 @@ async fn wire_prop_retry_progress_one_source() {
 
     let created = database.create(epoch, "Moment".into(), "{\"text\":\"a\"}".into(), "{}".into()).await.unwrap();
     let row_id = created.optimistic_value.unwrap().id;
-    database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
     let window = tokio::spawn({ let db = database.clone(); async move { db.load(epoch, "Moment".into(), "feed".into(), "{}".into()).await } });
-    let session = tokio::spawn({ let db = database.clone(); async move { db.session_call("social".into(), super::session_guards_tests::SOCIAL_BODY.into()).await } });
 
     let progress = database.retry_progress();
     let reader = progress.subscribe();
     let waiting = loop {
-        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
-        if snapshot.waiting.len() == 4 { break snapshot; }
+        let Ok(snapshot) = tokio::time::timeout(std::time::Duration::from_secs(8), reader.next()).await else { panic!("the registry stalled before Window and Outbox backed off: {:?}", progress.current()) };
+        let snapshot = snapshot.unwrap();
+        if snapshot.waiting.len() == 2 { break snapshot; }
     };
     let owners: BTreeSet<RetryOwner> = waiting.waiting.iter().map(|entry: &RetryEntry| entry.owner).collect();
-    assert_eq!(owners, [RetryOwner::Session, RetryOwner::Window, RetryOwner::Outbox, RetryOwner::Transfer].into_iter().collect(), "one waiting entry per owner");
+    assert_eq!(owners, [RetryOwner::Window, RetryOwner::Outbox].into_iter().collect(), "one waiting entry per owner of the epoch that backs off at once");
     assert!(waiting.waiting.iter().all(|entry| entry.attempt == 1), "the first retry of each owner: {:?}", waiting.waiting);
 
     http.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -121,7 +121,37 @@ async fn wire_prop_retry_progress_one_source() {
     };
     assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
 
+    http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
+    database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
+    let transfer = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.len() == 1 { break snapshot; }
+    };
+    assert_eq!((transfer.waiting[0].owner, transfer.waiting[0].attempt), (RetryOwner::Transfer, 1), "the upload step backs off under its own owner once the pair of the queue is free: {transfer:?}");
+    http.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
+    clock.advance(transfer.waiting[0].delay_ms);
+    let drained = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.is_empty() { break snapshot; }
+    };
+    assert!(drained.waiting.is_empty(), "the tick removed the transfer entry: {drained:?}");
+
+    http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
+    let ticket = tokio::spawn({ let db = database.clone(); async move { db.session_call("ticket".into(), "{}".into()).await } });
+    let session = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.len() == 1 { break snapshot; }
+    };
+    assert_eq!((session.waiting[0].owner, session.waiting[0].attempt), (RetryOwner::Session, 1), "the direct sessionless call backs off under its own owner: {session:?}");
+    http.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
+    clock.advance(session.waiting[0].delay_ms);
+    let drained = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.is_empty() { break snapshot; }
+    };
+    assert!(drained.waiting.is_empty(), "the tick removed the session entry: {drained:?}");
+    assert!(crate::test_wait::within(ticket).await.unwrap().is_err(), "the permanent refusal ends the call");
+
     window.abort();
-    session.abort();
     database.close_database().await.unwrap();
 }

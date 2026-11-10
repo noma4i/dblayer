@@ -75,6 +75,23 @@ fn xfer_step_answer_restart() {
     );
 }
 
+/// xfer_step_answer_restored_err (D-246, transfer.md:108, lifecycle.md P-SESS-09): the saved answer of the pair is a refusal.
+/// On reopen the refusal is applied as the step answer without a second request: the held pair is cleared and a plain attempt is written, as xfer_step_answer_failed.
+#[test]
+fn xfer_step_answer_restored_err() {
+    use crate::store::session_state::StoredAnswer;
+    for saved_answer in [StoredAnswer::Http { status: 500 }, StoredAnswer::Unauthorized] {
+        let mut answered = saved();
+        answered.saved_answer = Some((STEP, saved_answer.clone()));
+        let (mut twin, _) = Twin::opened(vec![answered], Default::default());
+        twin.online(true);
+        let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        assert_eq!((ready.writes(), ready.steps().len(), twin.stage(1)), (1, 0, TransferStage::PersistingAttempt), "{saved_answer:?}: the saved refusal clears the held pair and writes a plain attempt, no second request: {ready:?}");
+        let started = twin.commit();
+        assert_eq!((started.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "{saved_answer:?}: the committed attempt sends one plain step");
+    }
+}
+
 #[test]
 fn xfer_step_answer_stray() {
     let mut twin = held();
