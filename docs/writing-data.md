@@ -94,39 +94,23 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), 
 
 A created row joins, at the front, the list of every remote scope whose parameters it carries and that has no constant variable filter, so a live list shows it at once. A loaded scope without parameters takes a created row when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`). A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Readers receive the swap as a `rewrite` edit that carries the `temporary` id, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
-Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `outcome()` waits for that operation alone.
+Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `confirmed()` waits for that operation alone.
 
 If the storage format changes, the library clears the server cache and keeps queued intentions.
 
 ```swift
 let receipt = try await user.update(name: name)
-let outcome = try await receipt.outcome()
+let confirmed = try await receipt.confirmed()
 ```
 
 ```kotlin
 val receipt = user.update(name = name)
-val outcome = receipt.outcome()
+val confirmed = receipt.confirmed()
 ```
 
-The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `ended` with cause `SessionEnded`.
+The result is retained while the receipt is held. A confirmed result contains the server value. A session end throws `NoSession`, a closed database throws `Closed`.
 
-```swift
-switch try await receipt.outcome() {
-case let .confirmed(confirmedValue: value, answerJSON: answer): show(value, answer)
-case let .rejected(failure: failure): showRefusal(failure)
-case let .ended(cause: cause): keep(cause)
-}
-```
-
-```kotlin
-when (val outcome = receipt.outcome()) {
-    is OperationOutcome.Confirmed -> show(outcome.confirmedValue, outcome.answerJson)
-    is OperationOutcome.Rejected -> showRefusal(outcome.failure)
-    is OperationOutcome.Ended -> keep(outcome.cause)
-}
-```
-
-`confirmed()` waits for the same operation and returns the value or throws. A refusal throws `Rejected` with the whole `OperationFailure` and `kept`: `true` when the failed change stays for `retry` or `discard`, `false` when it was rolled back. The end of the wait throws the error of its cause (`Closed`, `NoSession`).
+`confirmed()` returns the value or throws. A refusal throws `Rejected` with the whole `OperationFailure` and `kept`: `true` when the failed change stays for `retry` or `discard`, `false` when it was rolled back. The end of the wait throws the error of its cause (`Closed`, `NoSession`).
 
 ```swift
 do {
@@ -150,14 +134,12 @@ try {
 
 ```swift
 let receipt = try await Note.create(groupId: group.id, body: "hi", in: scope)
-let noteId = try await receipt.outcome().confirmedValue?.id
+let noteId = try await receipt.confirmed().value?.id
 ```
-
-The case is `.confirmed(confirmedValue:answerJSON:)` in Swift, and `confirmedValue` reads its first value.
 
 ```kotlin
 val receipt = Note.create(groupId = group.id, body = "hi", account = scope)
-val noteId = receipt.outcome().confirmedValue?.id
+val noteId = receipt.confirmed().value?.id
 ```
 
 A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: readers get a `rewrite` edit with the `temporary` id, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
@@ -313,13 +295,13 @@ end
 ```swift
 try await user.block()
 let sent = try await user.sendGift(giftId: "g1", chatId: chat.id)
-let outcome = try await sent.outcome()
+let confirmed = try await sent.confirmed()
 ```
 
 ```kotlin
 user.block()
 val sent = user.sendGift(giftId = "g1", chatId = chat.id)
-val outcome = sent.outcome()
+val confirmed = sent.confirmed()
 ```
 
 ## Writing without a network
@@ -328,12 +310,12 @@ Every write is queued durably. It writes the row at once, queues the request, an
 
 ```swift
 let sent = try await Message.create(chatId: chat.id, text: "hi", in: scope)
-let outcome = try await sent.outcome()   // .confirmed, .rejected, .ended
+let confirmed = try await sent.confirmed()   // throws Rejected, NoSession or Closed
 ```
 
 ```kotlin
 val sent = Message.create(chatId = chat.id, text = "hi", account = scope)
-val outcome = sent.outcome()             // Confirmed, Rejected, Ended
+val confirmed = sent.confirmed()             // throws Rejected, NoSession or Closed
 ```
 
 Every queued write shows in `operations()` with its status, and a refused write is retried from that list: see [the queue of operations](sync-state.md#the-queue-of-operations).
@@ -347,9 +329,9 @@ operation :typing, expires_after: 30 do
 end
 ```
 
-When the library picks a queued operation for its first send and its waiting time is over, it does not send it. An operation that was sent at least once is never expired. It rolls back the optimistic change and ends the operation with the outcome `rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
+When the library picks a queued operation for its first send and its waiting time is over, it does not send it. An operation that was sent at least once is never expired. It rolls back the optimistic change and ends the operation with the refusal `Rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
 
-`outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
+`confirmed()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
 A model with `storage: :local` writes rows that only this device holds, see [storage rules](storage-models.md).
 
 ## What the server answered
@@ -372,15 +354,15 @@ end
 
 ```swift
 let sent = try await user.sendReward(rewardId: "g1")
-let outcome = try await sent.outcome()
+let confirmed = try await sent.confirmed()
 ```
 
 ```kotlin
 val sent = user.sendReward(rewardId = "g1")
-val outcome = sent.outcome()
+val confirmed = sent.confirmed()
 ```
 
-The receipt retains its outcome. Fields omitted by the server, or returned with another type, are null in the answer JSON.
+The receipt retains its result. Fields omitted by the server, or returned with another type, are null in the answer JSON.
 
 `optimistic` is applied locally at once and rolled back if the server refuses. `refetch` marks the listed scopes stale after success. See [server sync](server-sync.md).
 
