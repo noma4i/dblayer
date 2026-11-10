@@ -26,6 +26,72 @@ fn commit(twin: &mut Twin, revision: i64) {
 }
 
 #[test]
+fn dlv_deferred_index_other_model() {
+    let (mut twin, first_ready) = temporary_entity(Fetch::Stale);
+    let second_ready = Arc::new(AtomicBool::new(false));
+    let signal = second_ready.clone();
+    let mut other = view(Kind::Entity(Fetch::Stale));
+    other.model = "User".into();
+    other.tables = vec!["users".into()];
+    other.window.model = "User".into();
+    other.subject = "temp-1".into();
+    other.remote = false;
+    other.live = false;
+    let mut real = other.clone();
+    real.subject = "real-user".into();
+    let deferred = d::Deferred { temps: vec!["temp-1".into()], rebind: d::Rebind::new(move || signal.load(Ordering::SeqCst).then(|| real.clone())) };
+    twin.post(d::DeliveryInput::Open { stream: STREAM + 1, view: other, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    take(&twin.log);
+    rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
+    let read_id = twin.state().read_id(STREAM + 1);
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM + 1, read_id, revision: 0, data: d::ReadData::Rows { rows: vec![d::StreamRow::new("temp-1", 0)], replaced: vec![], total: None } });
+    take(&twin.log);
+    first_ready.store(true, Ordering::SeqCst);
+    second_ready.store(true, Ordering::SeqCst);
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+    let effects = take(&twin.log);
+    assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { .. } }) if *stream == STREAM)), "{effects:?}");
+    assert!(!effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { .. } }) if *stream == STREAM + 1)), "{effects:?}");
+    assert!(!effects.iter().any(|effect| matches!(effect, Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") && input.contains("User"))), "{effects:?}");
+}
+
+#[test]
+fn dlv_deferred_index_released() {
+    for ending in ["cancel", "release", "sink", "epoch", "closing"] {
+        let (mut twin, ready) = temporary_entity(Fetch::Stale);
+        take(&twin.log);
+        rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
+        take(&twin.log);
+        match ending {
+            "cancel" => twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 }),
+            "release" => twin.post(d::DeliveryInput::Release { stream: STREAM, reader: None, now: crate::runtime::Time(0) }),
+            "sink" => twin.post(d::DeliveryInput::SinkClosed { stream: STREAM }),
+            "epoch" => { twin.det.end_epoch(EPOCH, Ended::SessionReset); twin.run(); }
+            "closing" => { twin.det.close(); twin.run(); }
+            _ => unreachable!(),
+        }
+        take(&twin.log);
+        ready.store(true, Ordering::SeqCst);
+        twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+        let effects = Twin::modelled(take(&twin.log));
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Read(_) | Effect::InterestPlus)), "{ending}: {effects:?}");
+    }
+
+    let (mut twin, ready) = temporary_entity(Fetch::Stale);
+    take(&twin.log);
+    rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
+    take(&twin.log);
+    ready.store(true, Ordering::SeqCst);
+    commit(&mut twin, 1);
+    take(&twin.log);
+    rows(&mut twin, 1, vec![d::StreamRow::new("real-1", 1)], vec![("temp-1".into(), "real-1".into())]);
+    take(&twin.log);
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 2, revision: 2, tables: vec!["moments".into()], rows: Some([("moments".into(), "temp-1".into())].into()), models: Models::default(), stale_parents: Vec::new(), position: 2, shown: Vec::new(), files_removed: 0 }));
+    let effects = Twin::modelled(take(&twin.log));
+    assert!(!effects.iter().any(|effect| matches!(effect, Effect::Read(_) | Effect::InterestPlus)), "{effects:?}");
+}
+
+#[test]
 fn dlv_open_entity_temp() {
     let (mut twin, _) = temporary_entity(Fetch::Stale);
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
