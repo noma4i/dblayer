@@ -89,11 +89,11 @@ fn exported_calls() -> Vec<String> {
 }
 
 /// Calls that carry no model and no row: they have no admission steps 3 to 5.
-const WITHOUT_ROW: [&str; 26] = [
+const WITHOUT_ROW: [&str; 27] = [
     "retry_progress",
     "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch",
     "interrupted_session_answer", "session_reset", "session_call", "set_round_jobs", "round_started", "round_refused", "round_ended", "outcome",
-    "call", "cable_closes", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch",
+    "call", "cable_closes", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch", "confirmed",
 ];
 
 async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
@@ -243,6 +243,29 @@ async fn matrix_call_admission_2() { admission_group(2).await; }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn matrix_call_admission_3() { admission_group(3).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn matrix_call_admission_receipt() {
+    use crate::ffi::receipt::{Ticket, WireReceiptTicket};
+    let rig = Rig::encrypted_with_options(false, true).await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let receipt = bound(rig.database.send(message(epoch, "present", 1))).await.unwrap();
+    let other = Rig::encrypted().await;
+    other.login_ios("B").await;
+    assert!(matches!(bound(other.database.confirmed(receipt.clone(), false)).await, Err(DbError::Invalid { .. })));
+    bound(other.database.close_database()).await.unwrap();
+    assert!(matches!(bound(other.database.confirmed(receipt.clone(), false)).await, Err(DbError::Closed { .. })));
+
+    let held = &receipt.ticket;
+    let Some(Ticket::Outbox(mut unknown)) = held.ticket.clone() else { panic!("expected an Outbox receipt") };
+    unknown.op_id = i64::MAX as u64;
+    let ticket = WireReceiptTicket { ticket: Some(Ticket::Outbox(unknown)), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: Some(i64::MAX), revision: held.revision, optimistic_value: held.optimistic_value.clone() };
+    let missing = crate::ffi::WireOperationReceipt { operation: Some(i64::MAX), ticket: Arc::new(ticket), ..receipt.clone() };
+    assert!(matches!(bound(rig.database.confirmed(missing, false)).await, Err(DbError::NotFound { .. })));
+    bound(rig.database.session_reset()).await.unwrap();
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::NoSession { .. })));
+}
 
 /// The upload calls run on the stand of uploads: a process keeps one open database, so the stand is closed for the last row.
 #[tokio::test(flavor = "multi_thread")]
