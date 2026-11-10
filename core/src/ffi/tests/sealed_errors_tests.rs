@@ -84,8 +84,8 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     if code == SessionCode::Unauthenticated {
                         assert!(matches!(error, DbError::Unauthorized { .. }), "{case}: {error:?}");
                     } else if code == SessionCode::SessionEnded {
-                        let expected_end = if entry == "load" || entry == "refresh" { matches!(error, DbError::NoSession { .. }) } else { matches!(error, DbError::Interrupted { .. }) };
-                        assert!(expected_end, "{case}: a revoked answer ends the epoch of the author: a load wait ends with NoSession, a call with Interrupted (D-278, D-263, calls.md:80): {error:?}");
+                        let expected_end = matches!(error, DbError::NoSession { .. });
+                        assert!(expected_end, "{case}: a revoked answer ends the epoch of the author and every wait of it ends with NoSession (D-278, D-279, bridge.md:65): {error:?}");
                         let life = database.life_handle();
                         crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
                         assert_eq!(rig.credentials.inner.value(), None, "{case}: the published server end erases the session");

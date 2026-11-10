@@ -189,7 +189,7 @@ fn sess_wait_resume() {
     ended.start();
     ended.send(ask_answer(1));
     let effects = ended.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
-    assert_eq!(effects.iter().filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [&answer(1, Err(SessionError::Interrupted))]);
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [&answer(1, Err(SessionError::NoSession))], "D-279: the waiter of a resumed answer learns the end of the epoch as NoSession");
 
     let mut closed = Rig::new();
     closed.restore();

@@ -83,7 +83,7 @@ fn sess_sealing_epoch_ended() {
         let id = begin(&mut state, author);
         let effects = step(&mut state, SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
         if author { assert!(matches!(effects.as_slice(), [SessionEffect::Answer { outcome: AuthorOutcome::Error { error: SessionError::NoSession, .. }, .. }])); }
-        else { assert!(matches!(effects.as_slice(), [SessionEffect::Reply { id: 9, answer: Err(SessionError::Interrupted) }])); }
+        else { assert!(matches!(effects.as_slice(), [SessionEffect::Reply { id: 9, answer: Err(SessionError::NoSession) }]), "D-279: the author call in flight ends with the session: {effects:?}"); }
         assert!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 1 }).is_empty());
     }
 }

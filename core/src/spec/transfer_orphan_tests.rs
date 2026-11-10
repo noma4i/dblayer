@@ -108,6 +108,40 @@ fn xfer_restored_orphan_answer() {
     assert!(twin.online(true).orphan_aborts().is_empty(), "an answered abort is not sent again");
 }
 
+/// transfer.md:13, 330-331 (D-280): a restored abort answer that carries errors or no root is a refusal, the debt stays and no RemoveOrphan is written.
+#[test]
+fn xfer_restored_orphan_answer_refused() {
+    for body in ["{\"errors\":[{\"message\":\"no\"}]}", "{}"] {
+        let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+        twin.online(true);
+        let request_id = crate::owners::write::wire::abort_request_id("u9");
+        let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: body.into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
+        assert!(out.orphans_removed().is_empty(), "{body}: an unconfirmed abort keeps the debt: {out:?}");
+    }
+}
+
+/// store.md:93-95, transfer.md:458-459 (D-277): the Control batch of a minted debt refused with Storage is written again by its timer after the epoch ended, as a Control batch.
+#[test]
+fn xfer_minted_control_rewritten_after_end() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    minted(&mut twin, id, "u1");
+    let refused = twin.reject(RejectReason::NoSession);
+    assert_eq!(refused.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt goes to the Store as a Control batch");
+    let ended = twin.end_epoch();
+    assert!(ended.orphans_written().is_empty(), "the end of the epoch writes the pending debt no second time: {ended:?}");
+    let storage = twin.reject(RejectReason::Storage("busy".into()));
+    assert_eq!((storage.orphans_written().len(), storage.timers, storage.orphan_aborts().len()), (0, 1, 0), "a Storage refusal of the Control batch arms the retry of the write: {storage:?}");
+    let again = minted_due(&mut twin, "u1");
+    let control: Vec<_> = again.batches.iter().filter(|batch| batch.stamp == crate::runtime::EpochStamp::Control).collect();
+    assert_eq!((control.len(), again.orphans_written()), (1, vec![("u1".to_string(), KEY.to_string())]), "the ended epoch does not suppress the write and the batch is Control: {again:?}");
+    twin.commit();
+    twin.close();
+    let mut reopened = orphan_restart(vec![("u1".into(), KEY.into())]);
+    assert_eq!(reopened.online(true).orphan_aborts(), vec!["u1".to_string()], "the durable debt is aborted once after the restart");
+}
+
 #[test]
 fn xfer_orphan_abort_retry_later() {
     for status in [Some(503u16), None] {
