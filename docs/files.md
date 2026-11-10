@@ -7,28 +7,25 @@ attribute :media, :file, null: true
 ```
 
 ```swift
-let info = try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")   // FileInfo
-let data = try await moment.read(.media)
-let url  = try await moment.url(.media)     // local file URL for a player or viewer
+let info = try await moment.attach(.media, source: fileURL, name: "a.png", mime: "image/png")   // FileInfo, fileURL is a local file URL
+let url  = try await moment.url(.media)     // local file URL for a player or viewer, read the bytes from it
 try await moment.detach(.media)
 ```
 
 ```kotlin
-val info = moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")   // FileInfo
-val data = moment.read(Moment.media)
+val info = moment.attach(Moment.media, source = file, name = "a.png", mime = "image/png")   // FileInfo, file is a local java.io.File
 val uri  = moment.url(Moment.media)         // java.net.URI of a local file for a player or viewer
 moment.detach(Moment.media)
 ```
 
 | Call     | Result                                                                   |
 | -------- | ------------------------------------------------------------------------ |
-| `attach` | stores the file and replaces the previous one for that row and field     |
+| `attach` | copies the local file and replaces the previous one for that row and field |
 | `file`   | `FileInfo`: id, name, mime type, size, sha256                            |
-| `read`   | the bytes                                                                |
 | `url`    | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand |
 | `detach` | removes the file                                                         |
 
-You do not decide where bytes live. Small files are kept inside the database, large ones next to it, and the library may move them. The API has no paths to storage and no size thresholds.
+The library copies the source file in pieces of 1 MiB. It holds at most one piece of a large file in memory. A source that cannot be read fails with `Storage`. You do not decide where bytes live. Small files are kept inside the database, large ones next to it, and the library may move them. The API has no paths to storage and no size thresholds.
 
 ## Rules
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Attach file fields from a local file path.
+- Read file fields through their local URLs.
+
 ## 6.22.0 - 2026-11-10
 
 ### Added

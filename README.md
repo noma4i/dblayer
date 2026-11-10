@@ -126,7 +126,7 @@ struct FeedView: View {
 }
 
 let moment = try await Moment.create(text: "hello", in: scope).optimisticValue   // shown at once, queued, synced
-try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")   // typed file call
+try await user.attach(.avatar, source: fileURL, name: "a.png", mime: "image/png")   // typed file call
 ```
 
 ### Kotlin
@@ -138,7 +138,7 @@ class FeedModel(me: User, scope: AccountScope) : ViewModel() {
 }
 
 val moment = Moment.create(text = "hello", account = scope).optimisticValue   // shown at once, queued, synced
-user.attach(User.avatar, data = bytes, name = "a.png", mime = "image/png")   // typed file call
+user.attach(User.avatar, source = file, name = "a.png", mime = "image/png")   // typed file call
 ```
 
 ### Encrypted sign-in
