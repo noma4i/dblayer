@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use super::bridge_support_tests::message;
 use super::rig_tests::{Fault, Rig};
 use super::upload_stand::{clip, Answer, Stand, BLOB, CREATE_MOMENT};
-use crate::ffi::{DbError, WireOperationOutcome};
+use crate::ffi::DbError;
 use crate::test_matrix::Matrix;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -95,7 +95,7 @@ async fn drive_upload(path: Path, faults: Vec<Fault>) -> String {
     let database2 = database.clone();
     let mut call = tokio::spawn(async move {
         let receipt = match database2.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
-        match database2.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(_) => "Err:Rejected".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
+        match database2.confirmed(receipt).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
     });
     let mut armed = clock.armed();
     let result = loop {
@@ -125,7 +125,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
         Path::UploadStep | Path::UploadFinal => unreachable!("the upload paths run on their own stand"),
         Path::OutboxSend => rig.spawn(async move {
             let receipt = match database.send(message(epoch, "m", 1)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
-            match database.outcome(receipt).await { Ok(WireOperationOutcome::Confirmed { .. }) => "Ok".to_string(), Ok(WireOperationOutcome::Rejected { .. }) => "Err:Rejected".to_string(), Ok(WireOperationOutcome::Ended { cause }) => format!("Err:Ended:{cause:?}"), Err(error) => format!("Err:{}", tag(&error)) }
+            match database.confirmed(receipt).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
         }),
     };
     let mut armed = rig.clock.armed();

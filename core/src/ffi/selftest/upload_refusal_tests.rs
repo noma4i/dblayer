@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState, WireUploadStatus};
-use crate::ffi::{Database, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
+use crate::ffi::{Database, DbError, WireOperationReceipt, WireReceiptTicket};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled;
 
@@ -48,7 +48,7 @@ async fn xfer_prop_failure_carries_step_error() {
 
     let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap();
     let id = sent.optimistic_value.clone().unwrap().id;
-    assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.message == "BLOB_REFUSED" && failure.kind == "rejected"));
+    assert!(matches!(bound(database.confirmed(sent)).await, Err(DbError::Rejected { failure, kept: true }) if failure.message == "BLOB_REFUSED" && failure.kind == "rejected"));
 
     until_state(&database, &id, WireSyncState::Failed).await;
     let failed = row(&database, &id).await.unwrap();
@@ -112,7 +112,7 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
 
     let receipt = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
     let id = receipt.optimistic_value.clone().unwrap().id;
-    assert!(matches!(bound(database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+    assert!(matches!(bound(database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
 
     assert_eq!(row(&database, &id).await.map(|row| row.sync.state), Some(WireSyncState::Failed));
     bound(database.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
@@ -131,7 +131,7 @@ async fn a_send_that_landed_before_the_accepted_row_is_read_gives_the_landed_row
     stand.script.data("CreateMoment", ROW);
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let WireOperationOutcome::Confirmed { value: Some(landed), .. } = bound(database.outcome(sent)).await.unwrap() else { panic!("the transfer is confirmed with its row") };
+    let landed = bound(database.confirmed(sent)).await.unwrap().value.expect("the transfer is confirmed with its row");
     assert_eq!((landed.id, landed.sync.state), ("m1".to_string(), WireSyncState::Synced));
     database.close_now();
 }
@@ -160,7 +160,7 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let receipt_revision = held.revision;
     let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None };
     let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
-    let WireOperationOutcome::Confirmed { value, .. } = bound(database.outcome(late)).await.unwrap() else { panic!("the retry was not confirmed") };
+    let value = bound(database.confirmed(late)).await.unwrap().value;
     let shown = value.map(|row| (row.id, row.sync.state));
     if shown.is_none() {
         let found = |row: &str| crate::ffi::database::id(row).ok().map(|row| database.optimistic("Moment", &row).map(|row| row.map(|row| (row.id, row.sync.state))));

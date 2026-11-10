@@ -120,8 +120,8 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
-    let failed = crate::test_wait::within(database.outcome(created.clone())).await;
-    assert!(matches!(failed, Ok(crate::ffi::receipt::WireOperationOutcome::Rejected { .. })), "the fatal attempt of the queue ends the operation before the network recovers: {failed:?}");
+    let failed = crate::test_wait::within(database.confirmed(created.clone())).await;
+    assert!(matches!(failed, Err(crate::ffi::DbError::Rejected { kept: true, .. })), "the fatal attempt of the queue ends the operation before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
     let uploaded = database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
@@ -137,8 +137,8 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "the tick removed the transfer entry: {drained:?}");
-    let failed = crate::test_wait::within(database.outcome(uploaded.clone())).await;
-    assert!(matches!(failed, Ok(crate::ffi::receipt::WireOperationOutcome::Rejected { .. })), "the fatal attempt of the upload ends it before the network recovers: {failed:?}");
+    let failed = crate::test_wait::within(database.confirmed(uploaded.clone())).await;
+    assert!(matches!(failed, Err(crate::ffi::DbError::Rejected { kept: true, .. })), "the fatal attempt of the upload ends it before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
     let ticket = tokio::spawn({ let db = database.clone(); async move { db.session_call("ticket".into(), "{}".into()).await } });
