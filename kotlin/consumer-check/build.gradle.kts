@@ -13,6 +13,10 @@ dependencies {
   implementation(project(":"))
 }
 
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+  compilerOptions.allWarningsAsErrors.set(true)
+}
+
 androidComponents {
   onVariants { variant ->
     variant.sources.kotlin?.addStaticSourceDirectory(providers.gradleProperty("matrixKotlin").getOrElse("../src/test/kotlin/com/noma4i/dblayer/models"))

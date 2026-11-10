@@ -139,6 +139,8 @@ Typical scenarios to cover:
 
 `scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit. Every test step (`cargo-test-core`, `cargo-test-gen`, `swift-test`, `gradle-test`) has its own 300 s limit, compile steps keep theirs; a single lane run (`--only <lane>`) is bounded by its steps, not by the 300 s of the whole check.
 
+The Swift and Kotlin lanes compile the consumer app's generated models with warnings treated as errors.
+
 | Check                                          | Command                                    |
 | ---------------------------------------------- | ------------------------------------------ |
 | Rust core and generator                        | `cargo test`                               |

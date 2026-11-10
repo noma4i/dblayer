@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ]; }; then
-  echo "usage: scripts/gen_consumer_corpus.sh [--check]" >&2
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ] && [ "$1" != "--swift" ] && [ "$1" != "--kotlin" ]; }; then
+  echo "usage: scripts/gen_consumer_corpus.sh [--check|--swift|--kotlin]" >&2
   exit 2
 fi
 
@@ -14,6 +14,11 @@ out="$root/core/tests/corpus/consumer"
 
 models=()
 while IFS= read -r file; do models+=("$file"); done < <(find "$app/schemas" -name '*.dbl' -type f | sort)
+
+if [ "${1:-}" = "--swift" ] || [ "${1:-}" = "--kotlin" ]; then
+  cargo run -p dblayer-gen -- --schema "$app/graphql/schema.graphql" "${1#--}" "${models[@]}"
+  exit
+fi
 
 spec="$(cargo run -p dblayer-gen -- --internal --schema "$app/graphql/schema.graphql" spec "${models[@]}" 2> /dev/null)"
 operations="$(find "$app/graphql" -name '*.graphql' -type f ! -name schema.graphql | sort | python3 -I -c '

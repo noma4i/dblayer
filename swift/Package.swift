@@ -24,6 +24,11 @@ let package = Package(
       dependencies: ["DBlayer"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
+    .target(
+      name: "ConsumerCheck",
+      dependencies: ["DBlayer"],
+      swiftSettings: [.swiftLanguageMode(.v5), .unsafeFlags(["-warnings-as-errors"])]
+    ),
     .testTarget(
       name: "DBlayerTests",
       dependencies: ["DBlayer", "DBlayerTesting"],
