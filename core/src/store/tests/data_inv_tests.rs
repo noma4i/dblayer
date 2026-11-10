@@ -19,6 +19,39 @@ pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }
 
+#[test]
+fn dlv_deferred_alias_after_log_evicted() {
+    let db = open();
+    let mut initial = Vec::new();
+    let mut landed = Vec::new();
+    let mut swaps = Vec::new();
+    for i in 0..4097 {
+        let temp = format!("temp-{i}");
+        let real = format!("real-{i}");
+        initial.push(("moments".into(), json!({"id":temp, "userId":"u1"}).to_string()));
+        landed.push(("moments".into(), json!({"id":real, "userId":"u1"}).to_string()));
+        swaps.push(StoreOp::Swap { model: "moments".into(), temp, real });
+    }
+    write(&db, BatchAuthor::Outbox, initial, vec![]);
+    let baseline = db.read_view(&Query::new("moments"), false, 0, 0, None, None).unwrap().0;
+    write(&db, BatchAuthor::Outbox, landed, swaps);
+    for query in [Query::new("moments").filtered(Where::equal("id", json!("real-0"))), Query::new("moments")] {
+        let (_, _, replaced) = db.read_view(&query, false, baseline, baseline, None, None).unwrap();
+        assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
+        assert!(db.find("moments", &crate::identity::RowId::new("real-0").unwrap()).unwrap().is_some());
+    }
+}
+
+#[test]
+fn dlv_swap_same_id_other_model() {
+    let db = open();
+    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"temp-1", "userId":"u1"}).to_string()), ("users".into(), json!({"id":"temp-1"}).to_string())], vec![]);
+    let baseline = db.read_view(&Query::new("users"), false, 0, 0, None, None).unwrap().0;
+    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }]);
+    let (_, _, replaced) = db.read_view(&Query::new("users"), false, baseline, baseline, None, None).unwrap();
+    assert!(replaced.is_empty(), "another model's alias must not be returned: {replaced:?}");
+}
+
 fn texts(db: &Store, query: &Query) -> Vec<Value> { db.query(query).unwrap().iter().map(|row| row.get("text").cloned().unwrap_or(Value::Null)).collect() }
 
 #[test]
