@@ -73,6 +73,34 @@ async fn xfer_put_response_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn xfer_confirmed_discard_exact_op() {
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    settled(&rig, "the chat is visible", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    let other = bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
+    let upload = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    let held = rig.world.hold_next("ChatPin");
+    rig.world.fail_next("PUT", Fault::Http(400));
+    rig.database.set_online(true).unwrap();
+    held.entered().await;
+    settled(&rig, "the upload fails while the other operation is held", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
+    let copy = local_url(&chat, "c1", "update_photo").unwrap();
+    let before = bound(rig.database.read_row(epoch, "Chat".into(), "c1".into())).await.unwrap().unwrap();
+    assert!(matches!(bound(rig.database.confirmed(upload, true)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    let after = bound(rig.database.read_row(epoch, "Chat".into(), "c1".into())).await.unwrap().unwrap();
+    assert_eq!(after.cells, before.cells);
+    assert!(!std::path::Path::new(copy.strip_prefix("file://").unwrap()).exists());
+    assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().any(|entry| Some(entry.id.0) == other.operation));
+    held.release();
+    assert!(bound(rig.database.confirmed(other, false)).await.is_ok());
+    assert_eq!(rig.world.count("ChatPin"), 1);
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn xfer_confirmed_parallel_discard() {
     let rig = rig().await;
     let chat = entity(&rig, "Chat", "c1");
