@@ -193,3 +193,12 @@ fn win_prop_freshness_survives_open() {
         assert_eq!(requests(&twin.step(Input::Read(read))), asked, "{read:?}");
     }
 }
+
+#[test]
+fn win_idle_stale_lost_rereads() {
+    let mut twin = fresh_watched();
+    take(&twin.log);
+    twin.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Lost });
+    let (effects, _) = twin.split(take(&twin.log));
+    assert_eq!(requests(&effects), 1, "a lost event requires a new load: {effects:?}");
+}

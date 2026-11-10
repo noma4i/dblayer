@@ -22,6 +22,7 @@ pub(in crate::spec) enum Out {
     ModelReady(u64),
     ModelGap(u64),
     StaleGap { model: String, online_seq: u64 },
+    StaleLost { model: String },
     Commit,
     ModelInvalid(u64),
     ScheduleResubscribe,
@@ -45,14 +46,14 @@ pub(in crate::spec) struct Chan {
     wanted: BTreeSet<String>,
     pub(in crate::spec) confirmed: BTreeSet<String>,
     ready: BTreeSet<u64>,
-    gap: BTreeSet<String>,
+    gap: BTreeMap<String, u64>,
     pub(in crate::spec) position: BTreeMap<String, u64>,
     held: Vec<String>,
 }
 
 impl Chan {
     pub(in crate::spec) fn new(channels: BTreeMap<String, Vec<String>>) -> Self {
-        Self { mode: Mode::Off, online: false, online_seq: 0, channels, want: BTreeMap::new(), streams: BTreeSet::new(), scoped: BTreeMap::new(), wanted: BTreeSet::new(), confirmed: BTreeSet::new(), ready: BTreeSet::new(), gap: BTreeSet::new(), position: BTreeMap::new(), held: Vec::new() }
+        Self { mode: Mode::Off, online: false, online_seq: 0, channels, want: BTreeMap::new(), streams: BTreeSet::new(), scoped: BTreeMap::new(), wanted: BTreeSet::new(), confirmed: BTreeSet::new(), ready: BTreeSet::new(), gap: BTreeMap::new(), position: BTreeMap::new(), held: Vec::new() }
     }
 
     fn channels_of(&self, model: &str) -> Vec<String> {
@@ -148,9 +149,9 @@ impl Chan {
                             out.push(Out::ModelReady(*id));
                         }
                     }
-                    if self.gap.remove(&model) {
+                    if let Some(gap_seq) = self.gap.remove(&model) {
                         out.extend(ids.iter().map(|id| Out::ModelGap(*id)));
-                        out.push(Out::StaleGap { model: model.clone(), online_seq: self.online_seq });
+                        out.push(if self.online_seq > gap_seq { Out::StaleGap { model: model.clone(), online_seq: self.online_seq } } else { Out::StaleLost { model: model.clone() } });
                     }
                     let held = self.held.iter().filter(|held| **held == model).count();
                     self.held.retain(|held| *held != model);
@@ -172,7 +173,7 @@ impl Chan {
                 if self.wanted.contains(&channel) {
                     self.confirmed.remove(&channel);
                     let models = self.models_of(&channel);
-                    self.gap.extend(models);
+                    for model in models { self.gap.insert(model, self.online_seq); }
                     out.push(Out::ScheduleResubscribe);
                 }
             }

@@ -38,6 +38,7 @@ fn word(effect: Out) -> String {
         Out::ModelReady(stream) => format!("modelready:{stream}"),
         Out::ModelGap(stream) => format!("modelgap:{stream}"),
         Out::StaleGap { model, online_seq } => format!("stale:{model}:gap{online_seq}"),
+        Out::StaleLost { model } => format!("stale:{model}"),
         Out::Commit => "commit".into(),
         Out::ModelInvalid(stream) => format!("modelinvalid:{stream}"),
         Out::ScheduleResubscribe => "schedule:channel".into(),
@@ -377,7 +378,7 @@ fn feed_chan_ended_resubscribes() {
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
-    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap1", "stale:Post:gap1"], "each model of the channel sees one gap after the new confirmation, its windows turn Stale with the cause Gap of the Online(true) that began the subscription, and no second ready");
+    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, its windows turn Stale with the cause Lost, and no second ready");
 }
 
 #[test]
@@ -388,14 +389,14 @@ fn feed_chan_ended_retryable() {
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
-    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap1", "stale:Post:gap1"], "each model of the channel sees one gap after the new confirmation, no second ready");
+    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, no second ready");
 }
 
 #[test]
 fn feed_chan_gap_cause_names_last_online() {
     let mut rig = Rig::live();
-    rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
     rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) });
+    rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
     rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
     let mut shown = rig.confirm("B");
     shown.sort();
@@ -549,4 +550,25 @@ fn feed_chan_want_during_recovery() {
         }
         assert_eq!(second, 1, "the new reader gets one ready in {order:?}");
     }
+}
+
+#[test]
+fn feed_gap_same_online_seq_stale_lost() {
+    let mut rig = Rig::live();
+    rig.end("B");
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+    let mut got = rig.confirm("B");
+    got.sort();
+    assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"]);
+}
+
+#[test]
+fn feed_gap_after_online_return_stale_gap() {
+    let mut rig = Rig::live();
+    rig.end("B");
+    rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+    let mut got = rig.confirm("B");
+    got.sort();
+    assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat:gap2", "stale:Post:gap2"]);
 }
