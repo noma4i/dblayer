@@ -221,6 +221,44 @@ fn xfer_accept_batch_replaces_failed_single() {
     assert_eq!(out.rows().len(), 2);
 }
 
+fn replacing_failed() -> (Twin, TransferId, TransferId) {
+    let mut twin = Twin::new();
+    let old = ready(&mut twin);
+    twin.step_error(old, false);
+    twin.commit();
+    let out = twin.post(accept_input(KEY, 90));
+    let new = out.outbox.iter().find_map(|input| match input {
+        OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
+        _ => None,
+    }).expect("the replacement reserves its operation");
+    (twin, old, new)
+}
+
+#[test]
+fn xfer_replace_interval_refuses() {
+    let (mut twin, _, new) = replacing_failed();
+    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before reservation");
+    }
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before Store answers");
+    }
+}
+
+#[test]
+fn xfer_replace_rejected_keeps_failed() {
+    let (mut twin, old, new) = replacing_failed();
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(new), result: Ok(8) });
+    let out = twin.reject(RejectReason::Storage("disk".into()));
+    assert_eq!(Twin::fault(&out, 90), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
+    assert_eq!(twin.stage(old), TransferStage::Failed);
+    let (reply, outcome) = twin.outcome(old, 1);
+    assert!(matches!(outcome.replies(reply).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, _)]));
+    let (reply, out) = twin.discard(KEY);
+    assert_ne!(Twin::fault(&out, reply), Some(Fault::InFlight));
+}
+
 #[test]
 fn xfer_remove_rolls_back_optimistic() {
     let mut twin = Twin::new();
