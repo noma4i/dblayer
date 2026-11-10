@@ -64,7 +64,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::StateLost => Fail::StateLost,
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Unauthorized => Fail::Unauthorized,
-        SessionError::ResponseTooLarge { .. } => panic!("the Session reference has no response limit row"),
+        SessionError::ResponseTooLarge { limit } => Fail::ResponseTooLarge { limit: *limit },
         SessionError::Security { code, detail } => Fail::Security { code: *code, detail: detail.clone() },
         SessionError::Http { .. } => Fail::Http,
         SessionError::TooLarge { size, limit } => Fail::TooLarge { size: *size, limit: *limit },
@@ -275,6 +275,7 @@ impl Twin {
             Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
             Input::Revoked { request_id, attempt_id, body, author_ref } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: EPOCH },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
+            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: sequenced },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
@@ -474,6 +475,7 @@ enum Abstract {
     Revoked,
     HttpTemporary,
     HttpAuth,
+    AnswerTooLarge(bool, bool),
     Dropped,
     Cancel,
     Release,
@@ -498,6 +500,7 @@ fn concrete(twin: &Twin, input: Abstract) -> Input {
         Abstract::Revoked => Input::Revoked { request_id, attempt_id, body: "{}".into(), author_ref: None },
         Abstract::HttpTemporary => Input::HttpError { request_id, attempt_id, temporary: true, auth: false, security: None, body: None },
         Abstract::HttpAuth => Input::HttpError { request_id, attempt_id, temporary: false, auth: true, security: None, body: None },
+        Abstract::AnswerTooLarge(sequenced, foreign) => Input::AnswerTooLarge { request_id: request_id + u64::from(foreign), attempt_id, limit: 64, sequenced },
         Abstract::Dropped => Input::Dropped { request_id, attempt_id },
         Abstract::Cancel => Input::Cancel { req_id: 11 },
         Abstract::Release => Input::Release { req_id: 11 },
@@ -518,6 +521,7 @@ fn matrix_owner_state_input_session() {
         ("SessionCall", Abstract::Call), ("Mutate", Abstract::Mutate), ("Sealed", Abstract::Sealed), ("Committed", Abstract::Committed), ("Rejected storage", Abstract::RejectedStorage),
         ("Response sequence 1", Abstract::Response(1)), ("Response sequence 5", Abstract::Response(5)), ("Response refused", Abstract::ResponseRefused), ("Revoked", Abstract::Revoked),
         ("HttpError temporary", Abstract::HttpTemporary), ("HttpError auth", Abstract::HttpAuth), ("Dropped", Abstract::Dropped), ("Cancel", Abstract::Cancel), ("Release", Abstract::Release),
+        ("AnswerTooLarge read", Abstract::AnswerTooLarge(false, false)), ("AnswerTooLarge mutation", Abstract::AnswerTooLarge(true, false)), ("AnswerTooLarge foreign", Abstract::AnswerTooLarge(true, true)),
         ("Foreground", Abstract::Foreground), ("Tick", Abstract::Tick), ("Online false", Abstract::Online(false)), ("Online true", Abstract::Online(true)), ("EpochEnded", Abstract::EpochEnded), ("Closing", Abstract::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_session", vec![("idle", Twin::new), ("persisting", persisting), ("calling", calling), ("calling a mutation", calling_mutate), ("pending held", held), ("generating a credential", generating), ("storing a credential", storing), ("clearing", clearing), ("landing", landing_one), ("blocked storage", blocked_storage)], alphabet, |twin: &mut Twin, input| { let input = concrete(twin, input); twin.feed(input); });
