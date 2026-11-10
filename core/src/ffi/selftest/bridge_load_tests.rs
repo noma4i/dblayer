@@ -15,8 +15,9 @@ async fn win_node_temp_alias_permutations() {
 
     let rig = Rig::encrypted_edited(false, false, false, |models| {
         let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
-        let field = message["fields"].as_array_mut().unwrap().iter_mut().find(|field| field["name"] == "chatId").unwrap();
-        field["link"] = json!({"model":"Message", "id":"chatId"});
+        let mut parent = crate::schema::FieldSpec::object("parent").nullable();
+        parent.link = Some(crate::schema::FieldLink { model: "Message".into(), id: "chatId".into() });
+        message["fields"].as_array_mut().unwrap().push(serde_json::to_value(parent).unwrap());
         for (name, operation, mode, shape) in [
             ("node", "MessageNode", NodeRead::One, RemoteShape::Single),
             ("nodes", "MessageNodes", NodeRead::Many, RemoteShape::List { coverage: Coverage::Complete }),
