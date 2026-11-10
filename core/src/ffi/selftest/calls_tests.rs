@@ -179,7 +179,6 @@ async fn call_prop_mutation_against_end_any_order_public() {
     let mut cases = Vec::new();
     for end in ["reset", "close", "revoked", "logout"] {
         for phase in ["before", "in_flight", "answered"] {
-            if end == "logout" && phase == "in_flight" { continue; }
             cases.push(tokio::spawn(async move {
                 let rig = Rig::encrypted().await;
                 rig.login_ios("A").await;
@@ -196,6 +195,21 @@ async fn call_prop_mutation_against_end_any_order_public() {
                     }
                     None
                 };
+                if end == "logout" && phase == "in_flight" {
+                    let before = rig.database.life.waiting_calls();
+                    let db = rig.database.clone();
+                    let logout = rig.spawn(async move { db.session_call("logout".into(), "{}".into()).await });
+                    crate::test_wait::settled(&rig, "logout waits behind the mutation", || rig.database.life.waiting_calls() > before).await;
+                    assert_eq!(rig.world.count("logout"), 0);
+                    gate.unwrap().release();
+                    assert!(bound(call.unwrap()).await.unwrap().is_ok());
+                    assert!(bound(logout).await.unwrap().is_ok());
+                    rig.settle().await;
+                    assert_eq!(rig.world.count("UnregisterDevice"), 1);
+                    assert_eq!(rig.world.count("logout"), 1);
+                    rig.database.close_now();
+                    return;
+                }
                 match end {
                     "reset" => bound(rig.database.session_reset()).await.unwrap(),
                     "close" => rig.database.close_now(),
@@ -222,6 +236,48 @@ async fn call_prop_mutation_against_end_any_order_public() {
             }));
         }
     }
+    cases.push(tokio::spawn(async move {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let gate = rig.world.hold_next("logout");
+        let db = rig.database.clone();
+        let logout = rig.spawn(async move { db.session_call("logout".into(), "{}".into()).await });
+        gate.entered().await;
+        let before = rig.database.life.waiting_calls();
+        let db = rig.database.clone();
+        let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+        crate::test_wait::settled(&rig, "mutation waits behind logout", || rig.database.life.waiting_calls() > before).await;
+        assert_eq!(rig.world.count("UnregisterDevice"), 0);
+        gate.release();
+        assert!(bound(logout).await.unwrap().is_ok());
+        assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. })));
+        rig.settle().await;
+        assert_eq!(rig.world.count("UnregisterDevice"), 0);
+        rig.database.close_now();
+    }));
+    cases.push(tokio::spawn(async move {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let held = Held::open(&rig.database);
+        held.shows(&rig, "A").await;
+        rig.world.answer_with("UnregisterDevice", json!({"data":{"unregisterDevice":{"__typename":"User","id":"user","name":"late"}}}));
+        let gate = rig.world.hold_next("UnregisterDevice");
+        let db = rig.database.clone();
+        let epoch = db.session_epoch();
+        let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+        gate.entered().await;
+        bound(rig.database.session_reset()).await.unwrap();
+        rig.login_ios("B").await;
+        gate.release();
+        assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. })));
+        held.follow(&rig.database);
+        held.shows(&rig, "B").await;
+        rig.settle().await;
+        assert!(held.never_showed("late"));
+        assert_eq!(rig.world.count("UnregisterDevice"), 1);
+        rig.database.close_now();
+    }));
     for action in ["cancel", "deadline", "offline"] {
         cases.push(tokio::spawn(async move {
             let rig = Rig::encrypted().await;
