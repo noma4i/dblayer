@@ -280,3 +280,32 @@ async fn consumer_thread_temp_parent_swap() {
     assert_eq!(stand.requests_with("chatThread", "chatId", "c1"), 1);
     assert_eq!(stand.requests_with("chatThread", "chatId", &temporary), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_failed_page_retry() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let history = Arc::new(History::default());
+    stand.answer("chatThread", page(41, 65, true));
+    let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
+    let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
+    settled(&stand, "the first history page", || history.rows.len() == 25).await;
+    stand.answer_next("chatThread", json!({"errors":[{"message":"temporarily unavailable","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}));
+    stand.answer("chatThread", page(16, 40, false));
+    let mut armed = stand.clock.armed();
+    let load = stand.database.load_more(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into());
+    let result = crate::test_wait::within_named(15, "the failed page is retried", async {
+        tokio::pin!(load);
+        loop {
+            tokio::select! {
+                result = &mut load => break result,
+                () = stand.clock.await_armed(armed) => { armed = stand.clock.armed(); stand.clock.advance(16_000); }
+            }
+        }
+    }).await;
+    result.unwrap();
+    stand.settle().await;
+    assert_eq!(ids(&history), (16..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    assert_eq!(stand.requests("chatThread"), 3);
+}
