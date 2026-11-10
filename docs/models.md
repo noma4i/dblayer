@@ -22,6 +22,7 @@ Scope parameters and the existing `variables` bind variables for both queries.
 The core passes `upToSequence` to marker, the declared `after` variable to tail, and standard pagination variables.
 The tail query returns the same connection and model fields in ascending sequence order.
 `latestSequence` refers to the entire media library. Marker counts refer to the `upToSequence` prefix.
+The core confirms a loaded window when the sum of the marker fields other than `revision` equals the number of rows of this scope in that prefix. A scope that filters the library declares only the count of its own rows, for example `fields: [:revision, :audioCount]` for an audio scope.
 `revision` comes from `ChatMediaLibrary.revision`, which corresponds to `chats.media_revision`.
 
 A model is described once in a `.dbl` file. The syntax follows Ruby on Rails: a word, a symbol name, then named options after colons and commas. Order of options does not matter.
