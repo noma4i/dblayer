@@ -7,14 +7,15 @@ if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ]; }; then
 fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH" LC_ALL=C
+export LC_ALL=C
+cd -- "$root"
 app="$root/fixtures/consumer/app"
 out="$root/core/tests/corpus/consumer"
 
 models=()
 while IFS= read -r file; do models+=("$file"); done < <(find "$app/schemas" -name '*.dbl' -type f | sort)
 
-spec="$(cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --internal --schema "$app/graphql/schema.graphql" spec "${models[@]}" 2> /dev/null)"
+spec="$(cargo run -p dblayer-gen -- --internal --schema "$app/graphql/schema.graphql" spec "${models[@]}" 2> /dev/null)"
 operations="$(find "$app/graphql" -name '*.graphql' -type f ! -name schema.graphql | sort | python3 -I -c '
 import json, re, sys
 text = "\n".join(open(path.strip()).read() for path in sys.stdin)

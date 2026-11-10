@@ -7,7 +7,7 @@ build-kotlin:
 build-jvm:
 	bash scripts/build_kotlin.sh --jvm
 build-gen:
-	cargo build --manifest-path Cargo.toml -p dblayer-gen
+	cargo build -p dblayer-gen
 check:
 	bash scripts/check_dblayer.sh
 check-docs:

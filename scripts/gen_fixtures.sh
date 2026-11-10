@@ -7,16 +7,17 @@ if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ]; }; then
 fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH" LC_ALL=C
+export LC_ALL=C
+cd -- "$root"
 swift_out="$root/swift/Tests/DBlayerTests/FixtureModels.swift"
 kotlin_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureModels.kt"
 swift_operations_out="$root/swift/Tests/DBlayerTests/FixtureOperations.swift"
 kotlin_operations_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureOperations.kt"
 
-gen() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
-gen_operations() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
+gen() { cargo run -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
+gen_operations() { cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
 
-gen_operation_specs() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["operations"], separators=(",", ":")))'; }
+gen_operation_specs() { cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["operations"], separators=(",", ":")))'; }
 with_operations() { python3 -I -c 'import sys; text = sys.stdin.read(); empty = ",\"operations\":[]}"; assert text.count(empty) == 1; operations = sys.argv[1]; operations = operations.replace("$", "${\x27$\x27}") if sys.argv[2] == "kotlin" else operations; sys.stdout.write(text.replace(empty, ",\"operations\":" + operations + "}"))' "$1" "$2"; }
 
 operation_specs="$(gen_operation_specs 2> /dev/null)"
