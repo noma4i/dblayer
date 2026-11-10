@@ -25,15 +25,15 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | Swift / Kotlin                                                                                           | Section                                                                                                                              |
 | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `DB.account()` / `AccountScope.current()`, `AccountScope`                                                | [account scope](value-bridge.md#account-scope)                                                                                       |
-| `AccountScope.stream`, `count`, `entity`, `singleton`, `events`, `changes`, `uploadStatus`, `operations` | [streams](live-data.md#streams)                                                                                                      |
+| `AccountScope.stream`, `count`, `entity`, `events`, `changes`, `uploadStatus`, `operations`, `singleton` (Swift only) | [streams](live-data.md#streams)                                                                                                      |
 | `ValueStream`, `ReadValue`, `EndCause`, `ReadClaim`                                                      | [values](value-bridge.md#values), [errors](errors.md#where-an-error-arrives), [claiming a reader](value-bridge.md#claiming-a-reader) |
 | `DB.cableCloses` / `DBlayer.cableCloses`, `CableCloseItem`, `CableClose`                                 | [cable closes](cable-protocol.md#cable-closes)                                                                                       |
 | `ListDelivery`, `ListProjection`, `Projected`, `ListEdit`                                                | [what a delta contains](live-data.md#what-a-delta-contains), [reading a projection](value-bridge.md#reading-a-projection-on-screen)  |
-| `ProjectedCount`, `CountProjection`                                                                      | [streams](live-data.md#streams)                                                                                                      |
+| `ProjectedCount`, `CountProjection` (Kotlin only)                                                                      | [streams](live-data.md#streams)                                                                                                      |
 | `ReadState`, `ReadPhase`                                                                                 | [state of a stream](live-data.md#state-of-a-stream)                                                                                  |
 | `ReadFetch`                                                                                              | [streams](live-data.md#streams)                                                                                                      |
-| `ModelEvent`, `ModelEventItem`, `EventStream`                                                            | [model events](live-data.md#model-events)                                                                                            |
-| `ChangeItem`, `ChangeStream`, `ChangedRow`                                                               | [streams](live-data.md#streams)                                                                                                      |
+| `ModelEvent`, `ModelEventItem`, `EventStream` (Swift), `ValueStream.events` (Kotlin)                                                            | [model events](live-data.md#model-events)                                                                                            |
+| `ChangeItem`, `ChangedRow`, `ChangeStream` (Swift), `AccountScope.changes` as a `Flow` (Kotlin)                                                               | [streams](live-data.md#streams)                                                                                                      |
 | `ModelDecoder` (Kotlin: the companion of a generated model)                                              | [streams](live-data.md#streams)                                                                                                      |
 | `DBSingleton` (Swift: a model with one record)                                                           | [streams](live-data.md#streams)                                                                                                      |
 
@@ -45,7 +45,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `cachedRow`, `read`, `readRow`                                                         | [reading before the first delivery](live-data.md#reading-before-the-first-delivery) |
 | `load`, `beginLoad`, `LoadRequest`, `refresh`, `loadMore`, `loadAll`, `LoadMoreResult` | [remote relations are live too](live-data.md#remote-relations-are-live-too)         |
 | `edgeValues`, generated `<name>Edge`                                                   | [edge values](models.md#edge-values)                                                |
-| `readNode`, `readNodes`, generated node reads                                          | [node reads](models.md#node-reads)                                                  |
+| `readNode`, `readNodes` (Swift), generated node reads (Swift and Kotlin)                                          | [node reads](models.md#node-reads)                                                  |
 
 ## Records and writes
 
@@ -62,11 +62,11 @@ Every public name of the Swift package and the Kotlin module, with the section t
 
 | Swift / Kotlin                                                                                                          | Section                                                                                                                                  |
 | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `FileInfo`, `FileField`, `NoFiles`, `attach`, `file`, `url`, `detach`                                           | [files](files.md)                                                                                                                        |
+| `FileInfo`, `FileField` (Kotlin), `NoFiles` (Swift), `attach`, `file`, `url`, `detach`                                           | [files](files.md)                                                                                                                        |
 | `UploadRequest`, `UploadItem`, `UploadBatchRequest`, `UploadCommand`, `AccountScope.upload`, `AccountScope.uploadBatch` | [uploads of a record](files.md#uploads-of-a-record), [create several records with uploads](files.md#create-several-records-with-uploads) |
 | `UploadRequest.pending`, `UploadSource`, `supplySource`, `failSource`                                                   | [deferred source](files.md#deferred-source)                                                                                              |
 | `UploadInfo`, `UploadStatus`, `UploadProcessing`                                                                        | [state](files.md#state)                                                                                                                  |
-| `TransferProgress`, `TransferItem`, `UploadStatusStream`                                                                | [rules](files.md#rules-1)                                                                                                                |
+| `TransferProgress`, `TransferItem`, `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                | [rules](files.md#rules-1)                                                                                                                |
 | `cancelUpload`                                                                                                          | [rules](files.md#rules-1)                                                                                                                |
 
 ## Values inside generated code
@@ -75,7 +75,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | `CellReader`, `Cell`                             | [cell types](value-bridge.md#cell-types)                                                          |
 | `JSONValue` (Swift), `dbJson` (Kotlin)           | [JSON text in `:json` attributes](nested-types.md#json-text-in-json-attributes)                   |
-| `RawEnum`, `UnionSerializer`, `UnionTypenameKey` | [enums](models.md#enums), [unions](nested-types.md#unions)                                        |
+| `RawEnum`, `UnionSerializer` (Kotlin), `UnionTypenameKey` (Swift) | [enums](models.md#enums), [unions](nested-types.md#unions)                                        |
 | `GraphqlExtensions`, `SessionCode`               | [errors](errors.md#where-an-error-arrives), [encrypted session](server-sync.md#encrypted-session) |
 
 ## Errors and tests
