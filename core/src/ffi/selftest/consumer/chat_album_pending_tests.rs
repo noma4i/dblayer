@@ -161,3 +161,39 @@ async fn consumer_restored_transfer_origins_mixed() {
     assert_eq!((reopened.requests("MessageAlbumSend"), reopened.requests("MomentCreateFile"), reopened.puts()), (1, 1, 3));
     bound(reopened.database.close_database()).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_transfer_abort_debt_reset() {
+    use crate::ffi::command::{CommandRequest, CommandUpload};
+    use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
+    use crate::test_wait::settled;
+
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("multipart.jpg");
+    std::fs::File::create(&source).unwrap().set_len(11 * crate::owners::write::upload::MEBIBYTE).unwrap();
+    stand.answer("MultipartUploadInit", json!({"multipartUploadInit":{"multipartUpload":{"key":"key-1","uploadId":"upload-1","signedId":"signed","blobId":"b1"}}}));
+    stand.answer("MultipartUploadPresignParts", json!({"multipartUploadPresign":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}));
+    stand.answer("MultipartUploadAbort", json!({"multipartUploadAbort":{"aborted":true}}));
+    stand.hold(&["MultipartUploadPresignParts", "MultipartUploadAbort"]);
+    let receipt = bound(stand.database.send(CommandRequest {
+        epoch, model: "Moment".into(), values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(), args_json: "{}".into(),
+        upload: Some(CommandUpload { action: "create_file".into(), request: WireUploadRequest { source: WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() } }),
+    })).await.unwrap();
+    assert!(receipt.optimistic_value.is_some());
+    settled(&stand, "multipart init reaches presign", || stand.requests("MultipartUploadPresignParts") == 1).await;
+    bound(stand.database.session_reset()).await.unwrap();
+    stand.release(&["MultipartUploadPresignParts"]);
+    stand.sign_in().await;
+    settled(&stand, "the new session starts the owed abort", || stand.requests("MultipartUploadAbort") == 1).await;
+    let requests = stand.asked();
+    let aborts: Vec<_> = requests.iter().filter(|(name, _)| name == "MultipartUploadAbort").collect();
+    assert_eq!(aborts.len(), 1);
+    assert_eq!(aborts[0].1["uploadId"], json!("upload-1"));
+    assert_eq!(aborts[0].1["key"], json!("key-1"));
+    stand.release(&["MultipartUploadAbort"]);
+    stand.settle().await;
+    assert_eq!(stand.requests("MultipartUploadAbort"), 1);
+    stand.database.close_now();
+}
