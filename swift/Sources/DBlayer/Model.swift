@@ -111,8 +111,8 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
   }
 
   /// The one outcome of the receipt: the value, or the error of a refusal (`DbError.Rejected`, `kept` = the failed intent stays) or of the end of the wait.
-  @concurrent public func confirmed() async throws -> Confirmed<Model> {
-    let confirmed = try await database.confirmed(receipt: wire, discardOnFailure: false)
+  @concurrent public func confirmed(discardOnFailure: Bool = false) async throws -> Confirmed<Model> {
+    let confirmed = try await database.confirmed(receipt: wire, discardOnFailure: discardOnFailure)
     return Confirmed(value: try confirmed.value.map(Model.decode), answerJson: confirmed.answerJson)
   }
 }

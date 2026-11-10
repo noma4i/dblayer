@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Discard failed operations when waiting for their confirmation.
+
 ## 6.23.2 - 2026-11-10
 
 ### Fixed

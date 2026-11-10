@@ -120,8 +120,8 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
     val operation: Long? = wire.operation
 
     /** The one outcome of the receipt: the value, or [DbException.Rejected] (`kept` = the failed intent stays) or the exception of the end of the wait. */
-    suspend fun confirmed(): Confirmed<Model> = offCaller {
-        val result = database.confirmed(wire, false)
+    suspend fun confirmed(discardOnFailure: Boolean = false): Confirmed<Model> = offCaller {
+        val result = database.confirmed(wire, discardOnFailure)
         Confirmed(result.value?.let(decoder::read), result.answerJson)
     }
 }

@@ -112,6 +112,16 @@ The result is retained while the receipt is held. A confirmed result contains th
 
 `confirmed()` returns the value or throws. A refusal throws `Rejected` with the whole `OperationFailure` and `kept`: `true` when the failed change stays for `retry` or `discard`, `false` when it was rolled back. The end of the wait throws the error of its cause (`Closed`, `NoSession`).
 
+Pass `discardOnFailure: true` to discard a failed operation before the call returns. The refusal keeps its original failure and reports `kept = false` after the rollback and file removal attempt.
+
+```swift
+let confirmed = try await receipt.confirmed(discardOnFailure: true)
+```
+
+```kotlin
+val confirmed = receipt.confirmed(discardOnFailure = true)
+```
+
 ```swift
 do {
   let confirmed = try await receipt.confirmed()
