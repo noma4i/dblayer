@@ -1,29 +1,35 @@
 //! message.dbl and moment.dbl of the app against feed.md rows feed_payload_lands (l.104), feed_payload_incomplete (l.105), feed_changed_by_node (l.127) and delivery.md l.10 (`Entity` with `fetch: never` has no window).
 use serde_json::json;
 
-use super::stand::{moment, Stand};
+use super::stand::{message, moment, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_message_reaction_lands_the_payload_row() {
+async fn consumer_message_reaction_rereads_the_observed_node() {
     let stand = Stand::open().await;
+    stand.answer("MessageNode", json!({"node": message("m1", "c1", "before")}));
     let (events, token) = stand.events("Message").await;
+    let rows = stand.entity("Message", "m1", ReadFetch::Stale);
+    settled(&stand, "the message node answered", || stand.text_of(&rows, "Message", "m1", "body").as_deref() == Some("before")).await;
+    let asked = stand.requests("MessageNode");
+    stand.answer("MessageNode", json!({"node": message("m1", "c1", "reacted")}));
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1", "message": null}));
     let event = bound(events.pull_next()).await;
-    assert!(matches!(&event, Some(ReadValue::Event { area, id, after: Some(row), .. }) if area == "REACTION" && id == "m1" && crate::ffi::tests::lifecycle_tests::named(row, "reacted")), "{event:?}");
+    assert!(matches!(&event, Some(ReadValue::Event { area, kind, id, .. }) if area == "REACTION" && kind == "UPDATED" && id == "m1"), "{event:?}");
     stand.settle().await;
-    assert_eq!(stand.requests("MessageNode"), 0);
+    assert_eq!(stand.requests("MessageNode"), asked + 1);
+    assert_eq!(stand.text_of(&rows, "Message", "m1", "body").as_deref(), Some("reacted"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_message_reaction_without_payload_is_lost() {
+async fn consumer_message_reaction_without_window_is_an_event() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1"}));
     let value = bound(events.pull_next()).await;
-    assert!(matches!(value, Some(ReadValue::Lost { first: 1, last: 1 })), "{value:?}");
+    assert!(matches!(&value, Some(ReadValue::Event { area, id, .. }) if area == "REACTION" && id == "m1"), "{value:?}");
     stand.settle().await;
     assert_eq!(stand.requests("MessageNode"), 0);
 }

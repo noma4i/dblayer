@@ -73,6 +73,18 @@ fn feed_changed_by_node() {
 }
 
 #[test]
+fn feed_payload_missing_uses_node() {
+    for (relation, payload, accepted) in [("node", Value::Null, true), ("node", json!({}), false), ("", Value::Null, false)] {
+        let codec = codec(vec![json!({"area":"CHAT", "relation":relation, "payload":"chat"})]);
+        let response = Response::data(json!({"changes":[{"topic":"CHAT", "action":"UPDATED", "recordId":"c1", "chat":payload}]}));
+        let events = codec.events("Changes", response);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].refused, !accepted);
+        if accepted { assert_eq!(events[0].reread, keys(&[key("node", json!({crate::schema::NODE_PARAM: "c1"}))])); }
+    }
+}
+
+#[test]
 fn feed_changed_by_named() {
     let events = codec(vec![json!({"area":"CHAT", "relation":"named", "parameter":"other"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
     assert_eq!(events[0].reread, keys(&[key("named", json!({"other":"c1"}))]));
