@@ -24,7 +24,6 @@ async fn boundary_closed_call_precedence() {
         ("send", database.send(CommandRequest { epoch, model: "Unknown".into(), values_json: "{".into(), args_json: "{}".into(), upload: None }).await.map(drop)),
         ("edge_values", database.edge_values(epoch, model.clone(), None, "{}".into(), Vec::new()).await.map(drop)),
         ("file", database.file(epoch, model.clone(), String::new(), "f".into()).await.map(drop)),
-        ("read", database.read(epoch, model.clone(), String::new(), "f".into()).await.map(drop)),
         ("url", database.url(epoch, model.clone(), String::new(), "f".into()).await.map(drop)),
         ("retry", database.retry(epoch, model.clone(), "r1".into(), None, Some(source)).await.map(drop)),
         ("session_call", database.session_call("op".into(), "{broken".into()).await.map(drop)),
@@ -43,7 +42,7 @@ async fn call_refusal_order_table() {
     let receipt = database.create(database.session_epoch(), "Note".into(), "{}".into(), "{}".into()).await.unwrap();
     let epoch = database.session_epoch();
     let answers = [
-        database.attach(epoch, "Note".into(), "missing".into(), "unknown".into(), super::FileBytes { bytes: vec![1], name: "x".into(), mime: "image/png".into() }).await.map(drop),
+        database.attach_file(epoch, "Note".into(), "missing".into(), "unknown".into(), "missing".into(), "x".into(), "image/png".into()).await.map(drop),
         database.detach(epoch, "Note".into(), "missing".into(), "unknown".into()).await.map(drop),
     ];
     for answer in answers { assert!(matches!(answer, Err(DbError::Invalid { .. }))); }

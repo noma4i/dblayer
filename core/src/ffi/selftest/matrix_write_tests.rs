@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::rig_tests::bound;
 use crate::ffi::wire::{Cell, WireRow};
-use crate::ffi::{Config, Database, DbError, FileBytes, OpenPorts};
+use crate::ffi::{Config, Database, DbError, OpenPorts};
 use crate::test_matrix::{crate_dir, Matrix};
 
 const SPEC: &str = include_str!("../../../tests/corpus/matrix/kinds.spec.json");
@@ -166,7 +166,9 @@ async fn matrix_write_path_kind() {
         let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), "title".into(), "\"x\"".into())).await;
         matrix.check("set_local.title", "a server field", "\"x\"", "Invalid", match &result { Err(DbError::Invalid { detail }) if detail.contains("title") => "Invalid", Err(_) => "other error", Ok(()) => "accepted" });
         // attach: the file field
-        let result = bound(database.attach(epoch, "Kind".into(), base.id.clone(), "photo".into(), FileBytes { bytes: vec![1, 2], name: "a.png".into(), mime: "image/png".into() })).await;
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), [1, 2]).unwrap();
+        let result = bound(database.attach_file(epoch, "Kind".into(), base.id.clone(), "photo".into(), source.path().to_string_lossy().into(), "a.png".into(), "image/png".into())).await;
         matrix.check("attach.photo", "file", "2 bytes", "stored", if result.is_ok() { "stored" } else { "refused" });
         // set_ephemeral
         let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": true}).to_string())).await;

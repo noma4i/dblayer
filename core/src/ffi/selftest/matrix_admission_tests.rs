@@ -8,7 +8,7 @@ use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Fault, Rig};
 use super::upload_stand::{plain, Stand, CREATE_MOMENT};
 use crate::ffi::upload_wire::{WireSource, WireUploadRequest, WireUploadSource};
-use crate::ffi::{Database, DbError, FileBytes};
+use crate::ffi::{Database, DbError};
 use crate::test_matrix::{crate_dir, Matrix};
 
 struct Args {
@@ -38,7 +38,7 @@ async fn files_database(path: &Path) -> (Arc<Database>, u64, String) {
     (database, epoch, row)
 }
 
-const FILE_CALLS: [&str; 6] = ["file", "read", "url", "attach", "detach", "set_local"];
+const FILE_CALLS: [&str; 5] = ["file", "url", "attach_file", "detach", "set_local"];
 const UPLOAD_CALLS: [&str; 3] = ["upload", "supply_source", "fail_source"];
 const RELATION_CALLS: [&str; 4] = ["node", "nodes", "refresh", "edge_values"];
 
@@ -103,7 +103,6 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "peek_row" => database.peek_row(epoch, model, row).map(|_| ()),
         "read_row" => database.read_row(epoch, model, row).await.map(|_| ()),
         "file" => database.file(epoch, model, row, field).await.map(|_| ()),
-        "read" => database.read(epoch, model, row, field).await.map(|_| ()),
         "url" => database.url(epoch, model, row, field).await.map(|_| ()),
         "retry" => database.retry(epoch, model, row, None, None).await.map(|_| ()),
         "discard" => database.discard(epoch, model, row, None).await,
@@ -112,7 +111,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "act" => database.act(epoch, model, row, "edit".into(), "{}".into(), "{}".into()).await.map(|_| ()),
         "set_local" => database.set_local(epoch, model, row, args.local_path.clone(), args.local_value.clone()).await,
         "set_ephemeral" => database.set_ephemeral(epoch, model, row, args.values.clone()).await,
-        "attach" => database.attach(epoch, model, row, field, FileBytes { bytes: vec![1], name: "a".into(), mime: "image/png".into() }).await.map(|_| ()),
+        "attach_file" => database.attach_file(epoch, model, row, field, args.source_path.clone(), "a".into(), "image/png".into()).await.map(|_| ()),
         "detach" => database.detach(epoch, model, row, field).await.map(|_| ()),
         "create" => database.create(epoch, model, args.values.clone(), "{}".into()).await.map(|_| ()),
         "cancel_upload" => database.cancel_upload(epoch, model, row, "upload".into()).await.map(|_| ()),
@@ -146,7 +145,7 @@ fn observed(result: &Result<(), DbError>) -> &'static str {
 }
 
 /// A read answers `None` for a missing row (store.md), a local or ephemeral value waits for its row (outbox.md, P-DATA-14): only a write that needs the row answers `NotFound`.
-const MISSING_ROW_ADMITTED: [&str; 11] = ["peek_row", "read_row", "file", "read", "url", "edge_values", "node", "nodes", "refresh", "set_local", "set_ephemeral"];
+const MISSING_ROW_ADMITTED: [&str; 10] = ["peek_row", "read_row", "file", "url", "edge_values", "node", "nodes", "refresh", "set_local", "set_ephemeral"];
 
 fn expected(closed: bool, stale: bool, invalid: bool, missing: bool) -> &'static str {
     if closed { "Closed" } else if stale { "NoSession" } else if invalid { "Invalid" } else if missing { "NotFound" } else { "admitted" }

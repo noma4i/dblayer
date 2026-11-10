@@ -36,7 +36,9 @@ async fn attach_and_detach_answer_with_their_own_batch() {
     let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = database.session_epoch();
     let id = database.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
-    let attached = database.attach(epoch, "Files".into(), id.clone(), "photo".into(), crate::ffi::FileBytes { bytes: vec![1, 2, 3], name: "first".into(), mime: "image/png".into() }).await.unwrap();
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), [1, 2, 3]).unwrap();
+    let attached = database.attach_file(epoch, "Files".into(), id.clone(), "photo".into(), source.path().to_string_lossy().into(), "first".into(), "image/png".into()).await.unwrap();
     assert_eq!((attached.name.as_deref(), attached.size), (Some("first"), 3));
     let (first, second) = tokio::join!(
         database.detach(epoch, "Files".into(), id.clone(), "photo".into()),

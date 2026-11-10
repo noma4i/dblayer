@@ -10,7 +10,9 @@ async fn stand() -> (std::sync::Arc<Database>, u64, String, tempfile::TempDir) {
     let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let id = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
-    db.attach(epoch, "Files".into(), id.clone(), "photo".into(), crate::ffi::FileBytes { bytes: vec![1, 2, 3], name: "small".into(), mime: "image/png".into() }).await.unwrap();
+    let source = directory.path().join("source");
+    std::fs::write(&source, [1, 2, 3]).unwrap();
+    db.attach_file(epoch, "Files".into(), id.clone(), "photo".into(), source.to_string_lossy().into(), "small".into(), "image/png".into()).await.unwrap();
     (db, epoch, id, directory)
 }
 
@@ -65,15 +67,6 @@ async fn store_wait_file() {
     assert!(no_session(db.file(epoch + 1, "Files".into(), id.clone(), "photo".into()).await));
     db.close_database().await.unwrap();
     assert!(closed(db.file(epoch, "Files".into(), id, "photo".into()).await));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn store_wait_read_file() {
-    let (db, epoch, id, _directory) = stand().await;
-    assert_eq!(db.read(epoch, "Files".into(), id.clone(), "photo".into()).await.unwrap(), Some(vec![1, 2, 3]));
-    assert!(no_session(db.read(epoch + 1, "Files".into(), id.clone(), "photo".into()).await));
-    db.close_database().await.unwrap();
-    assert!(closed(db.read(epoch, "Files".into(), id, "photo".into()).await));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -114,3 +114,23 @@ fn mem_upload_copy_is_chunked() {
     }
     assert!(peak < 2 * CHUNK, "a source of 32 MiB is copied with one chunk and the table limit in memory: peak={peak}");
 }
+
+#[test]
+fn mem_file_attach_is_chunked() {
+    const CHUNK: usize = 1024 * 1024;
+    const SIZE: u64 = 32 * CHUNK as u64;
+    let (root, directories) = beside_database();
+    let source = root.path().join("source");
+    let file = fs::File::create(&source).unwrap();
+    file.set_len(SIZE).unwrap();
+    drop(file);
+    let (copy, peak) = crate::tests::peak_tests::measure_peak(|| {
+        crate::store::files::copy_attachment(&directories, &source).unwrap()
+    });
+    assert_eq!(copy.size, SIZE);
+    assert!(peak < 2 * CHUNK, "copy peak is {peak}");
+    let partial = directories.path(&copy.id).unwrap().with_extension("partial");
+    let copied = fs::read(partial).unwrap();
+    assert_eq!(copied.len() as u64, SIZE);
+    assert_eq!(copy.sha256, crate::store::files::sha256_hex(&copied));
+}

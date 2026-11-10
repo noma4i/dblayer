@@ -336,8 +336,8 @@ fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
     write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![attach("temp-1", vec![7; 40])]);
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id": "m5", "userId": "u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "m5".into() }]);
     let id = |text: &str| crate::identity::RowId::new(text).unwrap();
-    assert_eq!(db.read_file("moments", &id("m5"), "media").unwrap(), Some(vec![7; 40]), "the real row owns the bytes");
-    assert_eq!(db.read_file("moments", &id("temp-1"), "media").unwrap(), None, "the temporary row owns none");
+    assert_eq!(db.url("moments", &id("m5"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![7; 40]), "the real row owns the bytes");
+    assert_eq!(db.url("moments", &id("temp-1"), "media").unwrap(), None, "the temporary row owns none");
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_thresho
     for size in [1usize, 256 * 1024, 256 * 1024 + 1, 600_000] {
         let bytes: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
         write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![attach("m1", bytes.clone())]);
-        assert_eq!(db.read_file("moments", &crate::identity::RowId::new("m1").unwrap(), "media").unwrap(), Some(bytes), "size {size}");
+        assert_eq!(db.url("moments", &crate::identity::RowId::new("m1").unwrap(), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(bytes), "size {size}");
     }
 }
 

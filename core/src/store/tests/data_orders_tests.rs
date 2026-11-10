@@ -89,8 +89,8 @@ fn data_orders_real_row_around_the_create_answer_and_the_file() {
         let id = |text: &str| crate::identity::RowId::new(text).unwrap();
         assert!(db.read(&["moments"], |reader| reader.point("moments", &temp)).unwrap().is_none(), "{order:?}: the temp row is gone");
         assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "{order:?}: one row stays");
-        assert_eq!(db.read_file("moments", &id("m9"), "media").unwrap(), Some(vec![7; 40]), "{order:?}: the real row owns the bytes");
-        assert_eq!(db.read_file("moments", &id(&temp), "media").unwrap(), None, "{order:?}: the temporary row owns none");
+        assert_eq!(db.url("moments", &id("m9"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![7; 40]), "{order:?}: the real row owns the bytes");
+        assert_eq!(db.url("moments", &id(&temp), "media").unwrap(), None, "{order:?}: the temporary row owns none");
     }
 }
 

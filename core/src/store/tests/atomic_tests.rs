@@ -131,7 +131,7 @@ fn store_commit_file_orphan() {
     assert_ne!(old.id, new.id);
     assert!(!files.join(&old.id).exists());
     assert!(!files.join("cache").join(&old.id).exists());
-    assert_eq!(database.read_file("moments", &id("m1"), "media").unwrap(), Some(vec![2; 300_000]));
+    assert_eq!(database.url("moments", &id("m1"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![2; 300_000]));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn store_prop_file_orphans() {
     assert!(!files.join(detached.id).exists());
     assert!(files.join(retained.id).exists());
     assert!(database.file("moments", &id("m1"), "media").unwrap().is_none());
-    assert_eq!(database.read_file("moments", &id("m1"), "cover").unwrap(), Some(vec![3; 300_000]));
+    assert_eq!(database.url("moments", &id("m1"), "cover").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![3; 300_000]));
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn store_boot_finishes_file_rename() {
     std::fs::create_dir_all(files.join("cache")).unwrap();
     std::fs::write(files.join("cache/orphan"), b"orphan").unwrap();
     let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
-    assert_eq!(reopened.read_file("moments", &id("m1"), "media").unwrap(), Some(bytes));
+    assert_eq!(reopened.url("moments", &id("m1"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(bytes));
     assert!(!partial.exists());
     assert!(!files.join("orphan.partial").exists());
     assert!(!files.join("orphan").exists());

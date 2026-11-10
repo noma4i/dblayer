@@ -86,9 +86,8 @@ async fn files_rig() -> (std::sync::Arc<super::Database>, String) {
 fn file_calls(row: String) -> Vec<(&'static str, FileCall)> {
     let ids = move || ("Files".to_string(), row.clone(), "photo".to_string());
     vec![
-        ("attach", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(db.session_epoch(), m, r, f, crate::ffi::FileBytes { bytes: vec![1], name: "n".into(), mime: "image/png".into() }).await; })) }),
+        ("attach_file", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let source = tempfile::NamedTempFile::new().unwrap(); std::fs::write(source.path(), [1]).unwrap(); let _ = db.attach_file(db.session_epoch(), m, r, f, source.path().to_string_lossy().into(), "n".into(), "image/png".into()).await; })) }),
         ("file", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.file(db.session_epoch(), m, r, f).await; })) }),
-        ("read", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(db.session_epoch(), m, r, f).await; })) }),
         ("url", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(db.session_epoch(), m, r, f).await; })) }),
         ("detach", { let ids = ids.clone(); Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.detach(db.session_epoch(), m, r, f).await; })) }),
     ]
