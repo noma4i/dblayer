@@ -232,6 +232,39 @@ extension BridgeProbeTests {
     guard case .ended(.closed)? = await another.next("another reader sees the closed stream") else { Issue.record("the next reader did not see closed"); return }
   }
 
+  @MainActor
+  @Test
+  func bridge_reader_cancel_pending_pull_parity_c9() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    let stream = try scope.stream(Moment.recent)
+    let (ready, notify) = AsyncStream<Void>.makeStream()
+    let waiting = Task { () throws -> ReadValue? in
+      let reader = Cursor(stream)
+      guard case .snapshot? = await reader.next("the first snapshot") else { throw WaitFailure.unexpectedOutcome }
+      notify.yield(())
+      return await reader.next("the pending pull ends after cancellation")
+    }
+    let started = Cursor(ready)
+    guard await started.next("the first reader has a snapshot") != nil else { waiting.cancel(); return }
+    waiting.cancel()
+    let ended = try await valueBeforeDeadline(waiting) { notify.finish() }
+    if let ended {
+      guard case .ended(.closed) = ended else { Issue.record("the cancelled reader must end closed: \(ended)"); return }
+    }
+    let next = Cursor(stream)
+    guard let initial = await next.next("the new reader receives the current value"), case .snapshot = initial else { Issue.record("the new reader did not receive a snapshot"); return }
+    var projection = ListProjection<Moment>()
+    _ = try projection.apply(initial)
+    try DB.database.setOnline(online: false)
+    let sent = try await scope.send(Moment.self, values: ["text": .string("after cancellation")])
+    let id = try #require(sent.optimisticValue?.id)
+    guard let changed = await next.next("the new reader receives the write") else { Issue.record("the new reader did not receive the write"); return }
+    _ = try projection.apply(changed)
+    #expect(projection.rows.contains { $0.id == id }, "the new reader receives the written row")
+  }
+
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
   @MainActor
   @Test

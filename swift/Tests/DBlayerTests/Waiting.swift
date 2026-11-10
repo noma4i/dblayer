@@ -238,6 +238,7 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
       return first
     }
     guard let element else {
+      if Task.isCancelled { return nil }
       Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
       return nil
     }
