@@ -10,6 +10,68 @@ use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn win_node_temp_alias_permutations() {
+    use crate::schema::{Coverage, NodeRead, RelationSpec, RemoteShape};
+
+    let rig = Rig::encrypted_edited(false, false, false, |models| {
+        let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+        let field = message["fields"].as_array_mut().unwrap().iter_mut().find(|field| field["name"] == "chatId").unwrap();
+        field["link"] = json!({"model":"Message", "id":"chatId"});
+        for (name, operation, mode, shape) in [
+            ("node", "MessageNode", NodeRead::One, RemoteShape::Single),
+            ("nodes", "MessageNodes", NodeRead::Many, RemoteShape::List { coverage: Coverage::Complete }),
+        ] {
+            let mut relation = RelationSpec::global(name);
+            relation.remote = Some(crate::schema_fixtures::remote(operation, shape, "5.minutes"));
+            relation.node = Some(mode);
+            message["relations"].as_array_mut().unwrap().push(serde_json::to_value(relation).unwrap());
+        }
+    }).await;
+    rig.login_ios("A").await;
+    let mut operations: Vec<serde_json::Value> = serde_json::from_str(&super::rig_models::plain_operations()).unwrap();
+    operations.extend([
+        json!({"name":"MessageNode", "document":"query MessageNode($id: ID!) { node(id: $id) { ... on Message { id chatId text at } } }"}),
+        json!({"name":"MessageNodes", "document":"query MessageNodes($ids: [ID!]!) { nodes(ids: $ids) { ... on Message { id chatId text at } } }"}),
+    ]);
+    bound(rig.database.register_operations(serde_json::to_string(&operations).unwrap())).await.unwrap();
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("SendMessage");
+    let receipt = bound(rig.database.send(message(epoch, "temporary", 1))).await.unwrap();
+    let temporary = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    gate.entered().await;
+    assert!(temporary.starts_with("temp-"));
+    let local = bound(rig.database.node(epoch, "Message".into(), "node".into(), temporary.clone(), false)).await.unwrap().unwrap();
+    assert_eq!(local.id, temporary);
+    assert_eq!(rig.world.count("MessageNode"), 0);
+    assert!(bound(rig.database.node(epoch, "User".into(), "node".into(), temporary.clone(), false)).await.unwrap().is_none());
+    assert_eq!(rig.world.count("UserNode"), 0);
+
+    let row = |id: &str| json!({"__typename":"Message", "id":id, "chatId":"c1", "text":id, "at":1});
+    rig.world.answer_with("MessageNodes", json!({"data":{"nodes":[row("real-2"),row("real-1")]}}));
+    let found = bound(rig.database.nodes(epoch, "Message".into(), "nodes".into(), vec![temporary.clone(), "real-2".into(), "real-1".into()])).await.unwrap();
+    assert_eq!(found.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["real-2", "real-1"]);
+    let calls = rig.world.log();
+    let nodes = calls.iter().find(|entry| entry.operation == "MessageNodes").expect("nodes request");
+    assert!(nodes.body.contains("real-2") && nodes.body.contains("real-1") && !nodes.body.contains(&temporary));
+    let params = json!({"chatId":temporary}).to_string();
+    let before = rig.world.count("Thread");
+    bound(rig.database.load(epoch, "Message".into(), "thread".into(), params.clone())).await.unwrap();
+    assert_eq!(rig.world.count("Thread"), before);
+
+    gate.release();
+    let landed = bound(rig.database.confirmed(receipt)).await.unwrap().value.unwrap().id;
+    rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+    bound(rig.database.load(epoch, "Message".into(), "thread".into(), params)).await.unwrap();
+    assert_eq!(rig.world.count("Thread"), before + 1);
+    let calls = rig.world.log();
+    let thread = calls.iter().rev().find(|entry| entry.operation == "Thread").unwrap();
+    assert!(thread.body.contains(&landed) && !thread.body.contains(&temporary));
+    assert!(bound(rig.database.node(epoch, "User".into(), "node".into(), temporary, false)).await.unwrap().is_none());
+    assert_eq!(rig.world.count("UserNode"), 0);
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
