@@ -1892,7 +1892,8 @@
             "name": "MultipartUploadComplete"
           },
           "initiate": {
-            "name": "MultipartUploadInit"
+            "name": "MultipartUploadInit",
+            "root_path": "multipartUploadInit.multipartUpload"
           },
           "presign": {
             "name": "MultipartUploadPresignParts"
@@ -3959,7 +3960,8 @@
             "name": "MultipartUploadComplete"
           },
           "initiate": {
-            "name": "MultipartUploadInit"
+            "name": "MultipartUploadInit",
+            "root_path": "multipartUploadInit.multipartUpload"
           },
           "presign": {
             "name": "MultipartUploadPresignParts"
@@ -7842,7 +7844,8 @@
             "name": "MultipartUploadComplete"
           },
           "initiate": {
-            "name": "MultipartUploadInit"
+            "name": "MultipartUploadInit",
+            "root_path": "multipartUploadInit.multipartUpload"
           },
           "presign": {
             "name": "MultipartUploadPresignParts"
@@ -10112,7 +10115,8 @@
             "name": "MultipartUploadComplete"
           },
           "initiate": {
-            "name": "MultipartUploadInit"
+            "name": "MultipartUploadInit",
+            "root_path": "multipartUploadInit.multipartUpload"
           },
           "presign": {
             "name": "MultipartUploadPresignParts"
@@ -11926,7 +11930,8 @@
             "name": "MultipartUploadComplete"
           },
           "initiate": {
-            "name": "MultipartUploadInit"
+            "name": "MultipartUploadInit",
+            "root_path": "multipartUploadInit.multipartUpload"
           },
           "presign": {
             "name": "MultipartUploadPresignParts"
