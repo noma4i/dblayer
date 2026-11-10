@@ -98,3 +98,31 @@ fn dlv_nested_refs_work_linear() {
     let large = nested_work(40);
     assert_eq!(small, large, "SQL query count must not grow with referenced rows");
 }
+
+fn edge_work(size: usize) -> usize {
+    let db = Store::open_models(None, all_specs(), None).unwrap();
+    {
+        let inner = db.lock();
+        for index in 0..size {
+            let id = format!("r{index}");
+            inner.connection.execute("INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?3)", rusqlite::params!["moments", "scope", id]).unwrap();
+            inner.connection.execute("INSERT INTO scope_edge (model, scope_key, row_id, name, text) VALUES (?1, ?2, ?3, 'tag', 'value')", rusqlite::params!["moments", "scope", id]).unwrap();
+        }
+    }
+    let ids: Vec<String> = (0..size).map(|index| format!("r{index}")).collect();
+    let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
+    SQL.with(|count| count.set(0));
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
+    let edges = db.read(&["moments"], |reader| reader.scope_edges("moments", "scope", &wanted)).unwrap();
+    db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    assert_eq!(edges.members.len(), size);
+    assert!(edges.members.values().all(|fields| fields.len() == 1 && fields[0].0 == "tag"));
+    SQL.with(|count| count.get())
+}
+
+#[test]
+fn dlv_edges_work_linear() {
+    let small = edge_work(2);
+    let large = edge_work(40);
+    assert_eq!(small, large, "SQL query count must not grow with requested edges");
+}
