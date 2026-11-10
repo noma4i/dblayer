@@ -9,6 +9,24 @@ import org.junit.Test
 
 class FilePutTest {
     @Test
+    fun boundary_put_source_read_fails() = bounded {
+        val file = File.createTempFile("short-put", ".bin")
+        try {
+            file.writeText("part")
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse())
+                server.start()
+                val progress = object : ByteProgress(NoHandle) {
+                    override fun sent(bytes: ULong) {}
+                    override fun isCancelled() = false
+                }
+                val outcome = putFile(OkHttpClient(), server.url("/short").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, 0u, 8u), progress, 1024uL)
+                assertEquals(rawFailure(java.io.EOFException("the upload file is shorter than 8 bytes")), outcome.rawFailure())
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
     fun putSendsTheRangeOfTheFileAndReportsTheBytesAndTheEtag() = bounded {
         val file = File.createTempFile("range", ".bin").apply { writeBytes("0123456789".toByteArray()); deleteOnExit() }
         MockWebServer().use { server ->

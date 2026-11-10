@@ -75,6 +75,23 @@ private final class StallProtocol: URLProtocol, @unchecked Sendable {
   override func stopLoading() { stream?.close() }
 }
 
+private final class ReadBodyProtocol: URLProtocol, @unchecked Sendable {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    if let stream = request.httpBodyStream {
+      stream.open()
+      var bytes = [UInt8](repeating: 0, count: 4096)
+      while stream.read(&bytes, maxLength: bytes.count) > 0 {}
+      stream.close()
+    }
+    let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocolDidFinishLoading(self)
+  }
+  override func stopLoading() {}
+}
+
 private func openDescriptors(of path: String) -> Int {
   let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
   var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
@@ -132,6 +149,20 @@ struct UrlSessionPutTests {
     #expect(PartProtocol.mismatch == nil, "the bytes of the part are the bytes of the file range")
     #expect(PartProtocol.contentLength == String(length), "the request names the length of the part")
     #expect(PartProtocol.peakInUse - before < 16 * megabyte, "a part of 64 MiB leaves without 64 MiB in memory: \(PartProtocol.peakInUse - before) bytes")
+  }
+
+  @Test func boundary_put_source_read_fails() async throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data("part".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ReadBodyProtocol.self]
+    let transport = UrlSessionTransport(session: URLSession(configuration: configuration))
+    let outcome = await transport.put(target: PutTarget(url: "https://example.com/\(UUID().uuidString)", headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 1024), file: PutFile(path: file.path, offset: 0, length: 8), identity: TransferIdentity(operationId: 1, itemId: "i", step: .put), progress: NoProgress())
+    let failure = try #require(rawFailure(outcome))
+    #expect(failure.domain == NSURLErrorDomain)
+    #expect(failure.code == Int64(URLError.cannotDecodeRawData.rawValue))
+    #expect(openDescriptors(of: file.path) == 0)
   }
 
   /// A part that stops in the middle, by a cancel of the caller or by the server, ends the call with a failure and leaves no open file behind.
