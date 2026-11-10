@@ -51,7 +51,7 @@ pub fn step_request_id(transfer_id: u64, cycle_id: u64, step: crate::owners::wri
 }
 
 /// An abort of a multipart upload: a function of the upload id alone, the debt has no transfer id, cycle or key of its own.
-pub fn abort_request_id(_key: &str, upload_id: &str) -> u64 {
+pub fn abort_request_id(upload_id: &str) -> u64 {
     identity_request_id(&[&[crate::owners::write::upload::UploadStage::Abort as u8], upload_id.as_bytes()])
 }
 
