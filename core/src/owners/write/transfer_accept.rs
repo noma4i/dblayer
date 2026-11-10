@@ -7,7 +7,7 @@ use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::{RejectReason, ReplyId};
 use crate::owners::store::StoreOp;
-use crate::runtime::{Effect, Epoch, Outbound, Time};
+use crate::runtime::{Effect, Epoch, Outbound, RetryPolicy, Time};
 
 impl TransferState {
     pub(super) fn supply_source(&mut self, epoch: Epoch, key: &str, source: SuppliedSource, rep: ReplyId, fx: &mut Fx) {
@@ -363,8 +363,31 @@ impl TransferState {
         let rep = transfer.supply_reply.take();
         *transfer = *previous;
         transfer.staged_failed = Some((rep, fault));
+        self.write_restored(id, fx);
+    }
+
+    /// The batch of the old row after a failed swap: the call that waited for the swap and the temporary file wait for its `Committed`.
+    pub(super) fn write_restored(&mut self, id: TransferId, fx: &mut Fx) {
         self.store(&[id], StoreKind::Failed, fx);
         if let Some(pending) = self.pending.get_mut(&(self.next_batch - 1)) { pending.kind = StoreKind::StagedRestored; }
+    }
+
+    /// `StagedRestored x Rejected`: nothing is answered before the old row is durable, a refusal of the Store goes again after the backoff.
+    pub(super) fn staged_restore_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
+        if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
+        match reason {
+            RejectReason::Storage(_) => {
+                let attempt = self.transfers.get(&id).map_or(1, |transfer| transfer.attempts).max(1);
+                let timer = self.timer();
+                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { now: self.now, kind: TransferTick::StagedRestore { transfer_id: id } } });
+            }
+            RejectReason::StaleGeneration { models, generation } => {
+                for model in &models { self.generations.insert(model.clone(), generation); }
+                self.write_restored(id, fx);
+            }
+            RejectReason::Closed | RejectReason::NoSession => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
+            RejectReason::Invalid => self.staged_restored(id, false, fx),
+        }
     }
 
     /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.

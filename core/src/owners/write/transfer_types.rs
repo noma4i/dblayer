@@ -135,6 +135,8 @@ pub enum TransferTick {
     Expire,
 }
 
+    /// The write of the old row after a failed swap, which the Store refused, is due again.
+    StagedRestore { transfer_id: TransferId },
 /// The position and the size of the batch a row of an element carries: `renumber` rewrites them when an element leaves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Renumber {

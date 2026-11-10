@@ -214,6 +214,7 @@ impl TransferState {
             TransferTick::Expire => self.expire(fx),
             TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(transfer_id, attempt_id, fx),
             TransferTick::Minted { upload_id, attempt_id } => self.tick_minted(&upload_id, attempt_id, fx),
+            TransferTick::StagedRestore { transfer_id } => { if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.staged_failed.is_some()) { self.write_restored(transfer_id, fx); } }
             TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(transfer_id, attempt_id, fx),
         }
     }

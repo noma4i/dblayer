@@ -375,6 +375,7 @@ impl TransferState {
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
         replies.extend(transfer.retry_reply.take());
         replies.extend(transfer.supply_reply.take());
+        replies.extend(transfer.staged_failed.take().and_then(|(rep, _)| rep));
         replies.append(&mut transfer.discard_waiters);
         let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;
         let grouped = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
@@ -477,7 +478,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::StagedCleared { return; }
-        if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], false, fx); }
+        if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
             let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
                 (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
