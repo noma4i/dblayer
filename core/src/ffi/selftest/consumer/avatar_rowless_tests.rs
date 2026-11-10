@@ -261,9 +261,12 @@ async fn consumer_avatar_forbidden_discard_and_next_upload() {
                         assert!(matches!(outcome, Ok(ref confirmed) if confirmed.value.as_ref().is_some_and(|row| row.id == "u1")), "second upload merges the existing row: {outcome:?}");
                         assert_eq!(stand.requests("UserPhotoUpdate"), 2);
                     } else {
-                        let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await;
-                        assert!(matches!(second, Err(DbError::InFlight { .. })), "transfer.md:133: {second:?}");
-                        assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+                        stand.script_put(200, Some("etag"));
+                        let second = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+                        let outcome = bound(stand.database.confirmed(second, false)).await;
+                        assert!(matches!(outcome, Ok(ref confirmed) if confirmed.value.as_ref().is_some_and(|row| row.id == "u1")), "replacement upload merges the existing row: {outcome:?}");
+                        assert!(!copy.exists());
+                        assert_eq!(stand.requests("UserPhotoUpdate"), 2);
                     }
                     stand.database.close_now();
                 }));
