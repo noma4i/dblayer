@@ -204,7 +204,8 @@ pub(super) struct Twin {
     outbox: Log<OutboxInput>,
     rounds: Log<RoundsInput>,
     reply: ReplyId,
-    unanswered: Vec<BatchId>,
+    unanswered: Vec<(BatchId, EpochStamp)>,
+    ended: bool,
     seen_ids: std::collections::BTreeMap<String, TransferId>,
     followed: std::collections::BTreeSet<String>,
     /// The batches of shown values wait for the test to answer them.
@@ -223,7 +224,7 @@ impl Twin {
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default(), followed: Default::default(), hold_shown: false }
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), ended: false, seen_ids: Default::default(), followed: Default::default(), hold_shown: false }
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
@@ -299,7 +300,7 @@ impl Twin {
         for input in take(&self.store) {
             if let StoreInput::Commit(batch) = input {
                 if batch.ops.iter().all(|op| matches!(op, StoreOp::UploadShown { .. })) { out.shown.push(batch); continue; }
-                self.unanswered.push(batch.id);
+                self.unanswered.push((batch.id, batch.stamp));
                 out.batches.push(batch);
             }
         }
@@ -343,7 +344,8 @@ impl Twin {
 
     fn post_held(&mut self, input: TransferInput) -> Out {
         self.follow(&input);
-        self.det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), input);
+        let stamp = if self.ended { EpochStamp::Control } else { EpochStamp::Epoch(EPOCH) };
+        self.det.post(Address::<Transfers>::new(TRANSFER_AT), stamp, input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
         self.collect()
     }
@@ -368,8 +370,12 @@ impl Twin {
     pub fn attempt(&self, id: TransferId) -> u64 { self.t(id).attempt_id }
 
     pub fn answer(&mut self, reply: impl FnOnce(BatchId) -> TransferInput) -> Out {
-        let batch = self.unanswered.remove(0);
-        self.post(reply(batch))
+        let (batch, stamp) = self.unanswered.remove(0);
+        let kept = self.ended;
+        self.ended = stamp == EpochStamp::Control;
+        let out = self.post(reply(batch));
+        self.ended = kept;
+        out
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
@@ -490,6 +496,7 @@ impl Twin {
     }
 
     pub fn end_epoch(&mut self) -> Out {
+        self.ended = true;
         self.det.end_epoch(EPOCH, Cause::SessionReset);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
         self.collect()
