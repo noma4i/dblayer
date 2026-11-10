@@ -8,7 +8,8 @@
 
 ### Changed
 
-- Waits report `Closed` after database close and `NoSession` after session end; outcomes and streams carry the same causes as values.
+- Waits report `Closed` after database close and `NoSession` after session end.
+- Outcomes and streams carry the same end causes as values.
 - Calls, outcomes, uploads, streams, and loads end with one cause each.
 - An owner answer given before close reaches the caller unchanged.
 - `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
