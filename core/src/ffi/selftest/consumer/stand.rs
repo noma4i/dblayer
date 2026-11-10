@@ -215,6 +215,8 @@ impl Stand {
 
     pub(super) async fn put_started(&self) { bound(self.cable.put_started.subscribe().wait_for(|count| *count > 0)).await.unwrap(); }
 
+    pub(super) async fn puts_started(&self, expected: usize) { bound(self.cable.put_started.subscribe().wait_for(|count| *count >= expected)).await.unwrap(); }
+
     pub(super) fn release_put(&self) { crate::lock::effect(|| self.cable.put_release.notify_one()); }
 
     /// How many times the core asked for the operation with the variable `name` equal to `value`.
