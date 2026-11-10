@@ -407,3 +407,32 @@ fn store_batch_operation_result_queries() {
     };
     assert_eq!(measure(2), measure(40), "result reads must not grow with operation count");
 }
+
+thread_local! { static DIRTY_FIELD_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn count_dirty_fields(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.starts_with("SELECT") && sql.contains("FROM op_value WHERE") && sql.contains("parent = 0") { DIRTY_FIELD_QUERIES.with(|count| count.set(count.get() + 1)); }
+    }
+}
+
+#[test]
+fn store_batch_dirty_field_queries() {
+    let measure = |size: usize| {
+        let (store, _) = booted_store();
+        let changes = (0..size).map(|i| {
+            let mut item = record(None, OperationStatus::Pending, None);
+            item.action_key = "messages:update".into();
+            item.row_ids = vec![id(&format!("r{i}"))];
+            item.temp_id = None;
+            OperationTransition::Begin(Box::new(item))
+        }).collect();
+        DIRTY_FIELD_QUERIES.with(|count| count.set(0));
+        store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_dirty_fields));
+        let result = transitions(&store, changes);
+        store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+        assert_eq!(result.operations.len(), size);
+        DIRTY_FIELD_QUERIES.with(|count| count.get())
+    };
+    assert_eq!(measure(2), measure(40), "dirty field reads must not grow with operation count");
+}
