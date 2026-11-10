@@ -5,7 +5,6 @@ impl SessionState {
         let phase = std::mem::replace(&mut self.phase, SessionPhase::Closed);
         if matches!(phase, SessionPhase::Closed) {
             match input {
-                SessionInput::Revoked { author_ref: Some(author), request_id, .. } => author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Closed),
                 SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(SessionError::Closed)),
                 SessionInput::SessionResume { reply: id } => fx.push(SessionEffect::ResumeReply { id, answer: Err(SessionError::Closed) }),
                 SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::Closed),
@@ -14,26 +13,25 @@ impl SessionState {
             }
             return;
         }
-        if let SessionInput::Revoked { author_ref: Some(author), request_id, epoch, body, .. } = &input {
+        if let SessionInput::Revoked { author_ref: Some(_), epoch, .. } = &input {
             self.phase = phase;
-            if *epoch != self.epoch || !self.current(*epoch) { author_error(fx, *author, *request_id, ErrorClass::Permanent, SessionError::NoSession); return; }
+            if *epoch != self.epoch || !self.current(*epoch) { return; }
             let batch = self.batch();
-            self.external_revoked.insert(batch, (*author, *request_id, body.clone(), *epoch));
+            self.external_revoked.insert(batch, *epoch);
             fx.push(SessionEffect::CommitRevoked { batch, epoch: *epoch });
             return;
         }
         if let SessionInput::Committed(committed) = &input {
-            if let Some((author, request_id, body, epoch)) = self.external_revoked.remove(&committed.batch) {
+            if let Some(epoch) = self.external_revoked.remove(&committed.batch) {
                 self.phase = phase;
-                author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Revoked { body });
                 fx.push(SessionEffect::ServerEnded(ServerEnded { epoch }));
                 return;
             }
         }
         if let SessionInput::Rejected(rejected) = &input {
-            if let Some((author, request_id, _, _)) = self.external_revoked.remove(&rejected.batch) {
+            if self.external_revoked.remove(&rejected.batch).is_some() {
                 self.phase = phase;
-                author_error(fx, author, request_id, ErrorClass::Permanent, SessionError::Rejected(rejected.reason.clone()));
+                if matches!(rejected.reason, RejectReason::Storage(_) | RejectReason::Invalid | RejectReason::StaleGeneration { .. }) { fx.push(SessionEffect::ExecutorFailed); }
                 return;
             }
         }

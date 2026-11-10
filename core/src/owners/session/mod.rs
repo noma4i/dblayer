@@ -313,7 +313,7 @@ pub struct SessionState {
     epoch: Epoch,
     published: PublishedState,
     after_publish: Option<AnswerAfterPublish>,
-    external_revoked: std::collections::BTreeMap<BatchId, (AuthorId, RequestId, String, Epoch)>,
+    external_revoked: std::collections::BTreeMap<BatchId, Epoch>,
     subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
     restored_detached: Option<PendingCall>,

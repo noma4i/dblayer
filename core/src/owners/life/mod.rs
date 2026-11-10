@@ -42,6 +42,12 @@ use boot::boot_found;
 /// The first author id of the direct calls: below it the ids of Outbox, Transfer and Calls.
 const WAITER_AUTHOR: AuthorId = 1 << 32;
 
+struct EpochWait { outcomes: Outcomes<LifeReply>, id: OutcomeId }
+
+impl Drop for EpochWait {
+    fn drop(&mut self) { self.outcomes.forget(self.id); }
+}
+
 /// The document and the answer root of a declared operation.
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
 
@@ -384,12 +390,11 @@ impl Life {
                 let Some(wiring) = weak.upgrade() else { return crate::transport::TransportError::Interrupted("the database closed".into()) };
                 let request_id = super::contract::next_request_id();
                 let author_ref = WAITER_AUTHOR.saturating_add(request_id);
-                let waiter = wiring.mutations.register_as(author_ref, Epoch::MAX);
+                let waiter = wiring.outcomes.register(epoch);
+                let _waiting = EpochWait { outcomes: wiring.outcomes.clone(), id: waiter.id() };
                 wiring.to_session(SessionInput::Revoked { request_id, attempt_id: 0, body, author_ref: Some(author_ref), epoch });
                 match waiter.wait().await {
-                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::Revoked { body }, .. })) => crate::transport::TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail: body },
-                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::NoSession, .. })) => crate::transport::TransportError::NoSession,
-                    crate::runtime::Outcome::Value(LifeReply::Mutated(AuthorOutcome::Error { error: super::session::SessionError::Rejected(super::contract::RejectReason::Storage(detail)) | super::session::SessionError::Storage(detail), .. })) => crate::transport::TransportError::Storage(detail),
+                    crate::runtime::Outcome::EpochEnded(_) => crate::transport::TransportError::NoSession,
                     _ => crate::transport::TransportError::Interrupted("the session ended".into()),
                 }
             })
