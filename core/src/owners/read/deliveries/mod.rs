@@ -413,6 +413,8 @@ pub struct DeliveriesState {
     streams: BTreeMap<StreamId, Delivery>,
     by_table: BTreeMap<String, BTreeSet<StreamId>>,
     by_row: BTreeMap<String, BTreeMap<String, BTreeSet<StreamId>>>,
+    /// The streams that wait for the swap of a temporary id, by that id: a swap of the row wakes them whatever tables the batch wrote.
+    by_temp: BTreeMap<String, BTreeSet<StreamId>>,
     watchers: BTreeSet<StreamId>,
     examined: u64,
     peers: DeliveryPeers,
@@ -422,7 +424,7 @@ pub struct DeliveriesState {
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), watchers: BTreeSet::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), by_temp: BTreeMap::new(), watchers: BTreeSet::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -441,6 +443,9 @@ impl DeliveriesState {
             self.watchers.insert(stream);
         }
         let Some(machine) = self.streams.get(&stream).filter(|machine| (machine.view.kind.reads_rows() || machine.view.kind == Kind::Blob) && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
+        for temp in machine.deferred.iter().flat_map(|deferred| &deferred.temps) {
+            self.by_temp.entry(temp.clone()).or_default().insert(stream);
+        }
         let own = entity_row(&machine.view);
         for table in &machine.view.tables {
             match &own {
@@ -492,6 +497,20 @@ impl DeliveriesState {
         if machine.gone() {
             self.streams.remove(&stream);
         }
+    }
+
+    /// The streams that wait for the swap of a row this commit changed.
+    fn swap_woken(&self, committed: &Committed) -> BTreeSet<StreamId> {
+        let Some(rows) = &committed.rows else { return BTreeSet::new() };
+        rows.iter().filter_map(|(_, row)| self.by_temp.get(row)).flatten().copied().collect()
+    }
+
+    fn forget_unblocked(&mut self) {
+        let streams = &self.streams;
+        self.by_temp.retain(|_, waiting| {
+            waiting.retain(|stream| streams.get(stream).is_some_and(|machine| machine.deferred.is_some()));
+            !waiting.is_empty()
+        });
     }
 
     fn affected(&self, committed: &Committed) -> BTreeSet<StreamId> {
@@ -609,10 +628,12 @@ impl StateOwner for Deliveries {
             DeliveryInput::Resync { stream } => on(state, stream, &mut out, |machine, fx| machine.resync(fx)),
             DeliveryInput::Committed(committed) => {
                 state.revision = state.revision.max(committed.revision);
-                for stream in state.affected(&committed) {
+                let woken = state.swap_woken(&committed);
+                for stream in state.affected(&committed).into_iter().chain(woken.iter().copied()).collect::<BTreeSet<_>>() {
                     state.examined += 1;
                     on(state, stream, &mut out, |machine, fx| machine.committed(&committed, fx));
                 }
+                if !woken.is_empty() { state.forget_unblocked(); }
                 let watchers: Vec<StreamId> = state.watchers.iter().copied().collect();
                 for stream in watchers {
                     on(state, stream, &mut out, |machine, fx| machine.changed(&committed, fx));

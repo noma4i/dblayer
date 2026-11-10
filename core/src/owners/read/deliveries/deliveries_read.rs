@@ -217,8 +217,7 @@ impl Delivery {
     fn swapped_view(&self, data: &Whole) -> Option<View> {
         let deferred = self.deferred.as_ref()?;
         match data {
-            Whole::Rows { replaced, .. } => replaced.iter().any(|(from, _)| deferred.temps.contains(from)).then(|| (deferred.rebind.0)()).flatten(),
-            Whole::Count(_) => (deferred.rebind.0)(),
+            Whole::Rows { .. } | Whole::Count(_) => (deferred.rebind.0)(),
             Whole::Operations(_) => None,
         }
     }
