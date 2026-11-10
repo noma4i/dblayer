@@ -152,7 +152,7 @@ fn the_row_carries_its_id_sync_state_and_upload() {
             state: WireSyncState::Failed,
             actions: vec!["update".into()],
             dirty_fields: vec!["title".into()],
-            error: Some(WireFailure { kind: "server".into(), session_code: None, request_size: None, request_limit: None, message: "http 503".into(), extensions: None }),
+            error: Some(WireFailure { kind: "server".into(), session_code: None, request_size: None, request_limit: None, message: "http 503".into(), extensions: None, response_limit: None }),
             attempts: 2,
             since: 7,
         }
