@@ -11,6 +11,12 @@ use crate::runtime::Time;
 const KEY: &str = "CurrentUser:me:upload_photo";
 const OTHER: &str = "CurrentUser:other:upload_photo";
 
+fn item(key: &str, parts: u32) -> crate::owners::write::transfer::BatchItem {
+    let mut item = super::transfer_harness::item(key, parts);
+    item.mutation.effects = Default::default();
+    item
+}
+
 fn accept(twin: &mut Twin, key: &str, parts: u32) -> (TransferId, u64, Out) {
     let reply = twin.reply();
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });

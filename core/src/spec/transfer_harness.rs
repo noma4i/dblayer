@@ -152,7 +152,8 @@ impl Out {
 pub(super) fn mutation(key: &str) -> NewOp {
     let mut parts = key.splitn(3, ':');
     let (model, row, action) = (parts.next().unwrap_or("Moment"), parts.next().unwrap_or("r"), parts.next().unwrap_or("upload"));
-    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None }
+    let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: model.into(), row_id: row.into(), values: "{}".into() }], ..Default::default() };
+    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects, created_at: 0, expires_after: None }
 }
 
 pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: String::new() }) } }
