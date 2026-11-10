@@ -30,12 +30,25 @@ async fn profile_refresh_failure_keeps_value_without_extra_requests() {
     use crate::ffi::{QuerySpec, ReadRequest};
     use crate::ffi::tape::Rows;
 
-    let rig = Rig::encrypted().await;
+    let rig = Rig::encrypted_edited(false, false, false, |models| {
+        let user = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "User").unwrap();
+        user["changes"] = serde_json::json!([{"area":"COUNTERS","relation":"profile"},{"area":"GIFT","relation":"profile"}]);
+        user["change_feed"] = serde_json::json!({"subscription":"DblayerViewerChanges","root":"viewerChanges.changes","area":"area","kind":"kind","id":"entityId"});
+    }).await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
+    let mut operations: Vec<serde_json::Value> = serde_json::from_str(&super::rig_models::plain_operations()).unwrap();
+    operations.push(serde_json::json!({"name":"DblayerViewerChanges", "document":"subscription DblayerViewerChanges { viewerChanges { changes { area kind entityId } } }"}));
+    bound(rig.database.register_operations(serde_json::to_string(&operations).unwrap())).await.unwrap();
     let rows = Arc::new(Rows::default());
+    let gate = rig.world.hold_next("MyProfile");
     let reader = rig.database.watch(ReadRequest::List { query: QuerySpec::json(r#"{"model":"User","relation":"profile","params":{}}"#) }, rows.clone());
-    bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    gate.entered().await;
+    let db = rig.database.clone();
+    let first = rig.spawn(async move { db.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await });
+    rig.settle().await;
+    gate.release();
+    bound(first).await.unwrap().unwrap();
     settled(&rig, "the profile is shown", || rows.len() == 1).await;
     assert_eq!(profile_requests(&rig), 1, "first load: {:?}", rig.world.log());
     let initial = rows.0.lock().unwrap()[0].clone();
@@ -54,7 +67,7 @@ async fn profile_refresh_failure_keeps_value_without_extra_requests() {
     settled(&rig, "the refresh error is shown", || rows.last().is_some_and(|value| value.error.is_some())).await;
     assert_eq!(rows.0.lock().unwrap()[0].id, initial.id);
     let calls: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "MyProfile").collect();
-    assert_eq!(calls.len(), 3, "profile requests: {calls:?}");
+    assert_eq!(calls.len(), 3, "profile requests: {calls:?}; cable opens: {}", rig.switch.events.peer.connects());
     drop(reader);
     rig.database.close_now();
 }
