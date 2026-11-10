@@ -25,7 +25,7 @@ async fn sess_prop_server_end_atomic() {
     stand.sign_in().await;
     stand.settle().await;
     assert!(stand.database.session_epoch() > 0, "the sign-in opened a session");
-    stand.answer_next("UserLocationUpdate", json!({"errors": [{"extensions": {"code": "SESSION_ENDED"}}]}));
+    stand.answer_next("UserLocationUpdate", json!({"errors": [{"message": "session ended", "extensions": {"code": "SESSION_ENDED", "reasonCode": "session_ended"}}], "data": {"userLocationUpdate": null}}));
     let epoch = stand.database.session_epoch();
     let ended = bound(stand.database.run(epoch, "UserLocationUpdate".into(), json!({"input": {"lat": 1.0, "lng": 2.0}}).to_string())).await;
     assert!(ended.is_err(), "the server end fails the call: {ended:?}");
