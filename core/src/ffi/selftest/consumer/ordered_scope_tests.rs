@@ -56,6 +56,7 @@ async fn consumer_chat_media_load_all_keeps_every_page() {
         for (index, case) in cases.into_iter().enumerate() {
             for page in 0..2 {
                 let mut message = row(case, (index * 2 + page + 1) as i32);
+                if case.media == "GIFT" { message["media"] = Value::Null; }
                 message["createdAt"] = json!("2026-10-20T00:00:00Z");
                 message["updatedAt"] = json!("2026-10-20T00:00:00Z");
                 stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":[{"node":message}],"pageInfo":{"hasNextPage":page == 0,"endCursor":if page == 0 { Some("mid") } else { None }}}}}}));
