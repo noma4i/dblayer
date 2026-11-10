@@ -44,6 +44,7 @@ fn failed(error: DbError) -> RawOutcome {
         DbError::Http { status, detail } => RawOutcome::response(status, detail),
         DbError::Network { .. } | DbError::Offline { .. } => RawOutcome::failed(RawFailureKind::Unreachable, message),
         DbError::Interrupted { .. } => RawOutcome::failed(RawFailureKind::Cancelled, message),
+        DbError::ResponseTooLarge { .. } => RawOutcome::failed(RawFailureKind::ResponseLimit, message),
         DbError::Security { code: core::SecurityCode::TlsTrust, .. } => RawOutcome::failed(RawFailureKind::Tls, message),
         DbError::Graphql { messages, .. } => RawOutcome::response(200, serde_json::json!({"errors": messages.iter().map(|text| serde_json::json!({"message": text, "extensions": {"code": text}})).collect::<Vec<_>>()}).to_string()),
         _ => RawOutcome::failed(RawFailureKind::Io, message),
