@@ -6,6 +6,7 @@
 
 - `cableCloses` streams connection closures and their causes on Swift and Kotlin.
 - `ServerContract` registers documents and looks them up by hash.
+- The cable sends a client ping and reconnects when the pong is late.
 
 ### Changed
 
