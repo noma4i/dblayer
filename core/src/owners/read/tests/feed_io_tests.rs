@@ -407,7 +407,7 @@ fn abandoned_socket_case(case: &str) {
 #[test]
 fn feed_open_socket_cancel_orders() {
     let cases: Vec<_> = ["epoch", "offline", "close", "want"].into_iter().map(|case| std::thread::spawn(move || abandoned_socket_case(case))).collect();
-    for case in cases { case.join().unwrap(); }
+    for case in cases { crate::test_wait::join_within(case); }
 }
 
 #[test]
