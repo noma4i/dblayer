@@ -142,7 +142,7 @@ let replacement = try await DB.account().upload(moment, action: "upload_clip", n
 val replacement = AccountScope.current().upload(moment, "upload_clip", newRequest, Moment)
 ```
 
-For a batch, this rule applies to each item key. A failed upload at an item key is replaced. An upload still in progress at any item key returns `InFlight` for the whole batch.
+For a batch, this rule applies to each item key. A single failed upload at an item key is replaced. An upload still in progress at any item key, or a failed item of an earlier batch, returns `InFlight` for the whole batch.
 
 ### Android background transfer
 
