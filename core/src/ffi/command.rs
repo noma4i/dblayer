@@ -40,12 +40,10 @@ impl Database {
     pub(super) async fn read_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, read: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let kept = crate::runtime::hold_until_woken(self.life.launch());
         let this = self.clone();
-        let answer = this.clone();
         let work = async move { super::database::blocking(move || read(&this)).await };
         let value = self.in_epoch(epoch, target, work).await;
         crate::runtime::release_holds();
         drop(kept);
-        answer.close_after(epoch)?;
         value
     }
 
@@ -67,11 +65,6 @@ impl Database {
             CallVerdict::Refuse(crate::owners::calls::CallError::Storage) => Some(super::EndCause::Storage { error: "the database could not save its state".into() }),
             CallVerdict::Refuse(_) => Some(super::EndCause::SessionEnded),
         }
-    }
-
-    pub(super) fn close_after(&self, epoch: u64) -> Result<(), DbError> {
-        if matches!(self.admission_end(epoch), Some(super::EndCause::Closed)) { return Err(closed()); }
-        Ok(())
     }
 
     /// A call that holds no future: refused when the epoch of the caller is not current.
