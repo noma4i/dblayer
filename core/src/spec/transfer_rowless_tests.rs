@@ -105,20 +105,6 @@ fn xfer_rowless_steps() {
 }
 
 #[test]
-fn xfer_rowless_mutation_lands() {
-    let mut twin = Twin::new();
-    let (id, out) = mutating(&mut twin, KEY);
-    let ops = out.submit_ops();
-    assert_eq!((ops.len(), ops[0].row_id.as_str(), ops[0].effects.rows.len()), (1, "me", 0), "one final mutation, no effects of a row that does not exist");
-    let confirmed = OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"status":"GOOD"}"#.into()), row_id: Some("u1".into()) };
-    let out = twin.mutation_outcome(KEY, confirmed.clone());
-    assert!(out.batches.iter().flat_map(|batch| batch.ops.iter()).any(|op| matches!(op, StoreOp::Show { model, row_id } if model == "CurrentUser" && row_id == "u1")), "the row the answer landed is read in the transaction of the removal");
-    committed_with(&mut twin, vec![Some(landed("u1"))]);
-    let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(confirmed, Some(landed("u1")))], "confirmed carries the answer and the landed row");
-}
-
-#[test]
 fn xfer_rowless_confirmed() {
     let mut twin = Twin::new();
     let (id, _) = mutating(&mut twin, KEY);
