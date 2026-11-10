@@ -413,6 +413,20 @@ pub struct SessionStatus {
     pub phase: SessionStanding,
 }
 
+/// The status of a published value: a closed database refuses, a session without an identity is none.
+pub(crate) fn status_of_published(published: &crate::owners::contract::Published) -> Result<SessionStatus, DbError> {
+    use crate::owners::contract::PublishedState as State;
+    let (phase, identity) = match published.state {
+        _ if published.closed => return Err(super::command::closed()),
+        State::Closing => return Err(super::command::closed()),
+        State::NoSession => (SessionStanding::None, None),
+        State::Session | State::Resetting | State::StorageFailed if published.identity.is_none() => (SessionStanding::None, None),
+        State::Session | State::Resetting | State::StorageFailed => (SessionStanding::Active, published.identity),
+        State::Ending | State::EndingFailed => (SessionStanding::Ending, published.identity),
+    };
+    Ok(SessionStatus { epoch: published.epoch, identity, phase })
+}
+
 #[uniffi::export]
 impl Database {
     pub fn cable_closes(&self) -> Arc<ReadStream> { self.subscribe_values(self.session_epoch(), ReadRequest::CableCloses) }
@@ -420,19 +434,7 @@ impl Database {
     pub fn session_epoch(&self) -> u64 { self.life.published().epoch }
 
     /// The session of the database now, read from the published value: no network and no storage.
-    pub fn session_status(&self) -> Result<SessionStatus, DbError> {
-        use crate::owners::contract::PublishedState as State;
-        let published = self.life.published();
-        let (phase, identity) = match published.state {
-            _ if published.closed => return Err(super::command::closed()),
-            State::Closing => return Err(super::command::closed()),
-            State::NoSession => (SessionStanding::None, None),
-            State::Session | State::Resetting | State::StorageFailed if published.identity.is_none() => (SessionStanding::None, None),
-            State::Session | State::Resetting | State::StorageFailed => (SessionStanding::Active, published.identity),
-            State::Ending | State::EndingFailed => (SessionStanding::Ending, published.identity),
-        };
-        Ok(SessionStatus { epoch: published.epoch, identity, phase })
-    }
+    pub fn session_status(&self) -> Result<SessionStatus, DbError> { status_of_published(&self.life.published()) }
 
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
