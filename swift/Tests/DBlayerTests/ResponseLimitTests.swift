@@ -18,7 +18,36 @@ private final class LimitProtocol: URLProtocol, @unchecked Sendable {
   override func stopLoading() {}
 }
 
+private final class LimitProgress: ByteProgress, @unchecked Sendable {
+  init() { super.init(noHandle: .init()) }
+  required init(unsafeFromHandle handle: UInt64) { fatalError("not a core object") }
+  override func sent(bytes: UInt64) {}
+  override func isCancelled() -> Bool { false }
+}
+
 struct ResponseLimitTests {
+  @Test
+  func boundary_put_response_limit_c9() async throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data("file".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    for length in [16, 17] {
+      for mode in ["length", "chunked"] {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [LimitProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let url = "https://example.test/\(UUID().uuidString)/\(length)-\(mode)"
+        let target = PutTarget(url: url, headers: [:], connectMs: 10_000, requestMs: 30_000, responseLimit: 16)
+        let outcome = await UrlSessionTransport(session: session).put(target: target, file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "x", step: .put), progress: LimitProgress())
+        if length == 16 { #expect(outcome == .response(status: 200, etag: nil, body: String(repeating: "a", count: 16))) }
+        else {
+          let failure = try #require(rawFailure(outcome))
+          #expect((failure.domain, failure.code) == ("DBlayer.ResponseLimit", 1))
+        }
+      }
+    }
+  }
   @Test
   func boundary_http_response_limit_c9() async throws {
     for length in [16, 17] {
