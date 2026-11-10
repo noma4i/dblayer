@@ -22,8 +22,9 @@ pub use windows_types::*;
 mod windows_facts;
 use windows_facts::*;
 
-pub(crate) fn landed_tail(pages: u32, page: u32, replace_all: bool) -> (u32, bool) {
+pub(crate) fn landed_tail(pages: u32, page: u32, replace_all: bool, preserve: bool) -> (u32, bool) {
     if replace_all { return (page, false); }
+    if !preserve { return (if page == 1 { 1 } else { pages.saturating_add(1) }, false); }
     (pages.max(page), page < pages)
 }
 
@@ -134,7 +135,7 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer, *now),
             Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) => {
                 self.answered_at = *now;
-                self.page_count = landed_tail(self.page_count, load.page, self.replace_all).0;
+                self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
                 self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });

@@ -117,7 +117,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     envelope.entity_ops.extend(plan.entity_ops);
     envelope.scope_ops = plan.scope_ops;
     envelope.edge_writes = edge_writes(&scope, &declared.edge_fields, &accepted, &edges);
-    let (pages, keep_tail) = crate::owners::read::windows::landed_tail(stored.as_ref().and_then(|window| u32::try_from(window.pages).ok()).unwrap_or_default(), page.page, page.replace_all);
+    let (pages, keep_tail) = crate::owners::read::windows::landed_tail(stored.as_ref().and_then(|window| u32::try_from(window.pages).ok()).unwrap_or_default(), page.page, page.replace_all, local_order.is_some() || declared.media.is_some());
     let cursor = if keep_tail { stored.as_ref().and_then(|window| window.cursor.clone()) } else { page.cursor.map(str::to_string) };
     envelope.window = Some(WindowSave {
         marker: None, stale_since: None, key, scope, has_next: cursor.is_some(), cursor,

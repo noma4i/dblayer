@@ -30,6 +30,7 @@ pub(super) struct Facts {
     /// The last page that landed.
     pub(super) page: u32,
     pub(super) page_count: u32,
+    pub(super) local_order: bool,
     pub(super) max_pages: u32,
     pub(super) members_complete: bool,
     pub(super) cursor_reset_used: bool,
@@ -232,7 +233,7 @@ impl Facts {
         let number = if chain.base > 0 { 2 } else { 1 };
         let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
-        self.page_count = landed_tail(self.page_count, number, replace_all).0;
+        self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
         self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
@@ -368,7 +369,7 @@ impl Facts {
             self.members = members;
             if replaced { self.stale_owed.set(false); }
         }
-        if !landed_tail(self.page_count, page, self.replace_all).1 {
+        if !landed_tail(self.page_count, page, self.replace_all, self.local_order || self.media).1 {
             self.cursor = cursor;
             self.page = page;
         }
