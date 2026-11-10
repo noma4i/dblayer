@@ -225,3 +225,33 @@ async fn xfer_status_processing() {
     rig.database.close_now();
 }
 
+
+/// xfer_rowless_processing: for a key whose row does not exist the status carries no `processing`; when a row of the server lands and says the file is not ready, the same stream shows its processing, and the terminal value drops it.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_rowless_processing() {
+    use crate::ffi::{ReadValue, WireProcessing};
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
+        add_chat(models);
+        add_uploads(models);
+        let chat = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Chat").unwrap();
+        let fields = chat["fields"].as_array_mut().unwrap();
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoState", crate::value::ScalarKind::Str).nullable().optional()).unwrap());
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoProgress", crate::value::ScalarKind::Num).nullable().optional()).unwrap());
+        let action = chat["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "update_photo").unwrap();
+        action["processing"] = json!({"field": "photoState", "done": ["ready"], "progress": "photoProgress"});
+    })).await;
+    let stream = blob_stream(&rig, "update_photo");
+    let first = status_until(&stream, "the status of a missing row opens", |value| matches!(value, ReadValue::Status { .. })).await;
+    assert!(matches!(first, ReadValue::Status { processing: None, .. }), "no processing before a row exists: {first:?}");
+    let mut working = chat_row("c1", 0);
+    working["photoState"] = json!("working");
+    working["photoProgress"] = json!(0.5);
+    rig.land("Chat", working).await;
+    let shown = status_until(&stream, "the processing of the landed row shows", |value| matches!(value, ReadValue::Status { processing: Some(_), .. })).await;
+    assert!(matches!(shown, ReadValue::Status { processing: Some(WireProcessing { progress: Some(progress) }), .. } if (progress - 0.5).abs() < f64::EPSILON), "{shown:?}");
+    let mut ready = chat_row("c1", 0);
+    ready["photoState"] = json!("ready");
+    rig.land("Chat", ready).await;
+    status_until(&stream, "the terminal value drops the processing", |value| matches!(value, ReadValue::Status { processing: None, .. })).await;
+    rig.database.close_now();
+}
