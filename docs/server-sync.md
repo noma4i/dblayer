@@ -371,7 +371,7 @@ No timer runs without a failed request awaiting another attempt.
 Applications await the original call and use its cancellation instead of adding their own startup retry loop.
 Retries cover HTTP exchange failures. Local Pending conflicts, credential storage failures and SQLite failures still return immediately without retrying.
 
-Security, Config, unsupported versions, invalid origins, RequestTooLarge and Session refusals return immediately.
+Security, Config, unsupported versions, invalid origins, RequestTooLarge, ResponseTooLarge and Session refusals return immediately.
 HTTP 400, 404, 405, 413, 415 and 422 remain permanent refusals.
 Bare HTTP 401 and 403 keep their existing immediate errors.
 Malformed or unauthenticated encrypted responses also return immediately.

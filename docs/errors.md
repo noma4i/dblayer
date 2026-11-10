@@ -17,6 +17,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Offline` | The network is away and the call fails at once instead of waiting. |
 | `Network`, `Http` | The request failed on the network, or the server answered with a status (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
 | `RequestTooLarge` | The request exceeds the local limit (`size`, `limit`). |
+| `ResponseTooLarge` | The answer exceeds the limit (`limit`): 16 MiB for a GraphQL answer, 64 KiB for the answer of a file upload. The platform stops reading at the limit. A read or an upload fails without a retry. A sent mutation counts as an unknown outcome and repeats with the same request id. |
 | `Graphql` | The server answered with GraphQL errors (`messages`, `extensions`). |
 | `Rejected` | The server refused the operation of a receipt `confirmed()` (`failure`: an `OperationFailure`, `kept`). `kept` is true when the failed change stays for `retry` or `discard`. |
 | `Interrupted` | The wait was cancelled. The detail identifies the cause. A call deadline returns its last error or `Network`. |

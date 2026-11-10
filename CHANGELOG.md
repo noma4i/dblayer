@@ -6,6 +6,7 @@
 
 - Wait for a receipt with `confirmed`, which returns the value or throws `Rejected`.
 - Read the session with `sessionStatus`: epoch, identity and phase.
+- Fail with `ResponseTooLarge` when the answer of the server exceeds 16 MiB, or 64 KiB for a file upload.
 
 ### Changed
 
