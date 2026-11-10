@@ -131,3 +131,21 @@ async fn win_chain_refresh_keeps_tail() {
     assert_eq!(calls[2]["after"], "4");
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_chain_marker_change_resets() {
+    let (rig, rows, _stream) = chain_rig().await;
+    rig.world.fail_next("chatMediaState", chain_marker("2", 0, 8));
+    rig.world.fail_next("chatMedia", chain_page(&[7, 8], false));
+    rig.world.fail_next("chatMediaState", chain_marker("2", 2, 8));
+    let epoch = rig.database.session_epoch();
+    bound(rig.database.refresh(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    crate::test_wait::settled(&rig, "the new chain landed", || chain_ids(&rows) == ["7", "8"]).await;
+    assert_eq!(chain_ids(&rows), ["7", "8"]);
+    assert_eq!(*rows.has_more.lock().unwrap(), Some(false));
+    let calls: Vec<Value> = rig.world.log().into_iter().filter(|entry| entry.operation == "chatMedia").map(|entry| serde_json::from_str::<Value>(&entry.body).unwrap()["variables"].clone()).collect();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert!(calls[3].get("after").is_none_or(Value::is_null), "{calls:?}");
+    assert!(calls[3].get("afterSequence").is_none_or(Value::is_null), "{calls:?}");
+    rig.database.close_now();
+}
