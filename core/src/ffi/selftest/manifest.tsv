@@ -8,8 +8,8 @@ S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEa
 S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S313	outcome	core	boundary_receipt_orders	red-by-reading	read the same outcome twice	operation receipt
-S313	outcome	swift	BridgeProbeTests.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
-S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
+S313	outcome	swift	BridgeProbeTests.aReceiptCanBeConfirmedTwice	red-by-reading	read the same outcome twice	operation receipt
+S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.aReceiptCanBeConfirmedTwice	red-by-reading	read the same outcome twice	operation receipt
 S301	A4	core	an_acknowledged_membership_change_survives_an_older_list_answer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
 S301	A4	swift	BridgeProbeTests.anAcknowledgedMembershipChangeSurvivesAnOlderListAnswer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
 S301	A4	kotlin	com.noma4i.dblayer.ClubTest.anAcknowledgedMembershipChangeSurvivesAnOlderListAnswer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
@@ -279,7 +279,7 @@ T16		core	xfer_round_running_epoch_ended	regression	-	ending Android round after
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 K37		core	a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands	green	core-only: the proof holds a server request through the fake world gate and resets a model through the core database	final review Fable 3
-T04		core	attached_files_survive_reopen_and_detaching_one_keeps_the_other	regression	-	arch-audit/astra.md A6
+T04		core	file_attach_detach	regression	-	arch-audit/astra.md A6
 T20		core	a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id	regression	-	Transfer owner through Database
 T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regression	-	Transfer owner through Database
 T20		core	a_cancelled_upload_sends_nothing	regression	-	Transfer owner through Database

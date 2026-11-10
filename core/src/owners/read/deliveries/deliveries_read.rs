@@ -215,9 +215,12 @@ impl Delivery {
 
     /// The view with the server ids when the data tells that a temporary id of the request was swapped and none is left.
     fn swapped_view(&self, data: &Whole) -> Option<View> {
-        let Whole::Rows { replaced, .. } = data else { return None };
         let deferred = self.deferred.as_ref()?;
-        replaced.iter().any(|(from, _)| deferred.temps.contains(from)).then(|| (deferred.rebind.0)()).flatten()
+        match data {
+            Whole::Rows { replaced, .. } => replaced.iter().any(|(from, _)| deferred.temps.contains(from)).then(|| (deferred.rebind.0)()).flatten(),
+            Whole::Count(_) => (deferred.rebind.0)(),
+            Whole::Operations(_) => None,
+        }
     }
 
     /// The temporary ids of the request have server ids: the stream reads and watches the server rows, and its window opens once.

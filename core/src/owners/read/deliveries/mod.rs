@@ -279,7 +279,7 @@ pub enum DeliveryEffect {
 
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
-    /// `deferred` is set for an entity stream on a temporary id that has no server id yet: its window opens at the swap.
+    /// `deferred` is set for a stream of rows on temporary ids that has no server id yet: its window opens at the swap.
     Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64, deferred: Option<Deferred> },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
@@ -556,7 +556,7 @@ impl StateOwner for Deliveries {
                 };
                 let mut machine = machine;
                 machine.opened_at = now;
-                machine.deferred = deferred.filter(|_| matches!(machine.view.kind, Kind::Entity { .. }));
+                machine.deferred = deferred.filter(|_| machine.view.kind.reads_rows());
                 lower(state.peers, state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
                 state.index(stream);
