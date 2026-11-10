@@ -8,7 +8,9 @@
 
 ### Changed
 
-- Calls report `NoSession` after session end and `Closed` after database close.
+- Waits ended by database close report `Closed`, and by session end `NoSession`.
+- Calls, outcomes, uploads, streams, and loads end with one cause each.
+- An owner answer given before close reaches the caller unchanged.
 - `RetrySnapshot` lists waiting retries by owner, policy, attempt, and delay.
 - `RetrySnapshot.waiting` replaces `activeCalls` and `lastAttempt`.
 - `RetryEntry` replaces `RetryAttempt` in retry snapshots.
