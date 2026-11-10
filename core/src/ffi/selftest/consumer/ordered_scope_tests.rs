@@ -24,7 +24,13 @@ fn row(case: Case, number: i32) -> Value {
         let gift = case.media == "GIFT";
         json!({"id": format!("m{number}"), "chatId": "c1", "body": format!("message {number}"), "kind": if gift { "GIFT" } else { "TEXT" }, "status": "SENT", "oneTime": false, "expired": false, "isSystem": false, "isForwarded": false, "isReply": false, "unread": false, "sequenceNumber": 1 + (number - 1) / 3, "media": {"kind": if gift { "IMAGE" } else { case.media }}, "createdAt": timestamp, "updatedAt": timestamp})
     } else {
-        json!({"id": format!("m{number}"), "uuid": format!("u{number}"), "user": {"id": "u1"}, "unreadSimilarMomentsCount": (number - 1) / 3, "createdAt": timestamp, "updatedAt": timestamp})
+        let mut moment = super::stand::moment(&format!("m{number}"), 0);
+        moment["uuid"] = json!(format!("u{number}"));
+        moment["user"] = json!({"id": "u1", "fullName": "Ann", "username": "ann"});
+        moment["unreadSimilarMomentsCount"] = json!((number - 1) / 3);
+        moment["createdAt"] = json!(timestamp);
+        moment["updatedAt"] = json!(timestamp);
+        moment
     }
 }
 
