@@ -442,7 +442,7 @@ impl OutboxState {
         } else if operation.attempts < ATTEMPT_LIMIT {
             self.begin_attempt(op_id, fx);
         } else {
-            self.fail_with(op_id, "Exhausted".into(), fx);
+            self.fail_exhausted(op_id, fx);
         }
     }
 
@@ -481,6 +481,12 @@ impl OutboxState {
             operation.error = Some(error);
         }
         self.store(op_id, CommitKind::ErrorMark, fx);
+    }
+
+    /// The Backoff ran out: `Failed` carries the answer-too-large cause of the last attempt, any other cause is `Exhausted`.
+    pub(super) fn fail_exhausted(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let cause = self.ops.get(&op_id).and_then(|operation| operation.reject_error.clone()).filter(|text| matches!(super::failure::parse(text).kind, crate::value::sync::FailureKind::ResponseTooLarge { .. }));
+        self.fail_with(op_id, cause.unwrap_or_else(|| "Exhausted".into()), fx);
     }
 
     /// The operation is `Failed` with `error` on its row: `outcome` waiters get `Failed`.

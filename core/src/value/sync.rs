@@ -43,6 +43,8 @@ pub enum FailureKind {
     Session(SessionCode),
     /// The sealed request was above the limit of the transport: the size and the limit in bytes.
     RequestTooLarge { size: u64, limit: u64 },
+    /// The answer of the server was above the limit of the transport: the limit in bytes.
+    ResponseTooLarge { limit: u64 },
     Unrecognized,
     /// The answer of the server breaks the contract of the action: a batch answer lacks the row of an element.
     Protocol,
@@ -53,6 +55,7 @@ pub enum FailureKind {
 
 const SESSION_PREFIX: &str = "session:";
 const TOO_LARGE_PREFIX: &str = "request_too_large:";
+const RESPONSE_TOO_LARGE_PREFIX: &str = "response_too_large:";
 
 impl FailureKind {
     fn text(self) -> String {
@@ -64,6 +67,7 @@ impl FailureKind {
             FailureKind::SourceFailed => "source_failed".into(),
             FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
             FailureKind::RequestTooLarge { size, limit } => format!("{TOO_LARGE_PREFIX}{size}:{limit}"),
+            FailureKind::ResponseTooLarge { limit } => format!("{RESPONSE_TOO_LARGE_PREFIX}{limit}"),
             FailureKind::Unrecognized => "unrecognized".into(),
             FailureKind::Protocol => "protocol".into(),
             FailureKind::Refused => "refused".into(),
@@ -82,7 +86,7 @@ impl FailureKind {
             "protocol" => Some(FailureKind::Protocol),
             "refused" => Some(FailureKind::Refused),
             "expired" => Some(FailureKind::Expired),
-            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
+            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(RESPONSE_TOO_LARGE_PREFIX).and_then(|limit| limit.parse().ok()).map(|limit| FailureKind::ResponseTooLarge { limit })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }
 }

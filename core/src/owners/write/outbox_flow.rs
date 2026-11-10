@@ -67,7 +67,7 @@ impl OutboxState {
         }
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
-            self.fail_with(op_id, "Exhausted".into(), fx);
+            self.fail_exhausted(op_id, fx);
         } else if self.online {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.waiting_retry = true;
@@ -98,7 +98,7 @@ impl OutboxState {
                 if self.ops[&op_id].attempts < ATTEMPT_LIMIT {
                     self.begin_attempt(op_id, fx);
                 } else {
-                    self.fail_with(op_id, "Exhausted".into(), fx);
+                    self.fail_exhausted(op_id, fx);
                 }
             }
             Some(Stage::Sending) => self.requeue(op_id, fx),

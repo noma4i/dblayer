@@ -208,6 +208,7 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logou
             SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status, too_large, security: None, body: None }
         }
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id, attempt_id },
+        Err(TransportError::ResponseTooLarge { limit }) => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: sequenced },
         Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: None },
     }
 }

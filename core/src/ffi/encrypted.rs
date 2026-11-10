@@ -162,6 +162,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Security { code, detail } => DbError::Security { code, detail },
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
+        Failed::ResponseTooLarge { limit } => DbError::ResponseTooLarge { limit },
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => DbError::Storage { detail },
         Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => super::cause_error(&super::EndCause::SessionEnded),
         Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),

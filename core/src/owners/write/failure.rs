@@ -15,6 +15,9 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
     if let SessionError::Revoked { body } = error {
         return text(&OperationFailure::new(FailureKind::Session(SessionCode::SessionEnded), body.clone()));
     }
+    if let SessionError::ResponseTooLarge { limit } = error {
+        return text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, format!("the answer is above the limit of {limit} bytes")));
+    }
     if let SessionError::TooLarge { size, limit } = error {
         return text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, format!("the request is {size} bytes, the limit is {limit} bytes")));
     }
@@ -47,6 +50,7 @@ pub fn of_transport(error: &TransportError) -> String {
         TransportError::GraphqlAnswer { response } => of_graphql(response.errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>().join("; "), response.extensions()),
         TransportError::Session { code, detail } => text(&OperationFailure::new(FailureKind::Session(*code), if detail.is_empty() { code.name().to_string() } else { detail.clone() })),
         TransportError::RequestTooLarge { size, limit } => text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, error.to_string())),
+        TransportError::ResponseTooLarge { limit } => text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, error.to_string())),
         TransportError::Network(_) | TransportError::Interrupted(_) => text(&OperationFailure::new(FailureKind::Network, error.to_string())),
         TransportError::Http { status, .. } if *status >= 500 => text(&OperationFailure::new(FailureKind::Server, error.to_string())),
         _ => text(&OperationFailure::new(FailureKind::Rejected, error.to_string())),

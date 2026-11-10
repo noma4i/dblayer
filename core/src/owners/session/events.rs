@@ -610,6 +610,18 @@ impl SessionState {
                     self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
                 }
             }
+            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: false } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx),
+            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sent: true } if mine(request_id, attempt_id) => {
+                if let Some(author) = pending.author {
+                    author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::ResponseTooLarge { limit }, true);
+                    self.phase = SessionPhase::PendingHeld { pending };
+                } else if self.is_online() {
+                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
+                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
+                }
+            }
             SessionInput::HttpError { request_id, attempt_id, auth, status, too_large, .. } if mine(request_id, attempt_id) => {
                 let error = match (auth, too_large) {
                     (true, _) => SessionError::Unauthorized,
