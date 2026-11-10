@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.23.2 - 2026-11-10
+
+### Fixed
+
+- A stream reader released by its caller always ends as closed.
+
 ## 6.23.1 - 2026-11-10
 
 ### Fixed
