@@ -12,7 +12,6 @@ try await DB.sessionReset()
 DBlayer.sessionReset()
 ```
 
-
 A write applies to the local database at once, so every open stream updates immediately. Every write that reaches the server (`create`, `update`, `act`, `destroy`, a send and a media upload) is also placed in a durable queue in the same commit. The queue keeps it while the network is away and after the app closes.
 
 ```swift
@@ -43,7 +42,7 @@ moment.update(text = GraphQLNullable.Null)
 let message = try await Message.create(text: "hello", in: scope).optimisticValue
 ```
 
-```kotlin
+````kotlin
 val message = Message.create(text = "hello", account = scope).optimisticValue
 ``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
@@ -59,7 +58,7 @@ operation :create do
   parameter :file, :string, null: true
   parameter :attachedUserId, :id, null: true
 end
-```
+````
 
 ```swift
 let message = try await Note.create(groupId: group.id, body: "hi", attachedUserId: "42", file: signedId, in: scope).optimisticValue
@@ -80,11 +79,11 @@ A parameter goes into the queued change and is never stored in the row, so no re
 3. Observers see the change as one transition.
 4. Sync sends the queued mutation (see [server sync](server-sync.md)).
 
-| Call | Local effect | Queued action |
-| ---- | ------------ | ------------- |
-| `create` | new row with a temporary id (`temp-...`). A `create` with an id that already exists is an error (`AlreadyExists`), change an existing row with `update` | `create` |
-| `update` | patch merged into the current row, no commit if nothing changes | `update` |
-| `destroy` | row and its dependent children removed | `destroy` |
+| Call      | Local effect                                                                                                                                            | Queued action |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `create`  | new row with a temporary id (`temp-...`). A `create` with an id that already exists is an error (`AlreadyExists`), change an existing row with `update` | `create`      |
+| `update`  | patch merged into the current row, no commit if nothing changes                                                                                         | `update`      |
+| `destroy` | row and its dependent children removed                                                                                                                  | `destroy`     |
 
 `update` keeps attributes you did not mention. A patch that changes nothing creates no commit and no queue entry.
 
@@ -123,6 +122,26 @@ when (val outcome = receipt.outcome()) {
     is OperationOutcome.Confirmed -> show(outcome.confirmedValue, outcome.answerJson)
     is OperationOutcome.Rejected -> showRefusal(outcome.failure)
     is OperationOutcome.Ended -> keep(outcome.cause)
+}
+```
+
+`confirmed()` waits for the same operation and returns the value or throws. A refusal throws `Rejected` with the whole `OperationFailure` and `kept`: `true` when the failed change stays for `retry` or `discard`, `false` when it was rolled back. The end of the wait throws the error of its cause (`Closed`, `NoSession`). `discardOnFailure` rolls a failed change back before the call returns and reports the original refusal with `kept` false. Other changes of the row stay.
+
+```swift
+do {
+  let confirmed = try await receipt.confirmed(discardOnFailure: true)
+  show(confirmed.value, confirmed.answerJSON)
+} catch let DbError.Rejected(failure, kept) {
+  showRefusal(failure, kept: kept)
+}
+```
+
+```kotlin
+try {
+    val confirmed = receipt.confirmed(discardOnFailure = true)
+    show(confirmed.value, confirmed.answerJson)
+} catch (error: DbException.Rejected) {
+    showRefusal(error.failure, error.kept)
 }
 ```
 
