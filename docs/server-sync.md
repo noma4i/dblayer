@@ -383,6 +383,24 @@ There is no timer. The snapshot only follows the retry loops that `RetryPolicy` 
 The entry contains no request payload. Owners include bootstrap, session, window, calls, outbox, transfer and feed.
 Durable outbox and upload owners also expose their saved attempts through operation state.
 
+The list shows the timers that wait now. It is not a list of all calls.
+
+```swift
+let retries = RetryProgress()
+for await snapshot in retries.changes {
+  for entry in snapshot.waiting {
+    print(entry.owner, entry.kind, entry.attempt, entry.delayMs)
+  }
+}
+```
+
+```kotlin
+val retries = RetryProgress()
+retries.flow.collect { snapshot ->
+    snapshot.waiting.forEach { entry -> println("${entry.owner} ${entry.kind} ${entry.attempt} ${entry.delayMs}") }
+}
+```
+
 The core puts the timeouts in every `HttpRequest`: connect 10 seconds, request 30 seconds. Kotlin applies them to the call. Swift applies the request timeout to the request, including when given a custom session.
 URLSession does not expose an independent connect timeout, so Swift has no separate 10-second connect setting.
 

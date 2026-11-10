@@ -111,9 +111,29 @@ val outcome = receipt.outcome()
 The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `ended` with cause `SessionEnded`.
 
 ```swift
+switch try await receipt.outcome() {
+case let .confirmed(confirmedValue: value, answerJSON: answer): show(value, answer)
+case let .rejected(failure: failure): showRefusal(failure)
+case let .ended(cause: cause): keep(cause)
+}
+```
+
+```kotlin
+when (val outcome = receipt.outcome()) {
+    is OperationOutcome.Confirmed -> show(outcome.confirmedValue, outcome.answerJson)
+    is OperationOutcome.Rejected -> showRefusal(outcome.failure)
+    is OperationOutcome.Ended -> keep(outcome.cause)
+}
+```
+
+`EndCause` names why the command ended: `sessionEnded`, `closed`, `cancelled`, `discarded`, `invalid`, `storage` or `internal`. A command that ended is not retried in the next account.
+
+```swift
 let receipt = try await Note.create(groupId: group.id, body: "hi", in: scope)
 let noteId = try await receipt.outcome().confirmedValue?.id
 ```
+
+The case is `.confirmed(confirmedValue:answerJSON:)` in Swift, and `confirmedValue` reads its first value.
 
 ```kotlin
 val receipt = Note.create(groupId = group.id, body = "hi", account = scope)

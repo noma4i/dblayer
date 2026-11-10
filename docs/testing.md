@@ -22,6 +22,20 @@ A call with no queued reply fails at once with `Invalid` that names the operatio
 
 The test doubles follow the rules of the real server, and the core decides them for `MockTransport` and `SealedServer` through one `ServerContract` object. A request that repeats a pair (author and request id) gets the reply of the first send. A second body under one pair is refused like a call with no queued reply. An unscripted request is refused. A hash-only request for a document the server does not know gets `PERSISTED_QUERY_NOT_FOUND` without a sequence, and the library sends the full document under the same number. A request with a wrong sequence number gets `SEQUENCE_CONFLICT`.
 
+The double refuses a request whose document the server does not know. `registerStandOperations` registers the documents of an operation list on the server and in the database before the first request, also for operations declared late. With `SealedServer` register them with `registerDocuments`.
+
+```swift
+try await registerStandOperations(DB.database, defsJson: operationsJSON)
+try server.registerDocuments(operationsJSON)
+```
+
+```kotlin
+registerStandOperations(DBlayer.database, operationsJson)
+server.registerDocuments(operationsJson)
+```
+
+A test that calls `ServerContract` directly gets `Invalid` from `admit` and `settle` for a request that is not valid JSON of the form `requestId`, `sequence`, `body`. `admit` returns `stored`, `refused`, `twoBodies` or `fresh`. `registerDocument` adds a document and `document(hash)` finds it, `nil` or `null` when it is unknown.
+
 When two windows of one operation differ only in their variables, answer them by content with `respondWith`. The responder gets the request and returns the reply, or `nil` to take the next reply queued with `enqueue`. A repeat of the same request gets the same reply.
 
 ```swift

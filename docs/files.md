@@ -63,6 +63,20 @@ receipt.optimisticValue?.supplySource("upload", UploadSource(path, values = valu
 
 A restart before supply marks the transfer `missing_file`. Cancellation or account reset removes its row. A pending batch waits for all remaining sources before its final mutation.
 
+### Wire sources
+
+The public `UploadRequest` and `UploadItem` keep their form. A direct user of the bridge passes `WireUploadRequest` and `WireUploadItem`, which carry a `WireSource`: `file` with the path, name and mime type, or `pending` for a source that is supplied later.
+
+```swift
+let request = WireUploadRequest(source: .file(path: path, name: "a.png", mime: "image/png"), variablesJson: "{}")
+let later = WireUploadRequest(source: .pending, variablesJson: "{}")
+```
+
+```kotlin
+val request = WireUploadRequest(WireSource.File(path, "a.png", "image/png"), "{}")
+val later = WireUploadRequest(WireSource.Pending, "{}")
+```
+
 ### Uploads of a record
 
 An upload belongs to a declared upload action of the model. A standalone blob upload without a record does not exist: the upload creates or updates a record, and `uploads[action]` on that record shows its state, progress and error.

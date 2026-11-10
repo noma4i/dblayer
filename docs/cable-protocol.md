@@ -75,6 +75,32 @@ try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: mo
 DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson, uploadNotification = notification)
 ```
 
+## Cable closes
+
+`DB.cableCloses()` in Swift and `DBlayer.cableCloses()` in Kotlin give a stream of `CableCloseItem`: `ready` when the stream starts, `close` with the `position` and the `CableClose` event (connection id, code, reason, failure, initiator and `intended`), `lost` with the `first` and `last` positions of closes that are gone, and `ended` with an `EndCause` when the stream ends by itself.
+
+```swift
+for await item in try DB.cableCloses() {
+  switch item {
+  case .ready: break
+  case let .close(position, event): log(position, event.code, event.initiator)
+  case let .lost(first, last): log(first, last)
+  case let .ended(cause): log(cause)
+  }
+}
+```
+
+```kotlin
+DBlayer.cableCloses().collect { item ->
+    when (item) {
+        CableCloseItem.Ready -> Unit
+        is CableCloseItem.Close -> log(item.position, item.event.code, item.event.initiator)
+        is CableCloseItem.Lost -> log(item.first, item.last)
+        is CableCloseItem.Ended -> log(item.cause)
+    }
+}
+```
+
 ## Subscriptions
 
 Opening goes through the challenge, the channel confirmation, hello and an encrypted ready.

@@ -87,6 +87,24 @@ An action that has a mutation and no `optimistic` line returns after the server 
 It returns the row at the root of the answer. When that row has another id than the receiver, the receiver row stays unchanged and the answer row appears in its own chat.
 An action with an `optimistic` line shows its change at once as unsent and ends as synced after the answer.
 
+## Claiming a reader
+
+Apps read a `ValueStream`. A direct user of the bridge calls `claimReader()` on a read stream once. It returns `Claimed` with the reader number for `pull`, or `Ended` with an `EndCause` when the stream is already claimed or ended.
+
+```swift
+switch await reader.claimReader() {
+case let .claimed(reader: number): value = await reader.pull(reader: number)
+case let .ended(cause: cause): log(cause)
+}
+```
+
+```kotlin
+when (val claim = reader.claimReader()) {
+    is ReadClaim.Claimed -> value = reader.pull(claim.reader)
+    is ReadClaim.Ended -> log(claim.cause)
+}
+```
+
 ## Reading and stopping
 
 A stream lives while its reader lives.
