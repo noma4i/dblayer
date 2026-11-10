@@ -101,6 +101,9 @@ impl Delivery {
             }
             other => other,
         };
+        if matches!(value, Value::Gap) && matches!(self.journal.back(), Some(Value::Gap)) {
+            return;
+        }
         let was_empty = self.journal.is_empty();
         match &value {
             Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } | Value::State { .. })),
@@ -125,7 +128,7 @@ impl Delivery {
     pub(super) fn compact(&mut self) {
         let (mut first, mut last, mut at) = (u64::MAX, 0u64, None);
         while self.journal.len() > JOURNAL_LIMIT - 1 {
-            let Some(index) = self.journal.iter().position(|kept| matches!(kept, Value::Event { .. } | Value::CableClose { .. } | Value::Lost { .. })) else { break };
+            let Some(index) = self.journal.iter().position(|kept| matches!(kept, Value::Event { .. } | Value::CableClose { .. } | Value::Lost { .. } | Value::Gap)) else { break };
             at.get_or_insert(index);
             match self.journal.remove(index) {
                 Some(Value::Event { position, .. } | Value::CableClose { position, .. }) => {
@@ -140,7 +143,7 @@ impl Delivery {
             }
         }
         if let Some(index) = at {
-            self.journal.insert(index, Value::Lost { first, last });
+            self.journal.insert(index, if first > last { Value::Gap } else { Value::Lost { first, last } });
         }
     }
 
