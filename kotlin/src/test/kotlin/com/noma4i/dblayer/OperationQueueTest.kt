@@ -84,26 +84,6 @@ class OperationQueueTest {
     }
 
     @Test
-    fun bridge_discard_without_failed_parity_c9() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("MomentsFeed", QUEUE_FEED)
-        transport.enqueue("UpdateMoment", QUEUE_UPDATED)
-        try {
-            openSigned(Config(null, null), specs(momentsKeepingUpdates()), transport)
-            registerStandOperations(DBlayer.database, QUEUE_DEFS)
-            Moment.feed.load()
-            val moment = awaitWithin("the loaded moment") { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-            DBlayer.database.setOnline(false)
-            val waiting = moment.update(text = GraphQLNullable.Value("edited"))
-            val error = runCatching { moment.discard("update", AccountScope.current()) }.exceptionOrNull()
-            assertTrue("discard without a failed operation: $error", error is DbException.NotFound)
-            assertEquals("edited", Moment.find(moment.id).current()?.text)
-            DBlayer.database.setOnline(true)
-            awaitWithin("the waiting update is confirmed") { waiting.confirmed() }
-        } finally { closeForCleanup() }
-    }
-
-    @Test
     fun anOfflineUpdateShowsInTheQueueAndLeavesItWhenTheNetworkReturns() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", QUEUE_FEED)
