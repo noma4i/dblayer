@@ -17,18 +17,26 @@ pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
 
 fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
-fn touch_parents(writer: &RowWrite<'_>, reader: &Reader<'_>, owner: &RowRef, rows: &[&Map<String, Value>]) -> Result<Vec<EntityOp>, StoreError> {
+fn touch_parents(writer: &mut RowWrite<'_>, owner: &RowRef, rows: &[&Map<String, Value>]) -> Result<Vec<EntityOp>, StoreError> {
     let spec = &writer.models.get(owner.model.as_str()).ok_or_else(|| StoreError::UnknownModel(owner.model.to_string()))?.spec;
+    let associations: Vec<_> = spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent).cloned().collect();
     let mut seen = HashSet::from([owner.clone()]);
-    let mut touches = Vec::new();
-    for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent) {
+    let mut parents = Vec::new();
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
+    for association in associations {
         for row in rows {
             let Some(id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
             let parent = RowRef::new(association.target.clone(), id);
-            if seen.insert(parent.clone()) && reader.point(parent.model.as_str(), parent.id.as_str())?.is_some() {
-                touches.push(EntityOp::Touch { model: parent.model, id: parent.id });
+            if seen.insert(parent.clone()) {
+                wanted.entry(parent.model.to_string()).or_default().push(parent.id.to_string());
+                parents.push(parent);
             }
         }
+    }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids, None)?; }
+    let mut touches = Vec::new();
+    for parent in parents {
+        if writer.stored(parent.model.as_str(), parent.id.as_str())?.is_some() { touches.push(EntityOp::Touch { model: parent.model, id: parent.id }); }
     }
     Ok(touches)
 }
@@ -84,7 +92,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let old = writer.current.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone());
         let owner = RowRef::new(ModelKey::new(model), id.clone());
         let rows: Vec<_> = std::iter::once(&row).chain(old.as_ref()).collect();
-        envelope.entity_ops = touch_parents(writer, &reader, &owner, &rows)?;
+        envelope.entity_ops = touch_parents(writer, &owner, &rows)?;
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
@@ -98,8 +106,9 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         writer.candidates += looked_at;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
         if let Some(found) = correlated {
+            let held = writer.stored(model, found.temp.as_str())?.map(|stored| stored.row);
             let outbox = crate::store::plan::read_outbox(&reader)?;
-            super::swap::plan(&reader, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation)?;
+            super::swap::plan(&reader, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation, held)?;
         }
         if let Some(values) = payload.get("set").and_then(Value::as_object).filter(|values| !values.is_empty()) { overlay.push((model.to_string(), id.to_string(), values.clone())); }
     } else {

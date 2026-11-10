@@ -45,14 +45,14 @@ pub(crate) struct TempReplacement<'a> {
     pub real: &'a RowId,
 }
 
-pub(super) fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
+pub(super) fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64, held: Option<serde_json::Map<String, serde_json::Value>>) -> Result<(), StoreError> {
         let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
             envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: real.clone(), reason: DestroyReason::Local });
         }
-        carry_locals(reader, envelope, model, temp, real)?;
+        carry_locals(reader, envelope, model, real, held)?;
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });
         let references = references_to(reader.models(), model);
         let swap = Swap { model, temp, real, references: &references };
@@ -79,8 +79,8 @@ pub(super) fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[Outb
 }
 
     /// The `local` fields of the temporary row go to the row of the answer unless the answer brings its own value (P-OUT-22).
-fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, temp: &RowId, real: &RowId) -> Result<(), StoreError> {
-        let Some(held) = reader.point(model, temp.as_str())? else { return Ok(()) };
+fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, real: &RowId, held: Option<serde_json::Map<String, serde_json::Value>>) -> Result<(), StoreError> {
+        let Some(held) = held else { return Ok(()) };
         let spec = &reader.models().get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         for field in spec.fields.iter().filter(|field| matches!(field.merge, Some(crate::schema::MergeRule::Local))) {
             let Some(value) = held.get(&field.name).filter(|value| !value.is_null()) else { continue };
@@ -101,12 +101,12 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     writer.connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp, real])?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
-    let exists = writer.stored(model, temp.as_str())?.is_some();
+    let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);
     let reader = Reader::new(writer.connection, writer.models);
     let mut envelope = BatchPlan::new(writer.generation);
-    if exists {
+    if held.is_some() {
         let outbox = crate::store::plan::read_outbox(&reader)?;
-        plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
+        plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own, held)?;
     }
     writer.apply(&envelope)
 }
