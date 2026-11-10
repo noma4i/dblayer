@@ -10,7 +10,7 @@ extension BridgeProbeTests {
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func sealedUploadRefusalKeepsTheKeyBusy(dataPresent: Bool) async throws {
+  func sealedUploadRefusalIsReplaced(dataPresent: Bool) async throws {
     try await sealedUploadRefusal(dataPresent: dataPresent, discard: false)
   }
 
@@ -50,21 +50,23 @@ extension BridgeProbeTests {
     let after = Cursor(try DB.account().operations())
     guard case let .queue(_, remaining)? = await after.next("the queue after the refusal") else { throw WaitFailure.unexpectedOutcome }
     #expect(remaining.isEmpty == discard, "requests: \(transport.calls.map(\.operationName))")
-    if discard {
-      #expect(!FileManager.default.fileExists(atPath: localURL.path))
-      transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}"#)
-      transport.enqueuePut("https://storage.test/second")
-      transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","successMessage":"second"}}}"#)
-      let sent = try await Moment.uploadClip(id: "absent", source: second.path, in: DB.account())
-      #expect(try await sent.confirmed().value?.id == "m77")
-    } else {
-      do {
-        let attempt = Task { try await Moment.uploadClip(id: "absent", source: second.path, in: DB.account()) }
-        _ = try await valueBeforeDeadline(attempt, release: {})
-        Issue.record("a second upload was accepted while the key was failed")
-      } catch DbError.InFlight {}
-      try await DB.account().discard(model: "Moment", id: "absent", action: "upload_clip")
+    transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/second","headers":{},"signedId":"second","blobId":"second"}}}"#)
+    transport.enqueuePut("https://storage.test/second")
+    let next = transport.hold("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","successMessage":"second"}}}"#)
+    let attempt = Task { try await Moment.uploadClip(id: "absent", source: second.path, in: DB.account()) }
+    let sent = try await valueBeforeDeadline(attempt, release: { next.release() })
+    try #require(await entered(next))
+    let nextQueue = Cursor(try DB.account().operations())
+    guard case let .queue(_, nextItems)? = await nextQueue.next("the replacement upload") else { throw WaitFailure.unexpectedOutcome }
+    try #require(nextItems.count == 1)
+    #expect(try #require(nextItems.first?.uploadInfo?.localUrl) != info.localUrl)
+    #expect(!FileManager.default.fileExists(atPath: localURL.path))
+    if !discard {
+      do { _ = try await valueBeforeDeadline(Task { try await receipt.confirmed() }, release: { next.release() }); Issue.record("the replaced receipt did not end") }
+      catch let DbError.Interrupted(detail) { #expect(detail == "Discarded") }
     }
+    next.release()
+    #expect(try await valueBeforeDeadline(Task { try await sent.confirmed() }, release: { next.release() }).value?.id == "m77")
     #expect(transport.unscripted.isEmpty, "requests: \(transport.calls.map(\.operationName))")
     await DB.closeForCleanup()
   }

@@ -26,6 +26,24 @@ private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable 
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func anUploadInFlightRefusesAnotherUploadForTheSameKey() async throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data("clip".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let transport = HeldUploadTransport()
+    transport.base.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
+    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"#)
+    _ = try await Moment.uploadClip(id: "absent", source: file.path, in: DB.account())
+    _ = try #require(await Cursor(transport.arrived.stream).next("the first PUT starts"))
+    let attempt = Task { try await Moment.uploadClip(id: "absent", source: file.path, in: DB.account()) }
+    do { _ = try await valueBeforeDeadline(attempt, release: {}); Issue.record("an upload in flight accepted another") }
+    catch DbError.InFlight {}
+    #expect(transport.puts == 1)
+    await DB.closeForCleanup()
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func uploadRoundKeepsEachGroupsOriginalEpoch() async throws {
     let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try Data("clip".utf8).write(to: file)
