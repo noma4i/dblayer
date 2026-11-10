@@ -11,6 +11,35 @@ use crate::transport::{CredentialSlot as CoreCredentials};
 
 pub(in super::super) const SOCIAL_BODY: &str = r#"{"provider":"google","idToken":"t"}"#;
 
+#[test]
+fn life_session_status_published_table() {
+    use crate::ffi::{read::status_of_published, SessionStanding as Standing};
+    use crate::owners::contract::{Published, PublishedState as State};
+    for (state, closed, present, absent) in [
+        (State::NoSession, false, Some((Standing::None, None)), Some((Standing::None, None))),
+        (State::Session, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
+        (State::Resetting, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
+        (State::StorageFailed, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
+        (State::Ending, false, Some((Standing::Ending, Some(19))), Some((Standing::Ending, None))),
+        (State::EndingFailed, false, Some((Standing::Ending, Some(19))), Some((Standing::Ending, None))),
+        (State::Closing, false, None, None),
+        (State::NoSession, true, None, None),
+    ] {
+        for (identity, expected) in [(Some(19), present), (None, absent)] {
+            let published = Published { epoch: 23, identity, generation: 0, state, closed };
+            let result = status_of_published(&published);
+            match expected {
+                Some((phase, identity)) => {
+                    let status = result.unwrap();
+                    assert_eq!((status.phase, status.identity, status.epoch), (phase, identity, 23), "{state:?}");
+                    assert!(status.phase != Standing::Active || status.identity.is_some());
+                }
+                None => assert!(matches!(result, Err(DbError::Closed { .. })), "{state:?}: {result:?}"),
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(in super::super) struct WatchedHeld {
     pub(in super::super) inner: MemoryCredentials,
