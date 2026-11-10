@@ -142,6 +142,10 @@ impl Stand {
     }
 
     pub(super) async fn prepare_contract(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>) -> Stand {
+        Self::prepare_online(path, credentials, contract, true).await
+    }
+
+    pub(super) async fn prepare_online(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>, online: bool) -> Stand {
         let server = Arc::new(Server::default());
         server.register_documents(OPERATIONS);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
@@ -155,7 +159,7 @@ impl Stand {
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, clock.clone())).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(online).unwrap();
         Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed), clock }
     }
 

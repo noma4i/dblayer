@@ -103,3 +103,61 @@ async fn consumer_chat_album_pending_source_restart_and_reset() {
     assert!(!copy.exists());
     bound(reopened.database.close_database()).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_restored_transfer_origins_mixed() {
+    use std::sync::Arc;
+    use super::stand::moment;
+    use crate::ffi::command::{CommandRequest, CommandUpload};
+    use crate::ffi::tests::session_guards_tests::WatchedHeld;
+    use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    stand.sign_in().await;
+    stand.database.set_online(false).unwrap();
+    let epoch = stand.database.session_epoch();
+    let source = directory.path().join("source.jpg");
+    std::fs::write(&source, b"image").unwrap();
+    let file = || WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None };
+    let items = (0..2).map(|index| WireUploadItem {
+        values_json: json!({"chatId":"c1", "kind":"TEXT", "clientKey":format!("key-{index}"), "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(),
+        source: file(), variables_json: "{}".into(),
+    }).collect();
+    let batch = bound(stand.database.upload_create_batch(epoch, "Message".into(), items, WireUploadBatch { operation: "send_files".into(), variables_json: r#"{"chatId":"c1"}"#.into() })).await.unwrap();
+    let ids: Vec<_> = batch.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
+    let single = bound(stand.database.send(CommandRequest {
+        epoch, model: "Moment".into(), values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(), args_json: "{}".into(),
+        upload: Some(CommandUpload { action: "create_file".into(), request: WireUploadRequest { source: file(), variables_json: "{}".into() } }),
+    })).await.unwrap();
+    let moment_id = single.optimistic_value.unwrap().id;
+    bound(stand.database.close_database()).await.unwrap();
+    drop(stand);
+
+    let reopened = Stand::prepare_online(Some(path.to_string_lossy().into_owned()), credentials, None, false).await;
+    reopened.settle().await;
+    let epoch = reopened.database.session_epoch();
+    let mut receipts = Vec::new();
+    for id in &ids {
+        receipts.push(bound(reopened.database.retry(epoch, "Message".into(), id.clone(), Some("send_files".into()), None)).await.unwrap());
+    }
+    let receipt = bound(reopened.database.retry(epoch, "Moment".into(), moment_id, Some("create_file".into()), None)).await.unwrap();
+    reopened.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
+    for _ in 0..3 { reopened.script_put(200, Some("etag")); }
+    let mut first = message("m0", "c1", "");
+    first["clientKey"] = json!("key-0");
+    let mut second = message("m1", "c1", "");
+    second["clientKey"] = json!("key-1");
+    reopened.answer("MessageAlbumSend", json!({"messageAlbumSend":{"messages":[first, second]}}));
+    reopened.answer("MomentCreateFile", json!({"momentCreate":{"moment":moment("mo1", 0)}}));
+    reopened.database.set_online(true).unwrap();
+    for (index, receipt) in receipts.into_iter().enumerate() {
+        let value = bound(reopened.database.confirmed(receipt, false)).await.unwrap().value.unwrap();
+        assert_eq!(value.id, format!("m{index}"));
+    }
+    assert_eq!(bound(reopened.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id, "mo1");
+    assert_eq!((reopened.requests("MessageAlbumSend"), reopened.requests("MomentCreateFile"), reopened.puts()), (1, 1, 3));
+    bound(reopened.database.close_database()).await.unwrap();
+}
