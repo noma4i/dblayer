@@ -152,7 +152,7 @@ async fn out_prop_swap_carries_local() {
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
     hold.release();
-    bound(rig.database.outcome(receipt)).await.unwrap();
+    bound(rig.database.confirmed(receipt)).await.unwrap();
     settled(&rig, "the answer replaced the bubble", || rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>() == ["m1"] && last.len() == 1).await;
     settled(&rig, "the preview stands on the row of the answer in both places", || [&rows, &last].iter().all(|place| field(&rig, "Message", place, "m1", "localPreviewUrl") == Some(text("file:///clip.jpg")))).await;
     rig.database.close_now();

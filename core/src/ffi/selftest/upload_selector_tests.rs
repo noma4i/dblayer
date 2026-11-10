@@ -5,7 +5,7 @@ use super::rig_events::events;
 use super::rig_tests::{bound, Rig, World};
 use super::upload_fixtures::add_uploads;
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{DbError, WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{DbError, WireOperationReceipt};
 use crate::owners::write::upload::UploadFile;
 use crate::test_wait::settled;
 
@@ -36,7 +36,7 @@ async fn boundary_selector_without_action() {
 
         bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), None)).await.unwrap();
         let (ended, kept) = if transfer_first { (transfer, mutation) } else { (mutation, transfer) };
-        assert!(matches!(bound(rig.database.outcome(ended)).await.unwrap(), WireOperationOutcome::Ended { cause: crate::ffi::EndCause::Discarded }), "transfer_first {transfer_first}: the first operation ended");
+        assert!(matches!(bound(rig.database.confirmed(ended)).await, Err(DbError::Interrupted { detail }) if detail.to_lowercase().contains("discard")), "transfer_first {transfer_first}: the first operation ended");
 
         rig.database.set_online(true).unwrap();
         assert!(bound(rig.database.confirmed(kept)).await.is_ok(), "transfer_first {transfer_first}: the other operation went out");

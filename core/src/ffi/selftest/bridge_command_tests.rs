@@ -4,7 +4,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Rig};
 use crate::ffi::tests::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
-use crate::ffi::{DbError, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
+use crate::ffi::{DbError, ReadRequest, ReadValue, WireSyncState};
 use crate::test_wait::settled;
 use super::bridge_support_tests::*;
 
@@ -237,8 +237,8 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         settled(&rig, "the thread shows the source", || reader.texts().iter().any(|text| text.contains("hello"))).await;
         let before = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
         let acted = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": target}).to_string())).await.unwrap();
-        let outcome = bound(rig.database.outcome(acted)).await.unwrap();
-        assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "forwarded-1"), "{case}: the confirmed row differs");
+        let outcome = bound(rig.database.confirmed(acted)).await.unwrap();
+        assert!(matches!(outcome.value, Some(row) if row.id == "forwarded-1"), "{case}: the confirmed row differs");
         let after = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
         assert_eq!(after.cells, before.cells, "{case}: the answer was written onto the source row");
         let forwarded = bound(rig.database.read_row(epoch, "Message".into(), "forwarded-1".into())).await.unwrap().expect("the answer row");
