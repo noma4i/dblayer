@@ -39,6 +39,7 @@ pub(super) enum Answer {
     Unconfirmed(String),
     Unreadable,
     Status(u16),
+    ResponseTooLarge(u64),
     Lost,
     Held(Arc<Hold>, Box<Answer>),
 }
@@ -91,7 +92,7 @@ fn document_hash(document: &str) -> String {
 fn settled_of(answer: &Answer) -> Option<Answer> {
     match answer {
         Answer::Data(text) => Some(Answer::Data(text.clone())),
-        Answer::Status(_) | Answer::Unconfirmed(_) | Answer::Unreadable | Answer::Lost => None,
+        Answer::Status(_) | Answer::ResponseTooLarge(_) | Answer::Unconfirmed(_) | Answer::Unreadable | Answer::Lost => None,
         Answer::Held(_, next) => settled_of(next),
     }
 }
@@ -108,6 +109,7 @@ impl Script {
     pub(super) fn names(&self) -> Vec<String> { self.calls.lock().unwrap().iter().map(|call| call.operation.clone()).collect() }
     pub(super) fn count(&self, operation: &str) -> usize { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).count() }
     pub(super) fn pairs(&self, operation: &str, filename: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation && call.variables["filename"] == filename).map(|call| call.pair.clone()).collect() }
+    pub(super) fn operation_pairs(&self, operation: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.pair.clone()).collect() }
     pub(super) fn variables(&self, operation: &str) -> Vec<Value> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.variables.clone()).collect() }
     pub(super) fn purposes(&self, operation: &str) -> Vec<NetworkPurpose> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.purpose).collect() }
     /// The documents the app declared: a real server knows them, an undeclared document gets `PERSISTED_QUERY_NOT_FOUND`.
@@ -154,6 +156,7 @@ impl FakeHttp for ScriptedHttp {
                 }
                 Some(Answer::Lost) => return Err(DbError::Network { detail: "lost answer".into() }),
                 Some(Answer::Status(status)) => return Ok(EncryptedReply { status, body: String::new() }),
+                Some(Answer::ResponseTooLarge(limit)) => return Err(DbError::ResponseTooLarge { limit }),
                 Some(Answer::Data(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), serde_json::from_str(&text).unwrap()) }),
                 Some(Answer::Unconfirmed(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, serde_json::from_str(&text).unwrap()) }),
                 Some(Answer::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),
@@ -222,10 +225,13 @@ pub(super) struct Stand {
     pub(super) script: Arc<Script>,
     pub(super) puts: Arc<Puts>,
     root: Option<Option<&'static str>>,
+    keep_moment: bool,
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false } }
+
+    pub(super) fn keep_moment(mut self) -> Self { self.keep_moment = true; self }
 
     pub(super) fn declaring_root(mut self, root: Option<&'static str>) -> Self {
         self.root = Some(root);
@@ -234,9 +240,14 @@ impl Stand {
 
     fn models(&self) -> String {
         let text = include_str!("upload_wrapper_models.json");
-        let Some(root) = self.root else { return text.to_string() };
+        if self.root.is_none() && !self.keep_moment { return text.to_string() }
         let mut models: Value = serde_json::from_str(text).unwrap();
         for model in models.as_array_mut().unwrap() {
+            if self.keep_moment && model["key"] == "Moment" {
+                let action = model["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
+                action["on_failure"] = json!("keep");
+            }
+            let Some(root) = self.root else { continue };
             let Some(create) = model["upload_steps"].get_mut("create_blob") else { continue };
             match root {
                 Some(root) => create["root_path"] = json!(root),

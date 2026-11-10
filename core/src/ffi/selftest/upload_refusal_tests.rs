@@ -18,6 +18,42 @@ async fn until_state(database: &Database, id: &str, wanted: WireSyncState) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn out_response_limit_keeps_pending() {
+    let stand = Stand::new().keep_moment();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("queue.sqlite");
+    let clock = crate::ffi::TestClock::new(1_000_000);
+    let database = stand.open_with(Some(&path), &[CREATE_MOMENT], Some(clock.clone())).await;
+    let limit = crate::transport::MAX_HTTP_RESPONSE_BYTES;
+    for _ in 0..50 { stand.script.enqueue("CreateMoment", Answer::ResponseTooLarge(limit)); }
+    let receipt = bound(database.send(super::upload_stand::plain("Moment", r#"{"text":"held"}"#, database.session_epoch()))).await.unwrap();
+    let operation = receipt.operation.unwrap();
+    let db = database.clone();
+    let mut waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { db.confirmed(receipt).await }));
+    let mut armed = clock.armed();
+    let result = loop {
+        tokio::select! {
+            result = &mut waiting => break result.unwrap(),
+            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(60_000); }
+        }
+    };
+    assert!(matches!(result, Err(DbError::Rejected { kept: true, .. })), "{result:?}");
+    let pairs = stand.script.operation_pairs("CreateMoment");
+    assert!(pairs.len() >= 2 && !pairs[0].0.is_empty() && pairs[0].1.is_some());
+    assert!(pairs.iter().all(|pair| pair == &pairs[0]));
+    let failure = |db: &Database| {
+        let entries = crate::ffi::tests::queue_view_tests::queued(db);
+        entries.into_iter().find(|entry| entry.id.0 == operation).and_then(|entry| entry.error).expect("the failed intent remains")
+    };
+    assert!(matches!(failure(&database).kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
+    bound(database.close_database()).await.unwrap();
+    drop(database);
+    let reopened = stand.open_with(Some(&path), &[CREATE_MOMENT], Some(clock)).await;
+    assert!(matches!(failure(&reopened).kind, crate::value::sync::FailureKind::ResponseTooLarge { limit: seen } if seen == limit));
+    reopened.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_refused_blob_fails_the_row_of_its_upload() {
     let stand = Stand::new();
     let database = stand.open(None, &EXPIRY_OPERATIONS).await;
