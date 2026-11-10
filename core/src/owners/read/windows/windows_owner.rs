@@ -23,7 +23,7 @@ pub(super) struct WindowBasis {
 }
 
 impl Window {
-    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order): (u32, bool, (i64, i64), bool, bool), read_id: Option<u64>, ids: (&mut RequestIds, &mut u32)) -> Self {
+    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media): (u32, bool, (i64, i64), bool), read_id: Option<u64>, ids: (&mut RequestIds, &mut u32)) -> Self {
         let WindowBasis { epoch, online, online_seq, saving, base_generation, generations } = basis;
         let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
@@ -48,7 +48,6 @@ impl Window {
             cursor: None,
             page: 0,
             page_count: 0,
-            local_order,
             max_pages,
             members_complete,
             cursor_reset_used: false,
@@ -191,7 +190,6 @@ pub type MembersComplete = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
 /// Whether the `.dbl` declares `media` (a marker and a tail) for the relation of a key.
 pub type HasMedia = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
-pub type HasLocalOrder = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
 /// Whether the `.dbl` declares `refresh: foreground` for the relation of a key.
 pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
@@ -216,7 +214,6 @@ pub struct WindowsState {
     pub(super) members_complete: MembersComplete,
     pub(super) lifetimes: Lifetimes,
     pub(super) media: HasMedia,
-    pub(super) local_order: HasLocalOrder,
     pub(super) next_read: u64,
     pub(super) on_foreground: OnForeground,
     pub(super) foreground_seen: u64,
@@ -241,7 +238,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
     }
 
     #[cfg(test)]
@@ -278,11 +275,6 @@ impl WindowsState {
 
     pub fn with_media(mut self, media: HasMedia) -> Self {
         self.media = media;
-        self
-    }
-
-    pub fn with_local_order(mut self, local_order: HasLocalOrder) -> Self {
-        self.local_order = local_order;
         self
     }
 
@@ -327,7 +319,7 @@ impl WindowsState {
     /// A machine of the preload interest starts not fresh: there is no saved window to read.
     pub(super) fn create(&mut self, key: &WindowKey, read_id: Option<u64>) {
         let ids = (&mut self.request_ids, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key)), read_id, ids);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key)), read_id, ids);
         self.windows.insert(key.clone(), window);
     }
 }

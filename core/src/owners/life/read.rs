@@ -12,7 +12,7 @@ use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{BlobStatus, DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
-use crate::owners::read::{channels_of, has_local_order, has_media, lifetimes, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
+use crate::owners::read::{channels_of, has_media, lifetimes, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::owners::write::transfer::{Shown, TransferInput};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, Outcome, OutcomeId, RuntimeBuilder, Waiter};
@@ -61,7 +61,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.fault(format!("the preload of the schema is invalid: {error}"));
         Vec::new()
     });
-    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_local_order(has_local_order(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
+    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
     let read_db = db.clone();

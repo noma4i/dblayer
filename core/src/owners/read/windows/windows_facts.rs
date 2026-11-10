@@ -30,7 +30,6 @@ pub(super) struct Facts {
     /// The last page that landed.
     pub(super) page: u32,
     pub(super) page_count: u32,
-    pub(super) local_order: bool,
     pub(super) max_pages: u32,
     pub(super) members_complete: bool,
     pub(super) cursor_reset_used: bool,
@@ -231,11 +230,13 @@ impl Facts {
         page.payload = chain.rows.clone();
         page.dependency_models = chain.models.clone();
         let number = if chain.base > 0 { 2 } else { 1 };
-        self.page_count = 1;
-        self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all: false, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
+        let replace_all = !keep_rows && chain.base == 0;
+        self.replace_all = replace_all;
+        self.page_count = landed_tail(self.page_count, number, replace_all).0;
+        self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
-        Transition(WinState::landing(Landing { request: load.request, page: 1, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
+        Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
     }
 
     /// The answer of a request of a media chain, by the phase of the chain.
@@ -367,7 +368,7 @@ impl Facts {
             self.members = members;
             if replaced { self.stale_owed.set(false); }
         }
-        if !preserves_tail(self.local_order, page, self.page_count, self.replace_all) {
+        if !landed_tail(self.page_count, page, self.replace_all).1 {
             self.cursor = cursor;
             self.page = page;
         }
