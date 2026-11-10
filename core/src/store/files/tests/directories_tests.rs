@@ -26,7 +26,7 @@ fn a_write_keeps_the_bytes_under_the_id_and_leaves_no_partial_file() {
     let (_root, directories) = beside_database();
     let path = directories.write("f1", b"hello").unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"hello");
-    assert_eq!(directories.read("f1").unwrap(), b"hello");
+    assert_eq!(fs::read(directories.path("f1").unwrap()).unwrap(), b"hello");
     assert_eq!(directories.directory_entries().unwrap(), vec!["f1"]);
 }
 
