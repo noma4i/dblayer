@@ -167,13 +167,13 @@ Without the argument the call belongs to the account that is signed in when it i
 A create that the server answers, such as a new group, returns a receipt with the optimistic row. Its `confirmed()` carries the confirmed row.
 
 ```swift
-let group = try await Chat.create(name: "Friends", userIds: ids, in: scope).confirmed().value
-let rows = try await Chat.list.read(in: scope)
+let group = try await Chat.create(title: "Friends", serverRevision: 1, lists: ["main"], in: scope).confirmed().value
+let rows = try await Chat.list("main").read(in: scope)
 ```
 
 ```kotlin
-val group = Chat.create(name = "Friends", userIds = ids, account = scope).confirmed().value
-val rows = Chat.list.read(scope)
+val group = Chat.create(title = "Friends", serverRevision = 1, lists = listOf("main"), account = scope).confirmed().value
+val rows = Chat.list("main").read(scope)
 ```
 
 ## What the work costs
