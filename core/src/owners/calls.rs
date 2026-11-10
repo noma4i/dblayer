@@ -129,6 +129,7 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
     use crate::runtime::RetryPolicy;
     match error {
         CallError::Network | CallError::Dropped => Some(if kind == CallKind::Mutate { RetryPolicy::Http } else { RetryPolicy::QueryNetwork }),
+        CallError::Failed(crate::ffi::DbError::ResponseTooLarge { .. }) if kind == CallKind::Mutate => Some(RetryPolicy::Http),
         CallError::Http { status, .. } if matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Status(*status), false, true), crate::transport::AnswerKind::Transient { .. }) => Some(if kind == CallKind::Mutate { RetryPolicy::Http } else { RetryPolicy::QueryNetwork }),
         _ => None,
     }
