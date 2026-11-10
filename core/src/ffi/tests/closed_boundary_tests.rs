@@ -54,3 +54,15 @@ async fn call_refusal_order_table() {
         assert!(matches!(database.outcome(receipt).await, Err(DbError::Closed { .. })));
     }
 }
+
+/// boundary_resolved_error_survives_epoch_end (P-BND-11, D-172): the work of a call answers `Storage` and the epoch ends before the boundary returns; the caller gets the resolved `Storage`, not the end of the epoch.
+#[tokio::test]
+async fn boundary_resolved_error_survives_epoch_end() {
+    let (database, _transport) = with_transport(Arc::new(ManualClock::new(std::time::Duration::from_secs(1)))).await;
+    let epoch = database.session_epoch();
+    let resolved = database.in_epoch::<()>(epoch, "test", async {
+        database.session_reset().await.unwrap();
+        Err(DbError::Storage { detail: "disk full".into() })
+    }).await;
+    assert!(matches!(resolved, Err(DbError::Storage { ref detail }) if detail == "disk full"), "the resolved error is returned as is after the epoch ended: {resolved:?}");
+}
