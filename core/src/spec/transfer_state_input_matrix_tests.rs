@@ -290,6 +290,56 @@ fn key() -> TransferKey { TransferKey { model: "Moment".into(), row_id: "r1".int
 
 fn failure() -> Failure { Failure { kind: ErrKind::InternalInvalid, message: "refused".into() } }
 
+#[test]
+fn xfer_accept_rowless() {
+    use crate::owners::write::transfer::{TransferInput, TransferStage};
+    use crate::runtime::Time;
+    for pending in [false, true] {
+        let mut reference = RefRun::new();
+        let source = if pending { RefSource::Pending } else { RefSource::File { path: format!("/src/{KEY}") } };
+        let item = Item { key: key(), source, values: Vec::new(), check: Check { source_valid: true, action_declared: true, has_effects: false } };
+        reference.feed(RefInput::Accept { epoch: 1, now: 0, item, reply: 7 });
+        let mut owner = Twin::new();
+        let mut item = super::transfer_harness::item(KEY, 1);
+        item.mutation.effects = Default::default();
+        if pending { item.source = None; item.steps = None; }
+        let out = owner.post(TransferInput::Accept { epoch: 1, now: Time(0), item: Box::new(item), reply: 7 });
+        let id = owner.state().open_id(KEY).expect("rowless upload is accepted");
+        assert!(matches!(reference.state.transfers.get(&id).map(|transfer| &transfer.st), Some(St::Reserving)));
+        assert_eq!(owner.stage(id), TransferStage::Reserving);
+        assert_eq!((out.outbox.len(), out.writes(), out.replies(7).len()), (1, 0, 0));
+        assert!(!reference.state.transfers[&id].has_effects);
+    }
+}
+
+#[test]
+fn xfer_ref_rowless_accept_batch() {
+    use crate::owners::write::transfer::{TransferInput, TransferStage};
+    use crate::runtime::Time;
+    let keys = ["Moment:r1:upload", "Moment:r2:upload"];
+    let mut reference = RefRun::new();
+    let items = keys.iter().enumerate().map(|(index, name)| Item {
+        key: TransferKey { model: "Moment".into(), row_id: format!("r{}", index + 1), action: "upload".into() },
+        source: RefSource::File { path: format!("/src/{name}") }, values: Vec::new(),
+        check: Check { source_valid: true, action_declared: true, has_effects: false },
+    }).collect();
+    reference.feed(RefInput::AcceptBatch { epoch: 1, now: 0, minimum: 2, maximum: 10, items, reply: 7 });
+    let mut owner = Twin::new();
+    let items = keys.iter().map(|name| {
+        let mut item = super::transfer_harness::item(name, 1);
+        item.mutation.effects = Default::default();
+        item
+    }).collect();
+    let out = owner.post(TransferInput::AcceptBatch { epoch: 1, now: Time(0), joint: Box::new(super::transfer_harness::joint()), items, reply: 7 });
+    assert_eq!(out.outbox.len(), 3);
+    for name in keys {
+        let id = owner.state().open_id(name).expect("rowless batch item is accepted");
+        assert_eq!(owner.stage(id), TransferStage::Reserving);
+        assert!(matches!(reference.state.transfers.get(&id).map(|transfer| &transfer.st), Some(St::Reserving)));
+        assert!(!reference.state.transfers[&id].has_effects);
+    }
+}
+
 impl RefRun {
     fn new() -> Self {
         let mut run = Self { state: State::new(1, 100, 10), pending: Vec::new(), reply: 100, replies: Vec::new() };
@@ -337,7 +387,7 @@ impl RefRun {
         let attempt = self.attempt();
         match step_kind {
             Step::Accept => {
-                let item = Item { key: key(), source: RefSource::File { path: format!("/src/{KEY}") }, values: Vec::new(), check: Check { source_valid: true, action_declared: true, has_file_field: true, row_exists: true, has_effects: true } };
+                let item = Item { key: key(), source: RefSource::File { path: format!("/src/{KEY}") }, values: Vec::new(), check: Check { source_valid: true, action_declared: true, has_effects: true } };
                 self.feed(RefInput::Accept { epoch: 1, now: 0, item, reply });
                 self.feed(RefInput::OpReserved { target: Target::Transfer { transfer_id: 1 }, result: Ok(1) });
             }

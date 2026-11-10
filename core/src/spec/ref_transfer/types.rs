@@ -24,7 +24,7 @@ pub struct AbortFault { pub temporary: bool, pub status: Option<u16> }
 pub struct Supplied { pub path: String, pub name: String, pub mime: String, pub values: Vec<String>, pub variables: Vec<String>, pub valid: bool, pub values_declared: bool }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Check { pub source_valid: bool, pub action_declared: bool, pub has_file_field: bool, pub row_exists: bool, pub has_effects: bool }
+pub struct Check { pub source_valid: bool, pub action_declared: bool, pub has_effects: bool }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item { pub key: TransferKey, pub source: Source, pub values: Vec<String>, pub check: Check }

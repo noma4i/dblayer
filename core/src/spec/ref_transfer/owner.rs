@@ -113,7 +113,7 @@ pub fn odd_key(k: &TransferKey) -> bool {
 
 pub fn invalid_item(it: &Item) -> bool {
     let c = &it.check;
-    !c.action_declared || !c.has_file_field || (matches!(it.source, Source::File { .. }) && !c.source_valid)
+    !c.action_declared || (matches!(it.source, Source::File { .. }) && !c.source_valid)
 }
 
 pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &mut Vec<Effect>) {
@@ -125,11 +125,10 @@ pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &m
         s.g.held.push(Held { call: None, now, item: Some(item), batch: None, epoch, reply: r });
         return;
     }
-    let fails = (find_open(s, &item.key).is_some() as u8) + (invalid_item(&item) as u8) + (!item.check.row_exists as u8);
+    let fails = (find_open(s, &item.key).is_some() as u8) + (invalid_item(&item) as u8);
     if fails > 1 { row(e, "xfer_accept_check_order"); }
-    if find_open(s, &item.key).is_some() { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if invalid_item(&item) { row(e, "xfer_accept_invalid"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
-    if !item.check.row_exists { row(e, "xfer_accept_row_missing"); reply(e, r, Answer::Err(Fault::NotFound)); return; }
+    if find_open(s, &item.key).is_some() { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if odd_key(&item.key) { row(e, "xfer_key_path_chars"); }
     let has_effects = item.check.has_effects;
     let mut t = new_transfer(&mut s.g, item.key.clone(), item.source.clone(), epoch, now, None, 0, has_effects, item.values.clone());
@@ -149,9 +148,8 @@ pub fn accept_batch(s: &mut State, epoch: u64, now: u64, minimum: usize, maximum
         return;
     }
     if items.len() < minimum || items.len() > maximum { row(e, "xfer_accept_batch_length"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
-    if items.iter().any(|it| find_open(s, &it.key).is_some()) { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if items.iter().any(invalid_item) { row(e, "xfer_accept_batch_invalid"); reply(e, r, Answer::Err(Fault::Invalid)); return; }
-    if let Some(ix) = items.iter().position(|it| !it.check.row_exists) { row(e, "xfer_accept_batch_row_missing"); reply(e, r, Answer::Err(Fault::NotFoundAt(ix))); return; }
+    if items.iter().any(|it| find_open(s, &it.key).is_some()) { row(e, "xfer_accept_key_open"); reply(e, r, Answer::Err(Fault::InFlight)); return; }
     if items.iter().any(|it| odd_key(&it.key)) { row(e, "xfer_key_path_chars"); }
     row(e, "xfer_accept_batch");
     let gid = s.g.next_group;

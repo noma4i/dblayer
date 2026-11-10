@@ -65,6 +65,52 @@ fn committed_with(twin: &mut Twin, shown: Vec<Option<crate::store::Row>>) -> Out
 }
 
 #[test]
+fn xfer_copy_rowless() {
+    let mut twin = Twin::new();
+    let (id, reply, _) = accept(&mut twin, KEY, 1);
+    reserve(&mut twin, id);
+    let copy = twin.commit();
+    assert_eq!((twin.stage(id), copy.copies()), (TransferStage::Copying, 1));
+    let stored = twin.copy_done(id);
+    assert_eq!(twin.stage(id), TransferStage::PersistingCopy);
+    assert!(stored.batches.iter().flat_map(|batch| &batch.ops).all(|op| !matches!(op, StoreOp::Effects { .. })));
+    let accepted = twin.commit();
+    assert!(matches!(accepted.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.optimistic.is_none()));
+}
+
+#[test]
+fn xfer_rowless_mutation_lands() {
+    for has_row in [false, true] {
+        let mut twin = Twin::new();
+        let (id, _) = mutating(&mut twin, KEY);
+        let row_id = has_row.then(|| "u1".to_string());
+        let outcome = OutboxOutcome::Confirmed { revision: 3, result: Some("{}".into()), row_id };
+        twin.mutation_outcome(KEY, outcome.clone());
+        committed_with(&mut twin, has_row.then(|| Some(landed("u1"))).into_iter().collect());
+        let (reply, out) = twin.outcome(id, 1);
+        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(outcome, has_row.then(|| landed("u1")))]);
+    }
+}
+
+#[test]
+fn xfer_rowless_restore() {
+    let mut row = stored(1, KEY, 1);
+    row.completed = true;
+    row.signed_id = Some("signed".into());
+    row.has_intent = true;
+    row.has_operation = false;
+    row.mutation.effects = Default::default();
+    let (mut twin, _) = Twin::opened(vec![row], Default::default());
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(twin.stage(1), TransferStage::Mutating);
+    let outcome = OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None };
+    twin.mutation_outcome(KEY, outcome.clone());
+    twin.commit();
+    let (reply, out) = twin.outcome(1, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(outcome, None)]);
+}
+
+#[test]
 fn xfer_accept_check_order_without_row() {
     let invalid = || { let mut broken = item(KEY, 2); broken.source.as_mut().unwrap().path.clear(); Box::new(broken) };
     let mut closing = Twin::new();
