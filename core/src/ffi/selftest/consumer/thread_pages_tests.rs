@@ -63,6 +63,23 @@ async fn consumer_thread_refresh_keeps_older_pages() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_event_adds_after_three_pages() {
+    let (stand, history, _stream) = three_pages().await;
+    let (events, token) = stand.events("Message").await;
+    let mut message = super::stand::message("m66", "c1", "message 66");
+    message["sequenceNumber"] = json!(66);
+    message["status"] = json!("SENT");
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"CREATED", "entityId":"m66", "message":message}));
+    let event = bound(events.pull_next()).await;
+    assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m66"), "{event:?}");
+    stand.settle().await;
+    let rows = ids(&history);
+    assert_eq!(rows, (1..=66).map(|n| format!("m{n}")).collect::<Vec<_>>(), "event left {} rows: {rows:?}", rows.len());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    assert_eq!(stand.requests("chatThread"), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_thread_three_pages_keep_all_rows() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
