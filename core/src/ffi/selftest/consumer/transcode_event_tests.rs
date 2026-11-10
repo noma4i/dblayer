@@ -31,10 +31,10 @@ async fn consumer_message_transcode_event_updates_reader() {
     let rows = stand.entity("Message", "m1", ReadFetch::Never);
     let asked = stand.requests("MessageNode");
     let before = media_row(message("m1", "c1", "clip"), "PROGRESSING", 40);
-    stand.push(&token, json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":"m1", "message":before}));
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":"m1", "parentId":"c1", "message":before}));
     settled(&stand, "message begins transcoding", || media_status(&stand, &rows, "Message", "m1").as_deref() == Some("PROGRESSING")).await;
     let after = media_row(message("m1", "c1", "clip"), "COMPLETED", 100);
-    stand.push(&token, json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":"m1", "message":after}));
+    stand.push(&token, json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":"m1", "parentId":"c1", "message":after}));
     settled(&stand, "message is transcoded", || media_status(&stand, &rows, "Message", "m1").as_deref() == Some("COMPLETED")).await;
     assert_eq!(stand.requests("MessageNode"), asked, "payload landing needs no node query");
     drop(events);
