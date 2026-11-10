@@ -54,3 +54,49 @@ async fn consumer_moment_transcode_event_rereads_node() {
     settled(&stand, "moment is transcoded", || media_status(&stand, &rows, "Moment", "m1").as_deref() == Some("COMPLETED")).await;
     assert_eq!(stand.requests("MomentNode"), asked + 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_moment_temp_entity_swap() {
+    use crate::ffi::command::{CommandRequest, CommandUpload};
+    use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
+
+    let stand = Stand::open().await;
+    let database = &stand.database;
+    let epoch = database.session_epoch();
+    database.set_online(false).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("moment.jpg");
+    std::fs::write(&path, b"image").unwrap();
+    let command = CommandRequest {
+        epoch,
+        model: "Moment".into(),
+        values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(),
+        args_json: "{}".into(),
+        upload: Some(CommandUpload {
+            action: "create_file".into(),
+            request: WireUploadRequest {
+                source: WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None },
+                variables_json: "{}".into(),
+            },
+        }),
+    };
+    let receipt = bound(database.send(command)).await.unwrap();
+    let temporary = receipt.optimistic_value.as_ref().expect("optimistic Moment").id.clone();
+    assert!(temporary.starts_with("temp-"));
+    let rows = stand.entity("Moment", &temporary, ReadFetch::Stale);
+    settled(&stand, "temporary Moment is visible", || rows.0.lock().unwrap().iter().any(|row| row.id == temporary)).await;
+    stand.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
+    stand.script_put(200, Some("etag"));
+    stand.answer("MomentCreateFile", json!({"momentCreate":{"moment":media_row(moment("m1", 0), "PROGRESSING", 40)}}));
+    stand.answer("MomentNode", json!({"node":media_row(moment("m1", 0), "PROGRESSING", 40)}));
+    database.set_online(true).unwrap();
+    settled(&stand, "same reader sees the server Moment", || rows.0.lock().unwrap().iter().any(|row| row.id == "m1")).await;
+    let (_events, token) = stand.events("Moment").await;
+    let before = stand.requests_with("MomentNode", "momentId", "m1");
+    stand.answer("MomentNode", json!({"node":media_row(moment("m1", 0), "COMPLETED", 100)}));
+    stand.push(&token, json!({"area":"MOMENT", "kind":"UPDATED", "entityId":"m1"}));
+    settled(&stand, "same reader sees completed", || media_status(&stand, &rows, "Moment", "m1").as_deref() == Some("COMPLETED")).await;
+    assert_eq!(stand.requests_with("MomentNode", "momentId", "m1"), before + 1);
+    assert!(stand.asked().iter().filter(|(name, _)| name == "MomentNode").all(|(_, variables)| !variables["momentId"].as_str().is_some_and(|id| id.starts_with("temp-"))));
+    database.close_now();
+}
