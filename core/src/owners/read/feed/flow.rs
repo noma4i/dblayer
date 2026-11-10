@@ -36,7 +36,8 @@ impl FeedState {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || !self.confirmed.insert(channel.clone()) {
             return;
         }
-        let regapped: Vec<(String, u64)> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.model_is_ready(model)).filter_map(|model| self.gapped.remove(&model).map(|seq| (model, seq))).collect();
+        let ready: Vec<String> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.model_is_ready(model)).collect();
+        let regapped: Vec<(String, u64)> = ready.into_iter().filter_map(|model| self.gapped.remove(&model).map(|seq| (model, seq))).collect();
         for (model, _) in &regapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
