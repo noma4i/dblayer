@@ -46,7 +46,7 @@ async fn dlv_prop_operations_mirror() {
     let (revision, items) = operations(&stand).await;
     assert_eq!((items.clone(), store_rows(&stand, revision)), (Vec::new(), Vec::new()), "the committed write leaves the queue");
 
-    stand.answer_next("MomentReact", json!({"errors": [{"extensions": {"code": "REFUSED"}}]}));
+    stand.answer_next("MomentReact", json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED", "reasonCode": "refused"}}], "data": {"momentReact": null}}));
     stand.database.set_online(false).unwrap();
     bound(stand.database.act(epoch, "Moment".into(), "m2".into(), "react".into(), "{}".into(), "{}".into())).await.unwrap();
     stand.settle().await;
