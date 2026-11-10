@@ -60,3 +60,13 @@ fn gen_upload_action_type_call() {
     assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, id: String, source: String"), "kotlin model takes its id");
     assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, request: UploadRequest): MutationReceipt<CurrentUser> = account.upload(CurrentUser, id, \"update_photo\", request)"), "kotlin instance method calls the one on the type");
 }
+
+/// A generated Swift binding that is never assigned is declared with `let`: the consumer builds with warnings as errors.
+#[test]
+fn gen_swift_variables_binding_is_mutated() {
+    let found = consumer();
+    let swift = crate::emit_swift(&found.models, &found.operations, &found.inputs);
+    let lines: Vec<&str> = swift.lines().collect();
+    let never: Vec<usize> = lines.iter().enumerate().filter(|(_, line)| line.trim_start().starts_with("var variables_")).filter(|(at, _)| !lines[at + 1..].iter().take_while(|line| !line.contains("return ")).any(|line| line.contains("variables_[\""))).map(|(at, _)| at + 1).collect();
+    assert!(never.is_empty(), "`var variables_` is never assigned at generated lines {never:?}");
+}
