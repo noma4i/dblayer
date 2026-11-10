@@ -117,11 +117,19 @@ sealed interface OperationOutcome<out Model : DBModel> {
     data class Ended(val cause: EndCause) : OperationOutcome<Nothing>
 }
 
+data class Confirmed<Model : DBModel>(val value: Model?, val answerJson: String?)
+
 class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {
     val optimisticValue: Model? = wire.optimisticValue?.let(decoder::read)
     val revision: Long = wire.revision
     val epoch: ULong = wire.epoch
     val operation: Long? = wire.operation
+
+    /** The one outcome of the receipt: the value, or [DbException.Rejected] (`kept` = the failed intent stays) or the exception of the end of the wait. [discardOnFailure] rolls a failed cycle back first. */
+    suspend fun confirmed(discardOnFailure: Boolean = false): Confirmed<Model> = offCaller {
+        val result = database.confirmed(wire, discardOnFailure)
+        Confirmed(result.value?.let(decoder::read), result.answerJson)
+    }
 
     suspend fun outcome(): OperationOutcome<Model> = offCaller {
         when (val result = database.outcome(wire)) {

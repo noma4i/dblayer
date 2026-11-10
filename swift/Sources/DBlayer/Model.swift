@@ -100,6 +100,11 @@ public enum OperationOutcome<Model: DBModel>: Sendable {
   }
 }
 
+public struct Confirmed<Model: DBModel>: Sendable {
+  public let value: Model?
+  public let answerJSON: String?
+}
+
 public struct MutationReceipt<Model: DBModel>: Sendable {
   public let optimisticValue: Model?
   public let revision: Int64
@@ -115,6 +120,12 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
     self.epoch = wire.epoch
     self.operation = wire.operation
     self.optimisticValue = try wire.optimisticValue.map(Model.decode)
+  }
+
+  /// The one outcome of the receipt: the value, or the error of a refusal (`DbError.Rejected`, `kept` = the failed intent stays) or of the end of the wait. `discardOnFailure` rolls a failed cycle back first.
+  @concurrent public func confirmed(discardOnFailure: Bool = false) async throws -> Confirmed<Model> {
+    let confirmed = try await database.confirmed(receipt: wire, discardOnFailure: discardOnFailure)
+    return Confirmed(value: try confirmed.value.map(Model.decode), answerJSON: confirmed.answerJson)
   }
 
   @concurrent public func outcome() async throws -> OperationOutcome<Model> {
