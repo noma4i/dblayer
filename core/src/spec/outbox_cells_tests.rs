@@ -888,7 +888,7 @@ fn out_destroy_discards_chain() {
     twin.committed(later);
     let after = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 23);
     twin.committed(after);
-    twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: crate::owners::write::outbox::ReserveTarget::Transfer(1), row: None });
+    twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: crate::owners::write::outbox::ReserveTarget::Transfer(1) });
     let moved = after + 1;
     twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: moved, op: model_op("r", Policy::Rollback, true) });
     assert_eq!(twin.stage(moved), Some(St::Queued), "the intent of Transfer waits behind the create");

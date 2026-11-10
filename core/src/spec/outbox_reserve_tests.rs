@@ -41,11 +41,11 @@ fn upload(transfer_id: u64, cycle_id: u64) -> crate::owners::store::UploadRow {
 #[test]
 fn out_reserve_op() {
     let mut twin = Twin::new();
-    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5), row: None });
+    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     let found = reserved(&sends);
     assert!(found.len() == 1 && found[0].contains("Transfer(5)") && found[0].contains("Ok(1)"), "{sends:?}");
     assert!(sends.iter().all(|(to, _)| *to != STORE_AT), "nothing is written");
-    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(6), row: None });
+    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(6) });
     assert!(reserved(&sends)[0].contains("Ok(2)"), "the next op_id of the sequence");
     let id: OpId = twin.submit("r", Policy::Rollback, false);
     assert_eq!(id, 3, "a reserved op_id is not given again");
@@ -54,7 +54,7 @@ fn out_reserve_op() {
 #[test]
 fn out_reserve_op_while_restoring() {
     let mut twin = Twin::bare();
-    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5), row: None });
+    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     assert!(reserved(&sends).is_empty(), "the call waits for Restored");
     raw(&mut twin, OutboxInput::ReservedFloor { op_id: 9 });
     let (sends, _) = raw(&mut twin, OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
@@ -62,7 +62,7 @@ fn out_reserve_op_while_restoring() {
     assert!(found.len() == 1 && found[0].contains("Ok(10)"), "after Restored, above the floor of the restored transfers: {sends:?}");
 
     let mut ended = Twin::bare();
-    raw(&mut ended, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5), row: None });
+    raw(&mut ended, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     ended.det.end_epoch(EPOCH, Cause::SessionReset);
     ended.run();
     let (sends, _) = settle(&mut ended);
@@ -74,7 +74,7 @@ fn out_reserve_op_while_restoring() {
 fn out_reserve_op_queue_failed() {
     let mut twin = Twin::bare();
     raw(&mut twin, OutboxInput::RestoreFailed { error: "queue".into() });
-    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5), row: None });
+    let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     let found = reserved(&sends);
     assert!(found.len() == 1 && found[0].contains("Err(Rejected(Storage("), "{sends:?}");
 }
@@ -169,7 +169,7 @@ fn out_group_rollback_outcome() {
 /// A TransferGroup on the root row `a` and the member `member`: its intent is written by Transfer under the reserved `op_id`.
 fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
     use crate::owners::write::outbox::{OpSource, TransferMember};
-    let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9), row: None });
+    let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9) });
     let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };

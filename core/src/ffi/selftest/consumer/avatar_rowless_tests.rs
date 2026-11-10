@@ -66,34 +66,6 @@ async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_avatar_failed_intent_blocks_upload_without_transfer() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("app.sqlite");
-    let credentials = Arc::new(WatchedHeld::default());
-    let first = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
-    first.sign_in().await;
-    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
-    first.answer_next("UserPhotoUpdate", json!({"errors":[{"message":"Please select a profile picture with a clearly visible face.","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
-    first.script_put(200, Some("etag"));
-    let epoch = first.database.session_epoch();
-    let receipt = bound(first.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    assert!(matches!(bound(first.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
-    bound(first.database.close_database()).await.unwrap();
-    drop(first);
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(connection.execute("DELETE FROM sync_upload WHERE model = 'CurrentUser' AND row_id = 'singleton' AND action = 'update_photo'", []).unwrap(), 1);
-    drop(connection);
-    let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
-    reopened.sign_in().await;
-    let epoch = reopened.database.session_epoch();
-    let next = bound(reopened.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await;
-    assert!(matches!(next, Err(DbError::InFlight { .. })), "failed intent blocks the next upload: {next:?}");
-    assert_eq!(operations(&reopened).await.len(), 1);
-    assert_eq!(reopened.requests("CreateBlob"), 0);
-    reopened.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_reopen_discards_pending_behind_failed() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.sqlite");

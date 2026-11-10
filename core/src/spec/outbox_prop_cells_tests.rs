@@ -123,7 +123,7 @@ fn out_prop_stray_input_ignored() {
         twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: 950 });
         assert_eq!(twin.stage(id), Some(state), "{state:?} x Submit: the earlier operation is unchanged");
         let (mut twin, id) = reach(state, &ctx);
-        twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(1), row: None });
+        twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(1) });
         assert_eq!(twin.stage(id), Some(state), "{state:?} x ReserveOp: the earlier operation is unchanged");
     }
 }
