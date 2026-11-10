@@ -342,6 +342,59 @@ async fn consumer_rowless_accept_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_rowless_multipart_steps() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), Arc::new(WatchedHeld::default())).await;
+    stand.sign_in().await;
+    let source = directory.path().join("large.jpg");
+    let part_size = crate::owners::write::upload::UploadConfig::default().part_size as usize;
+    let mut file = std::fs::File::create(&source).unwrap();
+    file.write_all(&vec![b'a'; part_size]).unwrap();
+    file.write_all(&vec![b'b'; part_size]).unwrap();
+    drop(file);
+    stand.answer("MultipartUploadInit", json!({"multipartUploadInit": {"multipartUpload": {"key": "key", "uploadId": "upload", "signedId": "s", "blobId": "b"}}}));
+    stand.answer("MultipartUploadPresignParts", json!({"multipartUploadPresign": {"parts": [{"partNumber": 1, "url": "https://storage/1"}, {"partNumber": 2, "url": "https://storage/2"}]}}));
+    stand.answer("MultipartUploadComplete", json!({"multipartUploadComplete": {"signedId": "multipart-signed", "blobId": "b"}}));
+    stand.answer("UserPhotoUpdate", good());
+    stand.script_put(200, Some("part-one"));
+    stand.script_put(200, Some("part-two"));
+    stand.hold(&["UserPhotoUpdate"]);
+    stand.hold_put();
+    let mut input = UploadFile::new(source.to_str().unwrap());
+    input.variables = json!({"createInitialMoment": true}).as_object().unwrap().clone();
+    let epoch = stand.database.session_epoch();
+    let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), WireUploadRequest::of(&input))).await.unwrap();
+    assert!(receipt.optimistic_value.is_none());
+    stand.put_started().await;
+    assert_eq!(stand.puts(), 1);
+    stand.release_put();
+    arrived(&stand, "UserPhotoUpdate").await;
+    let parts = stand.put_files();
+    assert_eq!(parts.len(), 2);
+    for (index, part) in parts.iter().enumerate() {
+        assert_eq!((part.offset, part.length), ((index * part_size) as u64, part_size as u64));
+        let mut copy = std::fs::File::open(&part.path).unwrap();
+        copy.seek(SeekFrom::Start(part.offset)).unwrap();
+        let mut byte = [0];
+        copy.read_exact(&mut byte).unwrap();
+        assert_eq!(byte[0], [b'a', b'b'][index]);
+    }
+    let presigns: Vec<_> = stand.asked().into_iter().filter(|(name, _)| name == "MultipartUploadPresignParts").collect();
+    assert_eq!(presigns.len(), 2);
+    assert_eq!((presigns[0].1["uploadId"].as_str(), &presigns[0].1["partNumbers"]), (Some("upload"), &json!([1])));
+    assert_eq!((presigns[1].1["uploadId"].as_str(), &presigns[1].1["partNumbers"]), (Some("upload"), &json!([2])));
+    assert_eq!(stand.requests("MultipartUploadComplete"), 1);
+    let final_request = stand.asked().into_iter().find(|(name, _)| name == "UserPhotoUpdate").unwrap().1;
+    assert_eq!(final_request["input"]["signedId"].as_str(), Some("multipart-signed"));
+    assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+    stand.release(&["UserPhotoUpdate"]);
+    bound(stand.database.confirmed(receipt)).await.unwrap();
+    stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn direct_mutation_reports_the_end_cause() {
     for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
         let stand = Stand::open().await;
