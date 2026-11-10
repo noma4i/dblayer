@@ -156,3 +156,28 @@ pub fn rebuilt_rows(
     }
     Ok(rows)
 }
+
+pub(crate) fn read_operations(connection: &Connection, sequences: &BTreeSet<i64>) -> rusqlite::Result<std::collections::BTreeMap<i64, Option<Operation>>> {
+    if sequences.is_empty() { return Ok(Default::default()); }
+    let ids = serde_json::to_string(sequences).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let sql = format!(include_str!("../sql/operation/read_operations.sql"), OPERATION_COLUMNS = OPERATION_COLUMNS, OPEN_STATUSES = OPEN_STATUSES);
+    let mut operations: std::collections::BTreeMap<_, _> = sequences.iter().map(|seq| (*seq, None)).collect();
+    for operation in connection.prepare_cached(&sql)?.query_map([&ids], operation_at)? {
+        if let Some(operation) = operation? { operations.insert(operation.id.0, Some(operation)); }
+    }
+    let active: Vec<_> = operations.iter().filter_map(|(seq, operation)| operation.as_ref().map(|_| *seq)).collect();
+    if active.is_empty() { return Ok(operations); }
+    let ids = serde_json::to_string(&active).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_selected_rows.sql"))?;
+    for row in statement.query_map([&ids], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
+        let (seq, id) = row?;
+        if let Some(Some(operation)) = operations.get_mut(&seq) { operation.row_ids.push(stored_row_id(&id)?); }
+    }
+    let extensions = read_extensions(connection, "op_error", &["seq"], "seq IN (SELECT value FROM json_each(?1))", &[rusqlite::types::Value::Text(ids)])?;
+    for (owner, extensions) in extensions {
+        if let Some(rusqlite::types::Value::Integer(seq)) = owner.first() {
+            if let Some(Some(operation)) = operations.get_mut(seq) { attach_extensions(&mut operation.error, Some(extensions)); }
+        }
+    }
+    Ok(operations)
+}

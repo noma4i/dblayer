@@ -4,7 +4,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, Row};
 
 use crate::identity::RowId;
-use crate::store::operation::{attach_extensions, read_extensions, write_extensions, failure_at, failure_cells, info_at, read_operation, read_fields, row_operation_sequences, OPEN_STATUSES};
+use crate::store::operation::{attach_extensions, read_extensions, write_extensions, failure_at, failure_cells, info_at, read_operations, read_fields, row_operation_sequences, OPEN_STATUSES};
 use crate::owners::write::operation_status::Operation;
 
 use crate::value::sync::{fold_entries, SyncEntry, SyncInfo, SyncState};
@@ -33,8 +33,8 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>) -> ru
         }
     };
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
-    for seq in sequences {
-        let Some(operation) = read_operation(connection, seq)? else { continue };
+    for (seq, operation) in read_operations(connection, &sequences)? {
+        let Some(operation) = operation else { continue };
         let Some((_, action)) = Operation::split_action_key(&operation.action_key) else { continue };
         let fields = if action == "update" { read_fields(connection, seq)? } else { Vec::new() };
         let entry = SyncEntry {
