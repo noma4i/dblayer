@@ -68,7 +68,7 @@ manifest=core/src/ffi/selftest/manifest.tsv
 for check in check_docs check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
 bash scripts/check_legacy.sh check || fail "check_legacy failed"
 # The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. CONSUMER_LANES=none skips them only by the word of the owner for one release; the receipt records consumers = waived-by-owner.
-consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
+consumer_boundary='^(core/src/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
 consumers=required
 consumer_lanes="${CONSUMER_LANES:-ios android}"
 [ "$consumer_lanes" = none ] && { consumers=waived-by-owner; consumer_lanes=""; }
