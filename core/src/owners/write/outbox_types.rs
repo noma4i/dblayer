@@ -144,6 +144,10 @@ pub enum Fault {
     Rejected(RejectReason),
 }
 
+impl Fault {
+    pub(super) fn of_end(cause: crate::runtime::Cause) -> Self { if cause == crate::runtime::Cause::Close { Self::Closed } else { Self::SessionEnded } }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboxAnswer {
     Receipt(Receipt),

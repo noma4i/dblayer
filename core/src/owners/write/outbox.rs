@@ -668,7 +668,7 @@ impl OutboxState {
                     self.generation.insert(model, reset.generation);
                 }
             }
-            OutboxInput::EpochEnded(_) => self.interrupt_all(Fault::SessionEnded, fx),
+            OutboxInput::EpochEnded(ended) => self.interrupt_all(Fault::of_end(ended.cause), fx),
             OutboxInput::Closing => {
                 self.interrupt_all(Fault::Closed, fx);
                 self.closing = true;

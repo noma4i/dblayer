@@ -171,9 +171,9 @@ impl OutboxState {
             }
             OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
             OutboxInput::AliasesRestored { aliases } => self.aliases = aliases,
-            OutboxInput::EpochEnded(_) => {
+            OutboxInput::EpochEnded(ended) => {
                 self.ended = true;
-                self.answer_held(Fault::SessionEnded, fx);
+                self.answer_held(Fault::of_end(ended.cause), fx);
             }
             OutboxInput::Closing => {
                 self.answer_held(Fault::Closed, fx);
