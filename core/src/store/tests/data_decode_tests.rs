@@ -32,7 +32,7 @@ fn readings() -> Store {
 
 fn land(db: &Store, row: Value) -> Result<(), StoreError> {
     let values = RowValue { row_id: "r1".into(), values: row.to_string() };
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Rows { model: "readings".into(), rows: vec![values] }] };
+    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Rows { model: "readings".into(), rows: vec![values] }] };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).map(|_| ())
 }
 

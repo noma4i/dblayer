@@ -377,7 +377,7 @@ impl Feed {
             let observed = state.want.get(&event.model).is_some_and(|ids| ids.iter().any(|id| state.streams.contains(id)));
             (event.model, if observed { with_observe(&event.payload) } else { event.payload })
         }).collect();
-        StoreBatch { author: BatchAuthor::Feed, id: batch, epoch: state.epoch, basis, rows, intents: 0, credential: None, ops: Vec::new() }
+        StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows, intents: 0, credential: None, ops: Vec::new() }
     }
 
     fn lower(state: &FeedState, fx: Vec<Fx>) -> Effects<Self> {

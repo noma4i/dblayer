@@ -10,7 +10,7 @@ use crate::store::Store;
 use crate::value::ScalarKind;
 
 fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
-    let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops };
+    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }
 
@@ -97,7 +97,7 @@ fn out_server_removed_row() {
     let open = |db: &Store| db.lock().connection.query_row("SELECT COUNT(*) FROM op", [], |row| row.get::<_, i64>(0)).unwrap();
     assert_eq!(open(&db), 1);
     let event = json!({"op": "delete", "id": "m1"}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(written.removed_operations, vec![7], "the operation of the removed row leaves with the row");
     let mut removed = written.removed_rows.clone();
@@ -111,14 +111,14 @@ fn out_server_removed_row() {
 fn out_local_destroy_is_not_a_server_removal() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }], ..Default::default() };
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }] };
+    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }] };
     let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert!(written.removed_rows.is_empty(), "a local destroy of the app is not a server removal: its operation must not end Discarded");
 }
 
 fn feed(db: &Store, events: Vec<Value>) -> crate::store::batch_write::BatchWritten {
     let rows = events.into_iter().map(|event| (event["model"].as_str().unwrap().to_string(), event.to_string())).collect();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap()
 }
 

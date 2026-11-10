@@ -115,7 +115,7 @@ fn win_io_request_lands() {
     let landed = rig.batches.all();
     assert_eq!(landed.len(), 1);
     let batch = &landed[0];
-    assert_eq!((batch.epoch, batch.intents), (EPOCH, 0));
+    assert_eq!((batch.stamp, batch.intents), (crate::runtime::EpochStamp::Epoch(EPOCH), 0));
     let landed_rows: Vec<&str> = batch.ops.iter().flat_map(|op| match op { StoreOp::Window { roots, .. } => roots.iter().map(|row| row.row_id.as_str()).collect(), _ => Vec::new() }).collect();
     assert_eq!(landed_rows, ["r1", "r2"]);
     assert_eq!(batch.basis.get("Moment"), Some(&0));

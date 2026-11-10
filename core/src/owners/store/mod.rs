@@ -136,7 +136,7 @@ impl StoreState {
         }
         if self.mode == StoreMode::Closed {
             match input {
-                StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Closed) }),
+                StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) }),
                 StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => fx.push(StoreEffect::ClearFailed { erase_id, error: "closed".into() }),
                 _ => {}
             }
@@ -190,7 +190,7 @@ impl StoreState {
         if self.closing {
             match &input {
                 StoreInput::Commit(batch) => {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Closed) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) });
                     return;
                 }
                 StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => {
@@ -209,14 +209,14 @@ impl StoreState {
             StoreInput::Commit(batch) => {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::Commit(batch));
-                } else if batch.epoch != self.epoch {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::NoSession) });
+                } else if batch.stamp != crate::runtime::EpochStamp::Epoch(self.epoch) {
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::NoSession) });
                 } else if batch.models().iter().any(|model| !batch.basis.contains_key(model)) {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Invalid) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid) });
                 } else if !self.stale_models(&batch).is_empty() {
                     let models = self.stale_models(&batch);
                     let generation = models.iter().map(|model| self.generation(model)).max().unwrap_or(self.base_generation);
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
                 } else {
                     self.writing = Some(batch.clone());
                     fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
@@ -238,17 +238,18 @@ impl StoreState {
                     return;
                 }
                 let Some(written) = self.writing.take() else { return };
+                let written_epoch = match written.stamp { crate::runtime::EpochStamp::Epoch(epoch) => epoch, crate::runtime::EpochStamp::Control => self.epoch };
                 match result {
-                    Err(reason) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(reason) }),
+                    Err(reason) => fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Rejected(reason) }),
                     Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed }) => {
                         self.revision = revision;
-                        if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written.epoch, batch, payloads: observed }); }
-                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown, files_removed } });
-                        for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written.epoch, reset }); }
-                        if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written.epoch, ops: removed_operations }); }
-                        if !removed_rows.is_empty() { fx.push(StoreEffect::RowsRemoved { epoch: written.epoch, rows: removed_rows, revision }); }
-                        for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written.epoch, model, row_id }); }
-                        for item in expiring { fx.push(StoreEffect::ArmExpiry { epoch: written.epoch, model: item.model, row_id: item.row_id, revision, deadline: item.written_at.saturating_add(item.expires_after) }); }
+                        if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written_epoch, batch, payloads: observed }); }
+                        fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown, files_removed } });
+                        for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written_epoch, reset }); }
+                        if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written_epoch, ops: removed_operations }); }
+                        if !removed_rows.is_empty() { fx.push(StoreEffect::RowsRemoved { epoch: written_epoch, rows: removed_rows, revision }); }
+                        for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written_epoch, model, row_id }); }
+                        for item in expiring { fx.push(StoreEffect::ArmExpiry { epoch: written_epoch, model: item.model, row_id: item.row_id, revision, deadline: item.written_at.saturating_add(item.expires_after) }); }
                         fx.push(StoreEffect::BroadcastCommitted(notice));
                     }
                 }

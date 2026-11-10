@@ -134,7 +134,7 @@ impl TransferState {
         let batch_id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(batch_id, Pending { ids: ids.to_vec(), kind: StoreKind::BatchIntent, orphan: None, written: Default::default() });
-        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id: batch_id, epoch: self.epoch, basis, rows: Vec::new(), intents: 1, credential: None, ops: vec![op] };
+        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id: batch_id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis, rows: Vec::new(), intents: 1, credential: None, ops: vec![op] };
         for model in batch.models() {
             batch.basis.entry(model.clone()).or_insert_with(|| self.generations.get(&model).copied().unwrap_or(self.base_generation));
         }

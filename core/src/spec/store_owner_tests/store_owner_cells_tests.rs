@@ -88,7 +88,7 @@ fn store_commit_no_basis() {
     assert_eq!(Twin::rejected(&actions), Some(Reason::Invalid));
     assert_eq!(twin.state().revision(), 0);
     let effects = twin.send(StoreInput::Commit(StoreBatch {
-        author: BatchAuthor::Window, id: 2, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
+        author: BatchAuthor::Window, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
         ops: vec![crate::owners::store::StoreOp::Rows { model: "Moment".into(), rows: vec![crate::owners::store::RowValue { row_id: "b".into(), values: "{}".into() }] }],
     }));
     assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(RejectReason::Invalid), .. })));
@@ -98,7 +98,7 @@ fn store_commit_no_basis() {
 #[test]
 fn store_commit_arms_expiry() {
     let mut twin = Twin::live();
-    twin.send(StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: 2, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() }));
+    twin.send(StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() }));
     let result = crate::owners::store::WriteDone { revision: 7, expiring: vec![crate::owners::store::MemoryExpiry { model: "Moment".into(), row_id: "a".into(), written_at: 100, expires_after: 50 }], ..Default::default() };
     let effects = twin.send(StoreInput::Written { author: BatchAuthor::Feed, batch: 2, result: Ok(result) });
     let reply = effects.iter().position(|effect| matches!(effect, StoreEffect::Reply { .. })).unwrap();
@@ -109,7 +109,7 @@ fn store_commit_arms_expiry() {
 #[test]
 fn store_commit_disarms_expiry() {
     let mut twin = Twin::live();
-    twin.send(StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id: 2, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() }));
+    twin.send(StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() }));
     let result = crate::owners::store::WriteDone { revision: 7, removed_memory: vec![("Moment".into(), "a".into())], ..Default::default() };
     let effects = twin.send(StoreInput::Written { author: BatchAuthor::Outbox, batch: 2, result: Ok(result) });
     assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::DisarmExpiry { model, row_id, .. } if model == "Moment" && row_id == "a")));

@@ -193,7 +193,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 let saved = store.save_published(published.epoch, published.generation).map_err(|error| error.to_string()).and_then(|()| self.revision()).map(|revision| Done { revision });
                 back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: saved });
             }
-            StoreEffect::Reply { author, batch, epoch, reply } => wiring.route_store_reply(author, batch, epoch, reply),
+            StoreEffect::Reply { author, batch, stamp, reply } => wiring.route_store_reply(author, batch, stamp, reply),
             StoreEffect::Observed { epoch, batch, payloads } => wiring.to_feed_at(EpochStamp::Epoch(epoch), FeedInput::Observed { batch, payloads }),
             StoreEffect::ArmExpiry { epoch, model, row_id, revision, deadline } => {
                 wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmExpiry { model, row: row_id, revision, deadline });

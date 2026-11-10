@@ -264,7 +264,7 @@ fn created_window_membership_uses_the_committed_window() {
     let planned = db.plan_create("Moment", json!({"text":"created"}).as_object().unwrap().clone(), Default::default()).unwrap();
     let key = WindowKey::relation("Moment", "created", &Default::default());
     let commit = |author, ops| {
-        let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     };
     commit(BatchAuthor::Window, vec![StoreOp::Window {
@@ -301,7 +301,7 @@ fn data_matches_window() {
     models[0].relations.push(selected);
     let db = Store::open_models(None, models, None).unwrap();
     let commit = |author, ops| {
-        let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     };
     for minimum in [5, 10] {
@@ -323,7 +323,7 @@ fn data_matches_window() {
     commit(BatchAuthor::LocalWrites, vec![StoreOp::LocalRows { model: "Moment".into(), rows: vec![row] }]);
     assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, false]);
     let event = json!({"op":"upsert", "id":"m1", "row":{"id":"m1", "score":12}}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, epoch: 1, basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
 }

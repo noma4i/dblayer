@@ -15,7 +15,7 @@ use crate::value::SortDirection;
 pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None).unwrap()) }
 
 pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
-    let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops };
+    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }
 
@@ -86,7 +86,7 @@ fn transfer_effects_cannot_append_to_a_ready_intent() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
     let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
-    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 2, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Effects { op_id, model, row_id, action, payload, effects }] };
+    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Effects { op_id, model, row_id, action, payload, effects }] };
     assert!(db.write_batch(&batch, db.files(), db.pointer_guards(), None).is_err());
     assert_eq!(field(&db, "text"), json!("edit"));
 }
@@ -174,7 +174,7 @@ pub(super) fn ephemeral_specs() -> Vec<crate::schema::ModelSpec> {
 
 pub(super) fn set_typing(db: &Store, id: &str, on: bool) -> crate::store::batch_write::BatchWritten {
     let event = json!({"op": "ephemeral", "id": id, "values": {"typing": on}}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap()
 }
 
@@ -213,7 +213,7 @@ fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revi
     let first = set_typing(&db, "m1", true);
     let second = set_typing(&db, "m1", false);
     let reset = first.resets[0].clone();
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }] };
+    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }] };
     let third = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert!(first.notice.position < second.notice.position && second.notice.position < third.notice.position, "{} {} {}", first.notice.position, second.notice.position, third.notice.position);
     assert_eq!((first.revision, second.revision, third.revision), (second.revision, second.revision, second.revision));
@@ -227,7 +227,7 @@ fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets
     put(&db, "moments", json!({"id": "m9", "userId": "u1"}));
     assert_eq!(typing(&db, "m9"), Some(json!(true)), "the value waited for the row");
     let reset = &written.resets[0];
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }] };
+    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }] };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(typing(&db, "m9"), Some(json!(false)), "the clock reset applies");
 }
@@ -238,7 +238,7 @@ fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     set_typing(&db, "m1", true);
     let delete = json!({"op": "delete", "id": "m1"}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     assert_eq!(typing(&db, "m1"), Some(json!(false)), "a new row of the same id starts from the default");

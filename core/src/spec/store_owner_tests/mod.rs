@@ -112,7 +112,7 @@ impl Twin {
         let raw = take(&self.log);
         let epoch = self.state().epoch();
         self.written.extend(raw.iter().filter_map(|effect| match effect {
-            StoreEffect::Write { batch, .. } => Some((batch.epoch, epoch)),
+            StoreEffect::Write { batch, .. } => Some((match batch.stamp { crate::runtime::EpochStamp::Epoch(stamped) => stamped, crate::runtime::EpochStamp::Control => epoch }, epoch)),
             _ => None,
         }));
         let stale = raw.iter().filter(|effect| matches!(effect, StoreEffect::Write { batch, .. } if batch.basis.iter().any(|(model, basis)| *basis < self.state().generation(model)))).count() as u64;
@@ -132,7 +132,7 @@ impl Twin {
 
     fn input_of(&self, request: &Request) -> StoreInput {
         match request.clone() {
-            Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, epoch: batch.epoch, basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential, ops: Vec::new() }),
+            Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(batch.epoch), basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential, ops: Vec::new() }),
             Request::ClearAccount { epoch_old, cause: c, generation_new, erase_id } => StoreInput::ClearAccount { epoch_old, cause: cause(c), generation_new, erase_id },
             Request::ClearModels { epoch, generation_new, models, erase_id } => StoreInput::ClearModels { epoch, generation_new, models, erase_id },
             Request::Published { publication_id, epoch, generation, active } => StoreInput::Published { publication_id, published: Published { epoch, identity: None, generation, state: if active { PublishedState::Session } else { PublishedState::Ending }, closed: false } },

@@ -217,7 +217,7 @@ pub enum StoreOp {
 pub struct StoreBatch {
     pub author: BatchAuthor,
     pub id: BatchId,
-    pub epoch: Epoch,
+    pub stamp: crate::runtime::EpochStamp,
     pub basis: BTreeMap<String, u64>,
     pub rows: Vec<(String, String)>,
     /// Number of intents the batch writes (operations of the queue, `encrypted_*`, transfers).
@@ -312,7 +312,7 @@ pub enum StoreEffect {
     ClearSecret { io_id: u64 },
     /// One transaction: `saved_epoch`, `saved_generation`, `saved_identity`.
     SavePublished { io_id: u64, publication_id: u64, published: Published },
-    Reply { author: BatchAuthor, batch: BatchId, epoch: Epoch, reply: StoreReply },
+    Reply { author: BatchAuthor, batch: BatchId, stamp: crate::runtime::EpochStamp, reply: StoreReply },
     Cleared { epoch_old: Epoch, erase_id: u64 },
     ModelsCleared { generation_new: u64, erase_id: u64 },
     ClearFailed { erase_id: u64, error: String },

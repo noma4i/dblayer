@@ -172,7 +172,7 @@ fn feed_io_frames_commit() {
     let landed = batches.all();
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].rows, [("Chat".to_string(), "hello".to_string())]);
-    assert_eq!(landed[0].epoch, EPOCH);
+    assert_eq!(landed[0].stamp, crate::runtime::EpochStamp::Epoch(EPOCH));
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["id"].as_str(), sent[0].1["variables"]["channel"].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("1"), Some("1")), "the subscribe frame is sealed with the first send counter");

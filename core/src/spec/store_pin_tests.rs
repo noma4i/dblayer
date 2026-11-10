@@ -16,7 +16,7 @@ fn state(revision: u64) -> StoreState {
 }
 
 fn batch(id: u64) -> StoreInput {
-    StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, epoch: 0, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
+    StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(0), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
 }
 
 fn pin(state: &mut StoreState, epoch: u64, request_id: u64) -> Vec<StoreEffect> {
@@ -80,7 +80,7 @@ fn store_epoch_ended_drops_pins() {
     pin(&mut state, 0, 1);
     step(&mut state, StoreInput::EpochEnded(EpochEnded { epoch: 0, cause: Cause::SessionReset }));
     let mut input = batch(1);
-    if let StoreInput::Commit(ref mut batch) = input { batch.epoch = 1; }
+    if let StoreInput::Commit(ref mut batch) = input { batch.stamp = crate::runtime::EpochStamp::Epoch(1); }
     assert_eq!(limit(&step(&mut state, input)), Some(None));
 }
 

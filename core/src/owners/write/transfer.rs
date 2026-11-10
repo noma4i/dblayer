@@ -217,7 +217,7 @@ impl TransferState {
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None, written });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
-        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis, rows: Vec::new(), intents, credential: None, ops };
         let entries = batch.models().into_iter().map(|model| {
             let generation = batch.basis.get(&model).copied().or_else(|| self.generations.get(&model).copied()).unwrap_or(self.base_generation);
             (model, generation)
@@ -256,7 +256,7 @@ impl TransferState {
     pub(super) fn send_batch(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> crate::owners::contract::BatchId {
         let id = self.next_batch;
         self.next_batch += 1;
-        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
+        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
         batch.basis = crate::owners::store::basis_for(batch.models().into_iter().map(|model| (self.generations.get(&model).copied().unwrap_or(self.base_generation), model)).map(|(generation, model)| (model, generation)));
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
         id
@@ -279,7 +279,7 @@ impl TransferState {
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::OrphanRemoved, orphan: Some((upload_id.clone(), key)), written: BTreeMap::new() });
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 

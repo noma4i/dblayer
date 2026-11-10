@@ -350,7 +350,7 @@ impl Windows {
                     if let Some(marker) = marker {
                         ops.push(StoreOp::WindowMarker { key: key.name.clone(), model: key.model.clone(), marker });
                     }
-                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows: Vec::new(), intents: 0, credential: None, ops };
+                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {

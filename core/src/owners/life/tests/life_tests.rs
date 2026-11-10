@@ -372,7 +372,7 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
     let (sender, receiver) = std::sync::mpsc::channel();
     life.on_store_reply(BatchAuthor::Window, move |batch, reply| { let _ = sender.send((batch, reply)); });
     let epoch = life.published().epoch;
-    let batch = |id, row: &str| StoreBatch { author: BatchAuthor::Window, id, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), row.into())], intents: 0, credential: None, ops: Vec::new() };
+    let batch = |id, row: &str| StoreBatch { author: BatchAuthor::Window, id, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), row.into())], intents: 0, credential: None, ops: Vec::new() };
     life.wiring.to_store(StoreInput::Commit(batch(1, r#"{"id":"m1"}"#)));
     let (id, reply) = crate::test_wait::recv_within(&receiver);
     assert_eq!(id, 1);
@@ -401,7 +401,7 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     life.on_committed(move |broadcast| { let _ = first.send(broadcast); });
     life.on_committed(move |broadcast| { let _ = second.send(broadcast); });
     let epoch = life.published().epoch;
-    let batch = StoreBatch { author: BatchAuthor::Window, id: 1, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), r#"{"id":"m1"}"#.into())], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), r#"{"id":"m1"}"#.into())], intents: 0, credential: None, ops: Vec::new() };
     life.wiring.to_store(StoreInput::Commit(batch));
     let StoreReply::Committed { revision, .. } = crate::test_wait::recv_within(&reply) else { panic!("the batch was refused") };
     for heard in [heard_first, heard_second] {

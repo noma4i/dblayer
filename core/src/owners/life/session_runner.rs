@@ -151,7 +151,7 @@ impl SessionRunner {
     }
 
     fn commit(&self, batch: u64, epoch: u64, ops: Vec<StoreOp>) {
-        self.wiring.to_store(StoreInput::Commit(StoreBatch { author: BatchAuthor::Session, id: batch, epoch, basis: Default::default(), rows: Vec::new(), intents: 1, credential: None, ops }));
+        self.wiring.to_store(StoreInput::Commit(StoreBatch { author: BatchAuthor::Session, id: batch, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis: Default::default(), rows: Vec::new(), intents: 1, credential: None, ops }));
     }
 
     fn digest_for(&self, pending: &PendingCall) -> Result<String, TransportError> {

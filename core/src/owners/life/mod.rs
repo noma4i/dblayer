@@ -224,8 +224,7 @@ impl Wiring {
     }
 
     /// The answer of Store to the batch `(author, batch)`.
-    pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, epoch: Epoch, reply: StoreReply) {
-        let stamp = EpochStamp::Epoch(epoch);
+    pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, stamp: EpochStamp, reply: StoreReply) {
         if author == BatchAuthor::Session {
             self.to_session_at(stamp, match reply {
                 StoreReply::Committed { revision, .. } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),

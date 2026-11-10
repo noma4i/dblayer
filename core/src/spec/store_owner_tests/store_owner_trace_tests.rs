@@ -199,14 +199,14 @@ fn store_prop_reply_once() {
 #[test]
 fn store_commit_author_pair() {
     let mut twin = Twin::live();
-    let batch = |author| StoreBatch { author, id: 1, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() };
+    let batch = |author| StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() };
     twin.send(StoreInput::Commit(batch(BatchAuthor::Session)));
     twin.send(StoreInput::Commit(batch(BatchAuthor::Outbox)));
     let written = twin.send(StoreInput::Written { author: BatchAuthor::Session, batch: 1, result: Ok(WriteDone { revision: 1, ..WriteDone::default() }) });
-    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Session, batch: 1, epoch: 1, reply: StoreReply::Committed { .. } })), "the Session batch is answered");
+    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Session, batch: 1, stamp: crate::runtime::EpochStamp::Epoch(1), reply: StoreReply::Committed { .. } })), "the Session batch is answered");
     assert!(!written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Outbox, .. })), "the Outbox batch with the same id still waits");
     let written = twin.send(StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(WriteDone { revision: 2, ..WriteDone::default() }) });
-    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Outbox, batch: 1, epoch: 1, reply: StoreReply::Committed { .. } })), "the Outbox batch is answered with the epoch of the batch");
+    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Outbox, batch: 1, stamp: crate::runtime::EpochStamp::Epoch(1), reply: StoreReply::Committed { .. } })), "the Outbox batch is answered with the epoch of the batch");
 }
 
 #[test]
