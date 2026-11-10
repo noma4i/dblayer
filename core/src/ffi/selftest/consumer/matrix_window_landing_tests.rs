@@ -11,7 +11,7 @@ fn user(id: &str) -> Value {
 }
 
 fn page(ids: &[&str], has_next: bool) -> Value {
-    let edges: Vec<Value> = ids.iter().map(|id| json!({"cursor": format!("c-{id}"), "node": user(id)})).collect();
+    let edges: Vec<Value> = ids.iter().map(|id| json!({"node": user(id)})).collect();
     let end = ids.last().map(|id| format!("c-{id}")).or_else(|| Some("c-none".to_string()));
     json!({"viewer": {"blockedUsers": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": if has_next { json!(end) } else { Value::Null }}, "totalCount": 9}}})
 }
