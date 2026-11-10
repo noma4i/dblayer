@@ -34,7 +34,11 @@ async fn win_page_tail_leaves() {
     stand.settle().await;
     assert_eq!(ids(&stand).await, ["u1", "u2", "u3", "u4"], "the page of 4 users landed");
 
-    stand.answer("UserUnblock", json!({"userUnblock": {"user": user("u4")}}));
+    let mut public_user = user("u4");
+    public_user["fullAvatarUrl"] = Value::Null;
+    public_user["gender"] = Value::Null;
+    public_user["shareUrl"] = Value::Null;
+    stand.answer("UserUnblock", json!({"userUnblock": {"user": public_user}}));
     stand.answer("blockedUsers", blocked(&["u1", "u2", "u3"]));
     bound(stand.database.act(epoch, "User".into(), "u4".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
     stand.settle().await;
