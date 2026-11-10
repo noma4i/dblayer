@@ -40,11 +40,11 @@ pub(super) fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
-            OperationTransition::Attempt { seq, attempts, cycle_id, cause } => {
+            OperationTransition::Attempt { seq, attempts, cycle_id } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let written = connection.execute(
                     &format!(include_str!("../sql/apply_transitions/attempt_operation.sql"), operation_guard(OperationEvent::Attempt)?),
-                    params![seq, attempts, cycle_id, cause.and_then(|cause| cause.cause_columns().map(|(kind, _)| kind)), cause.and_then(|cause| cause.cause_columns().map(|(_, limit)| limit))],
+                    params![seq, attempts, cycle_id],
                 )?;
                 if written > 0 {
                     result.operations.insert(*seq);

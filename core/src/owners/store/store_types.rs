@@ -153,9 +153,9 @@ pub enum StoreOp {
     Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
     TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
-    Attempt { op_id: u64, attempts: u32, cycle_id: u64, cause: Option<crate::value::sync::FailureKind> },
-    /// The cause of the last failed attempt of the operation row.
-    Cause { op_id: u64, cause: Option<crate::value::sync::FailureKind> },
+    Attempt { op_id: u64, attempts: u32, cycle_id: u64 },
+    /// An attempt failed: the cause it kept (none clears the columns) is the one of the last recorded failed attempt.
+    AttemptFailed { op_id: u64, cause: Option<crate::value::sync::FailureKind> },
     /// An operation that left the network returns to the queue: its status is `pending`.
     Requeue { op_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.

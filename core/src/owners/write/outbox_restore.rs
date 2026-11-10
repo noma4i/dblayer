@@ -33,7 +33,6 @@ impl OutboxState {
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.attempts = attempts;
             operation.cause = cause;
-            operation.cause_stored = cause;
             operation.cycle_id = cycle_id.max(1);
             operation.sent = true;
         }
@@ -61,7 +60,7 @@ impl OutboxState {
             return self.restored_failed(op_id, "refused".into());
         }
         if attempts >= ATTEMPT_LIMIT {
-            return self.fail_exhausted(op_id, fx);
+            return self.fail_exhausted(op_id, None, fx);
         }
         if let Some((request_id, sequence)) = pending {
             crate::owners::contract::seen_request_id(request_id);

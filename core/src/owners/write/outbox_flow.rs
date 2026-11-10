@@ -55,31 +55,26 @@ impl OutboxState {
         self.drain(fx);
     }
 
-    /// The outcome of an attempt that did not answer: its cause replaces the kept one in memory and, when it differs from the row, in a Store batch before the wait of the Backoff.
+    /// The outcome of an attempt that did not answer. A temporary failure of a middle attempt is one Store batch with its cause: the Backoff starts after it committed. The last attempt fails the operation, its `ErrorMark` batch carries the cause.
     pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, cause: Option<crate::value::sync::FailureKind>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
-        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; operation.cause = cause; }
-        if self.ops.get(&op_id).is_some_and(|operation| operation.cause != operation.cause_stored) {
-            if let Some(operation) = self.ops.get_mut(&op_id) { operation.cause_stored = operation.cause; }
-            self.store(op_id, CommitKind::Cause, fx);
-        }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         if !temporary {
             self.reject_or_keep(op_id, fx);
             return self.drain(fx);
         }
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
-            self.fail_exhausted(op_id, fx);
-        } else if self.online {
-            if let Some(operation) = self.ops.get_mut(&op_id) {
-                operation.waiting_retry = true;
-            }
-            self.retry_timer(op_id, fx);
+            self.fail_exhausted(op_id, cause, fx);
         } else {
-            self.requeue(op_id, fx);
+            if let Some(operation) = self.ops.get_mut(&op_id) {
+                operation.failing = Some(cause);
+                operation.stage = Stage::PersistingAttempt;
+            }
+            self.store(op_id, CommitKind::AttemptFailed, fx);
         }
         self.drain(fx);
     }
@@ -103,11 +98,11 @@ impl OutboxState {
                 if self.ops[&op_id].attempts < ATTEMPT_LIMIT {
                     self.begin_attempt(op_id, fx);
                 } else {
-                    self.fail_exhausted(op_id, fx);
+                    self.fail_exhausted(op_id, None, fx);
                 }
             }
             Some(Stage::Sending) => self.requeue(op_id, fx),
-            Some(Stage::PersistingAttempt) => self.store(op_id, CommitKind::Attempt, fx),
+            Some(Stage::PersistingAttempt) => { let kind = if self.ops[&op_id].failing.is_some() { CommitKind::AttemptFailed } else { CommitKind::Attempt }; self.store(op_id, kind, fx) }
             Some(Stage::Landing) => self.store(op_id, CommitKind::Land, fx),
             Some(Stage::RollingBack(_)) => self.store(op_id, CommitKind::Rollback, fx),
             Some(Stage::MarkingFailed) => self.store(op_id, CommitKind::ErrorMark, fx),
@@ -290,7 +285,7 @@ impl OutboxState {
     }
 
     pub(super) fn remove_row_operation(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
-        if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, kind } if *id == op_id && *kind != CommitKind::Cause)) { return; }
+        if self.removing.contains(&op_id) || self.batches.values().any(|batch| matches!(batch, super::outbox::Batch::Operation { op_id: id, .. } if *id == op_id)) { return; }
         self.removing.insert(op_id);
         self.store(op_id, CommitKind::RemoveRow, fx);
     }

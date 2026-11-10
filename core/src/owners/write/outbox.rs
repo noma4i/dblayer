@@ -226,7 +226,7 @@ impl OutboxState {
                 retry_uploads: Vec::new(),
                 reject_error: None,
                 cause: None,
-                cause_stored: None,
+                failing: None,
                 cancels: None,
                 before_cancel: None,
                 restore_element: None,
@@ -251,7 +251,7 @@ impl OutboxState {
     pub(super) fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let generation = self.generation_of(&operation.op.model);
-        let attempt = StoreOp::Attempt { op_id, attempts: if kind == CommitKind::ClearMark { 1 } else { operation.attempts + 1 }, cycle_id: operation.cycle_id, cause: if kind == CommitKind::ClearMark { None } else { operation.cause } };
+        let attempt = StoreOp::Attempt { op_id, attempts: if kind == CommitKind::ClearMark { 1 } else { operation.attempts + 1 }, cycle_id: operation.cycle_id };
         let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
                 op_id,
@@ -283,10 +283,10 @@ impl OutboxState {
                 .into_iter()
                 .chain(((operation.pending_owned || operation.pair_in_flight) && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
                 .collect(),
-            CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
+            CommitKind::ErrorMark => vec![StoreOp::AttemptFailed { op_id, cause: operation.error.as_deref().map(|text| super::failure::parse(text).kind).filter(|kind| kind.cause_columns().is_some()) }, StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
             CommitKind::Requeue => vec![StoreOp::Requeue { op_id }],
-            CommitKind::Cause => vec![StoreOp::Cause { op_id, cause: operation.cause }],
+            CommitKind::AttemptFailed => vec![StoreOp::AttemptFailed { op_id, cause: operation.failing.flatten() }],
             CommitKind::RemoveRow => vec![StoreOp::RemoveIntent { op_id }, StoreOp::ReleasePendingOwner { request_id: operation.request_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::LocalWrite => Vec::new(),
         };
@@ -445,7 +445,7 @@ impl OutboxState {
         } else if operation.attempts < ATTEMPT_LIMIT {
             self.begin_attempt(op_id, fx);
         } else {
-            self.fail_exhausted(op_id, fx);
+            self.fail_exhausted(op_id, None, fx);
         }
     }
 
@@ -486,9 +486,9 @@ impl OutboxState {
         self.store(op_id, CommitKind::ErrorMark, fx);
     }
 
-    /// The Backoff ran out: `Failed` carries the cause of the last attempt when it has a kept one, `Exhausted` otherwise.
-    pub(super) fn fail_exhausted(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
-        let cause = self.ops.get(&op_id).and_then(|operation| operation.cause).map(super::failure::of_cause);
+    /// The Backoff ran out: `Failed` carries the cause of the last attempt (the recorded one when none is given), `Exhausted` when it has none.
+    pub(super) fn fail_exhausted(&mut self, op_id: OpId, cause: Option<crate::value::sync::FailureKind>, fx: &mut Effects<Outbox>) {
+        let cause = cause.or_else(|| self.ops.get(&op_id).and_then(|operation| operation.cause)).map(super::failure::of_cause);
         self.fail_with(op_id, cause.unwrap_or_else(|| "Exhausted".into()), fx);
     }
 
