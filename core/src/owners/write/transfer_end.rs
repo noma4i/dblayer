@@ -414,8 +414,9 @@ impl TransferState {
     pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
         self.ended = true;
         for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))); }
-        self.pending.clear();
-        self.minted.clear();
+        self.pending.retain(|_, pending| pending.kind == StoreKind::ControlOrphan);
+        let owed: Vec<(String, String)> = self.minted.iter().filter(|(upload_id, _)| !self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(written, _)| written == *upload_id))).map(|(upload_id, debt)| (upload_id.clone(), debt.key.clone())).collect();
+        for (upload_id, key) in owed { self.write_control_orphan(upload_id, key, fx); }
         for id in self.open_ids() {
             self.interrupt(id, crate::ffi::EndCause::SessionEnded, fx);
         }

@@ -189,7 +189,7 @@ impl StoreState {
     fn apply(&mut self, input: StoreInput, fx: &mut Vec<StoreEffect>) {
         if self.closing {
             match &input {
-                StoreInput::Commit(batch) => {
+                StoreInput::Commit(batch) if batch.stamp != crate::runtime::EpochStamp::Control => {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) });
                     return;
                 }
