@@ -182,6 +182,7 @@ pub struct ReadStream {
     database: Weak<Database>,
     stream: u64,
     ended: std::sync::Mutex<Option<EndCause>>,
+    readers: std::sync::Mutex<ReadReaders>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
     /// The epoch of the open, and the relation the request reads from the server.
@@ -193,6 +194,12 @@ struct RelationLoad {
     model: String,
     relation: String,
     params_json: String,
+}
+
+#[derive(Default)]
+struct ReadReaders {
+    claimed: Option<u64>,
+    released: std::collections::HashSet<u64>,
 }
 
 impl ReadStream {
@@ -233,16 +240,21 @@ impl Drop for PullWait {
 #[uniffi::export]
 impl ReadStream {
     pub fn resync(&self) {
+        let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
+        drop(readers);
         if let Some(life) = self.life() { life.request_snapshot(self.stream); }
     }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
     pub async fn pull(&self, reader: u64) -> Option<ReadValue> {
+        if self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
         let Some(life) = self.life() else { return self.finished(EndCause::Closed) };
         let waiter = life.pull(self.stream, reader);
         let mut waiting = PullWait { life, stream: self.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
         waiting.armed = false;
+        if self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
         match answer {
             Outcome::Value(PullAnswer::Value(value)) => {
                 let mut value = *value;
@@ -280,18 +292,30 @@ impl ReadStream {
 
     /// Takes the stream for one reader and returns its number or the reason the claim ended.
     pub async fn claim_reader(&self) -> ReadClaim {
+        {
+            let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(reader) = readers.claimed.filter(|id| readers.released.contains(id)) { return ReadClaim::Claimed { reader }; }
+        }
         let Some(life) = self.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
         let reader = crate::runtime::next_id(crate::runtime::IdSpace::Reader);
-        if life.claim_reader(self.stream, reader).await { ReadClaim::Claimed { reader } } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
+        if life.claim_reader(self.stream, reader).await {
+            self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).claimed = Some(reader);
+            ReadClaim::Claimed { reader }
+        } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
     }
 
     /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
     pub fn release_reader(&self, reader: u64) {
+        if !self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.insert(reader) { return; }
         if let Some(life) = self.life() { life.release_reader(self.stream, reader); }
     }
 
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
+        {
+            let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
+        }
         if let Some(life) = self.life() { let _ = life.cancel_stream(self.stream).wait().await; }
         self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(EndCause::Cancelled);
     }
@@ -455,7 +479,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), wire, epoch, load })
+        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
     }
 }
 
