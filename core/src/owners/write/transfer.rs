@@ -644,6 +644,9 @@ impl TransferState {
     fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
         match input {
             TransferInput::Restored { uploads, outcomes, orphans, batches } if !self.ended => {
+                let owned: std::collections::BTreeSet<&String> = uploads.iter().filter_map(|row| row.upload_id.as_ref()).collect();
+                let (live, orphans): (Vec<_>, Vec<_>) = orphans.into_iter().partition(|(upload_id, _)| owned.contains(upload_id));
+                self.commit_ops(live.into_iter().map(|(upload_id, _)| StoreOp::RemoveOrphan { upload_id }).collect(), fx);
                 self.orphans.extend(orphans);
                 self.restore_groups(batches);
                 self.restored(uploads, outcomes, fx)

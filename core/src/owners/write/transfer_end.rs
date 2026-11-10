@@ -414,7 +414,13 @@ impl TransferState {
     pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
         self.ended = true;
         for (reply_id, _) in std::mem::take(&mut self.selecting) { reply(fx, reply_id, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))); }
+        let unanswered: Vec<(String, String)> = self.pending.values().filter(|pending| matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan)).filter_map(|pending| match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
+            (Some(orphan), _) => Some(orphan.clone()),
+            (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
+            (None, None) => None,
+        }).collect();
         self.pending.retain(|_, pending| pending.kind == StoreKind::ControlOrphan);
+        for (upload_id, key) in unanswered { self.minted.entry(upload_id).or_insert(MintedDebt { transfer: None, key, attempts: 1, attempt_id: 0 }); }
         let owed: Vec<(String, String)> = self.minted.iter().filter(|(upload_id, _)| !self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(written, _)| written == *upload_id))).map(|(upload_id, debt)| (upload_id.clone(), debt.key.clone())).collect();
         for (upload_id, key) in owed { self.write_control_orphan(upload_id, key, fx); }
         for id in self.open_ids() {
