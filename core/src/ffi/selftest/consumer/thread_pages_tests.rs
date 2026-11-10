@@ -309,3 +309,25 @@ async fn consumer_thread_failed_page_retry() {
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(stand.requests("chatThread"), 3);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_stream_reset_and_gap() {
+    let (stand, history, _stream) = three_pages().await;
+    let (events, token) = stand.events("Message").await;
+    let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
+    let projection = stand.database.subscribe_values(stand.database.session_epoch(), ReadRequest::List { query });
+    let first = bound(projection.pull(0)).await;
+    assert!(matches!(first, Some(ReadValue::Snapshot { .. })), "{first:?}");
+    projection.resync();
+    let snapshot = bound(projection.pull(0)).await;
+    assert!(matches!(snapshot, Some(ReadValue::Snapshot { ref rows, .. }) if rows.len() == 65), "{snapshot:?}");
+    stand.answer("chatThread", page(41, 65, true));
+    stand.drop_cable(&token);
+    let _token = stand.next_subscription().await;
+    let gap = bound(events.pull_next()).await;
+    assert!(matches!(gap, Some(ReadValue::Gap)), "{gap:?}");
+    stand.settle().await;
+    assert_eq!(ids(&history), (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
+    assert_eq!(stand.requests("chatThread"), 4);
+}
