@@ -61,15 +61,12 @@ impl Store {
         let linked = !super::plan::nested_ref::link_targets(spec).is_empty();
         let mut built = HashMap::with_capacity(stored.len());
         for (id, record) in stored {
-            let mut data = record.row;
-            let mut stamp = record.revision;
+            let data = record.row;
             let mut sync = syncs.remove(&id).unwrap_or_default();
             self.finish_uploads(spec, &data, &mut sync);
-            if linked {
-                stamp = stamp.max(self.resolve_nested_refs(reader, spec, &mut data)?);
-            }
-            built.insert(id, Arc::new(Record { id: record.id, revision: stamp, data, sync }));
+            built.insert(id, Arc::new(Record { id: record.id, revision: record.revision, data, sync }));
         }
+        if linked { self.resolve_nested_refs(reader, spec, &mut built)?; }
         Ok((built, syncs))
     }
 

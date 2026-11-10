@@ -1,6 +1,7 @@
 //! A nested object that declares `ref: Model, id: :field` is read from the row of `Model` at the revision of the read (D-76).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -71,26 +72,43 @@ fn walk(fields: &[FieldSpec], shared: &[FieldSpec], value: &mut Value, fetch: &m
 impl Store {
     /// Replaces the nested records that reference a row by the current row at the revision of `reader`. A row that is not there keeps the record as written.
     /// Gives the newest revision among the rows read: the stamp of the row changes with them.
-    pub(crate) fn resolve_nested_refs(&self, reader: &Reader<'_>, spec: &ModelSpec, data: &mut Map<String, Value>) -> Result<i64, CoreError> {
-        let mut fetched = Fetched::new();
-        let snapshot_revision = reader.revision_seq()?;
-        let mut newest = 0;
-        let mut fetch = |model: &str, id: &str| -> Result<FetchedRow, CoreError> {
-            let key = (model.to_string(), id.to_string());
-            if let Some(found) = fetched.get(&key) {
-                return Ok(found.clone());
-            }
-            let row = reader.stored_rows(model, &[id.to_string()])?.remove(id).map(|stored| (stored.row, stored.revision));
-            newest = newest.max(row.as_ref().map_or(snapshot_revision, |(_, revision)| *revision));
-            fetched.insert(key, row.clone());
-            Ok(row)
+    pub(crate) fn resolve_nested_refs(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &mut HashMap<String, crate::store::record::Row>) -> Result<(), CoreError> {
+        let mut keys: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut collect = |model: &str, id: &str| -> Result<FetchedRow, CoreError> {
+            keys.entry(model.to_string()).or_default().insert(id.to_string());
+            Ok(None)
         };
-        for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
-            let name = field.from.clone().unwrap_or_else(|| field.name.clone());
-            if let Some(value) = data.get_mut(&name) {
-                walk(&field.fields, &field.shared, value, &mut fetch)?;
+        for row in rows.values_mut() {
+            let data = &mut Arc::make_mut(row).data;
+            for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
+                let name = field.from.clone().unwrap_or_else(|| field.name.clone());
+                if let Some(value) = data.get_mut(&name) { walk(&field.fields, &field.shared, value, &mut collect)?; }
             }
         }
-        Ok(newest)
+        let snapshot_revision = reader.revision_seq()?;
+        let mut fetched = Fetched::new();
+        for (model, ids) in keys {
+            let ids: Vec<String> = ids.into_iter().collect();
+            let mut stored = reader.stored_rows(&model, &ids)?;
+            for id in ids {
+                let row = stored.remove(&id).map(|row| (row.row, row.revision));
+                fetched.insert((model.clone(), id), row);
+            }
+        }
+        for row in rows.values_mut() {
+            let row = Arc::make_mut(row);
+            let mut newest = 0;
+            let mut fetch = |model: &str, id: &str| -> Result<FetchedRow, CoreError> {
+                let value = fetched.get(&(model.to_string(), id.to_string())).cloned().flatten();
+                newest = newest.max(value.as_ref().map_or(snapshot_revision, |(_, revision)| *revision));
+                Ok(value)
+            };
+            for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
+                let name = field.from.clone().unwrap_or_else(|| field.name.clone());
+                if let Some(value) = row.data.get_mut(&name) { walk(&field.fields, &field.shared, value, &mut fetch)?; }
+            }
+            row.revision = row.revision.max(newest);
+        }
+        Ok(())
     }
 }
