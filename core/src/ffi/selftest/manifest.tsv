@@ -306,3 +306,4 @@ D288b	deferred-parent-swap	core	dlv_deferred_parent_swap_wakes	regression	-	coor
 C62301	win-response-limit-permanent	core	win_response_limit_permanent	green	-	coordinator 6.23.0 cells
 C62401	confirmed-discard-storage-error	core	out_outcome_discard_storage_error	green	-	coordinator 6.24.0 cells
 C62402	confirmed-before-failure-discard	core	out_confirmed_before_failure_discard	green	-	coordinator 6.24.0 cells
+C10	G-09	core	call_prop_mutation_against_end_any_order_public	green	S1: the direct mutation against session end, close and call deadline in every public order	coordinator D-279 cells
