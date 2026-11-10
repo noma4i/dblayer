@@ -30,26 +30,26 @@ pub(super) struct RowWrite<'a> {
     pub closing: Option<i64>,
     pub candidates: usize,
     pub current: super::apply::Prefetched,
-    pub feed_fields: BTreeMap<String, std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    pub feed_fields: BTreeMap<(String, Option<i64>), std::collections::HashMap<String, std::collections::HashSet<String>>>,
     pub feed_tombstones: BTreeMap<String, BTreeMap<String, i64>>,
     pub feed_hidden: Option<super::apply::HiddenRows>,
 }
 
 impl RowWrite<'_> {
-    pub fn prefetch(&mut self, model: &str, ids: &[String]) -> Result<(), StoreError> {
+    pub fn prefetch(&mut self, model: &str, ids: &[String], closing: Option<i64>) -> Result<(), StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !missing.is_empty() {
             let mut rows = reader.stored_rows_with_revisions(model, &missing)?;
             for id in missing { self.current.insert((model.to_string(), id.clone()), rows.remove(&id)); }
         }
-        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(model).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(&(model.to_string(), closing)).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !needed.is_empty() {
             self.feed_tombstones.entry(model.to_string()).or_default();
-            let mut fields = unconfirmed_fields(&reader, self.closing, model, &needed)?;
+            let mut fields = unconfirmed_fields(&reader, closing, model, &needed)?;
             let mut tombstones = reader.tombstones(model, &needed)?;
             for id in needed {
-                self.feed_fields.entry(model.to_string()).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
+                self.feed_fields.entry((model.to_string(), closing)).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
                 if let Some(value) = tombstones.remove(&id) { self.feed_tombstones.entry(model.to_string()).or_default().insert(id, value); }
             }
         }
@@ -81,13 +81,13 @@ impl RowWrite<'_> {
     pub fn admit(&mut self, model: &str, patch: &Map<String, Value>, kind: RowKind, admission: Admission) -> Result<Option<Map<String, Value>>, StoreError> {
         let Some(id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
         if kind == RowKind::Local { return Ok(Some(patch.clone())); }
-        self.prefetch(model, &[id.to_string()])?;
+        self.prefetch(model, &[id.to_string()], admission.closing)?;
         let mut stored = BTreeMap::new();
         if let Some(row) = self.stored(model, id.as_str())? { stored.insert(id.to_string(), row); }
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let reader = Reader::new(self.connection, self.models);
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        admitted_with_fields(&reader, kind, admission, model, patch, spec, guards, self.feed_fields.get(model), self.feed_tombstones.get(model), Some(&stored))
+        admitted_with_fields(&reader, kind, admission, model, patch, spec, guards, self.feed_fields.get(&(model.to_string(), admission.closing)), self.feed_tombstones.get(model), Some(&stored))
     }
 
     pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {

@@ -118,7 +118,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let reader = Reader::new(writer.connection, writer.models);
         let mut ids = BTreeMap::<String, Vec<String>>::new();
         for (model, id) in writer.current.keys() { ids.entry(model.clone()).or_default().push(id.clone()); }
-        for (model, ids) in ids { writer.feed_fields.insert(model.clone(), unconfirmed_fields(&reader, None, &model, &ids)?); }
+        for (model, ids) in ids { writer.feed_fields.insert((model.clone(), None), unconfirmed_fields(&reader, None, &model, &ids)?); }
     }
     Ok(Some(result))
 }
@@ -136,7 +136,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
     }
     let mut before = EventRows::new();
     for (model, ids) in wanted {
-        writer.prefetch(&model, &ids)?;
+        writer.prefetch(&model, &ids, None)?;
         for id in ids {
             let key = (model.clone(), id.clone());
             let row = writer.current.get(&key).and_then(|row| row.as_ref());
