@@ -376,13 +376,7 @@ impl TransferState {
     pub(super) fn staged_restore_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
         match reason {
-            RejectReason::Storage(_) => self.backoff_restore(id, fx),
-            RejectReason::Invalid => {
-                if let Some(rep) = self.transfers.get_mut(&id).and_then(|transfer| transfer.staged_failed.as_mut()).and_then(|(rep, _)| rep.take()) {
-                    reply(fx, rep, TransferAnswer::Err(Fault::Ended(super::outbox_types::end_cause(&reason))));
-                }
-                self.backoff_restore(id, fx);
-            }
+            RejectReason::Storage(_) | RejectReason::Invalid => self.backoff_restore(id, fx),
             RejectReason::StaleGeneration { models, generation } => {
                 for model in &models { self.generations.insert(model.clone(), generation); }
                 self.write_restored(id, fx);
