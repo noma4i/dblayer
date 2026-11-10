@@ -93,7 +93,7 @@ async fn run(path: &'static str, name: &'static str) {
                     drop(rows);
                 }
                 "list page" => {
-                    stand.answer("myMoments", json!({"viewer": {"moments": {"edges": [{"node": moment}], "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": 1}}}));
+                    stand.answer("myMoments", json!({"viewer": {"moments": {"edges": [{"node": moment}], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}));
                     let _ = bound(stand.database.refresh(epoch, "Moment".into(), Some("owned".into()), "{}".into())).await;
                     stand.settle().await;
                 }
