@@ -115,14 +115,10 @@ pub(crate) fn response_from_answer_with_kind(answer: Answer, kind: crate::transp
     Ok(response)
 }
 
-fn response_from_read(answer: Answer) -> Result<Response, TransportError> {
+fn response_from_read(answer: Answer, has_document: bool) -> Result<Response, TransportError> {
     let outcome = crate::transport::WireOutcome::Answer { sequence: answer.sequence, body: answer.body.clone() };
-    let kind = crate::transport::classify_answer(&outcome, false, true);
+    let kind = crate::transport::classify_answer(&outcome, false, has_document);
     response_from_answer_with_kind(answer, kind)
-}
-
-pub fn missing_from_registry(response: &Response) -> bool {
-    serde_json::to_value(response).is_ok_and(|body| matches!(crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body }, false, false), crate::transport::AnswerKind::DocumentMissing))
 }
 
 #[async_trait]
@@ -134,11 +130,11 @@ impl Upstream for EncryptedTransport {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
         let wire = request.authored()?;
-        let response = response_from_read(self.read(path, graphql_body(&request, false), wire).await?)?;
-        if !missing_from_registry(&response) {
+        let response = response_from_read(self.read(path, graphql_body(&request, false), wire).await?, false)?;
+        if !matches!(&response.kind, Some(crate::transport::AnswerKind::DocumentMissing)) {
             return Ok(response);
         }
-        response_from_read(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
+        response_from_read(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?, true)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
