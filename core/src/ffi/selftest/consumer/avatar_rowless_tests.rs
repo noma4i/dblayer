@@ -66,6 +66,88 @@ async fn consumer_avatar_confirmed_after_reopen_waits_for_new_upload() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_failed_intent_blocks_upload_without_transfer() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer_next("UserPhotoUpdate", json!({"errors":[{"message":"Please select a profile picture with a clearly visible face.","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    first.script_put(200, Some("etag"));
+    let epoch = first.database.session_epoch();
+    let receipt = bound(first.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(matches!(bound(first.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.execute("DELETE FROM sync_upload WHERE model = 'CurrentUser' AND row_id = 'singleton' AND action = 'update_photo'", []).unwrap(), 1);
+    drop(connection);
+    let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
+    reopened.sign_in().await;
+    let epoch = reopened.database.session_epoch();
+    let next = bound(reopened.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await;
+    assert!(matches!(next, Err(DbError::InFlight { .. })), "failed intent blocks the next upload: {next:?}");
+    assert_eq!(operations(&reopened).await.len(), 1);
+    assert_eq!(reopened.requests("CreateBlob"), 0);
+    reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_reopen_discards_pending_behind_failed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer_next("UserPhotoUpdate", json!({"errors":[{"message":"no face","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    first.script_put(200, Some("etag"));
+    let epoch = first.database.session_epoch();
+    let failed = bound(first.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(matches!(bound(first.database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
+    first.hold(&["UserPhotoUpdate"]);
+    first.script_put(200, Some("etag"));
+    let _pending = bound(first.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    loop {
+        let received = first.asked().len();
+        if first.requests("UserPhotoUpdate") >= 2 { break; }
+        first.received(received + 1).await;
+    }
+    assert_eq!(first.requests("UserPhotoUpdate"), 2);
+    let items = operations(&first).await;
+    let url = items.iter().find(|item| item.row_id == "other").unwrap().upload.as_ref().unwrap().local_url.as_ref().unwrap();
+    let copy = std::path::PathBuf::from(url.strip_prefix("file://").unwrap());
+    assert!(copy.exists());
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute("DELETE FROM sync_upload WHERE model = 'CurrentUser' AND row_id = 'singleton'", []).unwrap();
+    assert_eq!(connection.execute("UPDATE sync_upload SET row_id = 'singleton' WHERE model = 'CurrentUser' AND row_id = 'other'", []).unwrap(), 1);
+    connection.execute("UPDATE op_row SET row_id = 'singleton' WHERE row_id = 'other'", []).unwrap();
+    connection.execute("UPDATE op SET temp_id = 'singleton' WHERE temp_id = 'other'", []).unwrap();
+    connection.execute("UPDATE op SET status = 'pending', attempts = 0 WHERE transfer_id = (SELECT transfer_id FROM sync_upload WHERE model = 'CurrentUser')", []).unwrap();
+    connection.execute("DELETE FROM encrypted_pending", []).unwrap();
+    drop(connection);
+    let reopened = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials).await;
+    reopened.sign_in().await;
+    reopened.settle().await;
+    let items = operations(&reopened).await;
+    assert_eq!(items.len(), 1, "only the failed intent remains: {items:?}");
+    assert!(!copy.exists(), "the pending upload copy is removed");
+    assert_eq!(reopened.requests("UserPhotoUpdate"), 0);
+    let epoch = reopened.database.session_epoch();
+    bound(reopened.database.discard(epoch, "CurrentUser".into(), "singleton".into(), Some("update_photo".into()))).await.unwrap();
+    reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    reopened.answer("UserPhotoUpdate", good());
+    reopened.script_put(200, Some("etag"));
+    let next = bound(reopened.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(bound(reopened.database.confirmed(next, false)).await.is_ok());
+    assert_eq!(reopened.requests("UserPhotoUpdate"), 1);
+    reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_avatar_forbidden_discard_and_next_upload() {
     let mut cases = Vec::new();
     for data_present in [false, true] {
