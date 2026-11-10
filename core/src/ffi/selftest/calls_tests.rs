@@ -173,3 +173,33 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::EndCause::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_mutation_reports_the_end_cause() {
+    for (close, in_flight) in [(false, false), (false, true), (true, false), (true, true)] {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        bound(rig.database.register_operations(json!([{"name":"DirectMutation","document":"mutation DirectMutation { directMutation { ok } }"}]).to_string())).await.unwrap();
+        let epoch = rig.database.session_epoch();
+        let gate = rig.world.hold_next("DirectMutation");
+        let running = if in_flight {
+            let database = rig.database.clone();
+            let running = tokio::spawn(async move { database.call(epoch, "DirectMutation".into(), "{}".into()).await });
+            gate.entered().await;
+            Some(running)
+        } else { None };
+        if close { rig.database.close_now(); } else { bound(rig.database.session_reset()).await.unwrap(); }
+        let answer = match running {
+            Some(running) => { gate.release(); bound(running).await.unwrap() }
+            None => bound(rig.database.call(epoch, "DirectMutation".into(), "{}".into())).await,
+        };
+        if close {
+            assert!(matches!(answer, Err(DbError::Closed { .. })), "close={close}, in_flight={in_flight}: {answer:?}");
+        } else {
+            assert!(matches!(answer, Err(DbError::NoSession { .. })), "close={close}, in_flight={in_flight}: {answer:?}");
+        }
+        let requests = rig.world.log().iter().filter(|entry| entry.operation == "DirectMutation").count();
+        assert_eq!(requests, usize::from(in_flight));
+        rig.database.close_now();
+    }
+}
