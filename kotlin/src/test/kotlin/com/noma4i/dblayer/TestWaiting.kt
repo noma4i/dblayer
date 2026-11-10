@@ -44,15 +44,30 @@ private fun threadStacks(): String = Thread.getAllStackTraces().entries
     .sortedBy { it.key.name }
     .joinToString("\n") { (thread, frames) -> "\"${thread.name}\" ${thread.state}\n" + frames.joinToString("\n") { "    at $it" } }
 
-suspend fun <Model : DBModel> MutationReceipt<Model>.confirmed(): Model =
-    requireNotNull(outcome().confirmedValue) { "the operation was not confirmed" }
-
 suspend inline fun <reified Answer> MutationReceipt<*>.answer(): Answer {
-    val confirmed = outcome() as? OperationOutcome.Confirmed<*> ?: error("the operation was not confirmed")
-    return dbJson.decodeFromString<Answer>(requireNotNull(confirmed.answerJson) { "the operation has no answer" })
+    return dbJson.decodeFromString<Answer>(requireNotNull(confirmed().answerJson) { "the operation has no answer" })
 }
 
-suspend fun MutationReceipt<*>.refusal(): WireFailure = (outcome() as? OperationOutcome.Rejected)?.failure ?: error("the operation was not refused")
+suspend fun MutationReceipt<*>.refusal(): WireFailure = try {
+    confirmed()
+    error("the operation was not refused")
+} catch (rejected: DbException.Rejected) {
+    rejected.failure
+}
+
+suspend fun MutationReceipt<*>.isRefused(): Boolean = try {
+    confirmed()
+    false
+} catch (_: DbException.Rejected) {
+    true
+}
+
+suspend fun MutationReceipt<*>.endedWithSession(): DbException.NoSession = try {
+    confirmed()
+    error("the operation was not ended by the session")
+} catch (ended: DbException.NoSession) {
+    ended
+}
 
 /** The network goes away while the held request is at the server: the load waits (Loading x Online(false) is Waiting) until the test sets the network online again. */
 suspend fun networkDrops(during: Hold) {

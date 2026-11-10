@@ -65,7 +65,7 @@ class TestClockTest {
             try {
                 awaitWithin("the first page is held") { firstPage.entered() }
                 val receipt = row.like()
-                assertTrue(awaitWithin("the mutation is confirmed") { receipt.outcome() } is OperationOutcome.Confirmed)
+                awaitWithin("the mutation is confirmed") { receipt.confirmed() }
                 firstPage.release()
                 awaitWithin("the old chain finishes") { loading.await() }
                 assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
@@ -100,7 +100,7 @@ class TestClockTest {
             val row = Moment.feed.read().single()
             assertEquals("1", row.id)
             val receipt = row.like()
-            assertTrue(awaitWithin("the mutation is confirmed") { receipt.outcome() } is OperationOutcome.Confirmed)
+            awaitWithin("the mutation is confirmed") { receipt.confirmed() }
             assertEquals(1, transport.calls.count { it.operationName == "MomentsFeed" })
             closeForCleanup()
             openSignedClocked(modelsJSON, transport, definitions, path = path, startMillis = 1_000_000L)

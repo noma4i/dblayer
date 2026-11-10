@@ -68,7 +68,7 @@ class OperationQueueTest {
         val sending = withTimeout(5000) { queue.until { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
         assertEquals(1u, sending[0].attempts)
         hold.release()
-        assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
         assertEquals(emptyList<OperationInfo>(), withTimeout(5000) { queue.until { it.isEmpty() } })
         queue.close()
     }

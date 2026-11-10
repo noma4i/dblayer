@@ -283,13 +283,13 @@ class ValueBridgeTest {
             val profile = Projected(scope.stream(User.profile), User, screen)
             thread.loaded()
             val first = (1..5).map { number -> scope.send(Moment, text("m$number")) }
-            first.forEach { it.outcome() }
+            first.forEach { it.confirmed() }
             thread.until("the thread holds five confirmed rows") { it.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
             assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
 
             val extra = scope.send(Moment, text("m6"))
             thread.until("the sixth row shows") { it.rows.size == 6 }
-            extra.outcome()
+            extra.confirmed()
             thread.until("the sixth row is confirmed") { it.rows.lastOrNull()?.sync?.state == SyncState.Synced }
 
             assertEquals(6, thread.projection.value.rows.size)
@@ -309,13 +309,14 @@ class ValueBridgeTest {
             val scope = AccountScope.current()
             DBlayer.database.setOnline(false)
             val sent = scope.send(Moment, text("queued"))
-            val waiting = screen.async { sent.outcome() }
+            val waiting = screen.async { sent.endedWithSession() }
 
             DBlayer.sessionReset()
-            assertEquals(OperationOutcome.Ended(EndCause.SessionEnded), awaitWithin("the outcome ends with the session") { waiting.await() })
+            awaitWithin("the outcome ends with the session") { waiting.await() }
             DBlayer.database.setOnline(true)
             signIn("B")
-            assertEquals("a receipt of A answered in the epoch of B", OperationOutcome.Ended(EndCause.SessionEnded), sent.outcome())
+            sent.endedWithSession()
+            Unit
         } finally {
             screen.cancel()
             closeForCleanup()

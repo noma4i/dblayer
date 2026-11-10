@@ -92,25 +92,25 @@ class ClubTest {
         openClubSession(transport)
         val club = confirmedClub()
         val receipt = club.addMember(userIds = listOf("u9"))
-        assertEquals(club.id, withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
-        assertTrue(withTimeout(5000) { club.leave().outcome() } is OperationOutcome.Confirmed)
-        assertEquals(club.id, withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
+        assertEquals(club.id, withTimeout(5000) { receipt.confirmed() }.value?.id)
+        withTimeout(5000) { club.leave().confirmed() }
+        assertEquals(club.id, withTimeout(5000) { receipt.confirmed() }.value?.id)
     }
 
     private suspend fun confirmedClub(): Club {
         val receipt = withTimeout(5000) { Club.create(name = "friends") }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
         return Query("Club", Club).read().first()
     }
 
     private suspend fun removeMemberConfirmed(club: Club) {
         val receipt = withTimeout(5000) { club.removeMember(userIds = listOf("u4")) }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
     }
 
     private suspend fun confirmedLetter(): Letter {
         val receipt = withTimeout(5000) { Letter.create(chatId = "c1", text = "hello", at = 1, account = AccountScope.current()) }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
         return Query("Letter", Letter).read().first()
     }
 
@@ -143,7 +143,7 @@ class ClubTest {
                         AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first { it.firstOrNull()?.status == OperationQueueStatus.FAILED }
                     }
                     val attempt = withTimeout(5000) { Letter.retry(id, null) }
-                    assertTrue(withTimeout(5000) { attempt.outcome() } is OperationOutcome.Rejected)
+                    withTimeout(5000) { attempt.refusal() }
                 } else {
                     awaitWithin("the refused operation is gone") {
                         AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first { items -> items.none { it.rowId == id } }
@@ -171,7 +171,7 @@ class ClubTest {
                 withTimeout(5000) { hold.entered() }
                 assertTrue(Query("Club", Club).readRow(club.id) == null)
                 hold.release()
-                assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+                withTimeout(5000) { receipt.refusal() }
                 assertTrue(Query("Club", Club).readRow(club.id) != null)
             } finally {
                 hold.release()
@@ -190,14 +190,15 @@ class ClubTest {
         joined.load()
         transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
         val removed = club.removeMember(userIds = listOf("u4", "u5"))
-        check(withTimeout(5000) { removed.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { removed.confirmed() }
         val hold = transport.hold("AddClubMember", clubAnswer("addClubMember"))
         try {
             val receipt = withTimeout(5000) { club.addMember(userIds = listOf("u4", "u5", "u4")) }
             withTimeout(5000) { hold.entered() }
             assertEquals(listOf("u1", "u2", "u3", "u4", "u5"), joined.read().map { it.id })
             hold.release()
-            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            withTimeout(5000) { receipt.confirmed() }
+            Unit
         } finally {
             hold.release()
         }
@@ -231,7 +232,8 @@ class ClubTest {
                 val receipt = withTimeout(5000) { adding.await() }
                 transport.base.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
                 hold.release()
-                assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+                withTimeout(5000) { receipt.confirmed() }
+                Unit
             } finally {
                 hold.release()
             }
@@ -253,11 +255,11 @@ class ClubTest {
             withTimeout(5000) { hold.entered() }
             assertTrue(Query("Letter", Letter).readRow(local.id) != null)
             hold.release()
-            assertTrue(withTimeout(5000) { sent.outcome() } is OperationOutcome.Rejected)
+            withTimeout(5000) { sent.refusal() }
             assertTrue(Query("Letter", Letter).readRow(local.id) != null)
             if (retry) {
                 val retried = local.retry(null)
-                assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Confirmed)
+                withTimeout(5000) { retried.confirmed() }
             } else {
                 local.discard(null)
             }
@@ -288,11 +290,11 @@ class ClubTest {
             withTimeout(5000) { first.entered() }
             val firstReceipt = withTimeout(5000) { joining.await() }
             first.release()
-            assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Rejected)
+            withTimeout(5000) { firstReceipt.refusal() }
             val secondReceipt = withTimeout(5000) { if (firstJoin) club.removeMember(userIds = listOf("u4")) else club.addMember(userIds = listOf("u4")) }
             withTimeout(5000) { second.entered() }
             second.release()
-            assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
+            withTimeout(5000) { secondReceipt.confirmed() }
             old.release()
             withTimeout(5000) { reading.await() }
             assertEquals(!firstJoin, joined.read().any { it.id == "u4" })
@@ -323,7 +325,7 @@ class ClubTest {
             val unchanged = Query("Letter", Letter).readRow(source.id)!!
             assertTrue(unchanged.chatId == source.chatId && unchanged.text == source.text)
             hold.release()
-            assertEquals("fwd-1", withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
+            assertEquals("fwd-1", withTimeout(5000) { receipt.confirmed() }.value?.id)
         } finally {
             hold.release()
         }
@@ -343,8 +345,8 @@ class ClubTest {
         assertTrue(sent.optimisticValue != null)
         assertEquals(0, transport.calls.count { it.operationName == "SendLetter" })
         DBlayer.database.setOnline(true)
-        assertTrue(withTimeout(5000) { sent.outcome() } is OperationOutcome.Confirmed)
-        assertTrue(withTimeout(5000) { action.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { sent.confirmed() }
+        withTimeout(5000) { action.confirmed() }
         assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
         assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
     }
@@ -357,7 +359,7 @@ class ClubTest {
             else transport.enqueue("CreateClub", DbException.Http(422.toUShort(), "refused"))
             openClubSession(transport, clubModels(keep))
             val receipt = Club.create(name = "friends")
-            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+            withTimeout(5000) { receipt.refusal() }
             assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
             assertEquals(if (keep) 1 else 0, Query("Club", Club).read().size)
         }
@@ -381,11 +383,11 @@ class ClubTest {
             try {
                 withTimeout(5000) { mutation.entered() }
                 val receipt = withTimeout(5000) { acting.await() }
-                if (answerFirst) { mutation.release(); assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed) }
+                if (answerFirst) { mutation.release(); withTimeout(5000) { receipt.confirmed() } }
                 hold.release()
                 reading.await()
                 assertEquals(!removing, joined.read().map { it.id }.contains("u4"))
-                if (!answerFirst) { mutation.release(); assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed) }
+                if (!answerFirst) { mutation.release(); withTimeout(5000) { receipt.confirmed() } }
             } finally {
                 hold.release()
                 mutation.release()
@@ -409,7 +411,7 @@ class ClubTest {
         val receipt = withTimeout(5000) { Club.create(name = "friends") }
         hold.entered()
         hold.release()
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
         val created = Query("Club", Club).read().first()
         assertTrue("the call returned before the server answered", created.id == "g1" && created.name == "friends" && created.sync.state == SyncState.Synced)
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
@@ -451,8 +453,7 @@ class ClubTest {
             assertEquals("$case: the lists before the answer", during, lists())
             val receipt = withTimeout(5000) { acting.await() }
             hold.release()
-            val outcome = withTimeout(5000) { receipt.outcome() }
-            assertTrue("$case: the outcome", if (refusal) outcome is OperationOutcome.Rejected else outcome is OperationOutcome.Confirmed)
+            assertEquals("$case: the outcome", refusal, withTimeout(5000) { receipt.isRefused() })
             val after = if (refusal) (if (removing) original else listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3"))) else during
             assertEquals("$case: the lists after the outcome", after, lists())
         }
@@ -465,7 +466,7 @@ class ClubTest {
         val (created, joined, owners) = openClubWithMembers(transport)
         transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
         val add = created.addMember(userIds = listOf("u9"))
-        assertTrue(withTimeout(5000) { add.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { add.confirmed() }
         assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
         assertEquals(listOf("u1", "u2", "u3", "u4"), joined.read().map { it.id })
         assertEquals(listOf("u2", "u1", "u3", "u4"), owners.read().map { it.id })
@@ -486,13 +487,13 @@ class ClubTest {
         val added = listOf(listOf("u1", "u2", "u3", "u4", "u9"), listOf("u2", "u1", "u3", "u4", "u9"))
         transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
         val add = created.addMember(userIds = listOf("u9"))
-        assertTrue(withTimeout(5000) { add.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { add.confirmed() }
         readAgain(added[0], added[1])
         assertEquals("the lists after the add", added, lists())
         val removed = listOf(listOf("u1", "u2", "u3", "u4"), listOf("u2", "u1", "u3", "u4"))
         transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
         val remove = created.removeMember(userIds = listOf("u9"))
-        assertTrue(withTimeout(5000) { remove.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { remove.confirmed() }
         readAgain(removed[0], removed[1])
         assertEquals("the lists after the removal", removed, lists())
     }
@@ -517,7 +518,7 @@ class ClubTest {
             withTimeout(5000) { mutationHold.entered() }
             mutationHold.release()
             val receipt = awaitWithin("the mutation receipt") { removing.await() }
-            assertTrue(awaitWithin("the mutation outcome while the list load is held") { receipt.outcome() } is OperationOutcome.Confirmed)
+            awaitWithin("the mutation outcome while the list load is held") { receipt.confirmed() }
             assertEquals(before + 1, transport.calls.count { it.operationName == "ClubMembers" })
             loadHold.release()
             awaitWithin("the reread begins") { rereadHold.entered() }
@@ -548,7 +549,7 @@ class ClubTest {
             assertTrue("the club stayed in its list before the answer", Query("Club", Club).readRow(created.id) == null)
             hold.release()
             val receipt = withTimeout(5000) { leaving.await() }
-            assertEquals("the outcome of leave", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+            assertEquals("the outcome of leave", refusal, withTimeout(5000) { receipt.isRefused() })
             Club.ids(listOf(created.id)).rowsReach("the club list after the outcome") { it.isNotEmpty() == refusal }
             assertEquals(refusal, Query("Club", Club).readRow(created.id) != null)
         }
@@ -565,7 +566,7 @@ class ClubTest {
 
         for ((target, id) in listOf("c1" to "fwd-1", "c2" to "fwd-2")) {
             transport.enqueue("ForwardLetter", forwardAnswer(id, target))
-            val answer = requireNotNull(withTimeout(5000) { source.forward(targetChatId = target).outcome() }.confirmedValue)
+            val answer = requireNotNull(withTimeout(5000) { source.forward(targetChatId = target).confirmed() }.value)
             assertTrue("$target: the call returned ${answer.id}, not the answer row", answer.id == id && answer.chatId == target)
             val unchanged = Query("Letter", Letter).readRow(sourceId)!!
             assertTrue("$target: the answer was written onto the source row", unchanged.chatId == "c1" && unchanged.text == "hello" && unchanged.at == 1L)
@@ -593,7 +594,7 @@ class ClubTest {
             assertTrue("$case: the copy is ${copy!!.id}", copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2")
             hold.release()
             val receipt = withTimeout(5000) { forwarding.await() }
-            assertEquals("$case: the outcome of forward", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+            assertEquals("$case: the outcome of forward", refusal, withTimeout(5000) { receipt.isRefused() })
             val expected = if (refusal) emptyList() else listOf("fwd-1")
             thread.rowsReach("the target thread shows the outcome") { rows -> rows.map { it.id } == expected }
             assertEquals(expected, thread.read().map { it.id })

@@ -26,10 +26,10 @@ class OptimisticReactionChainTest {
             val secondReceipt = withTimeout(5000) { changed.react(reactionBody = "", userId = "u1") }
             assertEquals(listOf("u2" to "B"), secondReceipt.optimisticValue!!.reactions.map { it.userId to it.body })
             first.release()
-            assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Confirmed)
+            withTimeout(5000) { firstReceipt.confirmed() }
             withTimeout(5000) { second.entered() }
             second.release()
-            assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
+            withTimeout(5000) { secondReceipt.confirmed() }
             val result = Query("Record", Record).readRow(record.id)!!
             assertEquals(listOf("u2" to "B"), result.reactions.map { it.userId to it.body })
         } finally {

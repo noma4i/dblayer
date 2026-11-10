@@ -28,7 +28,7 @@ class DestroyRereadTest {
             held.loaded()
             assertEquals("1", held.value?.id)
             val receipt = Moment.destroy("1")
-            assertTrue(receipt.outcome() is OperationOutcome.Confirmed)
+            receipt.confirmed()
             awaitWithin("the reread is shown") { held.projection.first { projection -> projection.rows.map { it.id } == listOf("2") } }
             assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
             held.close()

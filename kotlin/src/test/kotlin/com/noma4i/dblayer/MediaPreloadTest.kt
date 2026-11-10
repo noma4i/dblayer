@@ -53,7 +53,7 @@ class MediaPreloadTest {
             awaitWithin("the initial media load") { query.loadAll() }
             val row = query.read().single()
             val receipt = row.act("like", JsonObject(emptyMap()), JsonObject(emptyMap()), MediaMessage)
-            assertTrue(awaitWithin("the mutation outcome") { receipt.outcome() } is OperationOutcome.Confirmed)
+            awaitWithin("the mutation outcome") { receipt.confirmed() }
             awaitWithin("the stale media load") { query.loadAll() }
             assertEquals(listOf("v2"), query.read().map { it.id })
             assertEquals(2, transport.calls.count { it.operationName == "ChatMedia" })

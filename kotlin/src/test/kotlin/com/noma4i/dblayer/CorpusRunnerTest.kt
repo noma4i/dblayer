@@ -118,10 +118,23 @@ private fun fetchOf(name: String?): ReadFetch? = when (name) {
     else -> null
 }
 
-private fun outcomeName(outcome: WireOperationOutcome): String = when (outcome) {
-    is WireOperationOutcome.Confirmed -> "confirmed"
-    is WireOperationOutcome.Rejected -> "rejected"
-    is WireOperationOutcome.Ended -> "ended ${causeName(outcome.cause)}"
+private suspend fun outcomeName(database: Database, receipt: WireOperationReceipt): String = try {
+    database.confirmed(receipt)
+    "confirmed"
+} catch (_: DbException.Rejected) {
+    "rejected"
+} catch (_: DbException.NoSession) {
+    "ended session_ended"
+} catch (_: DbException.Closed) {
+    "ended closed"
+} catch (_: DbException.Invalid) {
+    "ended invalid"
+} catch (_: DbException.Storage) {
+    "ended storage"
+} catch (_: DbException.Internal) {
+    "ended internal"
+} catch (interrupted: DbException.Interrupted) {
+    "ended ${interrupted.detail.lowercase()}"
 }
 
 private fun moreName(result: LoadMoreResult): String = when (result) {
@@ -317,7 +330,7 @@ private class DatabaseRunner {
             "outcome" -> {
                 val key = text("receipt") ?: return failure("arguments")
                 val receipt = receipts[key] ?: return failure("unknown_receipt")
-                spawn { done("outcome", mapOf("receipt" to key, "result" to outcomeName(database.outcome(receipt)))) }
+                spawn { done("outcome", mapOf("receipt" to key, "result" to outcomeName(database, receipt))) }
             }
             "begin_load" -> {
                 val key = text("as") ?: return failure("arguments")

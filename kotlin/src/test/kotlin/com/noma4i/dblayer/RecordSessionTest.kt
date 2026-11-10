@@ -22,7 +22,7 @@ suspend fun openRecordSession(reacts: Int = 3, recordReply: String = RECORD_CREA
 
 suspend fun settledRecord(): Record {
     val receipt = withTimeout(5000) { Record.create(containerId = "c1", authorId = "u1", text = "hello", account = AccountScope.current()) }
-    check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+    withTimeout(5000) { receipt.confirmed() }
     return Query("Record", Record).read().first()
 }
 
@@ -42,7 +42,7 @@ class RecordSessionTest {
         assertTrue("the row was synced before the server answered", during.sync.state != SyncState.Synced)
         assertEquals(listOf("C"), during.reactions.map { it.body })
         hold.release()
-        assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        withTimeout(5000) { receipt.confirmed() }
         assertEquals(SyncState.Synced, Query("Record", Record).readRow(record.id)!!.sync.state)
         assertEquals(1, transport.calls.count { it.operationName == "RecordReact" })
         } finally { hold.release() }

@@ -95,7 +95,7 @@ private class RefuseFirstFile(private val mock: MockTransport) : ScriptedTranspo
 
 /** The item outcomes of a batch: each item has its own receipt. */
 internal suspend fun <Model : DBModel> confirmedPairs(receipt: OperationReceipt<Model>): List<Pair<String, String>?> =
-    receipt.items.map { item -> (item.receipt.outcome() as? OperationOutcome.Confirmed<Model>)?.confirmedValue?.let { item.item.value to it.id } }
+    receipt.items.map { item -> try { item.receipt.confirmed().value?.let { item.item.value to it.id } } catch (_: DbException.Rejected) { null } catch (_: DbException.Interrupted) { null } }
 
 private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> = confirmedPairs(receipt).map { it?.second }
 
@@ -253,7 +253,7 @@ class TransferTest {
             openSigned(Config(null, null), modelsJSON, transport, operations)
             val receipt = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(receipt.optimisticValue)
-            assertTrue(receipt.outcome() is OperationOutcome.Rejected)
+            receipt.refusal()
             val failed = requireNotNull(Moment.find(row.id).current())
             assertEquals(SyncState.Failed, failed.sync.state)
             failed.discard(null)
@@ -340,7 +340,7 @@ class TransferTest {
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             assertNotNull(requireNotNull(Asset.find(rows[0].id).current()).sync.error)
             val retried = rows[0].retry("create_files")
-            assertTrue(receipt.items[0].receipt.outcome() is OperationOutcome.Rejected)
+            receipt.items[0].receipt.refusal()
             assertEquals("a0", retried.confirmed().value?.id)
             assertEquals(listOf("a1", "a2"), confirmedIds(receipt).drop(1))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
