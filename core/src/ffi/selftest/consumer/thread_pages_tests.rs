@@ -58,7 +58,6 @@ async fn consumer_thread_refresh_keeps_older_pages() {
     stand.settle().await;
     let rows = ids(&history);
     assert_eq!(rows, (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>(), "refresh retained {} rows: {rows:?}", rows.len());
-    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(stand.requests("chatThread"), 4);
 }
 
@@ -89,7 +88,6 @@ async fn consumer_thread_refresh_removes_deleted_head_row() {
     stand.settle().await;
     let rows = ids(&history);
     assert_eq!(rows, (1..=65).filter(|n| *n != 50).map(|n| format!("m{n}")).collect::<Vec<_>>(), "refresh after deletion retained {} rows: {rows:?}", rows.len());
-    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(stand.requests("chatThread"), 4);
 }
 
@@ -128,4 +126,15 @@ async fn consumer_thread_three_pages_keep_all_rows() {
     assert_eq!(ids, (1..=65).map(|n| format!("m{n}")).collect::<Vec<_>>());
     assert_eq!(*history.has_more.lock().unwrap(), Some(false));
     assert_eq!(stand.requests("chatThread"), 3);
+}
+
+/// The end of the history reached by the loaded pages stays known after the first page is read again.
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_thread_refresh_keeps_history_end() {
+    let (stand, history, _stream) = three_pages().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("chatThread", page(41, 65, true));
+    bound(stand.database.refresh(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    stand.settle().await;
+    assert_eq!(*history.has_more.lock().unwrap(), Some(false));
 }
