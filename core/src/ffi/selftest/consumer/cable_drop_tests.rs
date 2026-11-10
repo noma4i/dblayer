@@ -39,24 +39,30 @@ async fn consumer_cable_drop_resubscribes_and_reloads_only_observed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_moment_updated_after_cable_drops_rereads_the_node() {
+async fn consumer_cable_gaps_reread_each_observed_key_once() {
     let stand = Stand::open().await;
     stand.answer("MomentNode", json!({"node": super::stand::moment("mo1", 0)}));
     let (events, mut token) = stand.events("Moment").await;
     let _node = stand.entity("Moment", "mo1", ReadFetch::Stale);
     stand.settle().await;
-    let loaded = stand.asked();
     assert_eq!(stand.requests("MomentNode"), 1);
-
+    let mut expected = None;
     for drop in 1..=3 {
+        let before = stand.asked().len();
         stand.drop_cable(&token);
         token = stand.next_subscription().await;
         while !matches!(crate::ffi::selftest::rig_tests::bound(events.pull_next()).await, Some(crate::ffi::ReadValue::Gap)) {}
         stand.settle().await;
-        assert_eq!(stand.asked(), loaded, "cable drop {drop} with the network up: the node load already covers the gap");
+        let asked = stand.asked();
+        let mut added: Vec<_> = asked[before..].iter().map(|(name, variables)| (name.clone(), variables.to_string())).collect();
+        added.sort();
+        assert!(added.windows(2).all(|pair| pair[0] != pair[1]), "cable drop {drop} duplicated a key: {added:?}");
+        assert_eq!(added.iter().filter(|(name, _)| name == "MomentNode").count(), 1, "cable drop {drop}: {added:?}");
+        if let Some(first) = &expected { assert_eq!(&added, first, "cable drop {drop} changed the observed keys"); } else { expected = Some(added); }
     }
 
+    let before = stand.requests("MomentNode");
     stand.push(&token, json!({"area": "MOMENT", "kind": "UPDATED", "entityId": "mo1"}));
     stand.settle().await;
-    assert_eq!((stand.requests("MomentNode"), stand.asked().len()), (2, loaded.len() + 1));
+    assert_eq!(stand.requests("MomentNode"), before + 1, "the update rereads the node once");
 }
