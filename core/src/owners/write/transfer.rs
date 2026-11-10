@@ -99,7 +99,7 @@ impl TransferState {
             let result = match outcome {
                 AuthorOutcome::Response { body, .. } => {
                     let answer: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                    let refused = answer.get("errors").and_then(serde_json::Value::as_array).is_some_and(|errors| !errors.is_empty()) || answer.get("data").and_then(serde_json::Value::as_object).is_none_or(|root| root.values().all(serde_json::Value::is_null));
+                    let refused = answer.get("errors").and_then(serde_json::Value::as_array).is_some_and(|errors| !errors.is_empty()) || answer.get("data").and_then(|data| data.get(self.abort_root.as_str())).is_none_or(serde_json::Value::is_null);
                     if refused { Err(AbortFault { temporary: false, status: None }) } else { Ok(()) }
                 }
                 AuthorOutcome::Error { class, error, .. } => Err(AbortFault { temporary: matches!(class, crate::owners::contract::ErrorClass::Network | crate::owners::contract::ErrorClass::Server), status: if let SessionError::Http { status } = error { Some(status) } else { None } }),

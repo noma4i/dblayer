@@ -167,7 +167,7 @@ impl StepCodec for UploadCodec {
         }
     }
 
-    async fn discard_upload(&self, link: &Link, _key: &str, upload_id: Option<&str>) -> Result<(), TransportError> {
+    async fn discard_upload(&self, link: &Link, upload_id: Option<&str>) -> Result<(), TransportError> {
         let Held::Multipart { key, id } = Held::read(upload_id)? else { return Ok(()) };
         let steps = self.operations.multipart.as_ref().ok_or_else(|| rejected("the upload has no multipart operations"))?;
         self.graphql(link, (&steps.abort.name, UploadStage::Abort), (0, upload_id.unwrap_or_default()), json!({"key": key, "uploadId": id})).await.map(|_| ())

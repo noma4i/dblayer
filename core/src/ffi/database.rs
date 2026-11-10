@@ -207,6 +207,7 @@ impl Database {
         let config = crate::owners::write::upload::UploadConfig::default();
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
             put_timeout: config.put_timeout,
+            abort_root: operations.multipart.as_ref().and_then(|steps| operations.root_of(&steps.abort.name)).map(str::to_string),
             codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), config)),
             jobs,
             slots: 1,

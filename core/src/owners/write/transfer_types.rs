@@ -580,6 +580,8 @@ pub struct TransferState {
     pub put_timeout: std::time::Duration,
     pub now: Time,
     pub drained: bool,
+    /// The root of the answer of the abort operation.
+    pub abort_root: String,
     /// The held calls replay: a start waits until all of them are classified.
     pub starts_held: bool,
     pub closing: bool,
@@ -625,6 +627,7 @@ impl TransferState {
             put_timeout: super::upload::UploadConfig::default().put_timeout,
             now: Time(0),
             drained: false,
+            abort_root: "abortMultipart".into(),
             starts_held: false,
             closing: false,
             ended: false,

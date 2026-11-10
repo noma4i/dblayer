@@ -57,7 +57,7 @@ impl StepCodec for Codec {
         link.mutate(GraphQLRequest::new("mutation Complete", "Complete", json!({})), &step_key()).await.map(|_| Some("signed".to_string()))
     }
 
-    async fn discard_upload(&self, link: &Link, _key: &str, upload_id: Option<&str>) -> Result<(), TransportError> {
+    async fn discard_upload(&self, link: &Link, upload_id: Option<&str>) -> Result<(), TransportError> {
         lock(&self.asked).push(("Abort".into(), None, upload_id.map(str::to_string), String::new()));
         link.mutate(GraphQLRequest::new("mutation Abort", "Abort", json!({})), &step_key()).await.map(|_| ())
     }

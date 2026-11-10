@@ -87,7 +87,7 @@ pub(crate) trait StepCodec: Send + Sync + 'static {
     async fn step(&self, link: &Link, operation: u64, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError>;
     /// The answer of `complete` carries `signed_id` of the file on the server.
     async fn complete(&self, link: &Link, key: &str, upload_id: Option<&str>, parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError>;
-    async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
+    async fn discard_upload(&self, link: &Link, upload_id: Option<&str>) -> Result<(), TransportError>;
 }
 
 /// What Life needs to install Transfer and Rounds: the codec of the steps, the platform job of the round.
@@ -97,6 +97,8 @@ pub(crate) struct TransferPort {
     /// `FileSlots`: transfers in Uploading and Completing at the same time.
     pub slots: u32,
     pub put_timeout: std::time::Duration,
+    /// The root of the abort operation in its answer: only an answer that carries it confirms an abort.
+    pub abort_root: Option<String>,
 }
 
 type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
@@ -278,22 +280,22 @@ impl TransferExecutor {
     }
 
     /// The owner has no input for the end of an abort: the result is not reported.
-    fn drop_upload(&self, key: String, upload_id: String) {
+    fn drop_upload(&self, upload_id: String) {
         let Some(link) = self.link(EpochStamp::Control) else { return };
         let codec = self.codec.clone();
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let _ = codec.discard_upload(&link, &key, Some(&upload_id)).await;
+            let _ = codec.discard_upload(&link, Some(&upload_id)).await;
         }));
     }
 
-    fn abort_orphan(&self, stamp: EpochStamp, back: &Back<Transfers>, key: String, upload_id: String) {
+    fn abort_orphan(&self, stamp: EpochStamp, back: &Back<Transfers>, upload_id: String) {
         let Some(link) = self.link(stamp) else {
             back.reply(stamp, TransferInput::AbortDone { upload_id, result: Err(AbortFault { temporary: true, status: None }) });
             return;
         };
         let (codec, back) = (self.codec.clone(), back.clone());
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let result = abort_result(&codec.discard_upload(&link, &key, Some(&upload_id)).await);
+            let result = abort_result(&codec.discard_upload(&link, Some(&upload_id)).await);
             back.reply(stamp, TransferInput::AbortDone { upload_id, result });
         }));
     }
@@ -358,8 +360,8 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded });
             }
             TransferEffect::Complete { transfer_id, attempt_id, cycle_id, key, upload_id, parts, seeded, .. } => self.complete(stamp, back, (transfer_id, attempt_id, cycle_id), key, (upload_id, parts), seeded),
-            TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),
-            TransferEffect::AbortOrphan { key, upload_id } => self.abort_orphan(stamp, back, key, upload_id),
+            TransferEffect::Abort { upload_id, .. } => self.drop_upload(upload_id),
+            TransferEffect::AbortOrphan { upload_id, .. } => self.abort_orphan(stamp, back, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
