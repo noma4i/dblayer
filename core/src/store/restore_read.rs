@@ -141,7 +141,7 @@ impl Store {
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
         let operation_ids: std::collections::BTreeSet<i64> = entries.iter().map(|entry| entry.operation.id.0).chain(effects_only.iter().copied()).collect();
         let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
-        let ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes));
+        let mut ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes));
         let intent_ids: std::collections::BTreeSet<u64> = origins.valid.values().flat_map(|origin| match origin {
             OpSource::Transfer { transfer_id, .. } => vec![*transfer_id],
             OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.transfer_id).collect(),
@@ -155,6 +155,16 @@ impl Store {
             }
             rows
         });
+        if let (Ok(ops), Ok(transfers)) = (&mut ops, &transfers) {
+            for stored in ops {
+                let transfer = match &stored.op.origin {
+                    OpSource::Transfer { transfer_id, .. } => transfers.iter().find(|row| row.transfer_id == *transfer_id),
+                    OpSource::TransferGroup { members, .. } => members.iter().find_map(|member| transfers.iter().find(|row| row.transfer_id == member.transfer_id)),
+                    OpSource::Api => None,
+                };
+                if let Some(transfer) = transfer { stored.op.on_failure = transfer.mutation.on_failure; }
+            }
+        }
         let mut transfer_outcomes = std::collections::BTreeMap::<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>::new();
         for (id, cycle, kind, revision, value) in outcomes {
             use crate::owners::write::outbox::OutboxOutcome;
