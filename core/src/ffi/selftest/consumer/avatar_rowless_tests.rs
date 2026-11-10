@@ -121,7 +121,7 @@ async fn consumer_rowless_retry_after_refusal() {
     stand.script_put(200, Some("etag"));
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
     assert!(receipt.optimistic_value.is_none());
-    assert!(matches!(bound(stand.database.confirmed(receipt)).await, Err(DbError::Rejected { kept: true, .. })));
+    assert!(matches!(bound(stand.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
     let items = operations(&stand).await;
     assert_eq!(items.len(), 1);
     let url = items[0].upload.as_ref().unwrap().local_url.as_ref().unwrap();
@@ -130,7 +130,7 @@ async fn consumer_rowless_retry_after_refusal() {
     assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "me".into())).await.unwrap().is_none());
     let retried = bound(stand.database.retry(epoch, "CurrentUser".into(), "me".into(), Some("update_photo".into()), None)).await.unwrap();
     assert!(retried.optimistic_value.is_none());
-    let confirmed = bound(stand.database.confirmed(retried)).await.unwrap();
+    let confirmed = bound(stand.database.confirmed(retried, false)).await.unwrap();
     assert!(matches!(confirmed.value, Some(ref row) if row.id == "u1"));
     assert!(bound(stand.database.read_row(epoch, "CurrentUser".into(), "u1".into())).await.unwrap().is_some());
     assert_eq!(stand.requests("UserPhotoUpdate"), 2);
