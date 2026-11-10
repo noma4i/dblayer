@@ -132,7 +132,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
             let database = database.clone();
             let (started, ready) = tokio::sync::oneshot::channel();
             let task = tokio::spawn(async move {
-                let mut waiting = Box::pin(database.outcome(receipt));
+                let mut waiting = Box::pin(database.confirmed(receipt, false));
                 let mut started = Some(started);
                 std::future::poll_fn(|context| {
                     let result = waiting.as_mut().poll(context);
@@ -153,7 +153,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
 
         for (index, waiter) in tasks.into_iter().enumerate() {
             let ended = bound(waiter).await.unwrap();
-            assert!(matches!(ended, Ok(crate::ffi::WireOperationOutcome::Ended { cause: crate::ffi::EndCause::SessionEnded })), "waiter {index} returned {ended:?}");
+            assert!(matches!(ended, Err(crate::ffi::DbError::NoSession { .. })), "waiter {index} returned {ended:?}");
         }
         bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         for _ in 0..8 { gate.release(); }

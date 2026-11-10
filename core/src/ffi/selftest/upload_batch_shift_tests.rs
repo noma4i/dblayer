@@ -1,7 +1,7 @@
 use super::rig_tests::bound;
 use super::upload_stand::Stand;
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
-use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::WireOperationReceipt;
 use crate::test_wait::settled;
 
 pub(super) const OPERATIONS: [(&str, &str); 3] = [
@@ -22,9 +22,10 @@ pub(super) fn items(directory: &std::path::Path) -> Vec<WireUploadItem> {
 }
 
 async fn confirmed(database: &crate::ffi::Database, receipt: &WireOperationReceipt) -> Option<String> {
-    match bound(database.outcome(receipt.clone())).await.unwrap() {
-        WireOperationOutcome::Confirmed { value, .. } => value.map(|row| row.id),
-        _ => None,
+    match bound(database.confirmed(receipt.clone(), false)).await {
+        Ok(confirmed) => confirmed.value.map(|row| row.id),
+        Err(crate::ffi::DbError::Rejected { .. } | crate::ffi::DbError::NoSession { .. } | crate::ffi::DbError::Interrupted { .. }) => None,
+        Err(error) => panic!("the receipt could not be read: {error:?}"),
     }
 }
 
