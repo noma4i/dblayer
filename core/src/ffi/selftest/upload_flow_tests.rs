@@ -10,7 +10,7 @@ use super::upload_fixtures::add_uploads;
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireUploadStatus;
-use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
+use crate::ffi::{ReadFetch, ReadRequest};
 use crate::test_wait::settled;
 use crate::owners::write::upload::UploadFile;
 
@@ -69,7 +69,7 @@ async fn flow_chat_photo_upload() {
     hold.entered().await;
     settled(&rig, "the chat shows the upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Uploading)).await;
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
     assert_eq!((rig.world.count("CreateBlob"), puts(&rig), rig.world.count("ChatUpdatePhoto")), (1, 1, 1), "one blob, one PUT, one mutation");
     rig.database.close_now();
@@ -90,7 +90,7 @@ async fn xfer_prop_local_url() {
     let url = local_url(&chat, "c1", "update_photo").unwrap();
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
     rig.database.close_now();
 }
@@ -109,7 +109,7 @@ async fn flow_chat_photo_retry_and_discard() {
     settled(&rig, "the upload failed on the row", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
 
     let again = bound(rig.database.retry(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()), None)).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(again)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(again, false)).await.unwrap();
     settled(&rig, "the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
 
     let (_other_directory, other) = source("logo2.jpg", b"another jpeg");
@@ -142,7 +142,7 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     assert!(first(&chat).is_some() && first(&list).is_some(), "a place never showed the upload {:?} {:?}", first(&chat), first(&list));
     one_revision(&rig, &[&chat, &list]).await;
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     settled(&rig, "both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;
     rig.database.close_now();
 }
@@ -174,7 +174,7 @@ async fn xfer_status_local_url() {
     let ReadValue::Status { local_url: Some(url), .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { local_url: Some(_), .. })).await else { unreachable!() };
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     status_until(&stream, "the URL goes with the transfer", |value| matches!(value, ReadValue::Status { local_url: None, .. })).await;
     rig.database.close_now();
 }

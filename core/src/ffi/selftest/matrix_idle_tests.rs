@@ -1,7 +1,6 @@
 //! C7: idle and work counters. After a trace has settled, 24 hours pass on the test clock with no input: the core sends no request and arms no timer. A reconnect (online flap) rereads each observed window at most once.
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Rig};
-use crate::ffi::WireOperationOutcome;
 use crate::test_matrix::Matrix;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -11,7 +10,7 @@ async fn idle_costs_nothing_for_a_day() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let receipt = bound(rig.database.send(message(epoch, "m", 1))).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     let _ = bound(rig.database.run(epoch, "MyProfile".into(), "{}".into())).await;
     bound(rig.settle()).await;
     let (requests, armed) = (rig.world.log().len(), rig.clock.armed());

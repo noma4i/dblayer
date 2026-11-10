@@ -17,7 +17,7 @@ async fn members_after_a_group_joined(rig: &Rig) -> (String, serde_json::Value, 
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     let id = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap().into_iter().next().unwrap().id;
     rig.world.set_members("JOINED", &["u1", "u2"]);
     let params = json!({"groupId": id, "order": "JOINED"});
@@ -28,7 +28,7 @@ async fn members_after_a_group_joined(rig: &Rig) -> (String, serde_json::Value, 
 async fn join(rig: &Rig, group: &str, epoch: u64) {
     rig.world.set_members("JOINED", &["u1", "u2", "u9"]);
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.into(), "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
 }
 
 /// out_landing_committed_stale: the confirmed action marks the window of its refetch relation stale and a held reader of the window reads it again.

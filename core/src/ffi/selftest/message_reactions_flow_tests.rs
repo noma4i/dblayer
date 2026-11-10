@@ -7,7 +7,7 @@ use super::rig_tests::{bound, Fault, Rig, World};
 use super::rig_models::add_reactions;
 use super::flow_fixtures::{one_revision, add_chat, add_reactor_user, cell, chat_row, texts};
 use crate::ffi::tape::Rows;
-use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
+use crate::ffi::{ReadFetch, ReadRequest};
 use crate::test_wait::settled;
 
 const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
@@ -49,7 +49,7 @@ async fn flow_message_reactions() {
     }
     one_revision(&rig, &[&thread, &entity]).await;
     hold.release();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
     rig.settle().await;
     assert!(has(&rig, &thread, &["A", "B"]) && has(&rig, &entity, &["A", "B"]));
 
