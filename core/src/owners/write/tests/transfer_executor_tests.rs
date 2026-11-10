@@ -166,8 +166,8 @@ fn exec_xfer_copies_big_file_to_directory() {
     w.stub.script([Act::Hang, Act::Hang]);
     w.accept(big_key, big_path, 2);
     w.accept(small_key, small_path, 1);
-    assert_eq!(w.files.read(&w.copy(big_key)).expect("copy in the directory"), big);
-    assert_eq!(w.files.read(&w.copy(small_key)).expect("small copy in the directory"), b"0123456789", "every copy lies in the directory: the steps read one place");
+    assert_eq!(std::fs::read(w.files.path(&w.copy(big_key)).unwrap()).expect("copy in the directory"), big);
+    assert_eq!(std::fs::read(w.files.path(&w.copy(small_key)).unwrap()).expect("small copy in the directory"), b"0123456789", "every copy lies in the directory: the steps read one place");
     assert_eq!((w.stage(big_key), w.stage(small_key)), (Some(TransferStage::Uploading), Some(TransferStage::Uploading)));
 }
 
@@ -256,11 +256,11 @@ fn exec_xfer_view_and_local_copy() {
     assert_eq!(lock(&w.shown).first(), Some(&Shown::Copying));
     let copy = w.copy(KEY);
     let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).expect("receipt");
-    assert!(w.files.read(&copy).is_ok(), "the local copy is on disk before Confirmed");
+    assert!(std::fs::read(w.files.path(&copy).unwrap()).is_ok(), "the local copy is on disk before Confirmed");
     let id = w.det.state(w.transfers).unwrap().open_id(KEY).unwrap();
     w.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None } });
     assert_eq!(w.stage(KEY), None);
-    assert!(w.files.read(&copy).is_err(), "the local copy is deleted after Confirmed");
+    assert!(std::fs::read(w.files.path(&copy).unwrap()).is_err(), "the local copy is deleted after Confirmed");
     w.post(TransferInput::Outcome { receipt, reply: 2 });
     assert!(lock(&w.answers).contains(&(2, TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None }, None))));
 }
@@ -324,12 +324,12 @@ fn xfer_prop_table_file_off_async() {
     w.settle();
     assert_eq!(w.stage(KEY), Some(TransferStage::Uploading));
     let copy = w.copy(KEY);
-    assert_eq!(w.files.read(&copy).expect("copy").len(), 2 * MIB);
+    assert_eq!(std::fs::read(w.files.path(&copy).unwrap()).expect("copy").len(), 2 * MIB);
     w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::Cancel { key: KEY.into(), reply: 2 });
     while w.det.step() {}
-    assert!(w.files.read(&copy).is_ok(), "the delete of the copy is a pending job, not a call of the owner thread");
+    assert!(std::fs::read(w.files.path(&copy).unwrap()).is_ok(), "the delete of the copy is a pending job, not a call of the owner thread");
     w.settle();
-    assert!(w.files.read(&copy).is_err(), "the pending job removed the copy");
+    assert!(std::fs::read(w.files.path(&copy).unwrap()).is_err(), "the pending job removed the copy");
 }
 
 fn step_key() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Detached }
