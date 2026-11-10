@@ -27,6 +27,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> { mutex.lock().unwr
 #[derive(Default)]
 struct Pool {
     next: u64,
+    reject_blocking: bool,
     tasks: BTreeMap<u64, Task>,
     jobs: BTreeMap<u64, Box<dyn FnOnce() + Send>>,
 }
@@ -36,6 +37,7 @@ struct Pool {
 pub(super) struct ManualSpawn(Arc<Mutex<Pool>>);
 
 impl ManualSpawn {
+    pub fn reject_next_blocking(&self) { lock(&self.0).reject_blocking = true; }
     pub fn pending(&self) -> usize {
         let pool = lock(&self.0);
         pool.tasks.len() + pool.jobs.len()
@@ -78,6 +80,11 @@ impl Tasks for ManualSpawn {
 
     fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
         let mut pool = lock(&self.0);
+        if std::mem::take(&mut pool.reject_blocking) {
+            drop(pool);
+            drop(job);
+            return Running::new(|| {});
+        }
         let id = pool.next;
         pool.next += 1;
         pool.jobs.insert(id, job);

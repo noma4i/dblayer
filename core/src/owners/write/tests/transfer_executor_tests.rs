@@ -285,6 +285,24 @@ fn xfer_confirmed_waits_file_delete() {
 }
 
 #[test]
+fn xfer_confirmed_delete_spawn_failed() {
+    let mut w = world();
+    let path = w.source(KEY, &vec![5u8; 300 * 1024]);
+    w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
+    w.accept(KEY, path, 1);
+    assert_eq!(w.stage(KEY), Some(TransferStage::Failed));
+    let copy = w.files.path(&w.copy(KEY)).unwrap();
+    let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).unwrap();
+    w.spawn.reject_next_blocking();
+    w.post(TransferInput::Outcome { receipt, reply: 2, discard_on_failure: true });
+    assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 2 && matches!(answer, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if error.contains("400"))));
+    assert!(copy.exists());
+    let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap();
+    assert!(!copy.exists());
+    drop(reopened);
+}
+
+#[test]
 fn exec_xfer_key_path_chars() {
     let mut w = world();
     let key = "Moment:../../escape:upload";
