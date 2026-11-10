@@ -7,7 +7,7 @@ use crate::ffi::{QuerySpec, ReadRequest};
 use crate::test_matrix::Matrix;
 
 fn user(id: &str) -> Value {
-    json!({"__typename": "User", "id": id, "fullName": format!("Name {id}"), "username": format!("name_{id}"), "online": false, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
+    json!({"__typename": "User", "id": id, "fullName": format!("Name {id}"), "username": format!("name_{id}"), "avatarUrl": null, "lastSeenAt": null, "age": null, "distance": null, "description": null, "story": null, "relationship": null, "online": false, "createdAt": "2026-11-08T00:00:00Z", "updatedAt": "2026-11-08T00:00:00Z"})
 }
 
 fn page(ids: &[&str], has_next: bool) -> Value {
