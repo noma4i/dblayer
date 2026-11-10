@@ -165,12 +165,10 @@ impl TransferState {
             }
         }
         for &id in &ids {
-            let transfer = &self.transfers[&id];
-            let row = Some((transfer.mutation.model.clone(), transfer.mutation.row_id.clone()));
-            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Transfer(id), row })));
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Transfer(id) })));
         }
         if let Some(group) = group {
-            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Group(group), row: None })));
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Group(group) })));
         }
     }
 

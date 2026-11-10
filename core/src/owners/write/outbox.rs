@@ -162,21 +162,22 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn blocks_row(&self, model: &str, row: &str, before: Option<u64>, failed_only: bool) -> bool {
-        self.ops.values().any(|other| other.stage != Stage::Done && (!failed_only || other.stage == Stage::Failed) && before.is_none_or(|sequence| other.sequence < sequence) && Self::addresses_row(other, model, row))
+    fn shares_row(first: &QueuedOperation, second: &QueuedOperation) -> bool {
+        match &second.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| Self::addresses_row(first, &second.op.model, &member.row_id)),
+            _ => Self::addresses_row(first, &second.op.model, &second.op.row_id),
+        }
     }
 
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.operation_blocked(operation, false)
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation))
     }
 
-    pub(super) fn operation_blocked(&self, operation: &QueuedOperation, failed_only: bool) -> bool {
-        match &operation.op.origin {
-            OpSource::TransferGroup { members, .. } => members.iter().any(|member| self.blocks_row(&operation.op.model, &member.row_id, Some(operation.sequence), failed_only)),
-            _ => self.blocks_row(&operation.op.model, &operation.op.row_id, Some(operation.sequence), failed_only),
-        }
+    pub(super) fn failed_upload_precedes(&self, operation: &QueuedOperation) -> bool {
+        if !matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { return false; }
+        self.ops.values().any(|other| matches!(other.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) && other.stage == Stage::Failed && other.sequence < operation.sequence && other.op.action == operation.op.action && Self::shares_row(other, operation))
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -679,7 +680,7 @@ impl OutboxState {
         }
         match input {
             OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
-            OutboxInput::ReserveOp { epoch, target, row } => self.reserve_op(epoch, target, row, fx),
+            OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),

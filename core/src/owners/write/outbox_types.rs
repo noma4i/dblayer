@@ -185,7 +185,7 @@ pub enum OutboxInput {
     ActivateEpoch(Epoch),
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
     /// Transfer asks for the `op_id` of the optimistic effects it writes with the acceptance (`out_reserve_op`).
-    ReserveOp { epoch: Epoch, target: ReserveTarget, row: Option<(String, String)> },
+    ReserveOp { epoch: Epoch, target: ReserveTarget },
     /// The final mutation of a transfer whose intent the batch of Transfer wrote under `op_id` (`out_submit_intent_written`).
     SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp },
     /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
