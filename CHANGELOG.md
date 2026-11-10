@@ -17,18 +17,22 @@
 - `RetrySnapshot.waiting` replaces `activeCalls` and `lastAttempt`.
 - `RetryEntry` replaces `RetryAttempt` in retry snapshots.
 - `EndCause` replaces `ReadEnd` for stream termination.
-- `OperationOutcome.Ended` replaces `Interrupted` and carries the termination cause.
+- `OperationOutcome.Ended` replaces `Interrupted`.
 - Swift `OperationOutcome.confirmed` names its value `confirmedValue`.
 - `ReadStream.claimReader` returns `ReadClaim` with a reader or an end cause.
 - `WireUploadRequest` and `WireUploadItem` carry `WireSource` instead of separate file fields.
 - `ServerContract.admit` and `settle` reject invalid JSON requests.
-- `SealedServer` refuses hash-only requests for undeclared documents and exposes registration for later operations.
+- `SealedServer` refuses hash-only requests for undeclared documents.
+- `SealedServer` registers documents for later operations.
+- `onlineSink` fails with `Closed` after close.
 - `bridgeToTransport` no longer accepts an operations argument.
 
 ### Fixed
 
-- Multipart aborts use upload IDs and resume after session end, close, or restart.
-- Revoked responses end the session and preserve the appropriate call and load errors.
+- Multipart aborts are identified by upload ID.
+- Multipart aborts resume after session end, close, or restart.
+- Revoked responses end the session.
+- Revoked responses reach callers as the original call and load errors.
 - Call deadlines start when requests are accepted, including while awaiting network state.
 - Resolved outcomes retain their values when the session ends.
 - Uploads apply saved step refusals after a restart without sending the step again.
@@ -36,7 +40,7 @@
 - Uploads resume retained request pairs after a restart without duplicating requests.
 - Upload outcomes from previous cycles cannot finish a newer cycle.
 - Removing one upload from a group preserves the other members and their mutation.
-- Retry and discard select the correct operation across upload group members.
+- Retry and discard act on the chosen operation across upload group members.
 - Destroying an unsent creation discards its dependent queued operations.
 - Server responses cannot restore rows deleted after the request started.
 - Queued operations preserve server refusal details after a restart.
