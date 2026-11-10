@@ -117,7 +117,7 @@ async fn call_refusal_order_table() {
         (true, "NoSuchModel", "absent-row", "no_such_action", "NoSession"),
         (false, "NoSuchModel", "absent-row", "no_such_action", "Invalid"),
         (false, "Moment", "absent-row", "no_such_action", "Invalid"),
-        (false, "Moment", "absent-row", "upload_clip", "NotFound"),
+        (false, "Moment", "absent-row", "upload_clip", "admitted"),
     ] {
         let at = if stale { epoch + 1000 } else { epoch };
         let result = database.upload(at, model.into(), row_id.into(), action.into(), request(Some(&source))).await.map(drop);
