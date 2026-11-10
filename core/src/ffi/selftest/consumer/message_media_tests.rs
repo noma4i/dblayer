@@ -8,7 +8,7 @@ use crate::ffi::ReadFetch;
 fn media_event(url: &str, progress: i64) -> Value {
     let mut row = message("m1", "c1", "clip");
     row["media"] = json!({"fileUrl": url, "transcodeProgress": progress});
-    json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "message": row})
+    json!({"area": "MESSAGE", "kind": "UPDATED", "entityId": "m1", "parentId": "c1", "message": row})
 }
 
 #[tokio::test(flavor = "multi_thread")]
