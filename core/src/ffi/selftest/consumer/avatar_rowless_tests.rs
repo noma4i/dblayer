@@ -64,7 +64,7 @@ async fn consumer_avatar_rowless_upload() {
     assert_eq!((stand.puts(), stand.requests("UserPhotoUpdate")), (1, 1), "the PUT of the file is done before the final mutation is received");
     assert!(stand.database.db.find("CurrentUser", &landed).unwrap().is_none(), "no row before the answer of the final mutation");
     stand.release(&["UserPhotoUpdate"]);
-    let confirmed = bound(stand.database.confirmed(receipt)).await.unwrap();
+    let confirmed = bound(stand.database.confirmed(receipt, false)).await.unwrap();
     let answer: Value = serde_json::from_str(&confirmed.answer_json.expect("the typed answer")).unwrap();
     assert_eq!((answer["moment"]["id"].as_str(), answer["userPhoto"]["status"].as_str(), answer["userPhoto"]["media"]["thumbUrl"].as_str()), (Some("m1"), Some("GOOD"), Some("https://t/1")), "the answer of the final mutation reaches the app by name");
     assert!(matches!(confirmed.value, Some(ref row) if row.id == "u1"), "the answer landed the row: {:?}", confirmed.value);
@@ -88,7 +88,7 @@ async fn consumer_avatar_rowless_rejected() {
     let directory = tempfile::tempdir().unwrap();
     let rows = stand.entity("CurrentUser", "u1", ReadFetch::Never);
     let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "me".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    let outcome = bound(stand.database.confirmed(receipt)).await;
+    let outcome = bound(stand.database.confirmed(receipt, false)).await;
     let Err(DbError::Rejected { failure, kept }) = outcome else { panic!("the refusal reaches the caller: {outcome:?}") };
     assert_eq!((failure.message.as_str(), failure.kind.as_str(), kept), ("no face", "rejected", true), "an upload keeps its failed operation, like every upload: {failure:?}");
     let extensions = failure.extensions.expect("the extensions of the refusal");

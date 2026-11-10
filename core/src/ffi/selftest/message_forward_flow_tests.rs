@@ -65,7 +65,7 @@ async fn flow_message_forward() {
     assert!(thread.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).is_some_and(|seen| seen.revision >= receipt.revision), "the copy came before the receipt");
     one_revision(&rig, &[&thread, &chats]).await;
     refused.release();
-    assert!(matches!(bound(rig.database.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refusal removes the copy and the pointer", || thread.emptied() && field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(Cell::Null)).await;
 
     let hold = rig.world.hold_next("MessageForward");
@@ -73,7 +73,7 @@ async fn flow_message_forward() {
     hold.entered().await;
     settled(&rig, "the copy stands again", || thread.len() == 1).await;
     hold.release();
-    assert!(bound(rig.database.confirmed(receipt)).await.is_ok());
+    assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the answer replaced the copy", || ids(&thread) == ["forwarded-1"]).await;
     assert!(thread.1.lock().unwrap().iter().all(|seen| seen.size <= 1), "the thread showed the copy and the answer together");
     assert!(forwarded_by_me(&rig, &thread, "forwarded-1"));

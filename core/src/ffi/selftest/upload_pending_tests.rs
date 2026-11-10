@@ -127,7 +127,7 @@ async fn xfer_prop_pending_terminates() {
             bound(database.supply_source(epoch, "Asset".into(), id, "create_files".into(), source)).await.unwrap();
         }
         for item in receipt.items {
-            assert!(bound(database.confirmed(item.receipt)).await.is_ok());
+            assert!(bound(database.confirmed(item.receipt, false)).await.is_ok());
         }
         let sent = stand.script.variables("CreateAssets");
         assert_eq!(sent.len(), 1, "{order:?}");

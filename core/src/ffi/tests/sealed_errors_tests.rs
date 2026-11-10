@@ -115,7 +115,7 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             rig.server.refuse_next(wire, confirmed);
             let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
 
-            let outcome = database.confirmed(receipt).await;
+            let outcome = database.confirmed(receipt, false).await;
             let case = format!("{wire} confirmed={confirmed}");
             if code == SessionCode::SessionEnded {
                 assert!(matches!(outcome, Err(super::DbError::NoSession { .. })), "{case}: a revoked answer ends the operation with the session, got {outcome:?}");
@@ -146,7 +146,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
         let row = receipt.optimistic_value.clone().unwrap();
 
-        let outcome = database.confirmed(receipt).await;
+        let outcome = database.confirmed(receipt, false).await;
         let Err(super::DbError::Rejected { failure, kept: true }) = outcome else { panic!("expected rejection: {outcome:?}") };
 
         assert_eq!(failure.session_code, Some(code), "{wire}");
@@ -157,7 +157,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let before = graphql_posts(&rig);
 
         let retried = database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None, None).await.unwrap();
-        let _ = database.confirmed(retried).await;
+        let _ = database.confirmed(retried, false).await;
 
         assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");
     }
@@ -171,7 +171,7 @@ async fn any_other_session_refusal_follows_the_same_keep_declaration() {
     let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
     let row = receipt.optimistic_value.clone().unwrap();
 
-    assert!(matches!(database.confirmed(receipt).await, Err(super::DbError::Rejected { kept: true, .. })));
+    assert!(matches!(database.confirmed(receipt, false).await, Err(super::DbError::Rejected { kept: true, .. })));
 
     assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_some());
 }

@@ -34,7 +34,7 @@ fn batch() -> WireUploadBatch { WireUploadBatch { operation: "create_files".into
 async fn upload_batch(database: &Database, items: Vec<WireUploadItem>) -> WireBatchReceipt { bound(database.upload_create_batch(database.session_epoch(), "Asset".into(), items, batch())).await.unwrap() }
 
 async fn outcome_of(database: &Database, receipt: &WireOperationReceipt) -> String {
-    match bound(database.confirmed(receipt.clone())).await {
+    match bound(database.confirmed(receipt.clone(), false)).await {
         Ok(confirmed) => format!("confirmed {}", confirmed.value.map(|row| row.id).unwrap_or_default()),
         Err(DbError::Rejected { failure, .. }) => format!("rejected {}", failure.message),
         Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => "interrupted".into(),
@@ -109,7 +109,7 @@ async fn a_batch_member_that_landed_before_the_accepted_row_is_read_gives_the_la
     database.set_online(true).unwrap();
     assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
 
-    let landed = bound(database.confirmed(receipt.items[0].receipt.clone())).await.unwrap().value.expect("the item is confirmed with its row");
+    let landed = bound(database.confirmed(receipt.items[0].receipt.clone(), false)).await.unwrap().value.expect("the item is confirmed with its row");
     assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
     database.close_now();
 }

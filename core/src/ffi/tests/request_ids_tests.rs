@@ -120,7 +120,7 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
-    let failed = crate::test_wait::within(database.confirmed(created.clone())).await;
+    let failed = crate::test_wait::within(database.confirmed(created.clone(), false)).await;
     assert!(matches!(failed, Err(crate::ffi::DbError::Rejected { kept: true, .. })), "the fatal attempt of the queue ends the operation before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -137,7 +137,7 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "the tick removed the transfer entry: {drained:?}");
-    let failed = crate::test_wait::within(database.confirmed(uploaded.clone())).await;
+    let failed = crate::test_wait::within(database.confirmed(uploaded.clone(), false)).await;
     assert!(matches!(failed, Err(crate::ffi::DbError::Rejected { kept: true, .. })), "the fatal attempt of the upload ends it before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);

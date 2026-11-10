@@ -336,7 +336,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let (local_list, local_entity) = (next_rows(&rig, &list, 3).await, next_rows(&rig, &entity, 3).await);
     assert!(local_list >= receipt.revision && local_entity >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it: {local_list} {local_entity}");
     hold.release();
-    assert!(bound(db.confirmed(receipt)).await.is_ok());
+    assert!(bound(db.confirmed(receipt, false)).await.is_ok());
     let (server_list, server_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
     assert!(server_list > local_list && server_entity > local_entity, "the server value follows the optimistic one on each stream");
     let refused = rig.world.hold_then("MomentReact", Fault::Business);
@@ -345,7 +345,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let (draft_list, draft_entity) = (next_rows(&rig, &list, 5).await, next_rows(&rig, &entity, 5).await);
     assert!(draft_list >= receipt.revision && draft_entity >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it: {draft_list} {draft_entity}");
     refused.release();
-    assert!(matches!(bound(db.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    assert!(matches!(bound(db.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let (rollback_list, rollback_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
     assert!(rollback_list > draft_list && rollback_entity > draft_entity, "the rollback follows the draft on each stream");
     assert_quiet(db, &[&list, &entity, &count]).await;
@@ -410,7 +410,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     }
     assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a stream showed the overlay before the receipt: {revisions:?}, receipt {}", receipt.revision);
     hold.release();
-    assert!(matches!(bound(db.confirmed(receipt)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
+    assert!(matches!(bound(db.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let mut restored = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull_next()).await.unwrap();

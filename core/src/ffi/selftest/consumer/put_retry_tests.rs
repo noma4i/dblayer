@@ -27,7 +27,7 @@ async fn xfer_scripted_put_failure() {
     let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"media":{"width":100,"height":80}}"#.into(), variables_json: "{}".into() };
     let mut armed = stand.clock.armed();
     bound(database.supply_source(epoch, "Message".into(), id.clone(), "send_file".into(), source)).await.unwrap();
-    let mut waiting = Box::pin(database.confirmed(receipt));
+    let mut waiting = Box::pin(database.confirmed(receipt, false));
     let outcome = loop {
         tokio::select! {
             result = &mut waiting => break result.unwrap(),
