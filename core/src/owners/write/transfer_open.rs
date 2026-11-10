@@ -241,6 +241,7 @@ impl TransferState {
         }
         self.phase = Phase::Ready;
         self.send_orphans(true, fx);
+        self.replay_held(fx);
         let groups: Vec<_> = self.groups.keys().copied().collect();
         for group in groups {
             if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
@@ -248,7 +249,6 @@ impl TransferState {
         }
         let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
-        self.replay_held(fx);
         self.start_in_order(fx);
     }
 }
