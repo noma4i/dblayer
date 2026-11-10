@@ -99,7 +99,7 @@ async fn wire_prop_retry_progress_one_source() {
     let row_id = created.optimistic_value.unwrap().id;
     database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
     let window = tokio::spawn({ let db = database.clone(); async move { db.load(epoch, "Moment".into(), "feed".into(), "{}".into()).await } });
-    let session = tokio::spawn({ let db = database.clone(); async move { db.run(epoch, "MakeMoment".into(), "{}".into()).await } });
+    let session = tokio::spawn({ let db = database.clone(); async move { db.session_call("social".into(), super::session_guards_tests::SOCIAL_BODY.into()).await } });
 
     let progress = database.retry_progress();
     let reader = progress.subscribe();
