@@ -5,6 +5,40 @@ use serde_json::json;
 use super::bridge_support_tests::{group, member_list, message, seed_members, strings};
 use super::rig_tests::{bound, Fault, Rig, World};
 
+#[tokio::test(flavor = "multi_thread")]
+async fn out_confirmed_before_failure_discard() {
+    let rig = Rig::encrypted_with_options(false, true).await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_then("SendMessage", Fault::Http(422));
+    let receipt = bound(rig.database.send(message(epoch, "pending", 1))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let operation = receipt.operation.unwrap();
+    gate.entered().await;
+    let waiting_before = rig.database.life.waiting_calls();
+    let waiting = { let db = rig.database.clone(); rig.spawn(async move { db.confirmed(receipt, true).await }) };
+    crate::test_wait::settled(&rig, "confirmed waits before the refusal", || rig.database.life.waiting_calls() > waiting_before).await;
+    let shared = rig.database.db.clone();
+    let entered = Arc::new(crate::test_wait::Flag::default());
+    let release = Arc::new(crate::test_wait::Flag::default());
+    let (probe, done) = (entered.clone(), release.clone());
+    *shared.after_commit.lock().unwrap() = Some(Box::new(move |result| {
+        if !result.queue_operations.get(&operation).is_some_and(Option::is_none) { return; }
+        probe.set();
+        done.wait_blocking("the rollback announcement is released");
+    }));
+    gate.release();
+    entered.wait("the rollback commits").await;
+    assert!(!waiting.is_finished(), "the receipt answered before rollback was announced");
+    release.set();
+    let answer = bound(waiting).await.unwrap();
+    assert!(matches!(answer, Err(crate::ffi::DbError::Rejected { failure, kept: false }) if failure.message.contains("422")));
+    assert!(bound(rig.database.read_row(epoch, "Message".into(), id)).await.unwrap().is_none());
+    assert!(!crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().any(|entry| entry.id.0 == operation));
+    *shared.after_commit.lock().unwrap() = None;
+    rig.database.close_now();
+}
+
 async fn confirmed_group(rig: &Rig) -> crate::ffi::WireRow {
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
