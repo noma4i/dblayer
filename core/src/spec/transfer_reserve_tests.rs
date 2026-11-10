@@ -164,7 +164,7 @@ fn xfer_accept_replaces_failed() {
     assert_eq!(out.outcomes_written(), vec![(old, 1, OutboxOutcome::Discarded)]);
     assert_eq!(out.rows().len(), 1);
     let committed = twin.commit();
-    assert_eq!(twin.stage(old), TransferStage::Done);
+    assert!(!twin.state().transfers.contains_key(&old));
     assert_eq!(committed.deletes(), 1);
     let (reply, outcome) = twin.outcome(old, 1);
     assert_eq!(outcome.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
