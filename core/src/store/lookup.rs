@@ -23,6 +23,8 @@ pub(crate) struct ActiveTransfer {
     pub row_id: String,
     pub action: String,
     pub transfer_id: i64,
+    /// The operation of the transfer in the queue: the reserved one, or the one of its group.
+    pub op_id: Option<i64>,
     pub info: crate::owners::write::upload::UploadInfo,
 }
 
@@ -166,35 +168,52 @@ impl Store {
         Ok(pairs)
     }
 
-    /// The open operations and the active transfers in one snapshot not older than `floor`. A transfer is addressed by its key: its row may not exist.
+    /// The open operations and the active transfers in one snapshot not older than `floor`. A transfer is addressed by its key and linked to its operation by identity: its row may not exist.
     pub(crate) fn read_queue(&self, floor: i64) -> Result<(i64, Vec<crate::owners::write::operation_status::Operation>, Vec<ActiveTransfer>), CoreError> {
-        self.read_models(&[], |reader| {
+        let models: Vec<String> = self.read_models(&[], |reader| {
+            let mut statement = reader.connection().prepare_cached("SELECT DISTINCT model FROM sync_upload WHERE transfer_id IS NOT NULL")?;
+            let found = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(found)
+        })?;
+        let pinned: Vec<&str> = models.iter().map(String::as_str).collect();
+        self.read_models(&pinned, |reader| {
             let seen = reader.revision_seq()?;
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
             let connection = reader.connection();
-            let mut statement = connection.prepare_cached("SELECT model, row_id, action, transfer_id FROM sync_upload WHERE transfer_id IS NOT NULL ORDER BY seq")?;
-            let keys = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut links = connection.prepare_cached("SELECT transfer_id, op_id FROM op_transfer")?;
+            let linked: HashMap<i64, i64> = links.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let mut statement = connection.prepare_cached("SELECT model, row_id, action, transfer_id, op_id FROM sync_upload WHERE transfer_id IS NOT NULL ORDER BY seq")?;
+            let keys = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<i64>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let mut transfers = Vec::new();
-            for (model, row_id, action, transfer_id) in keys {
-                let info = read_sync(connection, &model, std::slice::from_ref(&row_id))?.remove(&row_id).and_then(|mut sync| sync.uploads.remove(&action));
-                if let Some(info) = info { transfers.push(ActiveTransfer { model, row_id, action, transfer_id, info }); }
+            for (model, row_id, action, transfer_id, reserved) in keys {
+                if let Some(info) = self.transfer_info(reader, (&model, &row_id), &action)? {
+                    transfers.push(ActiveTransfer { op_id: linked.get(&transfer_id).copied().or(reserved), model, row_id, action, transfer_id, info });
+                }
             }
             Ok((seen, crate::store::operation::open_operations(connection)?, transfers))
         })
     }
 
+    /// The value of `uploads[action]` of a transfer: the row shows it when it exists, the key alone gives it when the row does not.
+    fn transfer_info(&self, reader: &Reader<'_>, (model, row_id): (&str, &str), action: &str) -> Result<Option<crate::owners::write::upload::UploadInfo>, CoreError> {
+        let ids = [row_id.to_string()];
+        if let Some(row) = self.load(reader, model, &ids)?.remove(row_id) { return Ok(row.sync.uploads.get(action).cloned()); }
+        let Some(mut sync) = read_sync(reader.connection(), model, &ids)?.remove(row_id) else { return Ok(None) };
+        self.finish_uploads(self.spec(model)?, &Map::new(), &mut sync);
+        Ok(sync.uploads.remove(action))
+    }
+
     /// The value of `uploads[action]` of a transfer by its key, whether or not the row exists.
     pub(crate) fn read_transfer(&self, model: &str, id: &RowId, action: &str, floor: i64) -> Result<(i64, Option<crate::owners::write::upload::UploadInfo>), CoreError> {
         self.spec(model)?;
-        let ids = [id.to_string()];
         self.read_models(&[model], |reader| {
             let seen = reader.revision_seq()?;
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
-            Ok((seen, read_sync(reader.connection(), model, &ids)?.remove(id.as_str()).and_then(|mut sync| sync.uploads.remove(action))))
+            Ok((seen, self.transfer_info(reader, (model, id.as_str()), action)?))
         })
     }
 

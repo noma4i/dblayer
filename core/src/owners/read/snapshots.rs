@@ -31,10 +31,11 @@ impl Snapshots for DbSnapshots {
         if view.kind == Kind::Operations {
             let (seen, operations, transfers) = self.db.read_queue(revision).map_err(|error| error.to_string())?;
             let mut items: Vec<crate::ffi::OperationInfo> = crate::owners::write::operation_queue::queue_of(&operations)?.into_iter().map(Into::into).collect();
+            let at: std::collections::HashMap<i64, usize> = items.iter().enumerate().map(|(index, item)| (item.seq, index)).collect();
             for transfer in transfers {
                 let shown = crate::ffi::wire::upload(&transfer.info);
-                match items.iter_mut().find(|item| item.model == transfer.model && item.row_id == transfer.row_id && item.action == transfer.action) {
-                    Some(item) => item.upload = Some(shown),
+                match transfer.op_id.and_then(|op_id| at.get(&op_id)) {
+                    Some(index) => items[*index].upload = Some(shown),
                     None => items.push(crate::ffi::OperationInfo::of_transfer(transfer, shown)),
                 }
             }
