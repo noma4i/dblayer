@@ -42,6 +42,7 @@ impl CredentialStore for WatchedHeld {
 async fn life_session_state_read() {
     use crate::ffi::SessionStanding;
     let rig = Rig::new();
+    assert!(matches!(crate::ffi::OpenDatabase::new().opened(), Err(DbError::NotOpen { .. })));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     let database = rig.open(Some(&path), pin()).await.unwrap();
@@ -54,7 +55,7 @@ async fn life_session_state_read() {
     let active = database.session_status().unwrap();
     assert_eq!(active.phase, SessionStanding::Active);
     assert!(active.identity.is_some());
-    assert_eq!(active.epoch, database.session_epoch());
+    assert!(active.epoch > status.epoch);
     assert_eq!(rig.server.seen().len(), before);
     database.close_database().await.unwrap();
     assert!(matches!(database.session_status(), Err(DbError::Closed { .. })));
@@ -67,15 +68,18 @@ async fn life_session_state_read() {
     offline.session_reset().await.unwrap();
     let before = rig.server.seen().len();
     let reset = offline.session_status().unwrap();
-    assert_eq!((reset.phase, reset.identity, reset.epoch), (SessionStanding::None, None, offline.session_epoch()));
+    assert_eq!((reset.phase, reset.identity), (SessionStanding::None, None));
+    assert!(reset.epoch > restored.epoch);
     assert_eq!(rig.server.seen().len(), before);
     offline.close_database().await.unwrap();
     let failed = rig.open(None, pin()).await.unwrap();
+    let sets = rig.touched().0;
     rig.credentials.fail_next_set.store(true, Ordering::SeqCst);
-    let _ = failed.session_call("social".into(), SOCIAL_BODY.into()).await;
+    assert!(matches!(failed.session_call("social".into(), SOCIAL_BODY.into()).await, Err(DbError::Storage { .. })));
+    assert_eq!(rig.touched().0, sets + 1);
     let before = rig.server.seen().len();
     let status = failed.session_status().unwrap();
-    assert_ne!(status.phase, SessionStanding::Active, "a refused credential save cannot publish an active session");
+    assert_eq!((status.phase, status.identity), (SessionStanding::None, None));
     assert_eq!(status.epoch, failed.session_epoch());
     assert_eq!(rig.server.seen().len(), before);
     failed.close_database().await.unwrap();
