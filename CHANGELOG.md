@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Replace failed uploads when a new upload starts for the same action.
 - Batch row reads while landing events, references and write batches.
 
 ### Fixed
