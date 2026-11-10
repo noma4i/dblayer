@@ -103,7 +103,10 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
     }
     let frame = data["frame"] as! String
     let body = try openFrame(frame, key: connection.receiveKey!)
-    if body["t"] as? String == "ping" { ping.continuation.yield(token) }
+    if body["t"] as? String == "ping" {
+      try emit(token: token, body: ["t": "pong", "ts": body["ts"]!])
+      ping.continuation.yield(token)
+    }
     if body["t"] as? String == "subscribe" {
       let id = body["id"] as! String
       connection.subscriptions[body["operationName"] as? String ?? ""] = id

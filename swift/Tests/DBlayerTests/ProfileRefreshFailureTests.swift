@@ -40,6 +40,7 @@ extension BridgeProbeTests {
     let definitions = #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"DblayerViewerChanges","document":"subscription DblayerViewerChanges { viewerChanges { changes { area kind entityId } } }"}]"#
     var schema = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [String: Any])
     var models = try #require(schema["models"] as? [[String: Any]])
+    for index in models.indices { models[index].removeValue(forKey: "change_feed") }
     let index = try #require(models.firstIndex { $0["key"] as? String == "CurrentUser" })
     models[index]["changes"] = [["area":"COUNTERS", "relation":"current"]]
     models[index]["change_feed"] = ["subscription":"DblayerViewerChanges", "root":"viewerChanges.changes", "area":"area", "kind":"kind", "id":"entityId"]
@@ -59,7 +60,8 @@ extension BridgeProbeTests {
       let ping = try #require(await pings.next("ping on the original connection, which may have reopened"))
       #expect(ping == token)
     }
-    #expect(try peer.event(token: token, operation: "DblayerViewerChanges", result: ["data": ["viewerChanges": ["changes": [["area":"COUNTERS", "kind":"UPDATED", "entityId":"u1"]]]]]))
+    let delivered = try peer.event(token: token, result: ["data": ["viewerChanges": ["changes": [["area":"COUNTERS", "kind":"UPDATED", "entityId":"u1"]]]]])
+    try #require(delivered)
     guard await observe("the change rereads the profile", { profile.value?.name == "Bea" }) else { return }
     #expect(peer.openedCount == 1)
     #expect(transport.calls.filter { $0.operationName == "CurrentUserQuery" }.count == 2)

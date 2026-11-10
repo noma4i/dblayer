@@ -108,7 +108,10 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         }
         val frame = data.getValue("frame").jsonPrimitive.content
         val body = openFrame(frame, connection.receiveKey!!)
-        if (body["t"]?.jsonPrimitive?.content == "ping") ping.trySend(token)
+        if (body["t"]?.jsonPrimitive?.content == "ping") {
+            emit(token, buildJsonObject { put("t", "pong"); put("ts", body.getValue("ts")) })
+            ping.trySend(token)
+        }
         if (body["t"]?.jsonPrimitive?.content == "subscribe") {
             val id = body.getValue("id").jsonPrimitive.content
             val operation = body["operationName"]?.jsonPrimitive?.content ?: ""

@@ -28,7 +28,7 @@ class CableClockTest {
             closeForCleanup()
             val schema = Json.parseToJsonElement(modelsJSON).jsonObject
             val models = schema.getValue("models").jsonArray.map { element ->
-                val model = element.jsonObject
+                val model = JsonObject(element.jsonObject - "change_feed")
                 if (model["key"]?.jsonPrimitive?.content != "CurrentUser") model else JsonObject(model + mapOf(
                     "changes" to Json.parseToJsonElement("""[{"area":"COUNTERS","relation":"current"}]"""),
                     "change_feed" to Json.parseToJsonElement("""{"subscription":"DblayerViewerChanges","root":"viewerChanges.changes","area":"area","kind":"kind","id":"entityId"}"""),
@@ -50,7 +50,7 @@ class CableClockTest {
                 assertEquals("the connection reopened", token, awaitWithin("ping on the original connection, which may have reopened") { peer.ping.receive() })
             }
             val event = Json.parseToJsonElement("""{"data":{"viewerChanges":{"changes":[{"area":"COUNTERS","kind":"UPDATED","entityId":"u1"}]}}}""").jsonObject
-            assertTrue(peer.event(token, "DblayerViewerChanges", event))
+            assertTrue(peer.event(token, event))
             awaitWithin("the change rereads the profile") { profile.projection.first { profile.value?.name == "Bea" } }
             assertEquals(1, peer.openedCount)
             assertEquals(2, transport.calls.count { it.operationName == "CurrentUserQuery" })
