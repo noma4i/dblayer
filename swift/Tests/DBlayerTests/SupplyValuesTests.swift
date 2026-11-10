@@ -28,6 +28,8 @@ extension BridgeProbeTests {
     #expect(rows.first?.size == 3, "the supplied value is in the row when the call returns")
     await held.entered()
     #expect(try await Asset.ids([id]).read().first?.size == 3, "the value is in the row when the blob request is sent")
+    try await receipt.items[1].optimisticValue.discard(action: "create_files")
+    try await receipt.items[0].optimisticValue.discard(action: "create_files")
     held.release()
   }
 
@@ -50,6 +52,8 @@ extension BridgeProbeTests {
     #expect(try await Moment.ids([id]).read().first?.text == "supplied", "the supplied value is in the row when the call returns")
     await held.entered()
     #expect(try await Moment.ids([id]).read().first?.text == "supplied", "the value is in the row when the blob request is sent")
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     held.release()
+    _ = try await sent.confirmed()
   }
 }

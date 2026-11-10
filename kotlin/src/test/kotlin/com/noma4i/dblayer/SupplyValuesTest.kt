@@ -30,7 +30,9 @@ class SupplyValuesTest {
         assertEquals("supplied", withTimeout(5000) { Moment.ids(listOf(local.id)).snapshots.flow.first { it.rows.isNotEmpty() }.rows.first().text })
         held.entered()
         assertEquals("supplied", withTimeout(5000) { Moment.ids(listOf(local.id)).snapshots.flow.first { it.rows.isNotEmpty() }.rows.first().text })
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         held.release()
+        sent.confirmed()
         closeForCleanup()
         file.delete()
         Unit
