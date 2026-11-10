@@ -91,12 +91,12 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
-            Self::run(lines, codec, (gate, epoch), connection, (cancel, closing), queued, reply, move |event| report.reply(stamp, FeedInput::CableClosed(event)), reason, now).await;
+            Self::run((lines, codec), (gate, epoch), connection, (cancel, closing), queued, (reply, move |event| report.reply(stamp, FeedInput::CableClosed(event))), (reason, now)).await;
             ended.cancel();
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static, report: impl Fn(CableClose), reason: Arc<AtomicU8>, now: Arc<dyn Fn() -> i64 + Send + Sync>) {
+    async fn run((lines, codec): (Arc<dyn CableLines>, Arc<dyn FeedCodec>), (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, (reply, report): (impl Fn(FeedInput) + Clone + Send + 'static, impl Fn(CableClose)), (reason, now): (Arc<AtomicU8>, Arc<dyn Fn() -> i64 + Send + Sync>)) {
         {
             let line = match crate::runtime::send_in_epoch(&gate, epoch, || async { Ok(lines.connect(&cancel).await) }).await {
                 Ok(Ok(line)) => line,

@@ -23,6 +23,10 @@ impl From<TransportError> for CableConnectError {
     fn from(error: TransportError) -> Self { Self { error, closed: None, socket_open: false } }
 }
 
+impl From<TransportError> for Box<CableConnectError> {
+    fn from(error: TransportError) -> Self { Box::new(CableConnectError::from(error)) }
+}
+
 /// One connection after its handshake. It holds a key and no counter: the owner of the counters gives the counter of every frame it sends.
 #[async_trait]
 pub trait CableLine: Send + Sync {
@@ -63,14 +67,14 @@ fn command(channel: &str, command: &str, data: Option<Value>) -> String {
 
 fn decode_fault(error: impl std::fmt::Display) -> TransportError { TransportError::Decode(error.to_string()) }
 
-async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str) -> Result<CableKeys, CableConnectError> {
+async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str) -> Result<CableKeys, Box<CableConnectError>> {
     config.validate()?;
     if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }.into()); }
     let mut agreed: Option<(CableKeys, String)> = None;
     loop {
         let text = match socket.next().await {
             Some(SocketEvent::Text(text)) => text,
-            Some(SocketEvent::Closed { code, reason, failure }) => return Err(CableConnectError { error: TransportError::Network("cable closed during handshake".into()), closed: Some((code, reason, failure)), socket_open: true }),
+            Some(SocketEvent::Closed { code, reason, failure }) => return Err(Box::new(CableConnectError { error: TransportError::Network("cable closed during handshake".into()), closed: Some((code, reason, failure)), socket_open: true })),
             None => return Err(TransportError::Network("cable closed".into()).into()),
         };
         let body: Value = serde_json::from_str(&text).map_err(decode_fault)?;
@@ -137,7 +141,7 @@ impl CableLines for EncryptedLines {
         let keys = tokio::select! {
             biased;
             () = cancel.cancelled() => Err(TransportError::Interrupted("the cable open was cancelled".into()).into()),
-            keys = handshake(socket.as_ref(), &self.config, &credential) => keys,
+            keys = handshake(socket.as_ref(), &self.config, &credential) => keys.map_err(|error| *error),
         };
         match keys {
             Ok(keys) => Ok(Arc::new(SocketLine { socket, keys, channel: self.config.cable_channel.clone() })),

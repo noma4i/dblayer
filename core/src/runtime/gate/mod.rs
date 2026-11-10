@@ -10,11 +10,13 @@ const CUT_SHIFT: u32 = 1;
 const CUT_BITS: u64 = 0x7FFF_FFFF;
 const EPOCH_SHIFT: u32 = 32;
 
+type Revoked = Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>;
+
 /// The gate of the epochs of one database: one atomic value, the epoch above, the `cut` counter in the middle and the closed bit below. The gate owns the transport of the database: the only way to it is a request through the gate, which lends it in the step that checks the epoch.
 pub struct EpochGate {
     state: AtomicU64,
     transport: OnceLock<Arc<dyn Upstream>>,
-    revoked: OnceLock<Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>>,
+    revoked: OnceLock<Revoked>,
     /// Test builds record every request that reaches the network after `shutdown`; the gate fails the test that sent it when it is dropped.
     #[cfg(test)]
     recorder: recorder::Recorder,
@@ -71,7 +73,7 @@ impl EpochGate {
 
     pub fn attach(&self, transport: Arc<dyn Upstream>) { let _ = self.transport.set(transport); }
 
-    pub(crate) fn attach_revoked(&self, revoked: Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>) { let _ = self.revoked.set(revoked); }
+    pub(crate) fn attach_revoked(&self, revoked: Revoked) { let _ = self.revoked.set(revoked); }
 
     pub fn has_transport(&self) -> bool { self.transport.get().is_some() }
 
