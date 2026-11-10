@@ -92,7 +92,7 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let store = det.add::<WindowStore>("store", batches.clone(), crate::spec::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::spec::support::Discard);
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
-    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers).with_local_request_ids(), io);
     det.start_epoch(EPOCH);
     Rig { det, windows, mock, gate, flights, batches, rest, _runtime: runtime }
 }
