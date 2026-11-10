@@ -138,3 +138,8 @@ async fn consumer_ordered_by_user_page_limit() {
 async fn consumer_ordered_owned_page_limit() {
     ordered_limit(Case { model: "Moment", scope: "owned", operation: "myMoments", params: r#"{}"#, media: "", ascending: false }).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_ordered_compass_page_limit() {
+    ordered_limit(Case { model: "Moment", scope: "compass", operation: "meCompass", params: r#"{}"#, media: "", ascending: false }).await;
+}
