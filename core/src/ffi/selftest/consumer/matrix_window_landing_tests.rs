@@ -140,7 +140,7 @@ async fn matrix_window_landing_invalid_cursor() {
 fn members_page(ids: &[&str], has_next: bool) -> Value {
     let edges: Vec<Value> = ids.iter().map(|id| json!({"cursor": format!("c-{id}"), "node": user(id)})).collect();
     let end = ids.last().map(|id| format!("c-{id}")).or_else(|| Some("c-none".to_string()));
-    json!({"data": {"node": {"__typename": "Chat", "id": "chat1", "membersCount": 4, "members": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": if has_next { json!(end) } else { Value::Null }}, "totalCount": 4}}}})
+    json!({"data": {"node": {"__typename": "Chat", "membersCount": 4, "members": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": if has_next { json!(end) } else { Value::Null }}, "totalCount": 4}}}})
 }
 
 fn chat_members_query() -> QuerySpec { QuerySpec::json(r#"{"model":"User","relation":"chat_members","params":{"chatId":"chat1"}}"#) }
