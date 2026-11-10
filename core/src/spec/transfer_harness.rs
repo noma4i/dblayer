@@ -186,6 +186,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         sha256: "h".into(),
         cycle_id: 1,
         has_intent: false,
+        has_operation: true,
         mutation: mutation(key),
         steps: Some(Steps { path: "/upload".into(), body: String::new() }),
         staged: false,
