@@ -65,14 +65,11 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
         do {
           switch try await socket.receive() {
           case let .string(text):
-            let limit = cableFrameLimit()
-            guard UInt64(text.utf8.count) <= limit else {
-              socket.cancel()
-              events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "DBlayer.ResponseLimit", code: 1, message: "the cable frame is above the limit of \(limit) bytes"))
-              return
-            }
+            guard UInt64(text.utf8.count) <= cableFrameLimit() else { return Self.refuse(socket, events) }
             events.frame(text: text)
-          case let .data(bytes): events.binary(bytes: bytes)
+          case let .data(bytes):
+            guard UInt64(bytes.count) <= cableFrameLimit() else { return Self.refuse(socket, events) }
+            events.binary(bytes: bytes)
           @unknown default: events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
           }
         } catch {
@@ -83,6 +80,11 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
         }
       }
     }
+  }
+
+  private static func refuse(_ socket: any CableWebSocket, _ events: CableEvents) {
+    socket.cancel()
+    events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "DBlayer.ResponseLimit", code: 1, message: "the cable frame is above the limit of \(cableFrameLimit()) bytes"))
   }
 
   func send(text: String) -> Bool {

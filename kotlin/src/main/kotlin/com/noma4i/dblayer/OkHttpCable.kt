@@ -8,6 +8,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.utf8Size
 
 internal class OkHttpCable(private val client: OkHttpClient) {
     private class Connection : PlatformSocket {
@@ -24,6 +25,11 @@ internal class OkHttpCable(private val client: OkHttpClient) {
         }
     }
 
+    private fun tooLarge(webSocket: WebSocket, events: CableEvents) {
+        webSocket.cancel()
+        events.ended(null, null, rawFailure(ResponseLimitException(cableFrameLimit())))
+    }
+
     suspend fun open(url: String, headers: Map<String, String>, connectMs: ULong, events: CableEvents): CableOutcome {
         val request = try {
             Request.Builder().url(url).apply { headers.forEach { (field, value) -> header(field, value) } }.build()
@@ -38,13 +44,12 @@ internal class OkHttpCable(private val client: OkHttpClient) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                val limit = cableFrameLimit()
-                if (text.toByteArray().size.toULong() <= limit) return events.frame(text)
-                webSocket.cancel()
-                events.ended(null, null, rawFailure(ResponseLimitException(limit)))
+                if (text.utf8Size().toULong() <= cableFrameLimit()) events.frame(text) else tooLarge(webSocket, events)
             }
 
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = events.binary(bytes.toByteArray())
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (bytes.size.toULong() <= cableFrameLimit()) events.binary(bytes.toByteArray()) else tooLarge(webSocket, events)
+            }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) = events.ended(code.toUShort(), reason, null)
 
