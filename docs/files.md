@@ -20,13 +20,13 @@ val uri  = moment.url(Moment.media)         // java.net.URI of a local file for 
 moment.detach(Moment.media)
 ```
 
-| Call | Result |
-| ---- | ------ |
-| `attach` | stores the file and replaces the previous one for that row and field |
-| `file` | `FileInfo`: id, name, mime type, size, sha256 |
-| `read` | the bytes |
-| `url` | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand |
-| `detach` | removes the file |
+| Call     | Result                                                                   |
+| -------- | ------------------------------------------------------------------------ |
+| `attach` | stores the file and replaces the previous one for that row and field     |
+| `file`   | `FileInfo`: id, name, mime type, size, sha256                            |
+| `read`   | the bytes                                                                |
+| `url`    | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand |
+| `detach` | removes the file                                                         |
 
 You do not decide where bytes live. Small files are kept inside the database, large ones next to it, and the library may move them. The API has no paths to storage and no size thresholds.
 
@@ -270,23 +270,22 @@ val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand
 
 Absent headers are valid. Malformed header JSON or non-string header names and values reject the answer before PUT.
 
-| Scenario | Steps |
-| -------- | ----- |
-| single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string |
-| multipart (threshold or larger) | `init` receives filename, contentType, byteSize and checksum, and returns `key` and `uploadId`. `presign` returns part URLs. PUT confirms parts. `complete` exchanges their ETags for `signedId` and `blobId` |
-| content mutation | runs once with the original variables plus `signedId` (and `blobId` when the steps name a variable for it, the typed `UploadRequest` sends only `signedId`) |
+| Scenario                            | Steps                                                                                                                                                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string      |
+| multipart (threshold or larger)     | `init` receives filename, contentType, byteSize and checksum, and returns `key` and `uploadId`. `presign` returns part URLs. PUT confirms parts. `complete` exchanges their ETags for `signedId` and `blobId` |
+| content mutation                    | runs once with the original variables plus `signedId` (and `blobId` when the steps name a variable for it, the typed `UploadRequest` sends only `signedId`)                                                   |
 
 The file is read in ranges: a single upload in one range up to the 10 MB threshold, a multipart upload in parts of 5 MB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
 
-| Setting | Default |
-| ------- | ------- |
-| multipart threshold | 10 MB |
-| part size | 5 MB |
-| parallel parts | 3 (1 means sequential) |
-| files at a time | 1, the others wait as `queued` |
-| retry backoff | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
-| PUT timeout / GraphQL step timeout | 120 s / 45 s |
-| presigned url lifetime | 50 minutes |
+| Setting                            | Default                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- |
+| multipart threshold                | 10 MB                                                                                     |
+| part size                          | 5 MB                                                                                      |
+| files at a time                    | 1, the others wait as `queued`                                                            |
+| retry backoff                      | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
+| PUT timeout / GraphQL step timeout | 120 s / 45 s                                                                              |
+| presigned url lifetime             | 50 minutes                                                                                |
 
 The file limit counts transfers across operations and their items. A limit of 2 allows 2 files to transfer together.
 The final content mutation does not hold a file permit.
@@ -295,17 +294,17 @@ The final content mutation does not hold a file permit.
 
 `record.uploads` is empty when nothing is running, otherwise it holds one entry per declared upload action. It changes through the same live reads as `record.sync`, so observers get a new row for every state or progress change.
 
-| Field | Meaning |
-| ----- | ------- |
-| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`, `cancelled` |
-| `waitReason` | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `offline`. A step that waits for the network or for power saving to end is `queued` |
-| `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
-| `sentBytes`, `totalBytes` | for multipart the sum over all parts |
-| `progress` | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown |
-| `attempts` | saved attempts for the current unfinished step, preserved across restarts |
-| `error` | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions` |
-| `localUrl` | the file URL of the copy of the library while the transfer holds it, `nil` otherwise |
-| `processing` | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before |
+| Field                     | Meaning                                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`, `cancelled`                                                                                                                      |
+| `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `offline`. A step that waits for the network or for power saving to end is `queued` |
+| `stage`                   | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation`                                                                                                                       |
+| `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
+| `progress`                | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown                                                                                                                           |
+| `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
+| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message` and `extensions`                                                                                                      |
+| `localUrl`                | the file URL of the copy of the library while the transfer holds it, `nil` otherwise                                                                                                                         |
+| `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                           |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
