@@ -15,14 +15,6 @@ use crate::owners::write::transfer::TransferAnswer;
 use crate::owners::write::outbox::{Fault, LocalWriteKind, NewOp, OpSource, OutboxAnswer, OutboxOutcome, Receipt};
 use crate::transport::GraphQLRequest;
 
-/// The bytes of a file with the name and the mime that `attach` stores in the field.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct FileBytes {
-    pub bytes: Vec<u8>,
-    pub name: String,
-    pub mime: String,
-}
-
 /// The value of a confirmed operation: the row it shows and the JSON of its answer.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct Confirmed {
@@ -261,15 +253,6 @@ impl Database {
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json, self.life.now());
         self.outbox_answer(epoch, waiter, "set ephemeral").await.map(drop)
-    }
-
-    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, file: FileBytes) -> Result<super::wire::WireFile, DbError> {
-        let FileBytes { bytes, name, mime } = file;
-        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.life.now());
-        let OutboxAnswer::Written { shown: Some(shown), .. } = self.outbox_answer(epoch, waiter, "attach").await? else { return Err(DbError::Internal { detail: "the attach was answered with no row".into() }) };
-        let attached = shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value).ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
-        Ok(attached.into())
     }
 
     /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.

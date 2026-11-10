@@ -304,10 +304,6 @@ impl Database {
         let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
     }
-    pub async fn read(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
-        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
-        self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read_file(&model, &row_id, &field)?)).await
-    }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await

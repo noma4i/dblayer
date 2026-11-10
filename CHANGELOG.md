@@ -7,6 +7,11 @@
 - Attach file fields from a local file path.
 - Read file fields through their local URLs.
 
+### Removed
+
+- Removed file-field reads that returned an in-memory byte array.
+- Removed file attachment from in-memory byte arrays.
+
 ## 6.22.0 - 2026-11-10
 
 ### Added

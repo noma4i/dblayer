@@ -34,14 +34,6 @@ impl Store {
         Ok(self.find(model, id)?.and_then(|row| row.get(field).and_then(FileDescriptor::from_value)))
     }
 
-    pub fn read_file(&self, model: &str, id: &RowId, field: &str) -> Result<Option<Vec<u8>>, CoreError> {
-        let Some(record) = self.stored_file(model, id, field)? else { return Ok(None) };
-        match record.location {
-            Location::Table => Ok(Some(record.data)),
-            Location::Directory => self.files().read(&record.id).map(Some).map_err(io_fault),
-        }
-    }
-
     pub fn url(&self, model: &str, id: &RowId, field: &str) -> Result<Option<PathBuf>, CoreError> {
         let Some(record) = self.stored_file(model, id, field)? else { return Ok(None) };
         match record.location {

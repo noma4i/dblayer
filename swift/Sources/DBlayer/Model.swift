@@ -47,10 +47,6 @@ extension DBModel {
     let (database, epoch) = try DB.admitted(scope)
     return try MutationReceipt(database: database, wire: await database.destroy(epoch: epoch, model: Self.modelName, rowId: id))
   }
-  @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
-    let (database, epoch) = try DB.admitted(scope)
-    return FileInfo(wire: try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, file: FileBytes(bytes: data, name: name, mime: mime)))
-  }
   @concurrent public func attach(_ field: Files, source: URL, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
     guard source.isFileURL else { throw DbError.Invalid(detail: "the source of a file must be a local file URL") }
     let (database, epoch) = try DB.admitted(scope)
@@ -59,10 +55,6 @@ extension DBModel {
   @concurrent public func file(_ field: Files, in scope: AccountScope? = nil) async throws -> FileInfo? {
     let (database, epoch) = try DB.admitted(scope)
     return try await database.file(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.init(wire:))
-  }
-  @concurrent public func read(_ field: Files, in scope: AccountScope? = nil) async throws -> Data? {
-    let (database, epoch) = try DB.admitted(scope)
-    return try await database.read(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
   }
   @concurrent public func url(_ field: Files, in scope: AccountScope? = nil) async throws -> URL? {
     let (database, epoch) = try DB.admitted(scope)

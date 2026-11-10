@@ -16,20 +16,12 @@ data class FileInfo(val id: String, val size: ULong, val name: String?, val mime
 
 class FileField<Model : DBModel>(val name: String)
 
-suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, data: ByteArray, name: String, mime: String, account: AccountScope? = null): FileInfo {
-    return onAccount(account) { database, epoch -> FileInfo.of(database.attach(epoch, modelName, id, field.name, FileBytes(data, name, mime))) }
-}
-
 suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, source: File, name: String, mime: String, account: AccountScope? = null): FileInfo {
     return onAccount(account) { database, epoch -> FileInfo.of(database.attachFile(epoch, modelName, id, field.name, source.path, name, mime)) }
 }
 
 suspend fun <Model : DBModel> Model.file(field: FileField<Model>, account: AccountScope? = null): FileInfo? {
     return onAccount(account) { database, epoch -> database.file(epoch, modelName, id, field.name)?.let(FileInfo::of) }
-}
-
-suspend fun <Model : DBModel> Model.read(field: FileField<Model>, account: AccountScope? = null): ByteArray? {
-    return onAccount(account) { database, epoch -> database.read(epoch, modelName, id, field.name) }
 }
 
 suspend fun <Model : DBModel> Model.url(field: FileField<Model>, account: AccountScope? = null): URI? {

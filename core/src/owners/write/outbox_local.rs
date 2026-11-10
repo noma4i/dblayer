@@ -56,7 +56,6 @@ impl OutboxState {
         let op = match kind {
             LocalWriteKind::Model(effects) => StoreOp::Planned { effects: effects.clone() },
             LocalWriteKind::Snapshot => StoreOp::Show { model: model.into(), row_id: row.into() },
-            LocalWriteKind::AttachBytes { bytes, name, mime } => StoreOp::AttachFile { model: model.into(), row_id: row.into(), field: values.into(), bytes: bytes.clone(), name: name.clone(), mime: mime.clone() },
             LocalWriteKind::AttachCopy { copy, name, mime } => StoreOp::AttachCopied { model: model.into(), row_id: row.into(), field: values.into(), copy: copy.clone(), name: name.clone(), mime: mime.clone() },
             LocalWriteKind::Detach => StoreOp::DetachFile { model: model.into(), row_id: row.into(), field: values.into() },
             LocalWriteKind::SetEphemeral { .. } => StoreOp::EphemeralRows { model: model.into(), rows },
@@ -64,7 +63,7 @@ impl OutboxState {
             _ => StoreOp::LocalRows { model: model.into(), rows },
         };
         let ops = match kind {
-            LocalWriteKind::AttachBytes { .. } | LocalWriteKind::AttachCopy { .. } => vec![op, StoreOp::Show { model: model.into(), row_id: row.into() }],
+            LocalWriteKind::AttachCopy { .. } => vec![op, StoreOp::Show { model: model.into(), row_id: row.into() }],
             _ => vec![op],
         };
         self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
