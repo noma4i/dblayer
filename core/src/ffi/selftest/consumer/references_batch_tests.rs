@@ -1,4 +1,5 @@
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Arc, atomic::{AtomicU64, AtomicUsize, Ordering}};
+use std::collections::BTreeMap;
 
 use serde_json::json;
 
@@ -6,15 +7,38 @@ use super::stand::{moment, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::Cell;
 
+struct SqlCount {
+    keys: [AtomicU64; 2048],
+    counts: [AtomicUsize; 2048],
+}
+
+impl SqlCount {
+    fn new() -> Self { Self { keys: std::array::from_fn(|_| AtomicU64::new(0)), counts: std::array::from_fn(|_| AtomicUsize::new(0)) } }
+    fn snapshot(&self) -> BTreeMap<u64, usize> {
+        self.keys.iter().zip(&self.counts).filter_map(|(key, count)| {
+            let key = key.load(Ordering::Relaxed);
+            (key != 0).then(|| (key, count.load(Ordering::Relaxed)))
+        }).collect()
+    }
+}
+
 unsafe extern "C" fn count_selects(_: u32, context: *mut std::ffi::c_void, _: *mut std::ffi::c_void, sql: *mut std::ffi::c_void) -> i32 {
-    let text = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_string_lossy();
-    if text.trim_start().to_ascii_uppercase().starts_with("SELECT") {
-        unsafe { &*context.cast::<AtomicUsize>() }.fetch_add(1, Ordering::SeqCst);
+    let text = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_bytes();
+    if !text.starts_with(b"SELECT") { return 0; }
+    let hash = text.iter().fold(0xcbf29ce484222325u64, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)).max(1);
+    let capture = unsafe { &*context.cast::<SqlCount>() };
+    for offset in 0..capture.keys.len() {
+        let index = (hash as usize).wrapping_add(offset) % capture.keys.len();
+        let slot = &capture.keys[index];
+        if slot.load(Ordering::Relaxed) == hash || slot.compare_exchange(0, hash, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            capture.counts[index].fetch_add(1, Ordering::Relaxed);
+            break;
+        }
     }
     0
 }
 
-async fn reference_batch(size: usize) -> usize {
+async fn reference_batch(size: usize) -> BTreeMap<u64, usize> {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
     let user = |id: String| json!({"__typename":"User", "id":id, "fullName":"A", "username":"a", "online":false, "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"});
@@ -36,7 +60,7 @@ async fn reference_batch(size: usize) -> usize {
     let database = stand.database.clone();
     let refresh = tokio::spawn(async move { database.refresh(epoch, "Moment".into(), Some("compass".into()), "{}".into()).await });
     stand.received(received + 1).await;
-    let selects = Arc::new(AtomicUsize::new(0));
+    let selects = Arc::new(SqlCount::new());
     let connection = stand.database.db.lock();
     let result = unsafe { rusqlite::ffi::sqlite3_trace_v2(connection.connection.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(count_selects), Arc::as_ptr(&selects).cast_mut().cast()) };
     assert_eq!(result, rusqlite::ffi::SQLITE_OK);
@@ -45,7 +69,7 @@ async fn reference_batch(size: usize) -> usize {
     bound(refresh).await.unwrap().unwrap();
     stand.settle().await;
     stand.database.db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-    let reads = selects.load(Ordering::SeqCst);
+    let reads = selects.snapshot();
     let row = bound(stand.database.read_row(epoch, "Moment".into(), "root".into())).await.unwrap().unwrap();
     assert_eq!(stand.cell("Moment", &row, "visitorIds"), visitor_ids);
     assert_eq!(stand.cell("Moment", &row, "similarIds"), ids("m"));
@@ -60,5 +84,9 @@ async fn reference_batch(size: usize) -> usize {
 async fn consumer_references_edges_batch() {
     let small = reference_batch(2).await;
     let large = reference_batch(12).await;
-    assert_eq!(large, small, "SQL SELECT count for 2 versus 12 references");
+    let differences: Vec<_> = small.keys().chain(large.keys()).copied().collect::<std::collections::BTreeSet<_>>().into_iter().filter_map(|key| {
+        let pair = (small.get(&key).copied().unwrap_or(0), large.get(&key).copied().unwrap_or(0));
+        (pair.0 != pair.1).then_some((format!("{key:016x}"), pair))
+    }).collect();
+    assert_eq!(large.values().sum::<usize>(), small.values().sum::<usize>(), "SQL SELECT counts by hash: {differences:?}");
 }
