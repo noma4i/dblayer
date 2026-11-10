@@ -31,6 +31,7 @@ struct Rig {
     server: Arc<FakeServer>,
     credentials: Arc<MemoryCredentials>,
     db: Arc<Store>,
+    life: Arc<crate::owners::life::Life>,
     _client: Arc<Client>,
 }
 
@@ -41,11 +42,11 @@ async fn rig() -> Rig {
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
     let client = Client::new(&config, server.clone(), credentials.clone(), db.clone(), clock, Arc::new(MockTransport::new())).unwrap();
-    client.start_owners();
+    let life = client.start_owners();
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register("query Q { q }");
     server.register("mutation M { m }");
-    Rig { transport: client.transport(), server, credentials, db, _client: client }
+    Rig { transport: client.transport(), server, credentials, db, life, _client: client }
 }
 
 fn pending(db: &Store) -> bool {
@@ -80,6 +81,12 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
 
                 let case = format!("{wire} mutation={mutation} confirmed={confirmed}");
                 let error = outcome.unwrap_err();
+                if mutation && code == SessionCode::SessionEnded {
+                    assert!(matches!(error, TransportError::Interrupted(_)), "{case}: D-278/D-279: the author of a revoked mutation learns the end through the epoch, the transport wait ends with it (P-SESS-14): {error:?}");
+                    crate::test_wait::settled(&rig.life, "the end of the session is published and the credential cleared", || rig.credentials.value().is_none()).await;
+                    assert!(!pending(&rig.db), "{case}: the pending request is cleared");
+                    continue;
+                }
                 if code == SessionCode::Unauthenticated {
                     assert!(matches!(error, TransportError::Http { status: 401, .. }), "{case}: {error:?}");
                 } else {

@@ -111,7 +111,7 @@ fn xfer_restored_orphan_answer() {
 /// transfer.md:13, 330-331 (D-280): a restored abort answer that carries errors or no root is a refusal, the debt stays and no RemoveOrphan is written.
 #[test]
 fn xfer_restored_orphan_answer_refused() {
-    for body in ["{\"errors\":[{\"message\":\"no\"}]}", "{}"] {
+    for body in ["{\"errors\":[{\"message\":\"no\"}]}", "{}", "{\"data\":{\"other\":{}}}"] {
         let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
         twin.online(true);
         let request_id = crate::owners::write::wire::abort_request_id("u9");
