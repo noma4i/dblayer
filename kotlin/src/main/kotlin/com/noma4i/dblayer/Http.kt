@@ -22,7 +22,7 @@ internal fun HttpResponse.text(limit: ULong): String {
     val buffer = okio.Buffer()
     val bound = limit.toLong()
     if (body.contentLength() > bound) throw ResponseLimitException(limit)
-    while (source.read(buffer, 8192L) >= 0L) {
+    while (source.read(buffer, minOf(8192L, bound - buffer.size + 1L)) >= 0L) {
         if (buffer.size > bound) throw ResponseLimitException(limit)
     }
     return buffer.readUtf8()
