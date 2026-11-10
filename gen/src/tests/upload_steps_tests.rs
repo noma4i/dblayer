@@ -2,6 +2,30 @@ use crate::parse_models;
 
 const MODEL: &str = "model Clip do\n  attribute :title, :string, null: true\n  operation :send, upload: true do\n    mutation \"ClipSend\"\n    optimistic false\n    response from: \"clipSend\"\n  end\nend\n";
 
+#[test]
+fn gen_multipart_roots() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("upload.dbl");
+    for (roots, expected, valid) in [
+        (", roots: { initiate: \"a.b\" }", Some("a.b"), true),
+        ("", None, true),
+        (", roots: { other: \"a.b\" }", None, false),
+        (", roots: { initiate: \"\" }", None, false),
+    ] {
+        let source = format!("uploads do\n  multipart initiate: :Init, presign: :Presign, complete: :Complete, abort: :Abort{roots}\nend\n{MODEL}");
+        std::fs::write(&file, source).unwrap();
+        let result = crate::parse_files(&[&file]);
+        if valid {
+            let models = result.unwrap_or_else(|errors| panic!("{roots}: {errors:?}"));
+            let steps = serde_json::to_value(models[0].upload_steps.as_ref().unwrap()).unwrap();
+            assert_eq!(steps["multipart"]["initiate"]["root_path"].as_str(), expected, "{roots}: {steps}");
+        } else {
+            let errors = result.unwrap_err();
+            assert!(errors.iter().any(|error| error.file.ends_with("upload.dbl") && error.error.line == 2), "{roots}: {errors:?}");
+        }
+    }
+}
+
 /// xfer_steps_declared_in_dbl: the steps come from one `uploads do` block and land on every model with an upload action.
 #[test]
 fn xfer_steps_declared_in_dbl() {
