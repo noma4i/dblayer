@@ -5,6 +5,7 @@
 ### Fixed
 
 - Send the owed multipart abort after a session reset, logout or revoke.
+- Keep rows of an earlier page when a later page shares their order value.
 
 ## 6.25.0 - 2026-11-11
 
