@@ -64,6 +64,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::StateLost => Fail::StateLost,
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Unauthorized => Fail::Unauthorized,
+        SessionError::ResponseTooLarge { .. } => panic!("the Session reference has no response limit row"),
         SessionError::Security { code, detail } => Fail::Security { code: *code, detail: detail.clone() },
         SessionError::Http { .. } => Fail::Http,
         SessionError::TooLarge { size, limit } => Fail::TooLarge { size: *size, limit: *limit },
