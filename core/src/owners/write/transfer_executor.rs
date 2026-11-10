@@ -25,7 +25,7 @@ pub struct Link {
     epoch: Option<Epoch>,
     minted: Option<Arc<dyn Fn(String) + Send + Sync>>,
     /// The cycle and the part of the step the link serves: with the key and the step they give the request id.
-    identity: (u64, u32),
+    identity: (u64, u64, u32),
     /// The answer of the saved pair of a restored step: the first request under its id gets it without the network.
     seeded: Option<(u64, Response)>,
     seed_used: std::sync::atomic::AtomicBool,
@@ -37,13 +37,13 @@ impl Drop for Link {
 
 impl Link {
     #[cfg(test)]
-    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (1, 0), seeded: None, seed_used: Default::default() } }
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default() } }
 
     /// `step` names the request: its id is the function of the step, so a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
         let id = match step {
-            crate::transport::RequestOwner::Transfer { item_id, step, .. } if *step != crate::owners::write::upload::UploadStage::Abort => super::wire::step_request_id(item_id, self.identity.0, *step, self.identity.1),
+            crate::transport::RequestOwner::Transfer { step, .. } if *step != crate::owners::write::upload::UploadStage::Abort => super::wire::step_request_id(self.identity.0, self.identity.1, *step, self.identity.2),
             _ => crate::owners::contract::next_request_id(),
         };
         if let Some((seeded_id, response)) = self.seeded.as_ref().filter(|(seeded_id, _)| *seeded_id == id) {
@@ -203,7 +203,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (1, 0), seeded: None, seed_used: Default::default() })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default() })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
@@ -244,7 +244,7 @@ impl TransferExecutor {
             TransferInput::StepError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
-                link.identity = (cycle_id, part.unwrap_or(0));
+                link.identity = (transfer_id, cycle_id, part.unwrap_or(0));
                 link.seeded = seeded_response(seeded);
                 Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
             },
@@ -263,7 +263,7 @@ impl TransferExecutor {
             TransferInput::CompleteError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.seeded = seeded_response(seeded);
-                link.identity = (cycle_id, 0);
+                link.identity = (transfer_id, cycle_id, 0);
                 Box::pin(async move { codec.complete(&link, &key, upload_id.as_deref(), &parts).await })
             },
             move |result| match result {

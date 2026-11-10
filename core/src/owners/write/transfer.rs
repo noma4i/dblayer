@@ -157,7 +157,7 @@ impl TransferState {
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
-                    if let (TransferStage::PersistingAttempt, Some(request_id)) = (transfer.stage, transfer.answer_saved) {
+                    if let (StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed, Some(request_id)) = (kind, transfer.answer_saved) {
                         ops.push(StoreOp::RemoveAnswer { request_id });
                     }
                     let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
@@ -402,7 +402,11 @@ impl TransferState {
 
     fn committed(&mut self, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
-        for id in &pending.ids { if let Some(transfer) = self.transfers.get_mut(id) { transfer.revision = revision; } }
+        for id in &pending.ids {
+            let Some(transfer) = self.transfers.get_mut(id) else { continue };
+            transfer.revision = revision;
+            if matches!(pending.kind, StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed) { transfer.answer_saved = None; }
+        }
         for (id, columns) in &pending.written { self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), fx); }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], true, fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }

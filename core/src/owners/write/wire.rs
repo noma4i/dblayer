@@ -36,11 +36,11 @@ impl Tasks for TokioTasks {
     }
 }
 
-/// The request id of a step of Transfer: a function of the transfer key, the cycle, the step and the part, so a repeat and a restart carry the same id (bit 62 keeps it apart from the counter ids).
-pub fn step_request_id(key: &str, cycle_id: u64, step: crate::owners::write::upload::UploadStage, part: u32) -> u64 {
+/// The request id of a step of Transfer: a function of the transfer id, the cycle, the step and the part, so a repeat and a restart carry the same id (bit 62 keeps it apart from the counter ids).
+pub fn step_request_id(transfer_id: u64, cycle_id: u64, step: crate::owners::write::upload::UploadStage, part: u32) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| for byte in bytes { hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3); };
-    feed(key.as_bytes());
+    feed(&transfer_id.to_le_bytes());
     feed(&cycle_id.to_le_bytes());
     feed(&[step as u8]);
     feed(&part.to_le_bytes());

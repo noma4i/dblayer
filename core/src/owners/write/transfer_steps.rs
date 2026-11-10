@@ -57,7 +57,6 @@ impl TransferState {
     }
 
     pub(super) fn attempt_committed(&mut self, id: TransferId, fx: &mut Fx) {
-        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.answer_saved = None; }
         let Some(operation) = self.transfers.get(&id).map(|transfer| self.operation_of(transfer)) else { return };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if self.online != Some(true) || (self.saving && !transfer.urgent) {

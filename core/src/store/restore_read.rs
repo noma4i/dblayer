@@ -83,7 +83,7 @@ fn saved_answer_of(row: &crate::owners::write::transfer::StoredTransfer, answers
     let part = row.confirmed_parts + 1;
     let steps: Vec<(UploadStage, u32)> = if row.confirmed_parts >= source.parts { vec![(UploadStage::Complete, 0)] } else { vec![(UploadStage::Create, part), (UploadStage::Init, part), (UploadStage::Presign, part)] };
     steps.into_iter().find_map(|(step, part)| {
-        let id = crate::owners::write::wire::step_request_id(&row.key, row.cycle_id.max(1), step, part);
+        let id = crate::owners::write::wire::step_request_id(row.transfer_id, row.cycle_id.max(1), step, part);
         match answers.get(&id)? { crate::store::session_state::StoredAnswer::Ok(body) => Some((id, body.clone())), _ => None }
     })
 }
