@@ -20,6 +20,7 @@
 
 - Removed file-field reads that returned an in-memory byte array.
 - Removed file attachment from in-memory byte arrays.
+- Removed the receipt method `outcome` and the type `OperationOutcome`: use `confirmed`.
 
 ## 6.22.0 - 2026-11-10
 
