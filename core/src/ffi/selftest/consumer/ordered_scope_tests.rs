@@ -42,6 +42,37 @@ fn answer(case: Case, numbers: &[i32], more: bool, cursor: &str) -> Value {
 
 fn ids(rows: &Rows) -> Vec<String> { rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect() }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_chat_media_load_all_keeps_every_page() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let params = r#"{"chatId":"c1"}"#;
+    let cases = [
+        Case { model: "Message", scope: "visual_media", operation: "chatMedia", params, media: "IMAGE", ascending: false },
+        Case { model: "Message", scope: "audio_media", operation: "chatMedia", params, media: "AUDIO", ascending: false },
+        Case { model: "Message", scope: "gift_media", operation: "chatMedia", params, media: "GIFT", ascending: false },
+    ];
+    for pass in 0..2 {
+        for (index, case) in cases.into_iter().enumerate() {
+            for page in 0..2 {
+                let mut message = row(case, (index * 2 + page + 1) as i32);
+                message["createdAt"] = json!("2026-10-20T00:00:00Z");
+                message["updatedAt"] = json!("2026-10-20T00:00:00Z");
+                stand.answer_next("chatMedia", json!({"data":{"node":{"messages":{"totalCount":2,"edges":[{"node":message}],"pageInfo":{"hasNextPage":page == 0,"endCursor":if page == 0 { Some("mid") } else { None }}}}}}));
+            }
+            bound(stand.database.load_all(epoch, "Message".into(), Some(case.scope.into()), params.into(), true)).await.unwrap();
+            let query = QuerySpec::json(json!({"model":"Message","relation":case.scope,"params":{"chatId":"c1"}}).to_string());
+            let mut found: Vec<_> = bound(stand.database.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+            found.sort();
+            assert_eq!(found, vec![format!("m{}", index * 2 + 1), format!("m{}", index * 2 + 2)], "{} pass {pass}", case.scope);
+        }
+        let requests: Vec<_> = stand.asked().into_iter().filter(|(name, _)| name == "chatMedia").collect();
+        assert_eq!(requests.len(), (pass + 1) * 6);
+        assert_eq!(requests.iter().filter(|(_, variables)| variables.get("after").is_some_and(|value| !value.is_null())).count(), (pass + 1) * 3);
+    }
+    stand.database.close_now();
+}
+
 async fn ordered_scope(case: Case) {
     let stand = Stand::prepare().await;
     let first: Vec<_> = if case.ascending { (1..=3).collect() } else { (7..=9).rev().collect() };
