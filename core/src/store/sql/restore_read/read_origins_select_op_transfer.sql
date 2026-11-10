@@ -1,1 +1,0 @@
-SELECT position, transfer_id FROM op_transfer WHERE op_id = ?1 ORDER BY position

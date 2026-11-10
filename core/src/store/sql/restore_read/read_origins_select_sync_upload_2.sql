@@ -1,1 +1,0 @@
-SELECT EXISTS(SELECT 1 FROM sync_upload WHERE transfer_id = ?1 AND batch = ?2)
