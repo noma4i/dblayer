@@ -109,12 +109,27 @@ async fn xfer_confirmed_parallel_discard() {
     let epoch = rig.database.session_epoch();
     let held = rig.world.hold_then("PUT", Fault::Http(400));
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    let operation = receipt.operation.unwrap();
     held.entered().await;
     let before = rig.database.life.waiting_calls();
     let first = { let db = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { db.confirmed(receipt, true).await }) };
     let second = { let db = rig.database.clone(); rig.spawn(async move { db.confirmed(receipt, false).await }) };
     settled(&rig, "both receipts wait for failure", || rig.database.life.waiting_calls() >= before + 2).await;
+    let shared = rig.database.db.clone();
+    let entered = Arc::new(crate::test_wait::Flag::default());
+    let release = Arc::new(crate::test_wait::Flag::default());
+    let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (probe, done, count) = (entered.clone(), release.clone(), commits.clone());
+    *shared.after_commit.lock().unwrap() = Some(Box::new(move |result| {
+        if !result.queue_operations.get(&operation).is_some_and(Option::is_none) { return; }
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        probe.set();
+        done.wait_blocking("release the rollback announcement");
+    }));
     held.release();
+    entered.wait("the rollback commits").await;
+    assert!(!first.is_finished() && !second.is_finished());
+    release.set();
     let first = bound(first).await.unwrap();
     let second = bound(second).await.unwrap();
     match (first, second) {
@@ -124,6 +139,8 @@ async fn xfer_confirmed_parallel_discard() {
         pair => panic!("both waiters must receive the discarded failure: {pair:?}"),
     }
     settled(&rig, "the discarded upload is gone", || status(&chat, "c1", "update_photo").is_none()).await;
+    assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    *shared.after_commit.lock().unwrap() = None;
     rig.database.close_now();
 }
 
