@@ -67,3 +67,18 @@ async fn boundary_reader_orders_a_claim_after_the_stream_ended_and_left_gets_end
     assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Ended { .. })));
     within(db.close_database()).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn boundary_released_reader_after_two_database_lives() {
+    for _ in 0..2 {
+        let db = open().await;
+        let stream = notes(&db);
+        let reader = claimed(within(stream.claim_reader()).await);
+        assert!(matches!(within(stream.pull(reader)).await, Some(ReadValue::Snapshot { .. })));
+        stream.release_reader(reader);
+        within(crate::ffi::settled(&db)).await.unwrap();
+        let ended = within(stream.pull(reader)).await;
+        assert!(matches!(ended, Some(ReadValue::Ended { cause: EndCause::Closed })), "released reader: {ended:?}");
+        within(db.close_database()).await.unwrap();
+    }
+}
