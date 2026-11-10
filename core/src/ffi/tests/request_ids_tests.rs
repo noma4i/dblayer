@@ -97,7 +97,7 @@ async fn wire_prop_retry_progress_one_source() {
     std::fs::write(&source, b"clip").unwrap();
 
     let created = database.create(epoch, "Moment".into(), "{\"text\":\"a\"}".into(), "{}".into()).await.unwrap();
-    let row_id = created.optimistic_value.unwrap().id;
+    let row_id = created.optimistic_value.as_ref().unwrap().id.clone();
     let window = tokio::spawn({ let db = database.clone(); async move { db.load(epoch, "Moment".into(), "feed".into(), "{}".into()).await } });
 
     let progress = database.retry_progress();
@@ -120,9 +120,11 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "every tick removed its entry: {drained:?}");
+    let failed = crate::test_wait::within(database.outcome(created.clone())).await;
+    assert!(matches!(failed, Ok(crate::ffi::receipt::WireOperationOutcome::Rejected { .. })), "the fatal attempt of the queue ends the operation before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
-    database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
+    let uploaded = database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
     let transfer = loop {
         let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
         if snapshot.waiting.len() == 1 { break snapshot; }
@@ -135,6 +137,8 @@ async fn wire_prop_retry_progress_one_source() {
         if snapshot.waiting.is_empty() { break snapshot; }
     };
     assert!(drained.waiting.is_empty(), "the tick removed the transfer entry: {drained:?}");
+    let failed = crate::test_wait::within(database.outcome(uploaded.clone())).await;
+    assert!(matches!(failed, Ok(crate::ffi::receipt::WireOperationOutcome::Rejected { .. })), "the fatal attempt of the upload ends it before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
     let ticket = tokio::spawn({ let db = database.clone(); async move { db.session_call("ticket".into(), "{}".into()).await } });
