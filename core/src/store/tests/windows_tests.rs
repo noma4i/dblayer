@@ -5,6 +5,32 @@ use crate::identity::ListKey;
 use crate::schema::PageDirection;
 
 #[test]
+fn win_page_cover_to_end_server_order_only() {
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreOp};
+    use crate::schema::Sort;
+    use serde_json::json;
+    for local_order in [false, true] {
+        let mut spec = crate::schema_fixtures::messages_spec(false);
+        if !local_order { spec.relations[0].sort = Sort::ServerOrder; }
+        let db = Store::open_models(None, vec![spec], None).unwrap();
+        let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
+        let key = WindowKey::relation("messages", "thread", &params);
+        let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
+        let page = |page, ids: &[(&str, i64)], cursor: Option<&str>| StoreOp::Window {
+            key: key.name.clone(), model: key.model.clone(), page, replace_all: false, cursor: cursor.map(str::to_string),
+            roots: ids.iter().map(|(id, seq)| RowValue { row_id: (*id).into(), values: json!({"id": id, "chatId":"c1", "sequenceNumber":seq}).to_string() }).collect(),
+            related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
+        };
+        db.write_queue_ops(&[page(1, &[("a", 1), ("b", 2), ("c", 3)], None)]).unwrap();
+        db.write_queue_ops(&[page(1, &[("a", 1)], Some("a"))]).unwrap();
+        db.write_queue_ops(&[page(2, &[("b", 2)], None)]).unwrap();
+        let members: Vec<_> = db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(members, if local_order { vec!["a", "b", "c"] } else { vec!["a", "b"] }, "local_order={local_order}");
+    }
+}
+
+#[test]
 fn saving_a_page_has_constant_sql_work() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
