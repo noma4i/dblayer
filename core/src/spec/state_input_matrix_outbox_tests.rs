@@ -227,7 +227,7 @@ impl Owner {
             Step::Online(on) => self.twin.post(I::Online(crate::owners::contract::Online(on))),
             Step::Retry => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 900 }),
             Step::Discard => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 901 }),
-            Step::Outcome(op) => { let mut receipt = self.twin.receipt(op, super::outbox_harness::EPOCH); if let Some(found) = self.twin.state().ops.get(&op) { receipt.cycle_id = found.cycle_id; } self.twin.post(I::Outcome { receipt, reply: 902 }) }
+            Step::Outcome(op) => { let mut receipt = self.twin.receipt(op, super::outbox_harness::EPOCH); if let Some(found) = self.twin.state().ops.get(&op) { receipt.cycle_id = found.cycle_id; } self.twin.post(I::Outcome { receipt, reply: 902, discard_on_failure: false }) }
             Step::EpochEnd => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.end_epoch(super::outbox_harness::EPOCH, crate::runtime::Cause::SessionReset); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Close => { super::outbox_harness::take_fx(&self.twin.log, None); self.twin.det.close(); self.twin.run(); super::outbox_harness::take_fx(&self.twin.log, None) }
             Step::Stray => self.twin.post(I::TransportError { op_id: 999, temporary: true }),
