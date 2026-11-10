@@ -25,10 +25,16 @@ pub(in super::super) fn apply_envelope_at(
     let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {
         let reader = Reader::new(connection, models);
+        let mut wanted = BTreeMap::<String, Vec<String>>::new();
         for operation in &envelope.entity_ops {
             let row = operation.row_ref();
-            if !originals.contains_key(&row) {
-                originals.insert(row.clone(), reader.point(row.model.as_str(), row.id.as_str())?);
+            if !originals.contains_key(&row) { wanted.entry(row.model.to_string()).or_default().push(row.id.to_string()); }
+        }
+        for (model, ids) in wanted {
+            let mut rows = reader.stored_rows(&model, &ids)?;
+            for id in ids {
+                let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                originals.entry(RowRef::new(ModelKey::new(&model), row_id)).or_insert_with(|| rows.remove(&id).map(|stored| stored.row));
             }
         }
     }
@@ -38,18 +44,21 @@ pub(in super::super) fn apply_envelope_at(
     let mut changes = RowChanges::default();
     let mut moves: Vec<ScopeOp> = Vec::new();
     let mut heads: Vec<(ScopeRef, crate::identity::RowId)> = Vec::new();
+    let mut windows = HashMap::new();
+    let mut threshold_windows = HashMap::new();
     let mut destroyed: Vec<Destroyed> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
     let hidden = if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
     let mut prefetched = prefetch_stored(connection, models, &envelope.entity_ops, &hidden)?;
+    let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, &prefetched)?;
 
     for operation in &envelope.entity_ops {
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut prefetched, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
+                apply_upsert(connection, info, model, row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut prefetched, pending: &mut pending, windows: &mut windows, threshold_windows: &mut threshold_windows, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;

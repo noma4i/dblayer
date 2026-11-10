@@ -163,6 +163,10 @@ impl<'a> Reader<'a> {
         Ok(fetch_stored(self.connection, self.model(model)?, &[id.to_string()], true)?.remove(id))
     }
 
+    pub(crate) fn stored_rows_with_revisions(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, StoredRow>, StoreError> {
+        fetch_stored(self.connection, self.model(model)?, ids, true)
+    }
+
     pub fn stored_rows(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, StoredRow>, StoreError> {
         let info = self.model(model)?;
         let mut rows = fetch_stored(self.connection, info, ids, false)?;

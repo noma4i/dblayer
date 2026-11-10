@@ -8,6 +8,18 @@ use crate::identity::RowRef;
 
 use super::{ModelInfo, Reader, StoreError};
 
+fn points(reader: &Reader<'_>, rows: impl IntoIterator<Item = RowRef>) -> Result<BTreeMap<RowRef, Map<String, Value>>, StoreError> {
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
+    for row in rows { wanted.entry(row.model.to_string()).or_default().push(row.id.to_string()); }
+    let mut found = BTreeMap::new();
+    for (model, ids) in wanted {
+        for (_, stored) in reader.stored_rows(&model, &ids)? {
+            found.insert(RowRef::new(crate::identity::ModelKey::new(&model), stored.id), stored.row);
+        }
+    }
+    Ok(found)
+}
+
 pub(super) type MemoryExpiries = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>);
 
 pub(super) fn expiry(connection: &Connection, models: &BTreeMap<String, ModelInfo>, results: &[CommitResult], now: i64) -> Result<MemoryExpiries, StoreError> {
@@ -55,13 +67,14 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
         combined.item_snapshots.extend(result.item_snapshots);
     }
     let reader = Reader::new(connection, models);
+    let after_rows = points(&reader, rows.keys().filter(|row| originals.contains_key(*row)).cloned())?;
     for (row, changes) in rows {
         let Some(before) = originals.get(&row) else {
             combined.rows.extend(changes);
             continue;
         };
-        let after = reader.point(row.model.as_str(), row.id.as_str())?;
-        let kind = match (before, &after) {
+        let after = after_rows.get(&row);
+        let kind = match (before, after) {
             (None, None) => continue,
             (None, Some(_)) => RowChangeKind::Inserted,
             (Some(_), None) => RowChangeKind::Destroyed,
@@ -71,7 +84,7 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
                 None => continue,
             },
         };
-        let fields: BTreeSet<String> = match (before, &after) {
+        let fields: BTreeSet<String> = match (before, after) {
             (Some(before), Some(after)) => before.keys().chain(after.keys()).filter(|key| before.get(*key) != after.get(*key)).cloned().collect(),
             (None, Some(after)) => after.keys().cloned().collect(),
             _ => BTreeSet::new(),
@@ -86,13 +99,16 @@ pub(super) fn stale_parents(connection: &Connection, models: &BTreeMap<String, M
     let reader = Reader::new(connection, models);
     let mut stale = BTreeSet::new();
     let landed: BTreeSet<RowRef> = results.iter().flat_map(|result| result.rows.iter()).filter(|change| matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated)).map(|change| change.row.clone()).collect();
-    for row in landed {
+    let owners = landed.into_iter().filter(|row| models.get(row.model.as_str()).is_some_and(|info| info.spec.associations.iter().any(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty())));
+    let rows = points(&reader, owners)?;
+    let mut parents = BTreeSet::new();
+    for (row, stored) in rows {
         let Some(info) = models.get(row.model.as_str()) else { continue };
-        let Some(stored) = reader.point(row.model.as_str(), row.id.as_str())? else { continue };
         for association in info.spec.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty()) {
-            let Some(parent) = stored.get(&association.foreign_key).and_then(crate::value::read_id) else { continue };
-            if reader.point(association.target.as_str(), parent.as_str())?.is_none() { stale.insert(association.target.to_string()); }
+            if let Some(parent) = stored.get(&association.foreign_key).and_then(crate::value::read_id) { parents.insert(RowRef::new(association.target.clone(), parent)); }
         }
     }
+    let found = points(&reader, parents.iter().cloned())?;
+    for parent in parents { if !found.contains_key(&parent) { stale.insert(parent.model.to_string()); } }
     Ok(stale.into_iter().collect())
 }

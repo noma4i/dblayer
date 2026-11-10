@@ -54,15 +54,15 @@ pub(crate) enum RowKind {
 }
 
 pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
-    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None, None)
+    admitted_with_fields(reader, kind, admission, model, patch, spec, guards, None, None, None)
 }
 
-pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let decoded = decode_nested(spec, patch)?;
     let patch = &decoded;
-    let stored = reader.stored_row(model, id.as_str())?;
+    let stored = match stored { Some(rows) => rows.get(id.as_str()).cloned(), None => reader.stored_row(model, id.as_str())? };
     let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
     let current = spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);
     if matches!((versioned, current), (Some(incoming), Some(current)) if incoming < current) {

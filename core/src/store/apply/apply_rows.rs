@@ -74,18 +74,34 @@ pub(super) fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> 
         .collect()
 }
 
-pub(super) fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
-    let owner = texts(&[model.as_str(), id]);
-    let pending = read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2", &owner)?;
-    if pending.is_empty() {
-        return Ok(());
-    }
-    for (key, value) in pending {
-        if let Some(slot) = key.last().and_then(|path| match path { rusqlite::types::Value::Text(path) => info.spec.local_slot(path), _ => None }) {
-            slot.write(row, value);
+pub(super) type PendingRows = HashMap<(String, String), Vec<(String, Value)>>;
+
+pub(super) fn prefetch_pending(connection: &Connection, models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], prefetched: &Prefetched) -> Result<PendingRows, StoreError> {
+    let mut wanted = BTreeMap::<String, Vec<String>>::new();
+    for operation in operations {
+        let EntityOp::Upsert { model, id, .. } = operation else { continue };
+        if models.get(model.as_str()).is_some_and(|info| info.spec.has_local()) && prefetched.get(&(model.to_string(), id.to_string())).is_some_and(Option::is_none) {
+            wanted.entry(model.to_string()).or_default().push(id.to_string());
         }
     }
-    delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2", &owner)?;
+    let mut found = PendingRows::new();
+    for (model, ids) in wanted {
+        let args = [rusqlite::types::Value::Text(model), rusqlite::types::Value::Text(serde_json::to_string(&ids)?)];
+        for (owner, value) in read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id IN (SELECT value FROM json_each(?2))", &args)? {
+            if let [rusqlite::types::Value::Text(model), rusqlite::types::Value::Text(id), rusqlite::types::Value::Text(path)] = owner.as_slice() {
+                found.entry((model.clone(), id.clone())).or_default().push((path.clone(), value));
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>, pending: &mut PendingRows) -> Result<(), StoreError> {
+    let Some(values) = pending.remove(&(model.to_string(), id.to_string())) else { return Ok(()) };
+    for (path, value) in values {
+        if let Some(slot) = info.spec.local_slot(&path) { slot.write(row, value); }
+    }
+    delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2", &texts(&[model.as_str(), id]))?;
     Ok(())
 }
 
@@ -119,6 +135,9 @@ pub(super) struct Landing<'a> {
     pub(super) revision: i64,
     pub(super) hidden: &'a HiddenRows,
     pub(super) prefetched: &'a mut Prefetched,
+    pub(super) pending: &'a mut PendingRows,
+    pub(super) windows: &'a mut HashMap<String, bool>,
+    pub(super) threshold_windows: &'a mut HashMap<String, Vec<String>>,
     pub(super) result: &'a mut RowChanges,
     pub(super) moves: &'a mut Vec<ScopeOp>,
     pub(super) heads: &'a mut Vec<(ScopeRef, crate::identity::RowId)>,
@@ -132,7 +151,7 @@ pub(super) fn apply_upsert(
     envelope: &BatchPlan,
     landing: Landing<'_>,
 ) -> Result<(), StoreError> {
-    let Landing { revision, hidden, prefetched, result, moves, heads } = landing;
+    let Landing { revision, hidden, prefetched, pending, windows, threshold_windows, result, moves, heads } = landing;
     let Some(id) = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { return Ok(()) };
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
@@ -148,12 +167,12 @@ pub(super) fn apply_upsert(
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
             None => {
-                take_pending(connection, info, model, &id, &mut next)?;
+                take_pending(connection, info, model, &id, &mut next, pending)?;
             }
         }
     }
     let row = &next;
-    declared_membership(connection, info, model, &id, RowVersions { old: old_row, new: row }, envelope, MembershipLog { moves: &mut *moves, heads: &mut *heads })?;
+    declared_membership(connection, info, model, &id, RowVersions { old: old_row, new: row }, envelope, MembershipLog { moves: &mut *moves, heads: &mut *heads, windows, threshold_windows })?;
     let (born_rev, mut field_rev, changed, kind) = match &existing {
         Some(stored) => {
             let changed = diff_fields(&stored.row, row);
@@ -301,11 +320,13 @@ pub(super) struct RowVersions<'a> {
 pub(super) struct MembershipLog<'a> {
     pub(super) moves: &'a mut Vec<ScopeOp>,
     pub(super) heads: &'a mut Vec<(ScopeRef, crate::identity::RowId)>,
+    pub(super) windows: &'a mut HashMap<String, bool>,
+    pub(super) threshold_windows: &'a mut HashMap<String, Vec<String>>,
 }
 
 pub(super) fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, versions: RowVersions<'_>, envelope: &BatchPlan, log: MembershipLog<'_>) -> Result<(), StoreError> {
     let RowVersions { old, new } = versions;
-    let MembershipLog { moves, heads } = log;
+    let MembershipLog { moves, heads, windows, threshold_windows } = log;
     use crate::schema::{RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
     for relation in info.spec.relations.iter().filter(|relation| relation.constants_described()) {
@@ -322,34 +343,37 @@ pub(super) fn declared_membership(connection: &Connection, info: &ModelInfo, mod
                 if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
             }
         }
-        let keys = |values: &Map<String, Value>| if relation.has_threshold() {
-            loaded_threshold_scopes(connection, info, relation, values)
+        let mut keys = |values: &Map<String, Value>| if relation.has_threshold() {
+            loaded_threshold_scopes(connection, info, relation, values, threshold_windows)
         } else {
             relation.row_params(values).into_iter().map(|params| info.spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))).collect::<Result<BTreeSet<_>, _>>()
         };
-        let before = old.map(keys).transpose()?.unwrap_or_default();
+        let before = old.map(&mut keys).transpose()?.unwrap_or_default();
         let after = keys(new)?;
         moves.extend(before.difference(&after).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }));
         if !joins { continue; }
         let direction = match relation.remote.as_ref().map(|remote| &remote.shape) { Some(RemoteShape::Connection { direction, .. }) => *direction, _ => PageDirection::Forward };
         for key in after {
             let window = super::super::windows::window_key(key.as_str(), direction);
-            let loaded = connection.query_row(include_str!("../sql/apply_rows/declared_membership.sql"), [&window], |_| Ok(())).optional()?.is_some();
+            let loaded = match windows.get(&window) { Some(loaded) => *loaded, None => { let loaded = connection.query_row(include_str!("../sql/apply_rows/declared_membership.sql"), [&window], |_| Ok(())).optional()?.is_some(); windows.insert(window, loaded); loaded } };
             if loaded { heads.push((ScopeRef::new(model.clone(), key), row.clone())); }
         }
     }
     Ok(())
 }
 
-pub(super) fn loaded_threshold_scopes(connection: &Connection, info: &ModelInfo, relation: &crate::schema::RelationSpec, values: &Map<String, Value>) -> Result<BTreeSet<crate::identity::ListKey>, StoreError> {
+pub(super) fn loaded_threshold_scopes(connection: &Connection, info: &ModelInfo, relation: &crate::schema::RelationSpec, values: &Map<String, Value>, cache: &mut HashMap<String, Vec<String>>) -> Result<BTreeSet<crate::identity::ListKey>, StoreError> {
     let constraint = |message: String| StoreError::Constraint(message);
     let wanted = relation.row_params(values).iter().map(|params| info.spec.partial_selection_params(&relation.name, params).map_err(|error| constraint(error.to_string()))).collect::<Result<Vec<_>, _>>()?;
     let mut keys = BTreeSet::new();
     if wanted.is_empty() { return Ok(keys); }
     let pattern = super::super::windows::like_prefix(&super::super::windows::family_prefix(info.spec.key.as_str(), &relation.name));
-    let mut statement = connection.prepare_cached(include_str!("../sql/apply_rows/loaded_threshold_scopes.sql"))?;
-    let windows = statement.query_map([pattern], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
-    for window in windows {
+    if !cache.contains_key(&pattern) {
+        let mut statement = connection.prepare_cached(include_str!("../sql/apply_rows/loaded_threshold_scopes.sql"))?;
+        let windows = statement.query_map([&pattern], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        cache.insert(pattern.clone(), windows);
+    }
+    for window in &cache[&pattern] {
         let (scope, _) = window.rsplit_once(':').ok_or_else(|| constraint(format!("malformed window key {window}")))?;
         let key = crate::identity::ListKey::from_raw(scope);
         let segments = key.decompose().ok_or_else(|| constraint(format!("malformed window key {window}")))?;
@@ -368,14 +392,25 @@ pub(super) fn join_heads(
     scopes: &mut BTreeSet<ScopeRef>,
     members: &mut BTreeSet<RowRef>,
 ) -> Result<bool, StoreError> {
-    let mut wrote = false;
-    for (scope, row) in heads {
-        if Reader::new(connection, models).scope_has_member(scope.model.as_str(), scope.key.as_str(), row.as_str())? { continue; }
-        let first = Reader::new(connection, models).scope_first_key(scope.model.as_str(), scope.key.as_str())?;
-        let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        let append = ScopeOp::Append { scope: scope.clone(), row: row.clone(), order_key };
-        wrote |= apply_scope_ops(connection, models, std::slice::from_ref(&append), scopes, members)?;
+    let reader = Reader::new(connection, models);
+    let mut grouped = BTreeMap::<ScopeRef, Vec<String>>::new();
+    for (scope, row) in heads { grouped.entry(scope.clone()).or_default().push(row.to_string()); }
+    let mut existing = BTreeMap::new();
+    let mut first = BTreeMap::new();
+    for (scope, ids) in grouped {
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        existing.insert(scope.clone(), reader.scope_members_among(scope.model.as_str(), scope.key.as_str(), &refs)?.into_iter().collect::<HashSet<_>>());
+        first.insert(scope.clone(), reader.scope_first_key(scope.model.as_str(), scope.key.as_str())?);
     }
+    let mut ops = Vec::new();
+    for (scope, row) in heads {
+        let Some(members) = existing.get_mut(scope) else { return Err(StoreError::Constraint("head scope is missing".into())); };
+        if !members.insert(row.to_string()) { continue; }
+        let order_key = crate::value::fractional_between(None, first.get(scope).and_then(Option::as_deref)).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        first.insert(scope.clone(), Some(order_key.clone()));
+        ops.push(ScopeOp::Append { scope: scope.clone(), row: row.clone(), order_key });
+    }
+    let wrote = apply_scope_ops(connection, models, &ops, scopes, members)?;
     Ok(wrote)
 }
 
