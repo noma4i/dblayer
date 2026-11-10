@@ -70,8 +70,8 @@ impl UploadCodec {
     async fn graphql(&self, link: &Link, (name, step): (&str, UploadStage), (operation, item): (u64, &str), variables: Value) -> Result<Answered, TransportError> {
         let (document, registered) = (self.lookup)(name).ok_or_else(|| rejected(&format!("operation {name} is not registered")))?;
         let root = self.operations.root_of(name).map_or(registered, str::to_string);
-        let key = RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step };
-        let request = GraphQLRequest { owner: (step != UploadStage::Abort).then(|| key.clone()), ..GraphQLRequest::new(&document, name, variables) };
+        let key = if step == UploadStage::Abort { RequestOwner::Orphan { upload_id: item.to_string() } } else { RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step } };
+        let request = GraphQLRequest { owner: Some(key.clone()), ..GraphQLRequest::new(&document, name, variables) };
         let response = link.mutate(request, &key).await?;
         let data = answered(name, &root, response)?;
         Ok(Answered { data, label: format!("{name}: {root}") })
@@ -167,9 +167,9 @@ impl StepCodec for UploadCodec {
         }
     }
 
-    async fn discard_upload(&self, link: &Link, transfer_key: &str, upload_id: Option<&str>) -> Result<(), TransportError> {
+    async fn discard_upload(&self, link: &Link, _key: &str, upload_id: Option<&str>) -> Result<(), TransportError> {
         let Held::Multipart { key, id } = Held::read(upload_id)? else { return Ok(()) };
         let steps = self.operations.multipart.as_ref().ok_or_else(|| rejected("the upload has no multipart operations"))?;
-        self.graphql(link, (&steps.abort.name, UploadStage::Abort), (0, transfer_key), json!({"key": key, "uploadId": id})).await.map(|_| ())
+        self.graphql(link, (&steps.abort.name, UploadStage::Abort), (0, upload_id.unwrap_or_default()), json!({"key": key, "uploadId": id})).await.map(|_| ())
     }
 }

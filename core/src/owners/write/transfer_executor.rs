@@ -43,7 +43,7 @@ impl Link {
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
         let id = match step {
-            crate::transport::RequestOwner::Transfer { item_id, step: crate::owners::write::upload::UploadStage::Abort, .. } => super::wire::abort_request_id(item_id, request.variables.get("uploadId").and_then(serde_json::Value::as_str).unwrap_or_default()),
+            crate::transport::RequestOwner::Orphan { upload_id } => super::wire::abort_request_id("", upload_id),
             crate::transport::RequestOwner::Transfer { step, .. } => super::wire::step_request_id(self.identity.0, self.identity.1, *step, self.identity.2),
             _ => crate::owners::contract::next_request_id(),
         };

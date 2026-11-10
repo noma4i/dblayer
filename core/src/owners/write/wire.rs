@@ -50,9 +50,9 @@ pub fn step_request_id(transfer_id: u64, cycle_id: u64, step: crate::owners::wri
     identity_request_id(&[&transfer_id.to_le_bytes(), &cycle_id.to_le_bytes(), &[step as u8], &part.to_le_bytes()])
 }
 
-/// An abort of a multipart upload: the key and the upload id, the abort has no transfer id or cycle of its own.
-pub fn abort_request_id(key: &str, upload_id: &str) -> u64 {
-    identity_request_id(&[key.as_bytes(), &[crate::owners::write::upload::UploadStage::Abort as u8], upload_id.as_bytes()])
+/// An abort of a multipart upload: a function of the upload id alone, the debt has no transfer id, cycle or key of its own.
+pub fn abort_request_id(_key: &str, upload_id: &str) -> u64 {
+    identity_request_id(&[&[crate::owners::write::upload::UploadStage::Abort as u8], upload_id.as_bytes()])
 }
 
 /// The network of an executor: the transport and the gate of the epoch it works in.
