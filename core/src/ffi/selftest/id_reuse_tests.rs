@@ -36,7 +36,15 @@ async fn session_request_after_reopen_does_not_take_the_saved_answer() {
     held.release();
     let _ = bound(first).await;
     let reopened = open(&path, world.clone(), credentials).await;
-    let answer = bound(reopened.session_call("login_link".into(), json!({"account":"second"}).to_string())).await.unwrap();
+    crate::test_wait::settled(&reopened, "the saved call is replayed", || world.log().iter().filter(|entry| entry.body.contains("\"first\"")).count() == 2).await;
+    let second_held = world.hold_next("login_link");
+    let calling = reopened.clone();
+    let second = tokio::spawn(async move { calling.session_call("login_link".into(), json!({"account":"second"}).to_string()).await });
+    second_held.entered().await;
+    let next: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT req_id FROM encrypted_pending", [], |row| row.get(0)).unwrap();
+    assert_eq!(next, pending, "the new Session issues the same internal id");
+    second_held.release();
+    let answer = bound(second).await.unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&answer).unwrap()["sessionId"], "second");
     let sent = world.log();
     let first_requests: Vec<_> = sent.iter().filter(|entry| entry.body.contains("\"first\"")).collect();
