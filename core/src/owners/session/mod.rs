@@ -340,9 +340,7 @@ pub struct SessionState {
     reported: (u64, RetryPhase),
 }
 
-fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause::ServerEnded | Cause::Close) }
-
-fn end_error(cause: Cause) -> SessionError { if cause == Cause::Close { SessionError::Closed } else { SessionError::NoSession } }
+fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause::ServerEnded) }
 
 fn author_error(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: RequestId, class: ErrorClass, error: SessionError) {
     author_error_retained(fx, author, req_id, class, error, false);
