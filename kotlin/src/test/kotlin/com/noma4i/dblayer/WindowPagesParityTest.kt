@@ -51,12 +51,12 @@ class WindowPagesParityTest {
             assertEquals(2, transport.calls.count { it.operationName == "ContainerThread" })
 
             projected.loadMore()
-            projected.until("final page") { it.state?.settled == true && it.state?.hasMore == false && it.rows.isNotEmpty() }
+            projected.until("final page") { it.state?.settled == true && !it.state.hasMore && it.rows.isNotEmpty() }
             val final = projected.projection.value
             val ids = final.rows.map { it.id }
+            assertEquals(3, transport.calls.count { it.operationName == "ContainerThread" })
             assertEquals("rows=${ids.size}, first=${ids.firstOrNull()}, last=${ids.lastOrNull()}, hasMore=${final.state?.hasMore}", (1..65).map { "m$it" }, ids)
             assertFalse(final.state!!.hasMore)
-            assertEquals(3, transport.calls.count { it.operationName == "ContainerThread" })
         } finally {
             scope.cancel()
             closeForCleanup()
