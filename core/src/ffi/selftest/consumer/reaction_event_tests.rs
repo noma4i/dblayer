@@ -1,7 +1,7 @@
 //! message.dbl and moment.dbl of the app against feed.md rows feed_payload_lands (l.104), feed_payload_incomplete (l.105), feed_changed_by_node (l.127) and delivery.md l.10 (`Entity` with `fetch: never` has no window).
 use serde_json::json;
 
-use super::stand::{message, moment, Stand};
+use super::stand::{moment, Stand};
 use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
@@ -10,7 +10,7 @@ use crate::test_wait::settled;
 async fn consumer_message_reaction_lands_the_payload_row() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
-    stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1", "message": message("m1", "c1", "reacted")}));
+    stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1", "message": null}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(&event, Some(ReadValue::Event { area, id, after: Some(row), .. }) if area == "REACTION" && id == "m1" && crate::ffi::tests::lifecycle_tests::named(row, "reacted")), "{event:?}");
     stand.settle().await;
