@@ -7,8 +7,15 @@ extension BridgeProbeTests {
   @MainActor @Test(.timeLimit(.minutes(1)))
   func aFailedProfileRefreshKeepsTheValueWithoutExtraRequests() async throws {
     let transport = MockTransport()
-    let definitions = #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#
-    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: definitions)
+    let definitions = #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"DblayerViewerChanges","document":"subscription DblayerViewerChanges { viewerChanges { changes { area kind entityId } } }"}]"#
+    var schema = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [String: Any])
+    var models = try #require(schema["models"] as? [[String: Any]])
+    let index = try #require(models.firstIndex { $0["key"] as? String == "CurrentUser" })
+    models[index]["changes"] = [["area":"COUNTERS", "relation":"current"], ["area":"GIFT", "relation":"current"]]
+    models[index]["change_feed"] = ["subscription":"DblayerViewerChanges", "root":"viewerChanges.changes", "area":"area", "kind":"kind", "id":"entityId"]
+    schema["models"] = models
+    let spec = String(decoding: try JSONSerialization.data(withJSONObject: schema), as: UTF8.self)
+    let clock = try await openSignedClocked(modelsJson: spec, transport: transport, operations: definitions)
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Ann"}}}"#)
     transport.enqueue("CurrentUserQuery", failure: .Network(detail: "offline"))
     transport.enqueue("CurrentUserQuery", failure: .Http(status: 400, detail: "refused after retry"))
