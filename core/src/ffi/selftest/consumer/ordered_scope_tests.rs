@@ -78,6 +78,38 @@ async fn ordered_scope(case: Case) {
     stand.database.close_now();
 }
 
+async fn ordered_limit(case: Case) {
+    for more_on_last in [false, true] {
+        let stand = Stand::prepare().await;
+        stand.answer(case.operation, answer(case, &[20], true, "c1"));
+        stand.sign_in().await;
+        let epoch = stand.database.session_epoch();
+        let query = QuerySpec::json(json!({"model":case.model, "relation":case.scope, "params":serde_json::from_str::<Value>(case.params).unwrap()}).to_string());
+        let rows = Arc::new(Rows::default());
+        let _stream = stand.database.watch(ReadRequest::List { query }, rows.clone());
+        settled(&stand, "the first page", || rows.len() == 1).await;
+        let first_requests = stand.requests(case.operation);
+        for page in 2..=20 {
+            let number = 21 - page;
+            let more = page < 20 || more_on_last;
+            stand.answer(case.operation, answer(case, &[number], more, &format!("c{page}")));
+            bound(stand.database.load_more(epoch, case.model.into(), Some(case.scope.into()), case.params.into())).await.unwrap();
+            settled(&stand, "the page landed", || rows.len() == page as usize).await;
+        }
+        assert_eq!(stand.requests(case.operation), first_requests + 19);
+        let result = bound(stand.database.load_more(epoch, case.model.into(), Some(case.scope.into()), case.params.into())).await;
+        if more_on_last {
+            assert!(matches!(result, Err(crate::ffi::DbError::Invalid { ref detail }) if detail == "the window reached its page limit"), "{}.{}: {result:?}", case.model, case.scope);
+        } else {
+            assert!(matches!(result, Ok(crate::ffi::LoadMoreResult::NoMore)), "{}.{}: {result:?}", case.model, case.scope);
+        }
+        stand.settle().await;
+        assert_eq!(stand.requests(case.operation), first_requests + 19);
+        assert_eq!(rows.len(), 20);
+        stand.database.close_now();
+    }
+}
+
 macro_rules! ordered_case {
     ($name:ident, $model:literal, $scope:literal, $op:literal, $params:literal, $media:literal, $asc:literal) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -96,3 +128,8 @@ ordered_case!(consumer_ordered_gifts_since, "Message", "gifts_since", "chatMedia
 ordered_case!(consumer_ordered_moment_by_user, "Moment", "by_user", "userMoments", r#"{"userId":"u1"}"#, "", false);
 ordered_case!(consumer_ordered_moment_owned, "Moment", "owned", "myMoments", r#"{}"#, "", false);
 ordered_case!(consumer_ordered_moment_compass, "Moment", "compass", "meCompass", r#"{}"#, "", false);
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_ordered_by_user_page_limit() {
+    ordered_limit(Case { model: "Moment", scope: "by_user", operation: "userMoments", params: r#"{"userId":"u1"}"#, media: "", ascending: false }).await;
+}
