@@ -325,13 +325,13 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - Offline cancellation returns without a network call and keeps the multipart upload id. When the network returns, the saved cancellation aborts the multipart and removes the operation.
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one open upload per declared action.
-- `upload` on a row that does not exist fails with `NotFound` for every model. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action), then `NotFound` for the row.
+- `upload` on a row that does not exist is accepted: it opens a transfer with no optimistic value and the answer of the final mutation writes the row. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action or variables). A missing row is no refusal.
 - `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
 
 ## Upload to a row that does not exist
 
-An upload may target a row that is not in the base yet, such as the avatar of the registration step or a singleton before its first read. The call is the same, the receipt shows no `optimisticValue`, and the final mutation answer writes the row. The queue, retry, reading the file in pieces, restart and cleanup are those of an upload to a row. A refusal of the final mutation throws `Rejected` from `confirmed` with `kept: true`, like every upload. `operations()` shows the transfer by its key before any row exists.
+An upload may target a row that is not in the base yet, such as the avatar of the registration step or a singleton before its first read. The call is on the type of the model: `Model.<action>(id:, source:, ...variables)`, or `Model.<action>(source:, ...variables)` for a singleton model. The call on an instance uses it. The receipt shows no `optimisticValue`, and the final mutation answer writes the row. The queue, retry, reading the file in pieces, restart and cleanup are those of an upload to a row. A refusal of the final mutation throws `Rejected` from `confirmed` with `kept: true`, like every upload. `operations()` shows the transfer by its key before any row exists.
 
 ```ruby
 operation :update_photo, upload: true do
@@ -348,11 +348,11 @@ end
 ```
 
 ```swift
-let sent = try await CurrentUser.updatePhoto(UploadRequest(path: path), in: scope)
+let sent = try await CurrentUser.updatePhoto(source: path, createInitialMoment: true, in: scope)
 let confirmed = try await sent.confirmed()
 ```
 
 ```kotlin
-val sent = CurrentUser.updatePhoto(UploadRequest(path = path), scope)
+val sent = CurrentUser.updatePhoto(scope, source = path, createInitialMoment = true)
 val confirmed = sent.confirmed()
 ```
