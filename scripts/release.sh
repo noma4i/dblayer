@@ -37,36 +37,39 @@ printf '%s %s\n' "$$" "$version" > "$lockdir/holder"
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
 check_package_commit() {
   local commit="$1" parent="$2"
-  [ "$(git rev-parse "$commit^" 2>/dev/null)" = "$parent" ] || fail "package commit $commit is not directly on source commit $parent"
+  [ "$(git rev-list --parents -n 1 "$commit" 2>/dev/null)" = "$commit $parent" ] || fail "package commit $commit is not directly on source commit $parent"
   local changed
   changed="$(git diff-tree --no-commit-id --name-only -r "$commit" | LC_ALL=C sort)"
-  printf '%s\n' "$changed" | grep -Fxq Package.swift || fail "package commit $commit must change Package.swift"
-  [ -z "$(printf '%s\n' "$changed" | grep -Fvx -e Package.swift -e swift/Sources/DBlayer/dblayer.swift || true)" ] || fail "package commit $commit must change only Package.swift and dblayer.swift"
+  [ "$changed" = "$(printf 'Package.swift\nswift/Sources/DBlayer/dblayer.swift')" ] || fail "package commit $commit must change exactly Package.swift and dblayer.swift"
 }
 package_sha=""
-cleanup_sha=""
 source_sha="$(git rev-parse HEAD)"
-if [ "$(git log -1 --format=%s)" = "Stop tracking the generated Swift binding" ]; then
-  cleanup_sha="$source_sha"
-  package_sha="$(git rev-parse "$cleanup_sha^")" || fail 'cleanup commit has no parent'
-  [ "$(git log -1 --format=%s "$package_sha")" = "Package release $version" ] || fail 'cleanup parent is not the package commit'
-  [ "$(git diff-tree --no-commit-id --name-status -r "$cleanup_sha")" = "$(printf 'D\tswift/Sources/DBlayer/dblayer.swift')" ] || fail 'cleanup commit must only untrack the Swift binding'
-  source_sha="$(git rev-parse "$package_sha^")" || fail 'package commit has no parent'
-  check_package_commit "$package_sha" "$source_sha"
-elif [ "$(git log -1 --format=%s)" = "Package release $version" ]; then
-  package_sha="$source_sha"
-  source_sha="$(git rev-parse "$package_sha^")" || fail 'package commit has no parent'
-  check_package_commit "$package_sha" "$source_sha"
-fi
+[ "$(git log -1 --format=%s)" = "Release $version" ] || fail "HEAD must be Release $version"
+[ -z "$(git ls-files -- swift/Sources/DBlayer/dblayer.swift)" ] || fail 'generated Swift binding must not be tracked on master'
 run_id="$(date +%s)-$$-$RANDOM"
 export RELEASE_SOURCE_SHA="$source_sha" RELEASE_RUN_ID="$run_id"
 require_source() {
-  local head expected="${cleanup_sha:-${package_sha:-$source_sha}}"
+  local head expected="$source_sha"
   head="$(git rev-parse HEAD)"
   [ "$head" = "$expected" ] || fail "source commit changed during the run: recorded $expected, HEAD is $head"
   [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree changed during the run'
 }
-previous_tag="$(git describe --tags --abbrev=0 --exclude "$version")" || fail 'previous tag not found'
+previous_tag=""
+while IFS= read -r candidate; do
+  [[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+  [ "$candidate" != "$version" ] || continue
+  [ "$(printf '%s\n%s\n' "$candidate" "$version" | sort -V | head -1)" = "$candidate" ] || continue
+  if git merge-base --is-ancestor "$candidate" "$source_sha" 2>/dev/null; then
+    previous_tag="$candidate"
+    break
+  fi
+  parent="$(git rev-parse "$candidate^" 2>/dev/null)" || continue
+  if [ "$(git log -1 --format=%s "$candidate")" = "Package release $candidate" ] && [ "$(git log -1 --format=%s "$parent")" = "Release $candidate" ] && git merge-base --is-ancestor "$parent" "$source_sha" 2>/dev/null; then
+    previous_tag="$candidate"
+    break
+  fi
+done < <(git tag --list --sort=-v:refname)
+[ -n "$previous_tag" ] || fail 'previous tag not found'
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
 [ "$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' core/Cargo.toml)" = "$version" ] || fail 'core version does not match'
@@ -246,41 +249,35 @@ receipt = {
 RECEIPT
 if [ "$publish" = --publish ]; then
   require_source
-  package_commits="$(git log --format=%s "$previous_tag"..HEAD | grep -Fxc "Package release $version" || true)"
-  if [ -z "$package_sha" ] && [ "$package_commits" = 0 ]; then
-    git diff --cached --quiet || fail 'index is not empty before packaging'
-    cp "$tmp/Package.swift" Package.swift
-    git add Package.swift
-    cp "$stage/dblayer.swift" swift/Sources/DBlayer/dblayer.swift
-    git add -f swift/Sources/DBlayer/dblayer.swift
-    [ "$(git diff --cached --name-only | LC_ALL=C sort)" = "$(printf 'Package.swift\nswift/Sources/DBlayer/dblayer.swift')" ] || fail 'index must contain exactly Package.swift and dblayer.swift'
-    git commit -m "Package release $version"
-    package_sha="$(git rev-parse HEAD)"
-    check_package_commit "$package_sha" "$source_sha"
-  elif [ -n "$package_sha" ] && [ "$package_commits" = 1 ]; then
-    git show "$package_sha":Package.swift > "$tmp/committed-Package.swift"
-    git show "$package_sha":swift/Sources/DBlayer/dblayer.swift > "$tmp/committed-dblayer.swift"
-    cmp -s "$tmp/Package.swift" "$tmp/committed-Package.swift" || fail 'existing Package.swift differs from the release package'
-    bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/committed-dblayer.swift" || fail 'existing dblayer.swift differs from the release package'
+  git diff --cached --quiet || fail 'index is not empty before packaging'
+  if git rev-parse --verify -q "refs/tags/$version^{commit}" > "$tmp/tag-sha"; then
+    package_sha="$(cat "$tmp/tag-sha")"
+  elif [ -s "$stage/PACKAGE_COMMIT" ]; then
+    package_sha="$(cat "$stage/PACKAGE_COMMIT")"
+    git cat-file -e "$package_sha^{commit}" || fail 'saved package commit is missing'
   else
-    fail "unexpected Package release $version commit state"
+    package_index="$tmp/package-index"
+    GIT_INDEX_FILE="$package_index" git read-tree "$source_sha"
+    manifest_blob="$(git hash-object -w "$tmp/Package.swift")"
+    binding_blob="$(git hash-object -w "$stage/dblayer.swift")"
+    GIT_INDEX_FILE="$package_index" git update-index --add --cacheinfo "100644,$manifest_blob,Package.swift" --cacheinfo "100644,$binding_blob,swift/Sources/DBlayer/dblayer.swift"
+    package_tree="$(GIT_INDEX_FILE="$package_index" git write-tree)"
+    package_sha="$(printf 'Package release %s\n' "$version" | git commit-tree "$package_tree" -p "$source_sha")"
   fi
+  check_package_commit "$package_sha" "$source_sha"
+  [ "$(git log -1 --format=%s "$package_sha")" = "Package release $version" ] || fail 'package commit has an unexpected subject'
+  git show "$package_sha":Package.swift > "$tmp/committed-Package.swift"
+  git show "$package_sha":swift/Sources/DBlayer/dblayer.swift > "$tmp/committed-dblayer.swift"
+  cmp -s "$tmp/Package.swift" "$tmp/committed-Package.swift" || fail 'existing Package.swift differs from the release package'
+  bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/committed-dblayer.swift" || fail 'existing dblayer.swift differs from the release package'
+  printf '%s\n' "$package_sha" > "$tmp/PACKAGE_COMMIT"
+  mv "$tmp/PACKAGE_COMMIT" "$stage/PACKAGE_COMMIT"
   require_source
   git tag "$version" "$package_sha" 2>/dev/null || {
     [ "$(git rev-parse "$version^{commit}")" = "$package_sha" ] || fail "tag $version already points elsewhere"
   }
   git show "$version":swift/Sources/DBlayer/dblayer.swift > "$tmp/tagged-dblayer.swift"
   bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
-  require_source
-  if [ -z "$cleanup_sha" ]; then
-    git diff --cached --quiet || fail 'index is not empty before untracking'
-    git rm --cached -q -- swift/Sources/DBlayer/dblayer.swift
-    [ "$(git diff --cached --name-status)" = "$(printf 'D\tswift/Sources/DBlayer/dblayer.swift')" ] || fail 'cleanup index must only remove the Swift binding'
-    git commit -q -m "Stop tracking the generated Swift binding"
-    cleanup_sha="$(git rev-parse HEAD)"
-    [ "$(git rev-parse "$cleanup_sha^")" = "$package_sha" ] || fail 'cleanup parent changed'
-    [ "$(git diff-tree --no-commit-id --name-status -r "$cleanup_sha")" = "$(printf 'D\tswift/Sources/DBlayer/dblayer.swift')" ] || fail 'cleanup commit must only untrack the Swift binding'
-  fi
   require_source
 else
   printf '%s\n' 'Package.swift to be written:'
@@ -317,7 +314,7 @@ push_maven_branch() {
 }
 
 if [ "$publish" = --publish ]; then
-  git push origin "$cleanup_sha:refs/heads/master"
+  git push origin "$source_sha:refs/heads/master"
   git push origin "$package_sha:refs/tags/$version"
   push_maven_branch "$(git remote get-url origin)"
   files=(); for file in "${attachments[@]}"; do files+=("$stage/$file"); done

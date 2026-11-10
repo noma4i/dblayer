@@ -34,7 +34,7 @@ def run(command, cwd, env, expected=0, contains=None):
     return result
 
 
-def fixture(base, touch=None, manifest=True):
+def fixture(base, touch=None, manifest=True, detached_previous=False):
     repo = base / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(release_script, repo / "scripts/release.sh")
@@ -100,8 +100,11 @@ printf bindings > kotlin/src/main/kotlin/com/noma4i/dblayer/dblayer.kt
     subprocess.run([real_git, "-C", str(repo), "config", "user.email", "release@example.invalid"], check=True)
     subprocess.run([real_git, "-C", str(repo), "remote", "add", "origin", "https://example.invalid/dblayer.git"], check=True)
     subprocess.run([real_git, "-C", str(repo), "add", "."], check=True)
-    subprocess.run([real_git, "-C", str(repo), "commit", "-m", "Source baseline"], check=True, capture_output=True)
+    subprocess.run([real_git, "-C", str(repo), "commit", "-m", "Release 1.2.2" if detached_previous else "Source baseline"], check=True, capture_output=True)
     subprocess.run([real_git, "-C", str(repo), "tag", "1.2.2"], check=True)
+    if detached_previous:
+        package = subprocess.check_output([real_git, "-C", str(repo), "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Package release 1.2.2"], text=True).strip()
+        subprocess.run([real_git, "-C", str(repo), "tag", "-f", "1.2.2", package], check=True, capture_output=True)
     (repo / "core/Cargo.toml").write_text(f'[package]\nname = "dblayer"\nversion = "{version}"\n')
     (repo / "CHANGELOG.md").write_text(f"## {version} - 2026-10-29\n\n### Fixed\n- Release selftest.\n\n## Unreleased\n")
     if touch:
@@ -119,23 +122,20 @@ import os, subprocess, sys
 a=sys.argv[1:]
 with open(os.environ["TEST_EVENTS"],"a") as f: f.write("git " + " ".join(a) + "\\n")
 command = a[2:] if a and a[0] == "-C" else a
-if command and command[0] == "commit" and os.environ.get("STUB_COMMIT_EXTRA"):
-    open(os.environ["STUB_COMMIT_EXTRA"], "w").write("extra\\n")
-    subprocess.run([os.environ["REAL_GIT"], "add", "-f", os.environ["STUB_COMMIT_EXTRA"]], check=True)
+if command and command[0] == "write-tree" and os.environ.get("STUB_COMMIT_EXTRA"):
+    blob = subprocess.check_output([os.environ["REAL_GIT"], "hash-object", "-w", "--stdin"], input=b"extra\\n").decode().strip()
+    subprocess.run([os.environ["REAL_GIT"], "update-index", "--add", "--cacheinfo", f"100644,{blob},{os.environ['STUB_COMMIT_EXTRA']}"], check=True)
 if command and command[0] in ("clone", "fetch", "pull", "push"): sys.exit(0)
-if command[:1] == ["tag"] and len(command) == 3 and os.environ.get("STUB_AFTER_TAG"):
+if command[:1] == ["tag"] and len(command) == 3 and not command[1].startswith("-") and os.environ.get("STUB_AFTER_TAG"):
     rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
     subprocess.run([os.environ["REAL_GIT"], *(a[:2] if a[0] == "-C" else []), "commit", "-q", "--allow-empty", "-m", "Foreign commit after the tag"], check=True)
     sys.exit(rc)
 if command and command[0] == os.environ.get("STUB_GIT_FAIL"): sys.exit(3)
 if a[:2] == ["ls-remote", "--heads"]: sys.exit(0)
 if a[:2] == ["remote", "get-url"]: print("https://example.invalid/dblayer.git"); sys.exit(0)
+if command and command[0] == "commit-tree" and os.environ.get("STUB_REPARENT"):
+    a[a.index("-p") + 1] = subprocess.check_output([os.environ["REAL_GIT"], "rev-list", "--max-parents=0", "HEAD"], text=True).strip()
 rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
-if rc == 0 and command and command[0] == "commit" and os.environ.get("STUB_REPARENT"):
-    g = [os.environ["REAL_GIT"]] + (a[:2] if a[0] == "-C" else [])
-    out = lambda *x: subprocess.check_output([*g, *x], text=True).strip()
-    new = out("commit-tree", "HEAD^{tree}", "-p", out("rev-list", "--max-parents=0", "HEAD"), "-m", out("log", "-1", "--format=%s"))
-    subprocess.run([*g, "update-ref", "HEAD", new], check=True)
 sys.exit(rc)
 ''',
         "cargo": '''#!/usr/bin/env python3
@@ -213,55 +213,53 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     sums_file = stage / "SHA256SUMS"
     sums_file.write_text(subprocess.check_output(["shasum", "-a", "256", *attachments], cwd=stage, text=True))
     (repo / "swift/Sources/DBlayer/dblayer.swift").write_bytes(b"dirty binding")
+    source_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    source_manifest = (repo / "Package.swift").read_bytes()
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
     staged_binding = (stage / "dblayer.swift").read_bytes()
-    for revision in ("HEAD^", version):
-        assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{revision}:swift/Sources/DBlayer/dblayer.swift"]) == staged_binding
-    assert (repo / "swift/Sources/DBlayer/dblayer.swift").read_bytes() == staged_binding
+    assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:swift/Sources/DBlayer/dblayer.swift"]) == staged_binding
+    assert (repo / "swift/Sources/DBlayer/dblayer.swift").read_bytes() == b"generated-bindings"
+    assert (repo / "Package.swift").read_bytes() == source_manifest
     assert not subprocess.check_output([real_git, "-C", str(repo), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
     assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
-    assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == "Stop tracking the generated Swift binding"
-    assert subprocess.check_output([real_git, "-C", str(repo), "diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD"], text=True).strip() == "D\tswift/Sources/DBlayer/dblayer.swift"
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == source_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == f"Release {version}"
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", f"{version}^"], text=True).strip() == source_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", version], text=True).splitlines() == ["Package.swift", "swift/Sources/DBlayer/dblayer.swift"]
     sums = [line.split("  ", 1)[1] for line in (stage / "SHA256SUMS").read_text().splitlines()]
     assert sorted(sums) == sorted(attachments), sums
     assert (stage / "NOTES.md").read_text() == "\n### Fixed\n- Release selftest.\n\n"
-    assert "https://github.com/noma4i/dblayer/releases/download/1.2.3/DBlayerFFI.xcframework.zip" in (repo / "Package.swift").read_text()
-    first_package = (repo / "Package.swift").read_bytes()
+    first_package = subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:Package.swift"])
+    assert b"https://github.com/noma4i/dblayer/releases/download/1.2.3/DBlayerFFI.xcframework.zip" in first_package
+    package_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip()
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
-    assert (repo / "Package.swift").read_bytes() == first_package
+    assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:Package.swift"]) == first_package
     subjects = subprocess.check_output([real_git, "-C", str(repo), "log", "--format=%s", "1.2.2..HEAD"], text=True)
-    assert subjects.splitlines().count(f"Package release {version}") == 1
-    assert subjects.splitlines().count("Stop tracking the generated Swift binding") == 1
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD^"], text=True).strip()
+    assert subjects.splitlines().count(f"Package release {version}") == 0
+    assert subjects.splitlines().count("Stop tracking the generated Swift binding") == 0
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
     assert subprocess.check_output([real_git, "-C", str(repo), "cat-file", "-t", version], text=True).strip() == "commit"
     events = (base / "events").read_text().splitlines()
     head_now = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-    package_now = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD^"], text=True).strip()
+    package_now = package_head
     assert f"git push origin {head_now}:refs/heads/master" in events and f"git push origin {package_now}:refs/tags/{version}" in events, events
-    assert events.index(f"git commit -q -m Stop tracking the generated Swift binding") < events.index(f"git push origin {head_now}:refs/heads/master"), events
     assert any(line.startswith("git -C ") and line.endswith("push -u origin maven") for line in events), events
     assert any(line.startswith("gh release create 1.2.3 ") and all(name in line for name in attachments) for line in events), events
     assert any(line.startswith("gh release download 1.2.3 ") for line in events), events
     print("ok publish uses four checksummed files and repeat reuses the tagged package commit")
     print("ok release tag is a lightweight tag")
-    cleanup_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-    package_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD^"], text=True).strip()
     subprocess.run([real_git, "-C", str(repo), "tag", "-d", version], check=True, capture_output=True)
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
     assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == cleanup_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == source_head
     assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
-    print("ok a rerun after the tag was deleted with the binding already untracked tags the same package commit")
-    subprocess.run([real_git, "-C", str(repo), "reset", "-q", "--hard", "HEAD^"], check=True)
-    subprocess.run([real_git, "-C", str(repo), "tag", "-d", version], check=True, capture_output=True)
-    assert subprocess.check_output([real_git, "-C", str(repo), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
-    run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD^"], text=True).strip() == package_head
-    assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == "Stop tracking the generated Swift binding"
-    assert not subprocess.check_output([real_git, "-C", str(repo), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
-    assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
-    print("ok a rerun with the package commit on HEAD untracks the binding in a new commit")
+    print("ok a rerun after the tag was deleted reuses the package commit and leaves master unchanged")
+
+    next_release, next_env = fixture(base / "detached-previous", detached_previous=True)
+    run(["bash", "scripts/release.sh", version, "--publish"], next_release, next_env)
+    assert subprocess.check_output([real_git, "-C", str(next_release), "log", "-1", "--format=%s"], text=True).strip() == f"Release {version}"
+    assert subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", f"{version}^"], text=True).strip() == subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", "HEAD"], text=True).strip()
+    print("ok the next release finds a previous package tag outside master")
 
     wrong, wrong_env = fixture(base / "wrong")
     subprocess.run([real_git, "-C", str(wrong), "commit", "--amend", "-m", "Release 9.9.9"], check=True, capture_output=True)
@@ -414,42 +412,19 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert tagged != head, "the foreign commit did not land after the tag"
     late_events = (base / "foreign-after-tag/events").read_text().splitlines()
     assert not any(line.startswith("git push ") or line.startswith("gh ") for line in late_events), late_events
-    assert not subprocess.check_output([real_git, "-C", str(late), "log", "--format=%s", f"{tagged}..HEAD"], text=True).count("Stop tracking"), "the binding was untracked after a foreign commit"
-    print("ok a foreign commit landing after the tag stops the release before the untrack and the push")
-    package_cases = (
-        ("extra", ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")),
-        ("only-binding", ("swift/Sources/DBlayer/dblayer.swift",)),
-    )
-    def package_case(case):
-        (case, files), (mode_args, label) = case
-        name = f"package-{case}-{label.replace(' ', '-')}"
-        bad, bad_env = fixture(base / name)
-        for file in files:
-            (bad / file).parent.mkdir(parents=True, exist_ok=True)
-            (bad / file).write_text("changed\n")
-        subprocess.run([real_git, "-C", str(bad), "add", "-f", *files], check=True)
-        subprocess.run([real_git, "-C", str(bad), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
-        run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change")
-        bad_events = (base / name / "events").read_text().splitlines() if (base / name / "events").exists() else []
-        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in bad_events), bad_events
-        assert subprocess.check_output([real_git, "-C", str(bad), "tag", "--list", version], text=True).strip() == ""
-        assert not (bad / "target/release-1.2.3").exists()
-        assert not (bad / "target/release.lock").exists()
-        return f"ok a Package release commit with {case} files is refused in the {label}"
-
-    for line in pool.map(package_case, [(case, mode) for case in package_cases for mode in (([], "dry run"), (["--publish"], "publish"))]):
-        print(line)
-    unchanged, unchanged_env = fixture(base / "package-unchanged-binding")
-    (unchanged / "Package.swift").write_text("changed\n")
-    subprocess.run([real_git, "-C", str(unchanged), "add", "Package.swift"], check=True)
-    subprocess.run([real_git, "-C", str(unchanged), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
-    run(["bash", "scripts/release.sh", version], unchanged, unchanged_env, contains="Package.swift to be written:")
-    print("ok a Package release commit with only Package.swift (binding unchanged) is accepted")
+    assert not subprocess.check_output([real_git, "-C", str(late), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
+    print("ok a foreign commit landing after the tag stops the release before the push")
     own, own_env = fixture(base / "own-extra")
+    own_head = subprocess.check_output([real_git, "-C", str(own), "rev-parse", "HEAD"], text=True).strip()
+    own_manifest = (own / "Package.swift").read_bytes()
     run(["bash", "scripts/release.sh", version, "--publish"], own, dict(own_env, STUB_COMMIT_EXTRA="core/extra.rs"), expected=1, contains="must change")
+    assert subprocess.check_output([real_git, "-C", str(own), "rev-parse", "HEAD"], text=True).strip() == own_head
+    assert not subprocess.check_output([real_git, "-C", str(own), "diff", "--cached", "--name-only"], text=True).strip()
+    assert (own / "Package.swift").read_bytes() == own_manifest
+    assert not subprocess.check_output([real_git, "-C", str(own), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
     assert subprocess.check_output([real_git, "-C", str(own), "tag", "--list", version], text=True).strip() == ""
     assert not any(line.startswith("gh ") or line.startswith("git push ") for line in (base / "own-extra/events").read_text().splitlines())
-    print("ok an extra staged file in the own package commit refuses the tag")
+    print("ok an extra package file refuses the tag without changing master or its index")
     wrong, wrong_env = fixture(base / "own-wrong-parent")
     run(["bash", "scripts/release.sh", version, "--publish"], wrong, dict(wrong_env, STUB_REPARENT="1"), expected=1, contains="is not directly on source commit")
     assert subprocess.check_output([real_git, "-C", str(wrong), "tag", "--list", version], text=True).strip() == ""
