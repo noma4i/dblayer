@@ -205,7 +205,10 @@ impl Database {
         let single = self.single_of(&model, &action, &file)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
-        let effects = self.offload(move || Ok(db.plan_act(&name, &verb, &target, Map::new(), args)?.effects)).await?;
+        let effects = self.offload(move || Ok(match db.find(&name, &target)? {
+            Some(_) => db.plan_act(&name, &verb, &target, Map::new(), args)?.effects,
+            None => IntentEffects::default(),
+        })).await?;
         let item = self.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.life.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };

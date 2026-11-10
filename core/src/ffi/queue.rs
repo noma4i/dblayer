@@ -1,6 +1,6 @@
 //! The queue of operations as the platform reads it: one row of the table `op` per operation that has not ended.
 
-use super::wire::{failure, WireFailure};
+use super::wire::{failure, WireFailure, WireUpload, WireUploadStatus};
 use crate::owners::write::operation_queue::{QueueStatus, QueuedOperation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -25,6 +25,18 @@ pub struct OperationInfo {
     pub blocked_by: Option<i64>,
     /// The value of `uploads[action]` of an active transfer, the same value the row shows.
     pub upload: Option<super::wire::WireUpload>,
+}
+
+impl OperationInfo {
+    /// The queue entry of a transfer that has no operation row yet: it shows the value of the transfer.
+    pub(crate) fn of_transfer(transfer: crate::store::ActiveTransfer, shown: WireUpload) -> Self {
+        let status = match shown.status {
+            WireUploadStatus::Failed => OperationQueueStatus::Failed,
+            WireUploadStatus::Waiting | WireUploadStatus::Preparing | WireUploadStatus::Queued => OperationQueueStatus::Pending,
+            _ => OperationQueueStatus::Sending,
+        };
+        Self { seq: transfer.transfer_id, model: transfer.model, row_id: transfer.row_id, action: transfer.action, status, attempts: shown.attempts, error: shown.error.clone(), created_at: 0, blocked_by: None, upload: Some(shown) }
+    }
 }
 
 impl From<QueuedOperation> for OperationInfo {

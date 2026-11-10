@@ -29,14 +29,22 @@ impl DbSnapshots {
 impl Snapshots for DbSnapshots {
     fn read(&self, view: &View, revision: i64, after: i64, mode: ReadMode) -> Result<(i64, ReadData), String> {
         if view.kind == Kind::Operations {
-            let (seen, operations) = self.db.read_operations(revision).map_err(|error| error.to_string())?;
-            return Ok((seen, ReadData::Operations(crate::owners::write::operation_queue::queue_of(&operations)?.into_iter().map(Into::into).collect())));
+            let (seen, operations, transfers) = self.db.read_queue(revision).map_err(|error| error.to_string())?;
+            let mut items: Vec<crate::ffi::OperationInfo> = crate::owners::write::operation_queue::queue_of(&operations)?.into_iter().map(Into::into).collect();
+            for transfer in transfers {
+                let shown = crate::ffi::wire::upload(&transfer.info);
+                match items.iter_mut().find(|item| item.model == transfer.model && item.row_id == transfer.row_id && item.action == transfer.action) {
+                    Some(item) => item.upload = Some(shown),
+                    None => items.push(crate::ffi::OperationInfo::of_transfer(transfer, shown)),
+                }
+            }
+            items.sort_by_key(|item| item.seq);
+            return Ok((seen, ReadData::Operations(items)));
         }
         if view.kind == Kind::Blob {
             let (model, id, action) = crate::store::split_transfer_key(&view.subject).ok_or_else(|| format!("{} is no transfer key", view.subject))?;
             let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
-            let (seen, row) = self.db.read_row(model, &id, revision).map_err(|error| error.to_string())?;
-            let upload = row.and_then(|row| row.sync.uploads.get(action).cloned());
+            let (seen, upload) = self.db.read_transfer(model, &id, action, revision).map_err(|error| error.to_string())?;
             let (wait_reason, local_url, processing) = upload.map_or((None, None, None), |upload| { let wire = crate::ffi::wire::upload(&upload); (upload.wait_reason, wire.local_url, wire.processing) });
             return Ok((seen, ReadData::Upload { wait_reason, local_url, processing }));
         }

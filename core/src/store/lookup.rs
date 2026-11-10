@@ -17,6 +17,15 @@ use super::{Reader, Store, StoreError};
 
 pub(crate) type RowKey = (String, i64);
 
+/// A transfer that has not ended, with the value `uploads[action]` shows.
+pub(crate) struct ActiveTransfer {
+    pub model: String,
+    pub row_id: String,
+    pub action: String,
+    pub transfer_id: i64,
+    pub info: crate::owners::write::upload::UploadInfo,
+}
+
 /// A query with the relation of its window: `Some((name, params))` when the relation is remote and watched.
 pub(crate) type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
@@ -168,8 +177,27 @@ impl Store {
         Ok(pairs)
     }
 
-    /// The row `id` and the revision of the snapshot that shows it, in one read not older than `floor`.
-    pub(crate) fn read_row(&self, model: &str, id: &RowId, floor: i64) -> Result<(i64, Option<Row>), CoreError> {
+    /// The open operations and the active transfers in one snapshot not older than `floor`. A transfer is addressed by its key: its row may not exist.
+    pub(crate) fn read_queue(&self, floor: i64) -> Result<(i64, Vec<crate::owners::write::operation_status::Operation>, Vec<ActiveTransfer>), CoreError> {
+        self.read_models(&[], |reader| {
+            let seen = reader.revision_seq()?;
+            if seen < floor {
+                return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
+            }
+            let connection = reader.connection();
+            let mut statement = connection.prepare_cached("SELECT model, row_id, action, transfer_id FROM sync_upload WHERE transfer_id IS NOT NULL ORDER BY seq")?;
+            let keys = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut transfers = Vec::new();
+            for (model, row_id, action, transfer_id) in keys {
+                let info = read_sync(connection, &model, std::slice::from_ref(&row_id))?.remove(&row_id).and_then(|mut sync| sync.uploads.remove(&action));
+                if let Some(info) = info { transfers.push(ActiveTransfer { model, row_id, action, transfer_id, info }); }
+            }
+            Ok((seen, crate::store::operation::open_operations(connection)?, transfers))
+        })
+    }
+
+    /// The value of `uploads[action]` of a transfer by its key, whether or not the row exists.
+    pub(crate) fn read_transfer(&self, model: &str, id: &RowId, action: &str, floor: i64) -> Result<(i64, Option<crate::owners::write::upload::UploadInfo>), CoreError> {
         self.spec(model)?;
         let ids = [id.to_string()];
         self.read_models(&[model], |reader| {
@@ -177,8 +205,7 @@ impl Store {
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
-            let mut loaded = self.load(reader, model, &ids)?;
-            Ok((seen, loaded.remove(id.as_str())))
+            Ok((seen, read_sync(reader.connection(), model, &ids)?.remove(id.as_str()).and_then(|mut sync| sync.uploads.remove(action))))
         })
     }
 
