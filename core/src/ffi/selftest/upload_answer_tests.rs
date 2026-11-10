@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, plain, request, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
-use crate::ffi::{DbError, WireOperationOutcome};
+use crate::ffi::DbError;
 
 const ROW: &str = r#""__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""#;
 
@@ -46,7 +46,7 @@ async fn an_upload_answers_with_the_server_text_and_null_when_the_server_left_it
         stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}{field}}}}}}}"#));
         let uploaded = bound(database.upload(epoch, "Moment".into(), "m77".into(), "upload_clip".into(), request(&source))).await.unwrap();
         assert_eq!(uploaded.optimistic_value.as_ref().map(|row| row.id.as_str()), Some("m77"));
-        let WireOperationOutcome::Confirmed { answer_json, .. } = bound(database.outcome(uploaded)).await.unwrap() else { panic!("the upload was not confirmed") };
+        let answer_json = bound(database.confirmed(uploaded, false)).await.unwrap().answer_json;
         let answer: Value = serde_json::from_str(&answer_json.expect("the upload carries its answer")).unwrap();
         assert_eq!(answer["successMessage"].as_str(), expected);
     }
@@ -125,8 +125,8 @@ async fn a_confirmed_upload_without_a_landed_row_answers_no_value_on_both_reads(
     final_mutation.release();
 
     for read in ["first", "second"] {
-        let outcome = bound(database.outcome(uploaded.clone())).await.unwrap();
-        assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: None, .. }), "{read} read: {outcome:?}");
+        let outcome = bound(database.confirmed(uploaded.clone(), false)).await.unwrap();
+        assert!(outcome.value.is_none(), "{read} read: {outcome:?}");
     }
     database.close_now();
 }

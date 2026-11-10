@@ -11,7 +11,7 @@ use crate::ffi::tests::encrypted_tests::ThroughServer;
 use crate::ffi::tests::sealed_errors_tests::moment_spec;
 use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest, WireOperationOutcome};
+use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response, FakeServer};
 use crate::transport::NetworkPurpose;
@@ -120,8 +120,7 @@ async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
     let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    let outcome = bound(database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
+    bound(database.confirmed(receipt, false)).await.unwrap();
     assert_eq!(*puts.0.lock().unwrap(), vec![(0, 3)]);
     let made = executed(&rig, "MakeMoment");
     assert_eq!(made.len(), 1);
@@ -139,8 +138,7 @@ async fn a_large_file_uploads_in_parts_and_completes_before_its_mutation() {
     let source = directory.path().join("long.mp4");
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
     let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    let outcome = bound(database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
+    bound(database.confirmed(receipt, false)).await.unwrap();
     assert_eq!(*puts.0.lock().unwrap(), vec![(0, 5 * MEBIBYTE), (5 * MEBIBYTE, 5 * MEBIBYTE), (10 * MEBIBYTE, MEBIBYTE)]);
     let completed = executed(&rig, "CompleteMultipart");
     assert_eq!(completed.len(), 1);
@@ -181,8 +179,7 @@ async fn store_resolve_peek_row_temp_id() {
     let receipt = bound(database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
     let shown = receipt.optimistic_value.clone().expect("the receipt carries the row");
     assert_eq!(shown.uploads.iter().map(|entry| entry.action.as_str()).collect::<Vec<_>>(), ["upload"], "the row shows the transfer of its action at once");
-    let outcome = bound(database.outcome(receipt)).await.unwrap();
-    let WireOperationOutcome::Confirmed { value, .. } = outcome else { panic!("{outcome:?}") };
+    let value = bound(database.confirmed(receipt, false)).await.unwrap().value;
     assert_eq!(value.map(|row| row.id), Some("42".to_string()));
     assert_eq!(database.peek_row(epoch, "Moment".into(), shown.id).unwrap().map(|row| row.id), Some("42".to_string()));
     database.close_now();
