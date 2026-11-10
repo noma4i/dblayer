@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 6.25.1 - 2026-11-11
 
 ### Fixed
 
 - Send the owed multipart abort after a session reset, logout or revoke.
 - Keep rows of an earlier page when a later page shares their order value.
+- Answer keepalive pings in the encrypted cable peer of the testing module.
 
 ## 6.25.0 - 2026-11-11
 
