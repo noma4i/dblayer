@@ -212,6 +212,7 @@ impl StaleKeys {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StaleCause {
     Change,
+    Lost,
     Gap { online_seq: u64 },
 }
 
