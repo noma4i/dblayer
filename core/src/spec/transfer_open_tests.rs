@@ -598,3 +598,41 @@ fn xfer_open_saved_outcome_of_a_removed_transfer_is_readable() {
     let (reply, out) = twin.outcome(7, 1);
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Discarded, _)]), "the receipt of a cycle reads its outcome after the removal and the restart (D-237): {:?}", out.replies(reply));
 }
+
+#[test]
+fn xfer_expired_failed_reopen_in_every_order() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Online, Restored, RestoreReady, Register }
+    use Event::*;
+    let orders: Vec<_> = permutations(&[Online, Restored, RestoreReady, Register]).into_iter().filter(|order| order.iter().position(|event| *event == Restored) < order.iter().position(|event| *event == RestoreReady)).collect();
+    assert_eq!(orders.len(), 12);
+    for order in orders {
+        let mut twin = Twin::bare(1);
+        twin.post(TransferInput::Clock(Time(8 * DAY)));
+        let mut row = partly(1, KEY);
+        row.failed = Some("refused".into());
+        row.failed_at = Some(Time(1));
+        let mut aborts = Vec::new();
+        let mut removed = 0;
+        for event in order.iter().copied() {
+            let out = match event {
+                Online => twin.online(true),
+                Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
+                RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+            };
+            aborts.extend(out.orphan_aborts());
+            if out.timers > 0 {
+                let expiry = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: crate::owners::write::transfer::TransferTick::Expire });
+                removed += expiry.removed().len();
+                aborts.extend(expiry.orphan_aborts());
+                while twin.has_pending() {
+                    let committed = twin.commit();
+                    aborts.extend(committed.orphan_aborts());
+                }
+            }
+        }
+        assert_eq!(removed, 1, "{order:?}: the expired transfer is removed once");
+        assert_eq!(aborts, ["u1".to_string()], "{order:?}: the saved multipart is aborted once");
+    }
+}
