@@ -119,7 +119,7 @@ fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortFie
     let mut removed = HashSet::new();
     for row in rows {
         let key = crate::store::query::place_of(&row.cells, &ranked.descending);
-        if bounds.is_some_and(|(low, high)| &key >= low && &key <= high) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
+        if bounds.is_some_and(|(low, high)| &key > low && &key < high) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
             removed.insert(row.id);
         }
     }
