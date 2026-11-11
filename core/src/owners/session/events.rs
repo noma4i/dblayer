@@ -544,7 +544,7 @@ impl SessionState {
                     }
                 }
             }
-            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, fx),
+            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, SessionInput::Tick) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
                 if let Some(error) = self.detach_error.take() {
                     self.resume_finish_retained(&pending, Err(error), true, fx);
@@ -715,7 +715,7 @@ impl SessionState {
                     self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingSecret };
                 }
             }
-            SessionInput::Tick(_) if phase == AttemptPhase::WaitingRetry && self.is_online() => self.request_http(pending, attempts, fx),
+            SessionInput::Tick if phase == AttemptPhase::WaitingRetry && self.is_online() => self.request_http(pending, attempts, fx),
             SessionInput::Foreground { .. } if phase == AttemptPhase::WaitingSecret => {
                 if self.is_online() {
                     self.request_http(pending, attempts, fx);

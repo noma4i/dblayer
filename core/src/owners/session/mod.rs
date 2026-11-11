@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
 pub use crate::store::session_state::StoredAnswer;
-use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner, Time};
+use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner};
 
 pub type Digest = u64;
 pub type AuthorId = u64;
@@ -276,7 +276,7 @@ pub enum SessionInput {
     HttpFailed { attempt_id: AttemptId },
     Committed(Committed),
     Rejected(Rejected),
-    Tick(Time),
+    Tick,
     Online(Online),
     /// The first online value that Network addresses to Session for `epoch`; one of an ended epoch is dropped.
     Snapshot { epoch: Epoch, online: bool },
@@ -412,7 +412,7 @@ impl StateOwner for SessionCalls {
         let mut fx = Vec::new();
         state.run(input, &mut fx);
         fx.into_iter().map(|effect| match effect {
-            SessionEffect::ScheduleTick { attempts } => Effect::Backoff { id: RETRY_TICK, policy: crate::runtime::RetryPolicy::Http, attempt: u32::try_from(attempts.max(1)).unwrap_or(u32::MAX), input: SessionInput::Tick(Time(0)) },
+            SessionEffect::ScheduleTick { attempts } => Effect::Backoff { id: RETRY_TICK, policy: crate::runtime::RetryPolicy::Http, attempt: u32::try_from(attempts.max(1)).unwrap_or(u32::MAX), input: SessionInput::Tick },
             other => Effect::Run(other),
         }).collect()
     }

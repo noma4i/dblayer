@@ -601,6 +601,15 @@ for path in sorted(source.rglob("*.rs")):
         if re.search(r"wiring\.now\b", line):
             findings.append(f"Z49 the time of an owner comes from the runtime step, the wiring holds no clock: {path.relative_to(root)}:{number}")
 
+session_inputs = source / "owners" / "session" / "mod.rs"
+if session_inputs.exists():
+    text = session_inputs.read_text()
+    body = enum_body(text, "SessionInput")
+    start = text.find(body) if body else -1
+    for found in re.finditer(r"\bTime\b", body):
+        number = text.count("\n", 0, start + found.start()) + 1
+        findings.append(f"Z50 an input of Session carries no time: the owner reads the time of its step: {session_inputs.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
