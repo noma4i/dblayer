@@ -92,6 +92,10 @@ pub(super) enum Input {
     StrayBatch,
     StrayRepeat,
     Tick,
+    /// `Tick(keepalive{connection_id})` of the active connection.
+    Keepalive,
+    /// `Tick(pong_deadline{connection_id})` of the active connection.
+    PongDeadline,
     Online(bool),
     EpochEnded,
     Closing,
@@ -105,6 +109,8 @@ pub(super) enum Effect {
     SealSubscribe,
     SealUnsubscribe,
     SealPong,
+    SealPing,
+    SchedulePong,
     Close,
     Cancel,
     ScheduleDrain,
@@ -195,7 +201,15 @@ pub(super) struct Feed {
     drained: bool,
     then: Then,
     closing_asked: bool,
+    /// The time of the step that is running (R5): the one time every term is compared with.
+    pub(super) now: u64,
+    last_sent: u64,
+    keepalive_at: Option<u64>,
+    pong_due: Option<u64>,
 }
+
+const KEEPALIVE_MS: u64 = 25_000;
+const PONG_DEADLINE_MS: u64 = 10_000;
 
 impl Feed {
     pub(super) fn new() -> Self {
@@ -224,6 +238,10 @@ impl Feed {
             drained: false,
             then: Then::End,
             closing_asked: false,
+            now: 0,
+            last_sent: 0,
+            keepalive_at: None,
+            pong_due: None,
         }
     }
 
@@ -516,6 +534,45 @@ impl Feed {
             self.commit_gap(models.into_iter().collect(), &mut batch);
             effects.splice(first..first, batch);
         }
+        if effects.iter().any(|effect| matches!(effect, Effect::SealSubscribe | Effect::SealUnsubscribe | Effect::SealPong | Effect::SealPing)) {
+            self.last_sent = self.now;
+            self.keepalive_at = Some(self.now + KEEPALIVE_MS);
+        }
+        if effects.contains(&Effect::SealPing) {
+            self.pong_due = Some(self.now + PONG_DEADLINE_MS);
+        }
+        if self.mode != Mode::Live {
+            self.keepalive_at = None;
+            self.pong_due = None;
+        }
+        effects
+    }
+
+    /// The timers of the active connection that are due at the time of the step run as the steps of their own.
+    pub(super) fn fire_due(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if self.keepalive_at.is_some_and(|at| at <= self.now) {
+            effects.extend(self.step(Input::Keepalive));
+        }
+        if self.pong_due.is_some_and(|due| due <= self.now) {
+            effects.extend(self.step(Input::PongDeadline));
+        }
+        effects
+    }
+
+    fn keepalive(&mut self) -> Vec<Effect> {
+        if self.mode != Mode::Live || self.active != Some(Proto::Established) || self.pong_due.is_some() || self.now.saturating_sub(self.last_sent) < KEEPALIVE_MS {
+            return Vec::new();
+        }
+        vec![Effect::SealPing, Effect::SchedulePong]
+    }
+
+    fn pong_deadline(&mut self) -> Vec<Effect> {
+        if self.mode != Mode::Live || self.active != Some(Proto::Established) || !self.pong_due.is_some_and(|due| self.now >= due) {
+            return Vec::new();
+        }
+        let mut effects = vec![Effect::Cancel];
+        effects.extend(self.dropped(To::Active));
         effects
     }
 
@@ -650,6 +707,8 @@ impl Feed {
                     self.commit_pending(&mut effects);
                 }
             }
+            Input::Keepalive => return self.keepalive(),
+            Input::PongDeadline => return self.pong_deadline(),
             Input::Online(on) => return self.online_changed(on),
         }
         effects
