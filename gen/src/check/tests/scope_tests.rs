@@ -197,7 +197,7 @@ fn membership_checks_parameter_fields_types_and_conflicts() {
         ("membership list: { other: :lists }", Some("exactly one")),
         ("where status: :list\n    membership list: { contains: :lists }", Some("conflicts with where")),
     ] {
-        let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :list, insert_on: [:event, :response, :node] do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
+        let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  scope :list, insert_on: [:event, :response, :node] do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("chat.dbl");
         std::fs::write(&file, source).unwrap();

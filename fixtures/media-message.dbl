@@ -4,6 +4,11 @@ model MediaMessage do
   attribute :mediaKind, :enum, values: ["AUDIO", "IMAGE", "VIDEO"], as: MediaKindValue, null: true
   attribute :sequenceNumber, :int, null: true
   index :chatId, :sequenceNumber
+  scope :node, node: :one do
+    parameter :id, :id
+    query "MediaMessageNode"
+    variables id: :id
+  end
   scope :visual_media, insert_on: [:event, :response, :node] do
     parameter :chatId, :id
     where chatId: :chatId
