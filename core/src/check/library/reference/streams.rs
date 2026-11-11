@@ -31,10 +31,6 @@ impl LibraryRef {
 
     /// Section 4 `Entity(*)`: the window of the stream is the key `node` of its row, the one of the call `node(id)` (coordinator answer H21).
     pub(super) fn open_entity(&mut self, name: String, fetch: Fetch) -> Vec<Observation> {
-        if self.live && !self.identity && matches!(fetch, Fetch::IfMissing | Fetch::Force) {
-            self.mark("H24_entity_if_missing_or_force_without_identity");
-            return Vec::new();
-        }
         match fetch {
             Fetch::Never => self.open_stream(name, Reads::Row { key: None }, false, Load::None),
             Fetch::Stale => self.open_stream(name, Reads::Row { key: Some(Key::Node) }, false, Load::Stale),
