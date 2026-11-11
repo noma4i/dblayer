@@ -295,3 +295,45 @@ async fn write_declared_id_variable_never_carries_the_temp_id() {
     rig.database.close_now();
     assert_none_red(&failed);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn write_sends_a_value_that_only_starts_with_the_temp_prefix() {
+    let mut failed = Vec::new();
+    for value in ["temp-hello", "temp-"] {
+        let rig = message_rig().await;
+        rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "old", "at": 1})).await;
+        rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+        let epoch = rig.database.session_epoch();
+        let create = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":value,"at":2}).to_string(), "{}".into())).await.unwrap();
+        let created = bound(rig.database.confirmed(create, false)).await;
+        let edit = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "edit".into(), json!({"text": value}).to_string(), "{}".into())).await.unwrap();
+        let edited = bound(rig.database.confirmed(edit, false)).await;
+        let run = bound(rig.database.run(epoch, "UnregisterDevice".into(), json!({"id": value}).to_string())).await;
+        let session = bound(rig.database.session_call("otp".into(), json!({"x": value}).to_string())).await;
+        let window = bound(rig.database.load(epoch, "Message".into(), "thread".into(), json!({"chatId":"c1","note":value}).to_string())).await;
+        let paths = [
+            ("create", "SendMessage", created.map(|_| ())),
+            ("update", "MessageEdit", edited.map(|_| ())),
+            ("run", "UnregisterDevice", run.map(|_| ())),
+            ("session call", "otp", session.map(|_| ())),
+            ("window read", "Thread", window.map(|_| ())),
+        ];
+        for (path, operation, ended) in paths {
+            if matches!(ended, Err(DbError::Invalid { .. })) {
+                failed.push(format!("{path} {value}: refused as Invalid: {ended:?}"));
+            }
+            let sent = rig.world.log().iter().filter(|entry| entry.operation == operation).count();
+            if sent != 1 {
+                failed.push(format!("{path} {value}: {operation} went to the server {sent} times, expected 1"));
+            }
+        }
+        for (path, operation) in [("create", "SendMessage"), ("update", "MessageEdit"), ("run", "UnregisterDevice"), ("session call", "otp")] {
+            let carried = rig.world.log().iter().filter(|entry| entry.operation == operation).any(|entry| entry.body.contains(&format!("\"{value}\"")));
+            if !carried {
+                failed.push(format!("{path} {value}: the request does not carry the value as it is"));
+            }
+        }
+        rig.database.close_now();
+    }
+    assert_none_red(&failed);
+}
