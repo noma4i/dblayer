@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Send one request when a stream and a load share a fresh window.
+
 ## 6.26.1 - 2026-11-11
 
 ### Fixed
