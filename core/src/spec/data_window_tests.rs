@@ -461,7 +461,7 @@ mod by_source {
     pub(super) fn entering(source: &str, cached: bool) -> [bool; 5] {
         match source {
             "event" | "response" => [false, true, false, false, cached],
-            "create" => [false, false, true, false, false],
+            "create" => [false, false, true, false, true],
             _ => [false, false, false, false, cached],
         }
     }
