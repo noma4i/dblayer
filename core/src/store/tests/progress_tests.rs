@@ -33,7 +33,7 @@ fn steps_of_one_confirmed_part(open: u64) -> usize {
         put(&db, "moments", json!({"id": row, "userId": "u1", "text": "old"}));
         write(&db, BatchAuthor::Transfer, vec![StoreOp::Upload { row: upload(index, 0), kind: UploadKind::SyncUpload }]);
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: row.clone(), values: json!({"id": row, "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
-        write(&db, BatchAuthor::Outbox, vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 100 + index, model: "moments".into(), row_id: row, action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Transfer { transfer_id: index + 1 } }]);
+        write(&db, BatchAuthor::Outbox, vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 100 + index, model: "moments".into(), row_id: row, action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Transfer { transfer_id: index + 1 } }]);
     }
     let steps = Arc::new(AtomicUsize::new(0));
     let counter = steps.clone();

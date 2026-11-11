@@ -83,14 +83,14 @@ fn out_reserve_op_queue_failed() {
 fn out_submit_intent_written() {
     let mut twin = Twin::new();
     let op = crate::owners::write::outbox::NewOp { effects: Default::default(), ..model_op("r", Policy::Rollback, true) };
-    let (sends, replies) = raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op: op.clone() });
+    let (sends, replies) = raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op: op.clone(), created_at: 0 });
     assert_eq!(twin.state().stage_of(4), Some(Stage::Sending), "online and the row free: the request leaves");
     assert!(sends.iter().all(|(to, _)| *to != STORE_AT) && sends.iter().any(|(to, _)| *to == SESSION_AT), "no write of the intent, one Mutate: {sends:?}");
     assert!(replies.is_empty(), "the outcome goes to Transfer, nobody waits for a receipt");
 
     let mut offline = Twin::new();
     raw(&mut offline, OutboxInput::Online(Online(false)));
-    let (sends, _) = raw(&mut offline, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    let (sends, _) = raw(&mut offline, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     assert_eq!(offline.state().stage_of(4), Some(Stage::Queued));
     assert!(sends.is_empty(), "{sends:?}");
 }
@@ -110,7 +110,7 @@ fn out_sending_response_batch_items_batch() {
     let mut twin = Twin::new();
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
-    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let rows = vec![("Moment".into(), vec![RowValue { row_id: "A".into(), values: "{}".into() }, RowValue { row_id: "B".into(), values: "{}".into() }])];
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows, swaps: vec![("a".into(), "A".into()), ("b".into(), "B".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let batches: Vec<_> = sends.iter().filter(|(to, _)| *to == STORE_AT).collect();
@@ -127,7 +127,7 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     let mut twin = Twin::new();
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
-    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: vec!["b".into()], errors: None });
     let store: Vec<_> = sends.iter().filter(|(to, _)| *to == STORE_AT).collect();
     assert_eq!(store.len(), 1);
@@ -147,7 +147,7 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     let mut twin = Twin::new();
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Keep, false) };
-    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
     assert!(store.contains("MarkError") && store.contains("transfer_id: 11, cycle_id: 1") && store.contains("transfer_id: 12, cycle_id: 1"), "{store}");
@@ -174,7 +174,7 @@ fn out_group_rollback_outcome() {
     let mut twin = Twin::new();
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
-    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
     assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 1, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 1, outcome: Rejected"), "{store}");
@@ -190,7 +190,7 @@ fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
     let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into() }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
-    twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op });
+    twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op, created_at: 0 });
     op_id
 }
 
@@ -399,7 +399,7 @@ fn out_group_outcome_each_member() {
     let group = |twin: &mut Twin, policy: Policy| {
         let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into() }];
         let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
-        twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+        twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
         assert_eq!(twin.stage(4), Some(St::Sending), "the group is Sending");
     };
 
@@ -442,7 +442,7 @@ fn out_retry_outcome_target() {
     let committed = |revision: i64| Committed { batch: 2, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
     let failed = |twin: &mut Twin| {
         let op = crate::owners::write::outbox::NewOp { origin: OpSource::Transfer { transfer_id: 1, cycle_id: 1 }, ..model_op("r", Policy::Keep, false) };
-        raw(twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+        raw(twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
         raw(twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
         raw(twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         raw(twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 1, uploads: vec![upload(1, 2)] });
@@ -473,7 +473,7 @@ fn out_retry_transfer_not_failed() {
     use crate::owners::write::outbox::OpSource;
     let mut twin = Twin::new();
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::Transfer { transfer_id: 1, cycle_id: 1 }, ..model_op("r", Policy::Rollback, false) };
-    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     assert_eq!(twin.state().stage_of(4), Some(Stage::Sending), "the operation is not Failed");
     let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 5, uploads: vec![upload(1, 2)] });
     assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome") && text.contains("(1, 2)") && text.contains("Err(InFlight)")), "RetryTransfer outside Failed answers Err(InFlight) to the target: {sends:?}");

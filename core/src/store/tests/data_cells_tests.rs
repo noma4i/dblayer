@@ -67,7 +67,7 @@ fn moment_text(db: &Store) -> Value {
 fn out_prop_other_model_same_id() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "vibes".into(), row_id: "m1".into(), values: json!({"id": "m1", "momentId": "m1", "kind": "wow"}).to_string() }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 3, model: "vibes".into(), row_id: "m1".into(), action: "react".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 3, model: "vibes".into(), row_id: "m1".into(), action: "react".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     write(&db, BatchAuthor::Window, Vec::new(), vec![moment_page(&db, "new")]);
     assert_eq!(moment_text(&db), json!("new"), "an open operation of vibes does not protect the moment with the same id");
 }
@@ -77,7 +77,7 @@ fn out_prop_destroy_hides_row() {
     let effects = || crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }], ..Default::default() };
     for via_event in [false, true] {
         let db = open_moments();
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects: effects(), origin: crate::owners::store::IntentOrigin::Api }]);
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects: effects(), origin: crate::owners::store::IntentOrigin::Api }]);
         assert_eq!(moment_text(&db), Value::Null, "the destroy hides the row at once");
         if via_event {
             let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "userId": "u1", "text": "again"}}).to_string();
@@ -94,7 +94,7 @@ fn out_missing_destroy_server_removal() {
     for optimistic in [false, true] {
         let db = open_moments();
         let effects = crate::owners::store::IntentEffects { tombstones: if optimistic { vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }] } else { Vec::new() }, ..Default::default() };
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
         let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveServerRows { model: "moments".into(), ids: vec!["m1".into()] }, StoreOp::RemoveIntent { op_id: 7 }] };
         let result = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
         assert!(result.removed_rows.contains(&("moments".into(), "m1".into())), "optimistic={optimistic}: {:?}", result.removed_rows);
@@ -106,7 +106,7 @@ fn out_missing_destroy_server_removal() {
 fn out_server_removed_row() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     let open = |db: &Store| db.lock().connection.query_row("SELECT COUNT(*) FROM op", [], |row| row.get::<_, i64>(0)).unwrap();
     assert_eq!(open(&db), 1);
     let event = json!({"op": "delete", "id": "m1"}).to_string();
@@ -124,7 +124,7 @@ fn out_server_removed_row() {
 fn out_local_destroy_is_not_a_server_removal() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }], ..Default::default() };
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }] };
+    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }] };
     let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert!(written.removed_rows.is_empty(), "a local destroy of the app is not a server removal: its operation must not end Discarded");
 }
@@ -212,7 +212,7 @@ fn store_read_intents_distinguishes_local_and_server_tombstones() {
         ("vibes", json!({"id":"v1","momentId":"m1","kind":"like"})),
         ("moments", json!({"id":"m2","userId":"u1","text":"server"})),
     ] { crate::store::fixtures::put(&db, model, value); }
-    let intent = |op_id, model: &str, row_id: &str, action: &str, effects| StoreOp::Intent { attempts: 1, cycle_id: 1, op_id, model: model.into(), row_id: row_id.into(), action: action.into(), payload: "{}".into(), effects, origin: IntentOrigin::Api };
+    let intent = |op_id, model: &str, row_id: &str, action: &str, effects| StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: model.into(), row_id: row_id.into(), action: action.into(), payload: "{}".into(), effects, origin: IntentOrigin::Api };
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(1, "vibes", "v1", "update", IntentEffects { rows: vec![EffectRow { model: "vibes".into(), row_id: "v1".into(), values: json!({"kind":"love"}).to_string() }], ..Default::default() })]);
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(2, "moments", "m2", "update", IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m2".into(), values: json!({"text":"edited"}).to_string() }], ..Default::default() })]);
     let local = [EffectTombstone { model: "moments".into(), row_id: "m1".into() }, EffectTombstone { model: "vibes".into(), row_id: "v1".into() }];
