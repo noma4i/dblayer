@@ -151,6 +151,9 @@ impl LibraryRef {
         if cursor && !online {
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
+        if !cursor && (busy || !online) {
+            self.mark("load_more_without_cursor_while_busy_or_offline");
+        }
         let id = self.add_call(Form::LoadMore, &name, Some(Key::Feed));
         if !cursor {
             self.finish(id, Ending::More("no_more"));

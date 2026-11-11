@@ -13,7 +13,7 @@ pub const SERVER_RETRIES: u32 = 2;
 pub const BACKOFF_CEILINGS: [u64; 6] = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 
 /// How the stand shows the session request of `login`.
-pub const SESSION_OPERATION: &str = "session/social";
+pub const SESSION_OPERATION: &str = "session/api/auth/social";
 
 pub fn error(kind: &str) -> Observation {
     Observation::new("error", json!({ "kind": kind }))
