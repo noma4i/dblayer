@@ -120,7 +120,7 @@ val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 Each `EncryptedSessionOperation` declares `path` and `class`: `login` creates the credential and fails with `AlreadyAuthenticated` while one exists, `authenticated` signs with the credential, `sessionless` sends none.
 For `class: .sessionless`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
 It omits `credential` and `sequence`, stores no pending request, and does not acquire the mutation lock.
-Errors return to the caller. The application decides whether to repeat the call.
+A failed send is repeated by the library with the session retry policy, up to 40 sends and without a time limit, then the error returns to the caller.
 Bootstrap keeps its separate envelope and shares only the JWE encryption primitive.
 
 | Operation | Body                                                                                                                                   | Answer                                                                |
@@ -145,10 +145,10 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 
 | Event                                            | What the app sees                                                                                                | Credential and data                                                                                           |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `sessionReset()`                                 | Returns after the clearing. Old-session calls end with `NoSession`; streams and receipts end with `SessionEnded` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
+| `sessionReset()`                                 | Returns after the clearing. Old-session calls and receipts (`confirmed`) end with `NoSession`, or `Closed` after `close`; streams end with `SessionEnded` | The credential, the stored session state and the data of the account are cleared. The server is not contacted |
 | The `logout` session operation, answer `revoked` | `sessionCall("logout", ...)` returns the answer. The session ends as after `sessionReset()`                      | The stored state is cleared first, the credential second                                                      |
 | Any other call, answer `revoked`                 | The session ends and the call fails with `NoSession`                                                             | Cleared as above                                                                                              |
-| HTTP 401 or 403 on a call                        | The call fails with `Unauthorized`. The session stays                                                            | Kept                                                                                                          |
+| HTTP 401 on a call                               | The call fails with `Unauthorized`. HTTP 403 fails it with `Http(403)`. The session stays                         | Kept                                                                                                          |
 
 `Unauthorized` means the server refused this request. `Revoked` means the server ended the session. After a revoked answer the app signs in again with a new `AccountScope`.
 Call `sessionReset()` for every sign-out of the app. The library clears the data itself.
@@ -829,10 +829,10 @@ end
 - After a dropped connection, the library reconnects and rereads once the watched relations of the models that lost events, fresh or not. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
 - A WebSocket close frame ends the current subscription even without a GraphQL `complete` message.
 - Bursts of events are merged into one commit.
-- Each active declaration keeps its own debounce interval and row effects, regardless of which reader opened first.
+- The debounce of a model is the longest `debounce:` of its subscriptions: events of the model wait for it and land in one commit. Each declaration keeps its own row effects, regardless of which reader opened first.
 - Declarations without readers receive no row effects, including while another declaration keeps the shared connection open.
 - Shared commits merge partial fields of the same nested row before writing it.
-- A shared batch failure rereads every receiving model and reports a gap for each failed reread.
+- A batch that fails to land marks its events `lost` for `scope.events(Model)` readers and makes the observed reads of its models stale. It reports no `gap`.
 - Change notifications and declared ephemeral or reread effects on the same operation all run.
 - Model event readers receive before and after rows for ephemeral and reread effects too.
 
@@ -878,7 +878,7 @@ model User do
 end
 ```
 
-The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them when the session ends. The core listens only while a credential is committed. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `scope.events(Model)` reader and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. The `scope.events(Model)` stream of a scope ends when its session ends: its last item is `ended`. Subscriptions that a refusal stopped restart with the next committed credential.
+A model-level subscription opens when the first stream with live data of the model starts (a `scope.events(Model)` reader, a list, a count or an entity of the model) and closes in the same step when the last of them ends. A signed-in session alone opens no subscription. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. The `scope.events(Model)` stream of a scope ends when its session ends: its last item is `ended`. Subscriptions that a refusal stopped restart with the next committed credential.
 
 ## Automatic refetching
 
@@ -888,7 +888,7 @@ The core starts these subscriptions when a session credential is committed (a se
 | Successful mutation with `refetch`          | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit. A load that began before the commit does not settle the refetch, whatever it lands. The call that sent the mutation returns with its own answer and never waits for the refetch, and the next mutation is sent meanwhile. A session change drops a refetch the old session owed  |
 | `freshness` expired                         | checked on the next read or network return. Expiration alone sends no request                                                                                                                                                                                                                                                                                                                                                                                                      |
 | App returns to the foreground               | an online idle window with a reader reloads when its scope declares `refresh_on_foreground: true`, whether fresh or stale. An offline foreground does nothing                                                                                                                                                                                                                                                                                                                      |
-| Network returns after offline               | stale windows with readers reload in small groups, events that coincide share one run, close cancels the run. Stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. Waiting changes and uploads resume |
+| Network returns after offline               | stale windows with readers reload in small groups, events that coincide share one run, close cancels the run. Live subscriptions with readers reconnect. Waiting changes and uploads resume |
 | Network is back                             | the queue is sent and stale relations are refetched                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Subscription reconnects after lost events   | watched relations of the affected models are refetched once                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
