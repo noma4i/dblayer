@@ -22,6 +22,8 @@ pub(super) struct Symbolic {
     live: bool,
     dir: Option<std::path::PathBuf>,
     seen: std::collections::HashMap<String, Seen>,
+    /// The kinds of request the stand does not show and does not number (the slice L-read does not model the subscription).
+    hidden: Vec<&'static str>,
 }
 
 /// What a stream showed in symbolic mode: its rows (or count) and the last value it showed. A state-only value and a delta are shown as the whole value.
@@ -68,7 +70,7 @@ fn page_body(held: &Held, rows: u64, more: bool) -> Value {
 impl DatabaseSut {
     /// The stand in symbolic mode.
     pub fn symbolic() -> Self {
-        Self { symbolic: Some(Symbolic::default()), ..Self::default() }
+        Self { symbolic: Some(Symbolic { hidden: vec!["subscription"], ..Symbolic::default() }), ..Self::default() }
     }
 
     /// Removes the temporary directory of the database file.
@@ -90,12 +92,14 @@ impl DatabaseSut {
 
     /// The requests that arrived since the last call get the shown ids in one canonical order: the ones with a body by (operation, variables as text), the others after them in arrival order.
     /// The requests of one input are independent, the library does not order them (H16).
-    fn note_requests(&mut self) {
+    fn note_requests(&mut self, observed: &[Observation]) {
         let sent = self.requests();
         let mode = self.mode();
+        let hidden: Vec<String> = observed.iter().filter(|item| item.kind == "request" && mode.hidden.iter().any(|kind| item.value["kind"] == *kind)).filter_map(|item| item.value["id"].as_str().map(str::to_string)).collect();
         let mut fresh: Vec<(bool, String, String, String, Value)> = sent
             .iter()
             .skip(mode.known)
+            .filter(|(id, _)| !hidden.contains(id))
             .map(|(id, body)| {
                 let (operation, variables) = if body.is_null() { (String::new(), String::new()) } else { let (operation, variables) = operation_of(body); (operation, variables.to_string()) };
                 (body.is_null(), operation, variables, id.clone(), body.clone())
@@ -186,6 +190,7 @@ impl DatabaseSut {
         let (mut requests, mut out) = (Vec::new(), Vec::new());
         for mut item in observed {
             if item.kind != "request" { out.push(item); continue; }
+            if mode.hidden.iter().any(|kind| item.value["kind"] == *kind) { continue; }
             let mock = item.value["id"].as_str().unwrap_or("").to_string();
             if let Some(shown) = mode.shown.get(&mock) { item.value["id"] = shown.clone().into(); }
             requests.push(item);
@@ -213,7 +218,7 @@ impl DatabaseSut {
         while !self.mode().held.is_empty() {
             let held = self.mode().held.remove(0);
             let observed = self.play(&make(&held)).await;
-            self.note_requests();
+            self.note_requests(&observed);
             let observed = self.relabel(observed);
             if !is_error(&observed, "no_request") {
                 let mut shown = vec![Observation::new("replied", json!({ "id": held.id, "how": how }))];
@@ -238,7 +243,7 @@ impl DatabaseSut {
         let observed = match input.name.as_str() {
             "login" => {
                 let started = self.play(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
-                self.note_requests();
+                self.note_requests(&started);
                 let started = self.relabel(started);
                 let mut observed = self.with_sent(started);
                 if !is_error(&observed, "not_open") {
@@ -270,7 +275,7 @@ impl DatabaseSut {
         if input.name.starts_with("open_") {
             if let Some(name) = input.text("as") { self.mode().seen.remove(name); }
         }
-        self.note_requests();
+        self.note_requests(&observed);
         let observed = self.relabel(observed);
         for item in &observed {
             match item.kind.as_str() {
