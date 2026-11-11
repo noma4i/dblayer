@@ -134,14 +134,18 @@ fn out_restored_attempt_without_pending() {
 enum Step {
     In(OutboxInput),
     Drain,
+    Commit(u64),
 }
 
 /// P-OUT-61: one written attempt gives one `Mutate`, wherever the network goes off among the inputs of an operation.
 #[test]
 fn out_prop_attempt_counted_once_for_any_input_order() {
-    use super::outbox_cells_tests::{marking_retry, sending};
+    use super::outbox_cells_tests::{marking_retry, queued_behind_blocker, sending};
     enum Start {
         Restored,
+        BehindBlocker,
+        ReservedOffline,
+        StoredFresh,
         Persisting,
         Sending,
         MarkingRetry,
@@ -161,11 +165,30 @@ fn out_prop_attempt_counted_once_for_any_input_order() {
         ("d: a live repeat, offline between the attempt batch and its Committed", Start::Persisting, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 2)),
         ("e: a sent attempt fails offline, the repeat writes its own attempt", Start::Sending, Box::new(|id| vec![offline(), Step::In(OutboxInput::TransportError { op_id: id, temporary: true }), Step::Drain, online(), Step::Drain]), (1, 1, 2)),
         ("f: a new cycle of Retry, offline before its Committed", Start::MarkingRetry, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 1)),
+        ("g: the attempt batch committed while the row is busy, the row is freed", Start::BehindBlocker, Box::new(|id| vec![Step::In(OutboxInput::Response { op_id: id - 1, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }), Step::Commit(id - 1), Step::Drain]), (0, 1, 1)),
+        ("h: a Transfer operation with the written attempt, no network and then the network", Start::ReservedOffline, Box::new(|_| vec![online(), Step::Drain]), (0, 1, 1)),
+        ("i: open with a StoredOp of attempts 0 and no pair", Start::StoredFresh, Box::new(|_| vec![Step::In(OutboxInput::Restored { ops: vec![StoredOp { attempts: 0, ..stored(7, "r") }], pending_lost: false }), Step::In(OutboxInput::RestoreReady { epoch: EPOCH }), Step::Drain]), (1, 1, 1)),
     ];
     let mut wrong = Vec::new();
     for (case, start, steps, want) in cases {
         let (mut twin, id, mut open_batch) = match start {
             Start::Restored => {
+                let mut twin = Twin::bare();
+                declare(&mut twin);
+                (twin, 7, false)
+            }
+            Start::BehindBlocker => {
+                let mut twin = Twin::new();
+                let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
+                (twin, id, false)
+            }
+            Start::ReservedOffline => {
+                let mut twin = Twin::new();
+                twin.post(OutboxInput::Online(Online(false)));
+                twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op: model_op("r", Policy::Rollback, true), created_at: 0 });
+                (twin, 4, false)
+            }
+            Start::StoredFresh => {
                 let mut twin = Twin::bare();
                 declare(&mut twin);
                 (twin, 7, false)
@@ -195,6 +218,7 @@ fn out_prop_attempt_counted_once_for_any_input_order() {
         for step in steps(id) {
             match step {
                 Step::In(input) => count(&twin.post(input), &mut open_batch),
+                Step::Commit(op) => count(&twin.committed(op), &mut open_batch),
                 Step::Drain => {
                     for _ in 0..8 {
                         if !open_batch { break; }
