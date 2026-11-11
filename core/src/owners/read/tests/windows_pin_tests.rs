@@ -242,12 +242,14 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
             run.step(WindowsInput::Pinned { request_id, base_revision: 1 });
             run.answer();
         }),
-        ("d: Stale(Change), load, request out, the last reader leaves, a new interest and load, the answer", |run| {
+        ("d: Stale(Change), load, request out, every reader leaves, a new interest and load, the answer", |run| {
             run.change();
             run.load();
             run.step(WindowsInput::InterestMinus { key: run.key.clone(), id: 9 });
+            run.step(WindowsInput::InterestMinus { key: run.key.clone(), id: 1 });
+            run.request = None;
             run.interest();
-            run.step(WindowsInput::Load { key: run.key.clone(), id: run.reads, goal: Goal::First, force: true, store_revision: 0 });
+            run.load();
             run.answer();
         }),
     ];
