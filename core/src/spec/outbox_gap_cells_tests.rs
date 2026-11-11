@@ -18,7 +18,8 @@ async fn reset_run() {
     first.seed_row("seed").await;
     assert!(first.row("seed").await.is_some());
     server.hold(Kind::Mutate, true);
-    first.create("queued").await;
+    let queued = first.create("queued").await;
+    let temporary = queued.optimistic_value.clone().expect("the create shows its row").id;
     server.wait_held(Kind::Mutate, 1).await;
     within(first.db.close_database()).await.unwrap();
     drop(first);
@@ -29,19 +30,19 @@ async fn reset_run() {
 
     server.wait_seen("MakeMoment", 2).await;
     assert!(second.row("seed").await.is_none(), "the cached rows of the changed model are reset");
+    assert!(second.row(&temporary).await.is_some(), "the optimistic row of the held create is visible");
 }
 
 #[test]
 fn out_intent_rejected_closed() {
     let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
+    let submitted = twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: SUBMIT_REPLY });
+    let id = *twin.state().ops.keys().max().unwrap();
+    assert_eq!(kinds(&submitted), vec![CommitKind::Intent], "the intent batch is the only write of the submit");
     let effects = refuse(&mut twin, id, RejectReason::Closed);
     assert_eq!(answers(&effects, SUBMIT_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Closed))]);
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::Done), Vec::new()), "the operation is done and no batch follows");
-
-    let mut reopened = Twin::new();
-    reopened.post(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
-    assert!(reopened.state().ops.is_empty(), "no operation after the open");
+    assert!(twin.state().ops[&id].outcome.is_some(), "the operation ended with its cause");
 }
 
 #[test]
@@ -50,15 +51,18 @@ fn out_destroy_failed_keeps_row_hidden() {
     twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
     let id = *twin.state().ops.keys().max().unwrap();
     twin.committed(id);
-    for _ in 0..39 {
-        twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
+    for step in 1..=39 {
+        let failed = twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
+        assert_ne!(twin.stage(id), Some(St::Failed), "step {step} is before the limit");
+        assert!(!kinds(&failed).contains(&CommitKind::Rollback), "step {step}: the row stays hidden");
         tick(&mut twin, id);
-        twin.committed(id);
+        let sent = twin.committed(id);
+        assert!(!kinds(&sent).contains(&CommitKind::Rollback), "step {step}: the row stays hidden after the attempt");
     }
     let last = twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    if twin.stage(id) != Some(St::Failed) { twin.committed(id); }
+    let marked = twin.committed(id);
     assert_eq!(twin.stage(id), Some(St::Failed), "{last:?}");
-    assert!(!kinds(&last).contains(&CommitKind::Rollback), "a destroy without an answer does not bring the row back");
+    assert!(!kinds(&last).contains(&CommitKind::Rollback) && !kinds(&marked).contains(&CommitKind::Rollback), "a destroy without an answer does not bring the row back");
 
     let discarded = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 23 });
     assert!(kinds(&discarded).contains(&CommitKind::Rollback), "the discard brings the row back");
