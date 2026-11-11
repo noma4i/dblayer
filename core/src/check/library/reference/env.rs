@@ -164,13 +164,18 @@ impl LibraryRef {
             }
         }
         if !was_on && online {
-            if matches!(self.login_call, Some(Login { sent: false, .. })) {
+            let mut starting = usize::from(matches!(self.login_call, Some(Login { sent: false, .. })));
+            if starting == 1 {
                 self.send_session();
             }
             for key in self.running() {
                 if matches!(self.run_of(key), Some(Run { phase: Phase::Waiting, .. })) {
+                    starting += 1;
                     self.send(key);
                 }
+            }
+            if starting > 1 {
+                self.mark("H16_order_of_loads_that_start_together");
             }
         }
         vec![Observation::new("online", json!(online))]
