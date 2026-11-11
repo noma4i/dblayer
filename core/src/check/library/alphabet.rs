@@ -82,3 +82,21 @@ pub fn alphabet() -> Vec<Input> {
         refuse("server"),
     ]
 }
+
+/// The stream inputs of the family of programs with streams: a count, and a `pull` and a `cancel` of each stream of the feed and of the entity.
+pub fn streams() -> Vec<Input> {
+    vec![
+        on_feed(stream("open_count", "c1")),
+        pull("s3"),
+        pull("c1"),
+        pull("e1"),
+        cancel("s1"),
+        cancel("s3"),
+        cancel("c1"),
+    ]
+}
+
+/// True for an input that opens, reads or ends a stream.
+pub fn is_stream(input: &Input) -> bool {
+    input.name.starts_with("open_") || input.name == "pull" || input.name == "cancel" && input.text("target").is_some_and(|target| !target.starts_with('l'))
+}
