@@ -55,3 +55,21 @@ async fn store_error_kinds_are_classified_once() {
     }
     assert!(wrong.is_empty(), "{} wrong answers:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+/// P-DATA-97: the SQLite codes of the class of data are `Invalid`, the codes of a failure of the storage are `Storage`.
+#[test]
+fn store_sqlite_codes_are_classified() {
+    use rusqlite::ffi;
+    let invalid = |reason: &RejectReason| matches!(reason, RejectReason::Invalid);
+    let data = [("CONSTRAINT", ffi::SQLITE_CONSTRAINT), ("MISMATCH", ffi::SQLITE_MISMATCH), ("TOOBIG", ffi::SQLITE_TOOBIG), ("RANGE", ffi::SQLITE_RANGE)];
+    let storage = [("IOERR", ffi::SQLITE_IOERR), ("BUSY", ffi::SQLITE_BUSY), ("LOCKED", ffi::SQLITE_LOCKED), ("FULL", ffi::SQLITE_FULL), ("READONLY", ffi::SQLITE_READONLY), ("CORRUPT", ffi::SQLITE_CORRUPT), ("CANTOPEN", ffi::SQLITE_CANTOPEN), ("NOTADB", ffi::SQLITE_NOTADB)];
+    let mut wrong = Vec::new();
+    for (name, code, want_invalid) in data.iter().map(|(name, code)| (name, code, true)).chain(storage.iter().map(|(name, code)| (name, code, false))) {
+        let error = crate::store::StoreError::from(rusqlite::Error::SqliteFailure(ffi::Error::new(*code), None));
+        let got = error.reject_reason();
+        if invalid(&got) != want_invalid {
+            wrong.push(format!("{name}: the classifier answered {got:?}, the spec asks {}", if want_invalid { "Invalid" } else { "Storage" }));
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong codes:\n{}", wrong.len(), wrong.join("\n"));
+}
