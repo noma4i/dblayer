@@ -12,7 +12,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Security` | The server key or the response did not pass the check (`code`: `ServerKeyMismatch`, `ResponseAuthentication`, `TlsTrust`). |
 | `Config` | The open or the server config was refused (`code`: `InvalidFormat`, `UnsupportedVersion`, `InvalidRequest`). `open` also fails with `Config` on Android below API 34 when the manifest lacks `FOREGROUND_SERVICE_DATA_SYNC`. |
 | `Invalid` | An argument or a declaration is wrong: a `limit` of 0, a load call without a relation, a second reader of a stream, an unreadable upload file, `encrypted` without credentials. |
-| `NotFound` | The row, the operation or the model does not exist. `upload` on a missing row ends with `NotFound`. |
+| `NotFound` | The row, the operation or the model does not exist. `upload` on a missing row is accepted: the answer of its mutation writes the row. |
 | `AlreadyExists` | A `create` with an id that exists (`model`, `id`). |
 | `Offline` | The network is away and the call fails at once instead of waiting. |
 | `Network`, `Http` | The request failed on the network, or the server answered with a status, for example 403 (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
@@ -28,7 +28,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Runtime`, `Internal` | A task of the library failed, or it met a state it cannot serve, such as a damaged model event (`detail`). |
 | `CorruptManifest` | The manifest of the database file cannot be read. |
 
-A call that fails in order reports the first failing check. For `upload` the order is `Closed` or `NoSession`, then `Invalid`, then `NotFound`.
+A call that fails in order reports the first failing check. For `upload` the order is `Closed` or `NoSession`, then `Invalid`, then `InFlight`.
 
 ## Where an error arrives
 
