@@ -89,3 +89,14 @@ fn gen_create_maps_own_id_refused() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("create") && errors[0].message.contains("`id`"), "{}", errors[0].message);
 }
+
+/// M76: the parameter name `nodeId` belongs to the `node` read, a scope without `node:` cannot declare it.
+#[test]
+fn gen_node_param_name_is_reserved() {
+    let scoped = |parameter: &str| format!("model Item do\n  attribute :title, :string\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ItemNode\"\n    variables id: :id\n  end\n  scope :by_owner do\n    parameter :{parameter}, :id\n    query \"ItemsByOwner\"\n    variables owner: :{parameter}\n    response from: \"items\", shape: :list\n  end\nend\n");
+    let accepted = parse_models(&scoped("ownerId"));
+    assert!(accepted.is_ok(), "{:?}", accepted.err());
+    let errors = parse_models(&scoped("nodeId")).unwrap_err();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("by_owner") && errors[0].message.contains("`nodeId`"), "{}", errors[0].message);
+}
