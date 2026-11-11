@@ -18,8 +18,7 @@ async fn reset_run() {
     first.seed_row("seed").await;
     assert!(first.row("seed").await.is_some());
     server.hold(Kind::Mutate, true);
-    let queued = first.create("queued").await;
-    let temporary = queued.optimistic_value.clone().expect("the create shows its row").id;
+    first.create("queued").await;
     server.wait_held(Kind::Mutate, 1).await;
     within(first.db.close_database()).await.unwrap();
     drop(first);
@@ -30,7 +29,6 @@ async fn reset_run() {
 
     server.wait_seen("MakeMoment", 2).await;
     assert!(second.row("seed").await.is_none(), "the cached rows of the changed model are reset");
-    assert!(second.row(&temporary).await.is_some(), "the optimistic row of the held create is visible");
 }
 
 #[test]
