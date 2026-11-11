@@ -152,10 +152,15 @@ impl Window {
 
     /// P-WIN-32: the outcome belongs to the current interest (streams and calls), the last one leaving takes it away.
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
-        let effects = self.step_input(input);
+        let before = self.value();
+        let mut effects = self.step_input(input);
         if self.state != State::Opening && !self.watched() { self.outcome = Outcome::None; }
+        let read = self.interest.iter().any(|id| *id != PRELOAD);
+        if read && self.value() != before && !effects.contains(&Effect::WindowState) { effects.push(Effect::WindowState); }
         effects
     }
+
+    fn value(&self) -> (Phase, bool, Option<bool>, bool) { (self.phase(), self.settled(), self.error(), self.has_more()) }
 
     fn step_input(&mut self, input: Input) -> Vec<Effect> {
         if self.unread && self.state == State::Idle && matches!(input, Input::InterestPlus { .. } | Input::InterestPassive { .. } | Input::Load { .. }) {
