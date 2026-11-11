@@ -500,7 +500,7 @@ impl Twin {
         let id = *self.seen_ids.get(key).expect("transfer for outcome");
         let cycle_id = self.t(id).cycle_id;
         let intent_removed = matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Rejected { .. } | OutboxOutcome::Discarded);
-        self.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id, outcome, intent_removed })
+        self.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id, outcome, intent_removed, row_never_created: false })
     }
 
     pub fn end_epoch(&mut self) -> Out { self.end_epoch_by(Cause::SessionReset) }

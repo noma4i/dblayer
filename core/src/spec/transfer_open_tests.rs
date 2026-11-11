@@ -111,7 +111,7 @@ fn xfer_prop_discard_outcome_before_or_after_declaration() {
         row.has_intent = true;
         let (mut twin, _) = undeclared(vec![row]);
         let register = || TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] };
-        let outcome = || TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, outcome: OutboxOutcome::Discarded, intent_removed: true };
+        let outcome = || TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, outcome: OutboxOutcome::Discarded, intent_removed: true, row_never_created: false };
         let mut removed = Vec::new();
         for input in if outcome_first { vec![outcome(), register()] } else { vec![register(), outcome()] } {
             removed.extend(twin.post(input).removed());
@@ -438,7 +438,7 @@ fn xfer_waiting_declaration_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
+        TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
         TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
     twin.det.tick(Time(1));

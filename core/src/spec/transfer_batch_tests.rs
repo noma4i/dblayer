@@ -294,7 +294,7 @@ fn xfer_batch_ready_other() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
-    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } }]);
+    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false }]);
     twin.ignores(ids[0], inputs);
 }
 

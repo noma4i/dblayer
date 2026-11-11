@@ -258,7 +258,7 @@ fn exec_xfer_view_and_local_copy() {
     let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).expect("receipt");
     assert!(std::fs::read(w.files.path(&copy).unwrap()).is_ok(), "the local copy is on disk before Confirmed");
     let id = w.det.state(w.transfers).unwrap().open_id(KEY).unwrap();
-    w.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None } });
+    w.post(TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None }, row_never_created: false });
     assert_eq!(w.stage(KEY), None);
     assert!(std::fs::read(w.files.path(&copy).unwrap()).is_err(), "the local copy is deleted after Confirmed");
     w.post(TransferInput::Outcome { receipt, reply: 2 , discard_on_failure: false});
