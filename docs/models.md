@@ -1000,10 +1000,10 @@ val groups = Group.nodes(ids)
 ```
 
 - The answer lands as a normal server row of the model. Only the fields the operation selects change, so a small read leaves the other fields, the merge rules and local fields as they were. A local edit that is not confirmed yet is kept.
-- A plain call inside the freshness time of an id reads the local row and sends nothing. `force: true` always asks the server. Each read of a model has its own freshness per id.
+- A plain `node(id)` call inside the freshness time of that id reads the local row and sends nothing. `force: true` always asks the server. Freshness per id applies only to `node(id)`.
 - Calls for one id that overlap share one request. Nothing needs to be started or released.
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
-- `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
+- `nodes(ids)` returns the rows in the order of the call. A repeated ID in the call gives the row again. An ID without a row in the answer is left out. Null and empty entries of the answer are skipped, and each row is written once. Every `nodes` call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
 - A read waiting across a session reset ends with `NoSession`. Nothing is written.
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
