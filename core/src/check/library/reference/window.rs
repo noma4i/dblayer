@@ -24,6 +24,14 @@ pub(super) struct Run {
     pub(super) attempts: u32,
 }
 
+/// library.md section 2 `outcome`; `Left` is the state after the last interest went away (section 3 `phase`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum Outcome {
+    Landed,
+    Failed,
+    Left,
+}
+
 /// library.md section 2: the saved fields (`members`, `cursor`, `landed_at`, `fresh_until`), `unfresh` and the load.
 #[derive(Clone, Default, Debug)]
 pub(super) struct Window {
@@ -34,6 +42,9 @@ pub(super) struct Window {
     pub(super) fresh_until: i64,
     pub(super) unfresh: bool,
     pub(super) load: Option<Run>,
+    pub(super) outcome: Option<Outcome>,
+    pub(super) error: Option<&'static str>,
+    pub(super) landed_run: bool,
 }
 
 impl Window {
@@ -47,5 +58,41 @@ impl Window {
         self.landed_at = Some(now);
         self.fresh_until = now + LIFETIME_MS;
         self.unfresh = false;
+    }
+}
+
+impl Window {
+    /// library.md section 3 `phase(window)` for a window with an interest.
+    pub(super) fn phase(&self, now: i64) -> &'static str {
+        let rows = self.members > 0;
+        let loading = matches!(self.load, Some(Run { phase: Phase::Flight(_) | Phase::Backoff(_), .. }));
+        match self.outcome {
+            _ if loading => "loading",
+            Some(Outcome::Landed) => "loaded",
+            Some(Outcome::Failed) if rows => "loaded",
+            Some(Outcome::Failed) => "failed",
+            Some(Outcome::Left) if rows => "loaded",
+            Some(Outcome::Left) => "idle",
+            None if self.fresh(now) => "loaded",
+            None => "idle",
+        }
+    }
+
+    /// library.md section 3 `loaded`: a landing of this run, or a saved window that is fresh.
+    pub(super) fn loaded(&self, now: i64) -> bool {
+        self.landed_run || (self.landed_at.is_some() && self.fresh(now))
+    }
+
+    /// The refusal `Offline` that needs no request (section 4 `refresh`, `load_more`): the window shows the error.
+    pub(super) fn refuse_offline(&mut self) {
+        self.outcome = Some(Outcome::Failed);
+        self.error = Some("offline");
+    }
+
+    pub(super) fn land_first(&mut self, now: i64) {
+        self.stamp(now);
+        self.outcome = Some(Outcome::Landed);
+        self.error = None;
+        self.landed_run = true;
     }
 }

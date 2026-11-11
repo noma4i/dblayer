@@ -117,10 +117,14 @@ impl LibraryRef {
         if !self.live {
             return not_open();
         }
+        self.end_streams("closed");
         self.end_calls("closed");
         for window in self.windows.values_mut() {
             window.load = None;
             window.unfresh = false;
+            window.outcome = None;
+            window.error = None;
+            window.landed_run = false;
         }
         let released: Vec<String> = self.held.drain(..).map(|held| held.id).collect();
         self.live = false;
@@ -136,8 +140,10 @@ impl LibraryRef {
         if !self.live {
             return not_open();
         }
+        self.end_streams("session_ended");
         self.end_calls("no_session");
         self.windows.clear();
+        self.row = false;
         self.identity = false;
         self.outcomes.push((u64::MAX, Observation::bare("reset")));
         Vec::new()
@@ -177,6 +183,7 @@ impl LibraryRef {
                     self.send(key);
                 }
             }
+            starting += self.reread_on_connect();
             if starting > 1 {
                 self.mark("H16_order_of_loads_that_start_together");
             }
@@ -212,17 +219,17 @@ impl LibraryRef {
         if !self.live {
             return not_open();
         }
-        let Some(&id) = self.handles.get(target) else { return vec![shapes::error("unknown_target")] };
+        let Some(&id) = self.handles.get(target) else {
+            if !self.streams.contains_key(target) {
+                return vec![shapes::error("unknown_target")];
+            }
+            self.cancel_stream(target);
+            return Vec::new();
+        };
         let Some(key) = self.calls.iter().find(|call| call.id == id).map(|call| call.key) else { return Vec::new() };
         self.finish(id, Ending::Failed("interrupted"));
         let Some(key) = key else { return Vec::new() };
-        if self.calls.iter().any(|call| call.key == Some(key)) {
-            return Vec::new();
-        }
-        if let Some(run) = self.run_of(key).take() {
-            self.kill(&run);
-            self.win(key).unfresh = true;
-        }
+        self.leave(key);
         Vec::new()
     }
 }

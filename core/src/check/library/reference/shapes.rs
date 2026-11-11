@@ -48,3 +48,11 @@ pub fn replied(id: &str, how: &str) -> Observation {
 pub fn session() -> Observation {
     Observation::new("session", json!({ "operation": "social", "answer": { "nextStep": "authenticated" } }))
 }
+
+pub fn ended(stream: &str, cause: &str) -> Observation {
+    Observation::new("ended", json!({ "stream": stream, "cause": cause }))
+}
+
+pub fn empty(stream: &str) -> Observation {
+    Observation::new("empty", json!({ "stream": stream }))
+}

@@ -112,6 +112,7 @@ impl LibraryRef {
             (window.fresh(now), window.load.as_ref().map(|run| run.page))
         };
         if forced && self.online == Some(false) {
+            self.win(key).refuse_offline();
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
         let id = self.add_call(form, &name, Some(key));
@@ -135,6 +136,7 @@ impl LibraryRef {
     /// library.md section 4 order (coordinator answer for H1, H2): network, then a running load (the call waits and decides again), then `cursor`.
     fn load_more_call(&mut self, name: String) -> Vec<Observation> {
         if self.online == Some(false) {
+            self.win(Key::Feed).refuse_offline();
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
         let (cursor, pages, busy) = {

@@ -19,20 +19,27 @@ pub(super) enum Op {
     Cancel(String),
     AnswerPage { rows: u64, more: bool },
     AnswerError(String),
-    OpenStream,
-    OpenEntity,
-    Pull,
+    OpenFeed { name: String, on_connect: bool },
+    OpenCount(String),
+    OpenMembers,
+    OpenEntity { name: String, fetch: Fetch },
+    OpenEvents,
+    Pull(String),
+}
+
+/// The `fetch` values of an entity stream (library.md section 1: 4 values).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum Fetch {
+    Never,
+    IfMissing,
+    Force,
+    Stale,
 }
 
 impl Op {
-    /// False for the streams: O1 does not model them (the "not modeled" column of library.md section 1).
+    /// False for the streams of the not-modeled column of library.md section 1 (`Events`).
     pub(super) fn modeled(&self) -> bool {
-        match self {
-            Op::OpenStream | Op::OpenEntity | Op::Pull => false,
-            Op::Open | Op::Login | Op::SetOnline(_) | Op::Tick(_) | Op::ClockBack(_) | Op::Close | Op::SessionReset => true,
-            Op::BeginLoad(_) | Op::Refresh(_) | Op::LoadMore(_) | Op::BeginLoadAll { .. } | Op::Node { .. } | Op::Nodes(_) => true,
-            Op::Cancel(_) | Op::AnswerPage { .. } | Op::AnswerError(_) => true,
-        }
+        !matches!(self, Op::OpenEvents)
     }
 }
 
@@ -68,9 +75,28 @@ pub(super) fn parse(input: &Input) -> Result<Op, String> {
         "cancel" => Op::Cancel(input.text("target").ok_or("cancel without target")?.to_string()),
         "answer_page" => Op::AnswerPage { rows: input.number("rows").ok_or("answer_page without rows")?, more: input.flag("more").ok_or("answer_page without more")? },
         "answer_error" => Op::AnswerError(input.text("kind").ok_or("answer_error without kind")?.to_string()),
-        "open_list" | "open_count" | "open_events" => Op::OpenStream,
-        "open_entity" => Op::OpenEntity,
-        "pull" => Op::Pull,
+        "open_list" | "open_count" => {
+            let name = input.text("as").ok_or("a stream without name")?.to_string();
+            match (input.name.as_str(), input.text("relation")) {
+                ("open_list", Some("feed")) => Op::OpenFeed { name, on_connect: input.flag("refresh_on_connect").unwrap_or(false) },
+                ("open_count", Some("feed")) => Op::OpenCount(name),
+                (_, Some("container_members")) => Op::OpenMembers,
+                _ => return Err(format!("the stream {input} is not a stream of the alphabet")),
+            }
+        }
+        "open_entity" => {
+            let name = input.text("as").ok_or("a stream without name")?.to_string();
+            let fetch = match input.text("fetch") {
+                Some("never") => Fetch::Never,
+                Some("if_missing") => Fetch::IfMissing,
+                Some("force") => Fetch::Force,
+                Some("stale") => Fetch::Stale,
+                _ => return Err(format!("the entity {input} has no known fetch")),
+            };
+            Op::OpenEntity { name, fetch }
+        }
+        "open_events" => Op::OpenEvents,
+        "pull" => Op::Pull(input.text("stream").ok_or("pull without stream")?.to_string()),
         other => return Err(format!("unknown input {other}")),
     })
 }

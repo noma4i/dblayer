@@ -1,5 +1,5 @@
 use super::shapes::{self, NETWORK_SENDS, SERVER_SENDS};
-use super::window::{Key, Phase, Run};
+use super::window::{Key, Outcome, Phase, Run};
 use super::{Ending, Form, LibraryRef, Owner};
 use crate::check::value::Observation;
 
@@ -75,7 +75,10 @@ impl LibraryRef {
 
     /// The load ends with a refusal (H7): the window is not fresh any more and every call waiting on it, a queued `load_more` too, gets the same error.
     fn fail(&mut self, key: Key, kind: &'static str) {
-        self.win(key).unfresh = true;
+        let window = self.win(key);
+        window.unfresh = true;
+        window.outcome = Some(Outcome::Failed);
+        window.error = Some(kind);
         let waiting: Vec<u64> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| call.id).collect();
         for id in waiting {
             self.finish(id, Ending::Failed(kind));
@@ -96,13 +99,13 @@ impl LibraryRef {
                 window.members = u64::from(rows > 0);
                 window.cursor = None;
                 window.pages = 1;
-                window.stamp(now);
+                window.land_first(now);
             }
             (Key::Feed, 1) => {
                 window.members = rows;
                 window.cursor = more.then(|| format!("c{rows}"));
                 window.pages = 1;
-                window.stamp(now);
+                window.land_first(now);
             }
             (Key::Feed, page) => {
                 window.members += rows;
@@ -111,6 +114,7 @@ impl LibraryRef {
             }
         }
         let (cursor, pages) = (window.cursor.is_some(), window.pages);
+        self.row |= rows > 0;
         let waiting: Vec<(u64, Form, bool, Option<u32>)> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| (call.id, call.form, call.queued, call.target)).collect();
         let result = if cursor { "loaded_more" } else { "loaded_last" };
         for (id, form, queued, target) in &waiting {
