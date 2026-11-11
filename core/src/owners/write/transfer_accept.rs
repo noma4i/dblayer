@@ -395,7 +395,8 @@ impl TransferState {
     pub(super) fn staged_restore_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
         match reason {
-            RejectReason::Storage(_) | RejectReason::Invalid => self.backoff_restore(id, fx),
+            RejectReason::Storage(_) => self.backoff_restore(id, fx),
+            RejectReason::Invalid => self.staged_restored(id, fx),
             RejectReason::StaleGeneration { generations, .. } => {
                 self.generations.extend(generations);
                 self.write_restored(id, fx);
