@@ -97,7 +97,8 @@ async fn compare(owner: &Arc<LibraryOwner>, programs: Vec<Vec<Input>>) -> (usize
     ranked.sort_by_key(|(_, _, divergence)| divergence.step);
     let mut messages = Vec::new();
     for (signature, count, divergence) in ranked.into_iter().take(GROUPS) {
-        let smallest = minimize(owner.as_ref(), divergence).await;
+        let shrunk = minimize(owner.as_ref(), divergence.clone()).await;
+        let smallest = if self::signature(&shrunk) == signature { shrunk } else { divergence };
         messages.push(format!("{count} program(s): {signature}\n{}", describe(&smallest)));
     }
     (compared, holes, messages)

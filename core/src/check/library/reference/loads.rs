@@ -98,7 +98,8 @@ impl LibraryRef {
 
     /// library.md section 4 `nodes(ids)`: 1 request always (K2, K4), without the network the call waits (H4). The stand schema must declare a `Container` relation `nodes`.
     fn nodes_call(&mut self, name: String) -> Vec<Observation> {
-        let id = self.add_call(Form::Nodes, &name, None);
+        let id = self.next_call;
+        self.add_call(Form::Nodes, &name, Some(Key::Nodes(id)));
         self.start_run(Key::Nodes(id), 1);
         Vec::new()
     }
