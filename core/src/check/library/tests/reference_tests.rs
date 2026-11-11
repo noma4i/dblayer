@@ -43,16 +43,13 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
-/// Three families: a session with every input, a session whose body has no second `login` (so the rows after it are seen apart from the divergence of a repeated login), and no session (depth 1: its reads all end with `NoSession`).
-fn programs() -> Vec<Vec<Input>> {
-    let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
-    let without_login: Vec<Input> = letters.iter().filter(|input| input.name != "login").cloned().collect();
-    let mut out = Vec::new();
-    for (head, body, deep) in [(prelude(false), &letters, depth()), (prelude(false), &without_login, depth()), (prelude(true), &letters, depth().min(1))] {
-        out.extend(all_traces(body, deep).into_iter().map(|trace| [head.clone(), trace].concat()));
-        out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(body, seed, LENGTH)].concat()));
-    }
-    out.extend(retry_programs());
+/// One family of programs: its prelude (with or without a session), its body inputs, its exhaustive depth and its extra programs.
+fn family(anonymous: bool, keep: fn(&Input) -> bool, deep: usize, extra: Vec<Vec<Input>>) -> Vec<Vec<Input>> {
+    let letters: Vec<Input> = alphabet().into_iter().filter(modeled).filter(keep).collect();
+    let head = prelude(anonymous);
+    let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
+    out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
+    out.extend(extra);
     out
 }
 
@@ -105,11 +102,26 @@ async fn compare(owner: &Arc<LibraryOwner>, programs: Vec<Vec<Input>>) -> (usize
     (compared, holes, messages)
 }
 
+async fn assert_matches(programs: Vec<Vec<Input>>) {
+    let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: true });
+    let (compared, holes, found) = compare(&owner, programs).await;
+    assert!(found.is_empty() && holes.is_empty(), "compared {compared} programs to depth {}, {} seeds of length {LENGTH}, not compared because of spec holes (must be empty) {holes:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
+}
+
 /// Requirement: library.md sections 3 to 7 for the slice O1 (environment and loads): after every input the stand shows what the reference shows.
-/// Observable: the requests (`sent`), the answers, the outcomes of the loads by name, the errors. Assert: no program of the modeled inputs diverges; a program that meets a spec hole is not compared and is counted.
+/// Observable: the requests (`sent`), the answers, the outcomes of the loads by name, the errors. Assert: no program of the modeled inputs diverges and none meets a spec hole.
+/// The 3 families run as 3 tests, so each stays inside the time limit of a test on a loaded machine.
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_loads() {
-    let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: true });
-    let (compared, holes, found) = compare(&owner, programs()).await;
-    assert!(found.is_empty() && holes.is_empty(), "compared {compared} programs to depth {}, {} seeds of length {LENGTH}, not compared because of spec holes (must be empty) {holes:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
+    assert_matches(family(false, |_| true, depth(), retry_programs())).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_second_login() {
+    assert_matches(family(false, |input| input.name != "login", depth(), Vec::new())).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_session() {
+    assert_matches(family(true, |_| true, depth().min(1), Vec::new())).await;
 }
