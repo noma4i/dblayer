@@ -388,12 +388,14 @@ pub struct Load {
     pub basis: GenerationsAtIssue,
     pub chain: Option<Chain>,
     pub confirms: u32,
+    /// A request of this load took the reread mark of the window: its landing batch is a `NodeReread` (P-WIN-34).
+    pub marked: bool,
 }
 
 impl Load {
     /// A request that waits for its pin.
     pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, basis: GenerationsAtIssue) -> Self {
-        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0 }
+        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0, marked: false }
     }
 }
 

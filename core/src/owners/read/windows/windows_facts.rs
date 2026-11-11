@@ -105,7 +105,7 @@ impl Facts {
     /// A backward clock remains fresh while its offset is shorter than the window lifetime.
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && now < self.fresh_until && i128::from(self.landed_at) - i128::from(now) < i128::from(self.fresh_until) - i128::from(self.landed_at) }
 
-    pub(super) fn page_source(&self) -> crate::schema::RowSource { if self.reread_by_event.take() { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
+    pub(super) fn page_source(marked: bool) -> crate::schema::RowSource { if marked { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
 
     pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
 
@@ -217,7 +217,8 @@ impl Facts {
         Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, stale, base: 0 }), ..load }
     }
 
-    pub(super) fn request_effect(&self, load: &Load) -> WindowEffect {
+    pub(super) fn request_effect(&self, load: &mut Load) -> WindowEffect {
+        load.marked |= self.reread_by_event.take();
         let (cursor, kind) = match &load.chain {
             Some(chain) => (chain.cursor.clone(), chain.kind()),
             None => (self.page_cursor(load.page), RequestKind::Page),
@@ -236,7 +237,7 @@ impl Facts {
     }
 
     /// The chain ends: its rows and its marker land in 1 batch, or only the marker when the rows stay.
-    pub(super) fn land_chain(&mut self, load: &Load, chain: &Chain, marker: Marker, keep_rows: bool) -> Outcome<WinState> {
+    pub(super) fn land_chain(&mut self, load: &mut Load, chain: &Chain, marker: Marker, keep_rows: bool) -> Outcome<WinState> {
         let related = chain.rows.related.iter().map(|(model, _)| model.clone());
         let models: BTreeSet<String> = self.dependency_models.iter().cloned().chain(chain.models.iter().cloned()).chain(related).collect();
         let basis = crate::owners::store::basis_for(models.iter().map(|model| (model.clone(), load.basis.of(model))));
@@ -248,11 +249,12 @@ impl Facts {
         let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
         self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
-        let source = self.page_source();
+        let marked = std::mem::take(&mut load.marked);
+        let source = Self::page_source(marked);
         self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
-        Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone(), marked: source == crate::schema::RowSource::NodeReread }))
+        Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone(), marked }))
     }
 
     /// The answer of a request of a media chain, by the phase of the chain.

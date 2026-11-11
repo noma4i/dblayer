@@ -77,7 +77,13 @@ impl Facts {
         }
     }
 
-    #[state]
+    /// A load that leaves without its landing batch gives the reread mark back to the window: the next load takes it (P-WIN-34).
+    #[action]
+    fn return_mark(&mut self, load: &mut Load) {
+        if std::mem::take(&mut load.marked) { self.reread_by_event.set(true); }
+    }
+
+    #[state(exit_action = "return_mark")]
     fn loading(&mut self, context: &mut Ctx<'_>, load: &mut Load, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         let mine = |got: &RequestId, got_attempt: &u32| *got == load.step && *got_attempt == load.attempt && !load.retry;
@@ -107,7 +113,9 @@ impl Facts {
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.emit(Emit::Pin { epoch: self.epoch, request });
+                let marked = load.marked;
                 *load = self.issue(request, attempt, 1, true);
+                load.marked = marked;
                 self.announce();
                 Handled
             }
@@ -129,12 +137,13 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer),
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
                 self.answered_at = context.now;
-                let source = self.page_source();
+                let marked = std::mem::take(&mut load.marked);
+                let source = Self::page_source(marked);
                 self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
                 self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false, source });
-                Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone(), marked: source == crate::schema::RowSource::NodeReread }))
+                Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone(), marked }))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
                 if error.class == ErrorClass::InvalidCursor && !self.cursor_reset_used {
