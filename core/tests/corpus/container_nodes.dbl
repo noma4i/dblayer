@@ -1,0 +1,7 @@
+model Container do
+  attribute :title, :string
+  scope :nodes, node: :many do
+    query "ContainersByIds"
+    response shape: :list
+  end
+end
