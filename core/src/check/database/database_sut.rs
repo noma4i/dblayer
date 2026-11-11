@@ -16,7 +16,7 @@ impl Sut for DatabaseSut {
 
 impl DatabaseSut {
     /// One input of the vocabulary on the plain stand.
-    async fn play(&mut self, input: &Input) -> Vec<Observation> {
+    pub(super) async fn play(&mut self, input: &Input) -> Vec<Observation> {
         match input.name.as_str() {
             "open" => return self.open(input.text("models").unwrap_or(""), input.flag("encrypted").unwrap_or(false), input.text("path").map(str::to_string)).await,
             "clock_back" => {
