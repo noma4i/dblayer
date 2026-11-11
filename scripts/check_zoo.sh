@@ -537,6 +537,28 @@ for path in files:
     if (declared or clock_used.search(text)) and f"z42:{relative}" not in allowed:
         findings.append(f"Z42 the time of an owner is the argument of its step, not an input or a trait function: {path.relative_to(root)}")
 
+for path in files:
+    relative = str(path.relative_to(source))
+    for number, line in enumerate(contents[path].splitlines(), 1):
+        if re.search(r"\bopened_at\b", line) and f"z43:{relative}" not in allowed:
+            findings.append(f"Z43 a window takes the time of its step, a stream keeps no time of its open for the loads it asks: {path.relative_to(root)}:{number}")
+
+windows_types = source / "owners" / "read" / "windows" / "windows_types.rs"
+if windows_types.exists():
+    text = windows_types.read_text()
+    context = re.search(r"\bstruct Ctx\b[^{]*\{[^}]*\}", text)
+    for found in re.finditer(r"\bnow: i64\b", text):
+        if context and context.start() <= found.start() < context.end(): continue
+        number = text.count("\n", 0, found.start()) + 1
+        findings.append(f"Z44 an input or an event of Windows carries no time: the owner reads the time of its step (Ctx.now): {windows_types.relative_to(root)}:{number}")
+
+for path in files:
+    relative = str(path.relative_to(source))
+    if not relative.startswith("owners/read/windows/"): continue
+    for number, line in enumerate(contents[path].splitlines(), 1):
+        if re.search(r"\bread_id: Option<", line):
+            findings.append(f"Z45 every window machine opens by reading its saved window (ensure), none is made without the read: {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
