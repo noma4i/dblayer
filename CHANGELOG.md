@@ -5,6 +5,8 @@
 ### Fixed
 
 - Remove a row from a loaded window when a page of another window changes its membership.
+- Keep the window phase of a stream when a read error clears.
+- Refuse a read whose parameter holds a temporary id that cannot be resolved.
 
 ## 6.26.2 - 2026-11-11
 
