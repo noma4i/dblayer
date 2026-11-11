@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::{Addresses, LifeReply, Ports, Wiring};
 use crate::store::Store;
-use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected};
+use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, RejectReason, Rejected};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{BlobStatus, DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
@@ -149,14 +149,14 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let reply_wiring = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Window, move |batch, reply| {
         reply_wiring.to_windows(match reply {
-            StoreReply::Committed { revision, .. } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
+            StoreReply::Committed { revision, .. } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
             StoreReply::Rejected(reason) => WindowsInput::Rejected(Rejected { batch, reason }),
         });
     });
     let feed_reply = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
         feed_reply.to_feed(match reply {
-            StoreReply::Committed { revision, stale_parents, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0, shown: Vec::new(), files_removed: 0 }),
+            StoreReply::Committed { revision, stale_parents, refused, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0, shown: Vec::new(), files_removed: 0, refused: refused.into_iter().map(|at| (at, RejectReason::Invalid)).collect() }),
             StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),
         });
     });

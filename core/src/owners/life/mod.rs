@@ -230,28 +230,28 @@ impl Wiring {
     pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, stamp: EpochStamp, reply: StoreReply) {
         if author == BatchAuthor::Session {
             self.to_session_at(stamp, match reply {
-                StoreReply::Committed { revision, .. } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
+                StoreReply::Committed { revision, .. } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
                 StoreReply::Rejected(reason) => SessionInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Transfer {
             self.to_transfer_at(stamp, match reply {
-                StoreReply::Committed { revision, shown, .. } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0 }),
+                StoreReply::Committed { revision, shown, .. } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0, refused: Vec::new() }),
                 StoreReply::Rejected(reason) => TransferInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::LocalWrites {
             self.to_local_writes_at(stamp, match reply {
-                StoreReply::Committed { revision, shown, files_removed, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed }),
+                StoreReply::Committed { revision, shown, files_removed, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed, refused: Vec::new() }),
                 StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Outbox {
             self.to_outbox_at(stamp, match reply {
-                StoreReply::Committed { revision, shown, files_removed, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed }),
+                StoreReply::Committed { revision, shown, files_removed, .. } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed, refused: Vec::new() }),
                 StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
             });
             return;

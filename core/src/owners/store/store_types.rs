@@ -262,7 +262,7 @@ pub struct OpenMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreReply {
-    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows, shown: Vec<Option<crate::store::Row>>, files_removed: usize },
+    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows, shown: Vec<Option<crate::store::Row>>, files_removed: usize, refused: Vec<usize> },
     Rejected(RejectReason),
 }
 
@@ -302,6 +302,8 @@ pub struct WriteDone {
     pub notice: crate::owners::contract::CommittedBroadcast,
     pub shown: Vec<Option<crate::store::Row>>,
     pub files_removed: usize,
+    /// The events of a Feed batch refused alone (P-DATA-99), by their place in the batch.
+    pub refused: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

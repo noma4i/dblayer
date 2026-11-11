@@ -284,7 +284,8 @@ impl FeedState {
     pub(super) fn owns_landing(&self, batch: BatchId) -> bool { self.landing.iter().any(|(id, _)| *id == batch) }
 
     /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. `NoSession` and `Closed` end a `Live` feed.
-    pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, fx: &mut Vec<Fx>) {
+    /// P-FEED-37: an event the Store refused alone (`refused`, by its place in the batch) is lost at its own position, the rest land.
+    pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, refused: &[(usize, RejectReason)], fx: &mut Vec<Fx>) {
         let Some(at) = self.landing.iter().position(|(id, _)| *id == batch) else { return };
         let events = self.landing.remove(at).1;
         if let Some(models) = self.gap_landing.remove(&batch) {
@@ -296,12 +297,21 @@ impl FeedState {
                 Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
                 Some(RejectReason::Invalid) => Self::stale_all(&models, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
+                None if !refused.is_empty() => Self::stale_all(&models, fx),
                 _ => {},
             }
             return;
         }
         match rejected {
-            None => self.land(events, fx),
+            None => {
+                let (lost, landed): (Vec<(usize, FeedEvent)>, Vec<(usize, FeedEvent)>) = events.into_iter().enumerate().partition(|(at, _)| refused.iter().any(|(refused, _)| refused == at));
+                if !lost.is_empty() {
+                    let lost: Vec<FeedEvent> = lost.into_iter().map(|(_, event)| event).collect();
+                    let lost_models = self.mark_lost(&lost, fx);
+                    Self::stale_all(&lost_models, fx);
+                }
+                self.land(landed.into_iter().map(|(_, event)| event).collect(), fx);
+            }
             Some(RejectReason::StaleGeneration { models, .. }) => {
                 let (lost, rest): (Vec<FeedEvent>, Vec<FeedEvent>) = events.into_iter().partition(|event| models.contains(&event.model));
                 let lost_models = self.mark_lost(&lost, fx);

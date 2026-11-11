@@ -506,10 +506,10 @@ impl StateOwner for Feed {
             FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
             FeedInput::Committed(committed) => {
                 let landed = state.owns_landing(committed.batch);
-                state.verdict(committed.batch, None, &mut fx);
+                state.verdict(committed.batch, None, &committed.refused, &mut fx);
                 if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All, cause: StaleCause::Change })); }
             }
-            FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
+            FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &[], &mut fx),
             FeedInput::Tick => {
                 if state.mode == Mode::Live {
                     state.flush_pending(&mut fx);

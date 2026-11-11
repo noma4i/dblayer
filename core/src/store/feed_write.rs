@@ -127,7 +127,8 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     Ok(Some(result))
 }
 
-pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overlay: &mut OverlayWrites, results: &mut Vec<CommitResult>) -> Result<Vec<String>, StoreError> {
+/// The events of a batch land in one transaction, each in its own savepoint: a data error of one event (P-DATA-99) undoes only that event and names it in the second list.
+pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overlay: &mut OverlayWrites, results: &mut Vec<CommitResult>) -> Result<(Vec<String>, Vec<usize>), StoreError> {
     let parsed = events.iter().map(|(model, text)| Ok((model, serde_json::from_str::<Value>(text)?))).collect::<Result<Vec<_>, StoreError>>()?;
     let mut wanted = BTreeMap::<String, Vec<String>>::new();
     for (model, payload) in &parsed {
@@ -149,8 +150,26 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
         }
     }
     writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);
-    for (model, payload) in &parsed {
-        if let Some(result) = landing(writer, model, payload, overlay)? { results.push(result); }
+    let mut refused = Vec::new();
+    for (at, (model, payload)) in parsed.iter().enumerate() {
+        writer.connection.execute_batch("SAVEPOINT feed_event")?;
+        let landed_overlay = overlay.len();
+        match landing(writer, model, payload, overlay) {
+            Ok(result) => {
+                writer.connection.execute_batch("RELEASE feed_event")?;
+                results.extend(result);
+            }
+            Err(error) if matches!(error.reject_reason(), crate::owners::contract::RejectReason::Invalid) => {
+                writer.connection.execute_batch("ROLLBACK TO feed_event; RELEASE feed_event")?;
+                overlay.truncate(landed_overlay);
+                let read: Vec<(String, String)> = std::mem::take(&mut writer.current).into_keys().collect();
+                let mut again = BTreeMap::<String, Vec<String>>::new();
+                for (model, id) in read { again.entry(model).or_default().push(id); }
+                for (model, ids) in again { writer.prefetch(&model, &ids, None)?; }
+                refused.push(at);
+            }
+            Err(error) => return Err(error),
+        }
     }
     let mut observed = Vec::with_capacity(parsed.len());
     for (model, mut payload) in parsed {
@@ -164,5 +183,5 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
         }
         observed.push(payload.to_string());
     }
-    Ok(observed)
+    Ok((observed, refused))
 }

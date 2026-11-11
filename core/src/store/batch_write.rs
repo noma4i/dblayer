@@ -14,6 +14,7 @@ const OVERLAY_ROW_LIMIT: usize = 1024;
 struct WrittenBatch<'a> {
     committed: super::Committed<'a>,
     observed: Vec<String>,
+    refused: Vec<usize>,
     live_files: std::collections::HashSet<String>,
     discarded: Vec<String>,
     expiry: ExpiryParts,
@@ -28,6 +29,8 @@ type ResetParts = (Vec<u64>, Vec<(String, String)>, Vec<crate::owners::store::Ep
 pub(crate) struct BatchWritten {
     pub revision: u64,
     pub observed: Vec<String>,
+    /// The events of a Feed batch refused alone (P-DATA-99), by their place in the batch.
+    pub refused: Vec<usize>,
     pub faults: Vec<String>,
     pub expiring: Vec<crate::owners::store::MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
@@ -55,7 +58,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, shown }) => {
+            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, shown }) => {
                 self.lock().counters.outbox_candidates += candidates;
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
@@ -69,7 +72,7 @@ impl Store {
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, refused, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed })
             }
         }
     }
@@ -86,7 +89,7 @@ impl Store {
         let mut results = Vec::new();
         let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None };
         let mut overlay = Vec::new();
-        let observed = if batch.author == BatchAuthor::Feed {
+        let (observed, refused) = if batch.author == BatchAuthor::Feed {
             super::feed_write::land(&mut writer, &batch.rows, &mut overlay, &mut results)?
         } else {
             for (model, text) in &batch.rows {
@@ -95,7 +98,7 @@ impl Store {
                 let row = RowValue { row_id: row_id.into(), values: text.clone() };
                 if let Some(result) = writer.upsert(model, &row, false, batch.author == BatchAuthor::Outbox)? { results.push(result); }
             }
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         let mut writes_database = !results.is_empty() || (batch.author != BatchAuthor::Feed && !batch.rows.is_empty());
         let mut resets = Vec::new();
@@ -177,6 +180,6 @@ impl Store {
             if position != current.position { self.overlays.publish(snapshot); }
         }
         if let Some(journal) = journal { journal.finish(); }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, shown })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, shown })
     }
 }

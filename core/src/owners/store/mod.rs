@@ -245,10 +245,10 @@ impl StoreState {
                 let written_epoch = match written.stamp { crate::runtime::EpochStamp::Epoch(epoch) => epoch, crate::runtime::EpochStamp::Control => self.epoch };
                 match result {
                     Err(reason) => fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Rejected(reason) }),
-                    Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed }) => {
+                    Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed, refused }) => {
                         self.revision = revision;
                         if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written_epoch, batch, payloads: observed }); }
-                        fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown, files_removed } });
+                        fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone(), shown, files_removed, refused } });
                         for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written_epoch, reset }); }
                         if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written_epoch, ops: removed_operations }); }
                         if !removed_rows.is_empty() { fx.push(StoreEffect::RowsRemoved { epoch: written_epoch, rows: removed_rows, revision }); }

@@ -64,13 +64,15 @@ pub struct Committed {
     pub shown: Vec<Option<crate::store::Row>>,
     /// The files the batch deleted.
     pub files_removed: usize,
+    /// P-DATA-99: the events of a Feed batch that the Store refused alone, by their place in the batch, with the reason; the rest of the batch landed.
+    pub refused: Vec<(usize, RejectReason)>,
 }
 
 impl CommittedBroadcast {
     /// The input of `Deliveries`: a reset (`rows` none) is `All` and reads no row stream, a write touches the streams of `tables` and `rows`.
     pub fn for_deliveries(self) -> Committed {
         let models = if self.models == Models::All || self.rows.is_none() { Models::All } else { Models::default() };
-        Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position, shown: Vec::new(), files_removed: 0 }
+        Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position, shown: Vec::new(), files_removed: 0, refused: Vec::new() }
     }
 }
 
