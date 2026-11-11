@@ -223,13 +223,17 @@ impl OutboxState {
 
     pub(super) fn rejected(&mut self, now: u64, rejected: Rejected, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&rejected.batch) else { return };
-        if let RejectReason::StaleGeneration { generations, .. } = &rejected.reason {
-            self.generation.extend(generations.clone());
-        }
+        let stale = match &rejected.reason {
+            RejectReason::StaleGeneration { generations, .. } => {
+                self.generation.extend(generations.clone());
+                true
+            }
+            RejectReason::NoSession | RejectReason::Storage(_) | RejectReason::Closed | RejectReason::Invalid => false,
+        };
         match batch {
             Batch::Member { op_id } => self.member_rejected(now, op_id, rejected.reason, fx),
             Batch::Write { reply, call, expire } => {
-                if matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
+                if stale {
                     let generation = self.generation_of(&call.model);
                     let id = self.next_batch;
                     self.next_batch += 1;

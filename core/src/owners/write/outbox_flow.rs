@@ -5,7 +5,7 @@ use super::outbox::{Batch, MemberRemoval, Outbox, OutboxState};
 use super::outbox_types::*;
 use crate::owners::contract::RequestId;
 
-use crate::owners::contract::{ReplyId};
+use crate::owners::contract::{RejectReason, ReplyId};
 
 use crate::owners::store::{RowValue};
 use crate::owners::session::SessionInput;
@@ -290,17 +290,21 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn member_rejected(&mut self, now: u64, op_id: OpId, reason: crate::owners::contract::RejectReason, fx: &mut Effects<Outbox>) {
-        if matches!(reason, crate::owners::contract::RejectReason::StaleGeneration { .. }) {
-            if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
-            return self.store_member(op_id, fx);
-        }
-        if matches!(reason, crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) {
-            self.member_removals.remove(&op_id);
-            return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
-        }
+    pub(super) fn member_rejected(&mut self, now: u64, op_id: OpId, reason: RejectReason, fx: &mut Effects<Outbox>) {
+        let storage = match &reason {
+            RejectReason::StaleGeneration { .. } => {
+                if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
+                return self.store_member(op_id, fx);
+            }
+            RejectReason::NoSession | RejectReason::Closed => {
+                self.member_removals.remove(&op_id);
+                return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+            }
+            RejectReason::Storage(_) => true,
+            RejectReason::Invalid => false,
+        };
         if let Some(pending) = self.member_removals.get_mut(&op_id) {
-            if matches!(reason, crate::owners::contract::RejectReason::Storage(_)) { pending.storage_failures = pending.storage_failures.saturating_add(1); }
+            if storage { pending.storage_failures = pending.storage_failures.saturating_add(1); }
             if pending.storage_failures >= 2 && !pending.deferred.is_empty() {
                 pending.land_after_storage = true;
                 if let Some(operation) = self.ops.get_mut(&op_id) { if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); } }
