@@ -10,7 +10,7 @@ const API: u64 = 61;
 fn dropped() -> Twin {
     let mut twin = Twin::bare();
     twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
-    let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: Some(("op".into(), "k1".into())), removed_rows: Vec::new() };
+    let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: Some(("op".into(), "k1".into())), removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     twin

@@ -8,7 +8,7 @@ use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput,
 use crate::runtime::Cause;
 
 fn stored(op_id: u64, row: &str) -> StoredOp {
-    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
+    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
 }
 
 #[test]

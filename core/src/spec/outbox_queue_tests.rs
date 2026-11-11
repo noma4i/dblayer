@@ -77,7 +77,7 @@ fn out_queued_expired() {
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         twin.det.tick(Time(11_000));
-        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
+        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, created_at: 0, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
         let ready = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         let stage = twin.stage(1);
         assert_eq!(stage == Some(St::RollingBack(RWhy::Rejected)), expect_rollback, "attempts {attempts}: {stage:?} {ready:?}");

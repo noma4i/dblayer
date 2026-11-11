@@ -326,7 +326,7 @@ impl Rig {
     pub async fn seed_row(&self, id: &str) -> String {
         use crate::owners::store::{EffectRow, IntentEffects};
         let rows = vec![EffectRow { model: "Moment".into(), row_id: id.into(), values: json!({ "id": id, "text": "seed" }).to_string() }];
-        let written = self.db.life.local_write(self.epoch(), "Moment".into(), crate::owners::write::outbox::LocalWriteKind::Model(IntentEffects { rows, ..Default::default() }), id.into(), String::new(), crate::runtime::Time(0));
+        let written = self.db.life.local_write(self.epoch(), "Moment".into(), crate::owners::write::outbox::LocalWriteKind::Model(IntentEffects { rows, ..Default::default() }), id.into(), String::new());
         within(written.wait()).await;
         id.to_string()
     }

@@ -8,7 +8,7 @@ use crate::runtime::{Cause, Time};
 
 const WRITE: u64 = 60;
 
-fn write(kind: LocalWriteKind) -> OutboxInput { OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: kind, row: "w".into(), values: "{}".into(), reply: WRITE, now: Time(100) } }
+fn write(kind: LocalWriteKind) -> OutboxInput { OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: kind, row: "w".into(), values: "{}".into(), reply: WRITE } }
 
 fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
@@ -35,6 +35,7 @@ fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
 fn out_local_write() {
     for kind in [LocalWriteKind::SetLocal, LocalWriteKind::SetEphemeral { expire_after: None }, LocalWriteKind::Detach] {
         let mut twin = Twin::new();
+        twin.det.tick(Time(100));
         let effects = twin.post(write(kind));
         assert_eq!((kinds(&effects), answers(&effects, WRITE)), (vec![CommitKind::LocalWrite], Vec::<OutboxAnswer>::new()));
         assert_eq!(twin.stores.len(), 1);
@@ -45,7 +46,8 @@ fn out_local_write() {
 #[test]
 fn out_local_write_stale() {
     let mut twin = Twin::new();
-    let input = OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH + 1, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: WRITE, now: Time(100) };
+    twin.det.tick(Time(100));
+    let input = OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH + 1, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: WRITE };
     let effects = twin.post(input);
     assert_eq!((answers(&effects, WRITE), kinds(&effects), effects.len()), (vec![OutboxAnswer::Err(Fault::NoSession)], Vec::<CommitKind>::new(), 1));
 }
@@ -53,6 +55,7 @@ fn out_local_write_stale() {
 #[test]
 fn out_local_write_stale_generation() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
     let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
     let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() } }));
@@ -68,6 +71,7 @@ fn out_local_write_stale_generation() {
 fn out_local_write_closing() {
     let mut twin = Twin::new();
     close(&mut twin);
+    twin.det.tick(Time(100));
     let effects = twin.post(write(LocalWriteKind::SetLocal));
     assert_eq!(answers(&effects, WRITE), vec![OutboxAnswer::Err(Fault::Closed)]);
 }
@@ -75,6 +79,7 @@ fn out_local_write_closing() {
 #[test]
 fn out_local_set_ephemeral() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     assert!(twin.store_text.contains("EphemeralRows"), "{}", twin.store_text);
     assert_eq!(twin.stores.len(), 1);
@@ -87,6 +92,7 @@ fn out_local_set_ephemeral() {
 #[test]
 fn out_local_set_local_pending() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocalPending));
     assert!(twin.store_text.contains("LocalPending"), "{}", twin.store_text);
     assert_eq!(twin.stores.len(), 1);
@@ -97,6 +103,7 @@ fn out_local_set_local_pending() {
 #[test]
 fn out_local_write_epoch_ended() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
     take_fx(&twin.log, None);
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
@@ -112,6 +119,7 @@ fn out_local_write_epoch_ended() {
 #[test]
 fn out_local_write_closing_waits() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
     let closing = close(&mut twin);
     assert!(answers(&closing, WRITE).is_empty() && drained(&closing) == 0, "{closing:?}");
@@ -122,6 +130,7 @@ fn out_local_write_closing_waits() {
 #[test]
 fn out_local_write_other() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
     for input in [OutboxInput::Online(Online(false))] {
         let effects = twin.post(input.clone());
@@ -139,6 +148,7 @@ fn out_local_closing() {
 #[test]
 fn out_prop_expire_last_write() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     commit_first(&mut twin);
     let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(50) });
@@ -199,10 +209,12 @@ fn out_prop_discard_outcome_once() {
 #[test]
 fn out_local_write_memory_same() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     let first = twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     assert_eq!(kinds(&first), vec![CommitKind::LocalWrite]);
     commit_first(&mut twin);
-    let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1, now: Time(200) });
+    twin.det.tick(Time(200));
+    let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1 });
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
     assert_eq!(twin.stores.len(), 1);
     assert!(twin.store_text.contains("EphemeralRows { model: \"Moment\"") && twin.store_text.contains("row_id: \"w\""), "{}", twin.store_text);
@@ -264,7 +276,7 @@ fn out_prop_local_write_orders() {
             let mut effects = Vec::new();
             for event in order {
                 effects.extend(match event {
-                    Write => twin.post(write(LocalWriteKind::SetLocal)),
+                    Write => { twin.det.tick(Time(100)); twin.post(write(LocalWriteKind::SetLocal)) }
                     Outcome => outcome.iter().flat_map(|(batch, result)| store_outcome(&mut twin, *batch, result.clone())).collect(),
                     Closing => close(&mut twin),
                     EpochEnded => end_epoch(&mut twin),
@@ -284,11 +296,13 @@ fn out_prop_local_write_orders() {
 #[test]
 fn out_local_write_committed() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
     let committed = commit_first(&mut twin);
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     assert!(!committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "a plain local write schedules no expiry: {committed:?}");
     let mut ephemeral = Twin::new();
+    ephemeral.det.tick(Time(100));
     ephemeral.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     let committed = commit_first(&mut ephemeral);
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
@@ -299,6 +313,7 @@ fn out_local_write_committed() {
 fn out_local_write_rejected() {
     for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid] {
         let mut twin = Twin::new();
+        twin.det.tick(Time(100));
         twin.post(write(LocalWriteKind::SetLocal));
         let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reason.clone() }));
         assert_eq!(answers(&effects, WRITE), vec![OutboxAnswer::Err(Fault::Rejected(reason))], "the local write is refused with the reason");
@@ -327,6 +342,7 @@ fn out_ephemeral_expire_batch() {
 #[test]
 fn out_ephemeral_expire() {
     let mut twin = Twin::new();
+    twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
     commit_first(&mut twin);
     let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(50) });

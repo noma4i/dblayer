@@ -199,7 +199,7 @@ pub(super) fn model_op_as(row: &str, policy: Policy, transfer: bool, action: &st
         action: action.into(),
         on_failure: if policy == Policy::Keep { OnFailure::Keep } else { OnFailure::Rollback },
         origin: if transfer { OpSource::Transfer { transfer_id: 1, cycle_id: 1 } } else { OpSource::Api },
-        created_at: 0, expires_after: None,
+        expires_after: None,
         path: format!("/moments/{row}"),
         body: format!("{{\"row\":\"{row}\"}}"),
         effects: crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "Moment".into(), row_id: row.to_string(), values: "{\"state\":\"optimistic\"}".into() }], ..Default::default() },
@@ -339,7 +339,7 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
     }
     if state == St::WaitingDeclaration {
         let mut twin = Twin::bare();
-        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
+        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
         twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
         twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.stage(7), Some(St::WaitingDeclaration), "the owner reached WaitingDeclaration");

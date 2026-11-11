@@ -100,12 +100,12 @@ fn out_wait_discard() {
 #[test]
 fn out_wait_local_write() {
     let mut twin = Twin::new();
-    let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81, now: Time(0) });
+    let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81 });
     assert!(replies_of(&effects, 81).is_empty());
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     let mut twin = Twin::new();
-    twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
+    twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 82 });
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
@@ -286,7 +286,7 @@ fn out_prop_dropped_resent() {
 
 #[test]
 fn out_prop_local_write_kept() {
-    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 300, now: Time(0) }], store_script(), vec![OutboxInput::Online(Online(true))]], |_| {
+    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 300 }], store_script(), vec![OutboxInput::Online(Online(true))]], |_| {
         let answers = effects_now().iter().filter(|effect| matches!(effect, OutboxEffect::Reply { reply: 300, .. })).count();
         if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
     });

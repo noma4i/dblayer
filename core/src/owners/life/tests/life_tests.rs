@@ -528,7 +528,7 @@ async fn a_database_without_a_session_writes_a_local_row_through_local_writes() 
     let life = start(&db, &transport).await;
     let epoch = life.published().epoch;
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1"}).to_string() }], ..Default::default() };
-    let reply = answer(life.local_write(epoch, "moments".into(), LocalWriteKind::Model(effects), "m1".into(), String::new(), crate::runtime::Time(0))).await;
+    let reply = answer(life.local_write(epoch, "moments".into(), LocalWriteKind::Model(effects), "m1".into(), String::new())).await;
     assert!(matches!(reply, Reply::Outbox(OutboxAnswer::Written { shown: None, .. })), "{reply:?}");
     assert!(db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().is_some());
     closed(&life).await;
