@@ -81,23 +81,28 @@ impl Delivery {
         self.acked_rows = self.rows.clone();
     }
 
-    /// `Failed` only without rows, an error with rows is `Loaded` with the error: the rows of the snapshot decide, not the window.
-    pub(super) fn shown(&self, mut state: WindowState) -> WindowState {
-        if state.error.is_some() && matches!(state.phase, WindowPhase::Loaded | WindowPhase::Failed) {
-            let has_rows = if self.view.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
-            state.phase = if has_rows { WindowPhase::Loaded } else { WindowPhase::Failed };
+    /// P-DLV-32: the state of every value of the stream, from the last value of the window, the read error and the rows of the stream.
+    pub(super) fn delivered(&self, window: &WindowState) -> WindowState {
+        let has_rows = if self.view.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
+        let by_rows = if has_rows { WindowPhase::Loaded } else { WindowPhase::Failed };
+        let total = if self.view.kind == Kind::List { self.total } else { None };
+        if let Some(detail) = &self.read_error {
+            return WindowState { phase: by_rows, error: Some(crate::ffi::DbError::Storage { detail: detail.clone() }), loaded: window.loaded, has_more: window.has_more, settled: true, total };
         }
-        state.total = if self.view.kind == Kind::List { self.total } else { None };
-        state
+        if !self.view.remote {
+            return WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total };
+        }
+        let phase = if window.error.is_some() && matches!(window.phase, WindowPhase::Loaded | WindowPhase::Failed) { by_rows } else { window.phase };
+        WindowState { phase, total, ..window.clone() }
     }
 
     pub(super) fn push(&mut self, value: Value, fx: &mut Vec<Emit>) {
         let value = match value {
-            Value::Snapshot { revision, rows, edits, temporary, forgotten, state } => Value::Snapshot { revision, rows, edits, temporary, forgotten, state: self.shown(state) },
-            Value::Count { revision, count, state } => Value::Count { revision, count, state: self.shown(state) },
-            Value::State { revision, state } => Value::State { revision, state: self.shown(state) },
+            Value::Snapshot { revision, rows, edits, temporary, forgotten, state } => Value::Snapshot { revision, rows, edits, temporary, forgotten, state: self.delivered(&state) },
+            Value::Count { revision, count, state } => Value::Count { revision, count, state: self.delivered(&state) },
+            Value::State { revision, state } => Value::State { revision, state: self.delivered(&state) },
             Value::Delta(mut delta) => {
-                delta.state = self.shown(delta.state);
+                delta.state = self.delivered(&delta.state);
                 Value::Delta(delta)
             }
             other => other,
@@ -228,7 +233,6 @@ impl Delivery {
         self.deferred = None;
         self.view = view;
         self.window = WindowState::idle();
-        self.window_phase = self.window.phase;
         self.held_state = None;
         self.watch(fx);
         fx.push(self.new_read(self.read_revision));
@@ -258,17 +262,15 @@ impl Delivery {
             (self.revision, self.value_position)
         };
         self.value_position = value.1;
-        if self.stage == DeliveryStage::Live && self.read_error {
-            self.read_error = false;
-            self.window.error = None;
-            self.window.phase = self.window_phase;
+        if self.stage == DeliveryStage::Live && self.read_error.take().is_some() {
             let unchanged = match &data {
                 Whole::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
                 Whole::Count(count) => self.count == Some(*count),
                 Whole::Operations(items) => self.operations.as_ref() == Some(items),
             };
             if !self.resync_pending && unchanged {
-                self.push(Value::State { revision: self.revision, state: self.window.clone() }, fx);
+                let state = self.state_at(revision);
+                self.push(Value::State { revision: self.revision, state }, fx);
             }
         }
         match (self.stage, data) {

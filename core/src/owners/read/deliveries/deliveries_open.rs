@@ -2,7 +2,6 @@ use super::*;
 
 impl Delivery {
     pub(super) fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
-        let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None } };
         Self {
             epoch,
             view,
@@ -17,15 +16,14 @@ impl Delivery {
             acknowledged: None,
             resync_pending: false,
             resync_failed: false,
-            read_error: false,
+            read_error: None,
             rows: Vec::new(),
             acked_rows: Vec::new(),
             temporary: BTreeMap::new(),
             count: None,
             operations: None,
             total: None,
-            window_phase: window.phase,
-            window,
+            window: WindowState::idle(),
             held_state: None,
             next_feed: None,
             position: 0,

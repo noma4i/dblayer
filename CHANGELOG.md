@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Show the load error of a window again after a failed read of the stream recovers.
 - Keep the other events of a feed batch when one event carries data that does not decode.
 - Refuse a write with data the Store cannot accept as `Invalid` and do not retry it: a feed gap, an upload and a restored upload end instead of looping.
 - Skip the request of a preload window whose saved data is still fresh at open.

@@ -634,6 +634,19 @@ if len(validate_calls) != 1:
     for place in validate_calls:
         findings.append(f"Z52 the batch plan has one check, in the one write entry of Store after the follow operations and the reduced repeats ({len(validate_calls)} calls): {place}")
 
+for path in sorted(source.rglob("*.rs")):
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.search(r"\bwindow_phase\b", line):
+            findings.append(f"Z53 the stream keeps the window value as the window sent it, no second phase field: {path.relative_to(root)}:{number}")
+for path in sorted((source / "owners" / "read" / "deliveries").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    inside = False
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.match(r"\s*pub\(super\) fn delivered\(", line): inside = True
+        elif inside and re.match(r"    \}$", line): inside = False
+        if not inside and re.search(r"\bWindowState \{ (phase|error|loaded|has_more|settled|total)\b", line):
+            findings.append(f"Z53 the state of a stream value is built only in Delivery::delivered (P-DLV-32): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

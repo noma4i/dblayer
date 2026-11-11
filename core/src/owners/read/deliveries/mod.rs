@@ -341,7 +341,8 @@ struct Delivery {
     acknowledged: Option<i64>,
     resync_pending: bool,
     resync_failed: bool,
-    read_error: bool,
+    /// The error of the last failed read, until a read succeeds.
+    read_error: Option<String>,
     rows: Vec<StreamRow>,
     acked_rows: Vec<StreamRow>,
     /// Server id to the temporary id of the rows the reader took.
@@ -349,8 +350,8 @@ struct Delivery {
     count: Option<u64>,
     operations: Option<Vec<crate::ffi::OperationInfo>>,
     total: Option<u64>,
+    /// The last value of the window, as the window sent it.
     window: WindowState,
-    window_phase: WindowPhase,
     held_state: Option<WindowState>,
     next_feed: Option<u64>,
     position: u64,

@@ -125,7 +125,6 @@ impl Facts {
             _ if loading => Phase::Loading,
             LastLoad::None => Phase::Idle,
             LastLoad::Fresh | LastLoad::Landed => Phase::Loaded,
-            LastLoad::Failed(_) if self.has_rows => Phase::Loaded,
             LastLoad::Failed(_) => Phase::Failed,
         };
         let settled = match &self.outcome {
