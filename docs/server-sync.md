@@ -193,15 +193,14 @@ Recovery depends on the response and whether it confirms the sequence:
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code)            | spent, nothing is pending                                                                 | fix the cause, then `retry`. The core sends the mutation as a new request      |
 | did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too                                  | `sessionReset()`, sign in again, then `retry`                                  |
-| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer                                | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | Fix the cause before sending again                                             |
+| HTTP 3xx or 4xx other than 401, 408, 425 and 429, without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with `Http(code)` | Fix the cause before sending again |
 | lost connection, timeout, HTTP 408, 429 or 5xx                                              | pending                                                                                   | the durable owner repeats the saved request under the [retry policy](#retries) |
-| any other HTTP error status                                                                 | pending                                                                                   | fix the cause, then `retry`                                                    |
 | stored request whose path is now declared sessionless                                       | removed without sending or advancing the sequence                                         | nothing to do                                                                  |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
 The [retry owner](#retries) preserves Pending across temporary failures.
-HTTP 401, 403 and every other unlisted status return immediately with pending preserved.
+HTTP 401 returns immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
 Opening the database with a session sends the stored request. The application calls nothing.
 
@@ -353,7 +352,7 @@ Each request has one retry owner. Core `RetryPolicy` defines the common delay ca
 
 Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
 The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
-Queued mutations retain optimistic edits for these codes on both transports.
+A queued mutation repeats these codes only when the answer does not confirm the sequence. An answer that confirms the sequence ends the mutation by its `on_failure`.
 Opening after a schema change preserves the attempt budget and the final Failed result of queued operations.
 An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
 An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
@@ -885,7 +884,7 @@ The core starts these subscriptions when a session credential is committed (a se
 
 | Event                                       | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Successful `create` or `destroy` of a model | scopes of that model become stale and are refetched at once if someone is reading them. After a `create`, a scope with `insert_on: [:event, :response]` is not refetched: the answer of the mutation already placed the row                                                                                                                                                                                                                                                        |
+| Successful `create` or `destroy` of a model | no refetch: the answer places or removes the row. Scopes are refetched only when the action declares `refetch`. A `destroy` answered with `NOT_FOUND` makes every relation of the model stale |
 | Successful mutation with `refetch`          | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit. A load that began before the commit does not settle the refetch, whatever it lands. The call that sent the mutation returns with its own answer and never waits for the refetch, and the next mutation is sent meanwhile. A session change drops a refetch the old session owed  |
 | `freshness` expired                         | checked on the next read or network return. Expiration alone sends no request                                                                                                                                                                                                                                                                                                                                                                                                      |
 | App returns to the foreground               | an online idle window with a reader reloads when its scope declares `refresh_on_foreground: true`, whether fresh or stale. An offline foreground does nothing                                                                                                                                                                                                                                                                                                                      |
