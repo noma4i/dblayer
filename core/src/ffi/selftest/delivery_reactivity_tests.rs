@@ -41,6 +41,10 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
 }
 
 async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::Value>, fanout: Option<&str>, memory: bool, changes: Vec<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_joining(world, listen, fanout, memory, changes, (true, true)).await
+}
+
+pub(super) async fn feed_database_joining(world: Arc<World>, listen: Option<serde_json::Value>, fanout: Option<&str>, memory: bool, changes: Vec<serde_json::Value>, joins: (bool, bool)) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -58,8 +62,8 @@ async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::
     let mut list = RelationSpec::new("list", &[]);
     list.text_params.push("list".into());
     list.membership.insert("list".into(), Membership::Contains("lists".into()));
-    list.joins_node = true;
-    list.joins_events = true;
+    list.joins_node = joins.0;
+    list.joins_events = joins.1;
     let mut remote = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(remote);
@@ -510,5 +514,35 @@ async fn feed_payload_two_models_one_entry() {
     }
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     assert_eq!(world.count("ChatNode"), requests);
+    bound(database.close_database()).await.unwrap();
+}
+
+/// M24: `insert_on: [:node]` acts only for the node read that a `changed_by` event starts; an unchanged row enters the loaded window, a node read by the caller puts no row into it.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_insert_on_node_reread() {
+    let world = World::new("server", "A", true);
+    let changes = vec![json!({"area":"CHAT","relation":"node"})];
+    let (database, transport) = feed_database_joining(world.clone(), None, None, false, changes, (true, false)).await;
+    let chat = |id: &str| json!({"data":{"node":{"__typename":"Chat","id":id,"title":"t","revision":1,"lists":["PRIMARY"]}}});
+    let list = Arc::new(crate::ffi::tape::Rows::default());
+    let window = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, list.clone());
+    world.answer_with("ChatList", json!({"data":{"chats":[]}}));
+    bound(window.wait_for_initial_load()).await.unwrap();
+    bound(transport.opened.notified()).await;
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    let mut nodes = Vec::new();
+    for id in ["c2", "c1"] {
+        world.answer_with("ChatNode", chat(id));
+        let rows = Arc::new(crate::ffi::tape::Rows::default());
+        nodes.push(database.watch_query(&json!({"model":"Chat","relation":"node","params":{crate::schema::NODE_PARAM: id}}).to_string(), rows.clone()));
+        crate::test_wait::settled(&database, "the node is read", || rows.len() == 1).await;
+    }
+    assert_eq!(list.len(), 0, "a node read by the caller puts no row into the window");
+    let asked = world.count("ChatNode");
+    world.answer_with("ChatNode", chat("c1"));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
+    crate::test_wait::settled(&database, "the event starts one node read", || world.count("ChatNode") == asked + 1).await;
+    crate::test_wait::settled(&database, "the node read is done", || true).await;
+    assert_eq!(list.len(), 1, "the reread row joins the window");
     bound(database.close_database()).await.unwrap();
 }
