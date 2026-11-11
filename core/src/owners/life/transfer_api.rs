@@ -6,7 +6,7 @@ use super::{Life, LifeReply};
 use crate::owners::write::outbox::{Fault, Receipt};
 use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::{BatchItem, Joint, SuppliedSource, TransferAnswer, TransferInput};
-use crate::runtime::{Epoch, EpochStamp, Time, Waiter};
+use crate::runtime::{Epoch, EpochStamp, Waiter};
 
 impl Life {
     fn transfer_call(&self, epoch: Epoch, input: impl FnOnce(u64) -> TransferInput) -> Waiter<LifeReply> {
@@ -17,9 +17,9 @@ impl Life {
         waiter
     }
 
-    pub fn accept_upload(&self, epoch: Epoch, item: BatchItem, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply, now }) }
+    pub fn accept_upload(&self, epoch: Epoch, item: BatchItem) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply }) }
 
-    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint: Box::new(joint), reply, now }) }
+    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint: Box::new(joint), reply }) }
 
     pub fn cancel_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Cancel { key, reply }) }
 

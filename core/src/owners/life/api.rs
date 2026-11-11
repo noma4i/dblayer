@@ -163,9 +163,6 @@ impl Life {
         self.wiring.to_windows(WindowsInput::RegisterOperations);
     }
 
-    /// The clock of the runtime, the time that the platform calls hand to the owners.
-    pub fn now(&self) -> crate::runtime::Time { crate::runtime::Time((self.wiring.now)().unsigned_abs()) }
-
     pub fn session_reset(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);

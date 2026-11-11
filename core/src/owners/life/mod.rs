@@ -88,8 +88,6 @@ pub(crate) struct Addresses {
 /// What every runner shares: the address book, the registry of waiters and the published value.
 pub(crate) struct Wiring {
     pub handle: Handle,
-    /// The clock of the database in ms: the platform calls stamp the inputs that decide freshness with it.
-    pub now: Arc<dyn Fn() -> i64 + Send + Sync>,
     pub addresses: OnceLock<Addresses>,
     pub outcomes: Outcomes<LifeReply>,
     /// The answers of `Pull`: the registry of the platform calls that wait for the next value of a stream.
@@ -122,9 +120,8 @@ impl Wiring {
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
-    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+    fn new(handle: Handle) -> Self {
         Self {
-            now,
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
             pulls: Outcomes::new(),
@@ -380,8 +377,8 @@ impl Life {
         let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
         let found = boot_found(&ports.db, saved_unowned_pending)?;
         let clock = ports.db.lock().clock.clone();
-        let mut builder = RuntimeBuilder::new(clock.clone());
-        let wiring = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
+        let mut builder = RuntimeBuilder::new(clock);
+        let wiring = Wiring::new(builder.handle());
         if let Some(transport) = &ports.transport { wiring.gate.attach(transport.clone()); }
         let wiring = Arc::new(wiring);
         let weak = Arc::downgrade(&wiring);

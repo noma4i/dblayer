@@ -75,7 +75,7 @@ impl TransferState {
         self.show(id, shown, fx);
         run(fx, effect);
         if uploading {
-            let input = TransferInput::Tick { now: self.now, kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } };
+            let input = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } };
             fx.push(Effect::Schedule { id: put_timer(attempt_id), after: self.put_timeout, input });
         }
     }

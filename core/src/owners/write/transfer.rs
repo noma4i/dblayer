@@ -433,7 +433,7 @@ impl TransferState {
 
     pub(super) fn schedule_expire(&mut self, fx: &mut Fx) {
         let id = self.timer();
-        fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
+        fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { kind: TransferTick::Expire } });
     }
 
     #[cfg(test)]
@@ -450,7 +450,7 @@ impl TransferState {
         let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
-        fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { now: self.now, kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
+        fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
         self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id });
     }
 
@@ -463,7 +463,7 @@ impl TransferState {
         let attempt = transfer.attempts;
         transfer.attempt_id = attempt_id;
         let timer = ScheduleId(RETRY_TIMER + attempt_id);
-        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { now: self.now, kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
+        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
     }
 
     /// Everything that waits for the call answers `answer`; `Interrupted` for the end of the epoch and for the close.
@@ -693,8 +693,8 @@ impl TransferState {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
-            TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
-            TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(*joint), reply, now, fx),
+            TransferInput::Accept { epoch, item, reply } => self.accept(epoch, vec![*item], None, reply, fx),
+            TransferInput::AcceptBatch { epoch, items, joint, reply } => self.accept(epoch, items, Some(*joint), reply, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } | TransferInput::ReservedFloor { .. } => {}
             TransferInput::AbortDone { upload_id, result } => self.abort_done(upload_id, result, fx),
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),

@@ -227,8 +227,8 @@ pub struct AbortFault {
 
 #[derive(Clone, Debug)]
 pub enum TransferInput {
-    Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
-    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId, now: Time },
+    Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId },
+    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId },
     Restored { uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, orphans: Vec<(String, String)>, batches: BTreeMap<u64, StoredGroup>, held_orphan: Option<String> },
     ReservedFloor { transfer_id: TransferId },
     /// The answer to `abort` of a removed transfer: `Ok` when the server removed the upload or has none, else the refusal.
@@ -273,7 +273,7 @@ pub enum TransferInput {
     Online(Online),
     PowerSaving(bool),
     EpochStarted(EpochStarted),
-    Tick { now: Time, kind: TransferTick },
+    Tick { kind: TransferTick },
     EpochEnded(EpochEnded),
     Closing,
 }

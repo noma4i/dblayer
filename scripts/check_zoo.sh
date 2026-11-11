@@ -585,6 +585,22 @@ if outbox_types.exists():
         if re.search(r"\bLocalWrite \{[^}]*\bnow:", line):
             findings.append(f"Z48 LocalWrite carries no time: the owner reads the time of its step: {outbox_types.relative_to(root)}:{number}")
 
+upload = source / "ffi" / "upload.rs"
+if upload.exists():
+    for number, line in enumerate(upload.read_text().splitlines(), 1):
+        if re.search(r"life\.now\(\)", line):
+            findings.append(f"Z49 an upload call reads no clock: Transfer takes the time of its step: {upload.relative_to(root)}:{number}")
+transfer_types = source / "owners" / "write" / "transfer_types.rs"
+if transfer_types.exists():
+    for number, line in enumerate(transfer_types.read_text().splitlines(), 1):
+        if re.search(r"^\s*(Accept|AcceptBatch|Tick) \{[^}]*\bnow:", line):
+            findings.append(f"Z49 an input of Transfer carries no time: the owner reads the time of its step: {transfer_types.relative_to(root)}:{number}")
+for path in sorted(source.rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs") or "spec" in path.relative_to(source).parts[:1]: continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.search(r"wiring\.now\b", line):
+            findings.append(f"Z49 the time of an owner comes from the runtime step, the wiring holds no clock: {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

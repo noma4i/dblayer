@@ -214,7 +214,7 @@ impl Database {
             }
         }).await?;
         let item = self.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
-        let waiter = self.life.accept_upload(epoch, item, self.life.now());
+        let waiter = self.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value))
@@ -242,7 +242,7 @@ impl Database {
         }).collect::<Result<Vec<_>, DbError>>()?;
         let built: Vec<BatchItem> = planned.iter().map(|(_, _, built)| built.clone()).collect();
         let joint = self.joint_of(&model, &request)?;
-        let waiter = self.life.accept_upload_batch(epoch, built, joint, self.life.now());
+        let waiter = self.life.accept_upload_batch(epoch, built, joint);
         let TransferAnswer::Receipts(held) = self.transfer_answer(epoch, waiter, "upload batch").await? else { return Err(DbError::Internal { detail: "the owner answered a batch with no receipts".into() }) };
         let mut items = Vec::new();
         for ((item, planned, _), held) in planned.into_iter().zip(held) {
@@ -274,7 +274,7 @@ impl Database {
         let (file, planned) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
         let single = self.single_of(&request.model, &upload.action, &file)?;
         let item = self.single_upload((&request.model, planned.row_id.as_str(), &upload.action), single, &file, planned.effects.clone())?;
-        let waiter = self.life.accept_upload(epoch, item, self.life.now());
+        let waiter = self.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&request.model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {} is not shown", planned.row_id, request.model) })?;
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))

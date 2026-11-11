@@ -137,7 +137,7 @@ impl TransferState {
     }
 
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
-    pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, now: Time, fx: &mut Fx) {
+    pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Closed } else { Fault::NoSession }));
         }
@@ -155,7 +155,7 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
-            self.create(item, group, now, TransferStage::Reserving)
+            self.create(item, group, self.now, TransferStage::Reserving)
         }).collect();
         for (&id, old) in ids.iter().zip(old) {
             if let Some(old) = old {
@@ -407,7 +407,7 @@ impl TransferState {
     fn backoff_restore(&mut self, id: TransferId, fx: &mut Fx) {
         let attempt = self.transfers.get(&id).map_or(1, |transfer| transfer.attempts).max(1);
         let timer = self.timer();
-        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { now: self.now, kind: TransferTick::StagedRestore { transfer_id: id } } });
+        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { kind: TransferTick::StagedRestore { transfer_id: id } } });
     }
 
     /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.
