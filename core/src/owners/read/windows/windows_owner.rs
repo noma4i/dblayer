@@ -23,9 +23,9 @@ pub(super) struct WindowBasis {
 }
 
 impl Window {
-    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order): (u32, bool, (i64, i64), bool, bool), read_id: Option<u64>, ids: (&mut RequestIds, &mut u32), now: i64) -> Self {
+    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order): (u32, bool, (i64, i64), bool, bool), read_id: u64, ids: (&mut RequestIds, &mut u32), now: i64) -> Self {
         let WindowBasis { epoch, online, online_seq, saving, base_generation, generations } = basis;
-        let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
+        let opening = Some(Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
@@ -318,13 +318,12 @@ impl WindowsState {
         if !self.windows.contains_key(key) && self.ended.is_none() {
             let read_id = self.next_read;
             self.next_read += 1;
-            self.create(key, Some(read_id), now);
+            self.create(key, read_id, now);
             out.push(Effect::Run(WindowsEffect::ReadWindow { key: key.clone(), read_id }));
         }
     }
 
-    /// A machine of the preload interest starts not fresh: there is no saved window to read.
-    pub(super) fn create(&mut self, key: &WindowKey, read_id: Option<u64>, now: i64) {
+    fn create(&mut self, key: &WindowKey, read_id: u64, now: i64) {
         let ids = (&mut self.request_ids, &mut self.next_attempt);
         let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key)), read_id, ids, now);
         self.windows.insert(key.clone(), window);
@@ -431,7 +430,7 @@ impl Windows {
 
     pub(super) fn interest_preload(state: &mut WindowsState, key: WindowKey, now: i64, out: &mut Effects<Self>) {
         match state.windows.get(&key) {
-            None => state.create(&key, None, now),
+            None => state.ensure(&key, now, out),
             Some(window) if window.interest().contains(&PRELOAD) => return,
             Some(_) => {}
         }
