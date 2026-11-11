@@ -155,7 +155,7 @@ A list is complete when `settled` is true and `hasMore` is false.
 
 ## Model events
 
-An event of `scope.events(Model)` carries `position`, `area`, `kind`, `id` and the rows `before` and `after` the event, `nil` when the row did not exist on that side. A `gap` item tells that the order of the events is lost: read the rows again.
+An event of `scope.events(Model)` carries `position`, `area`, `kind`, `id` and the rows `before` and `after` the event, `nil` when the row did not exist on that side. A `gap` item tells that events were missed: the library rereads the watched reads of the model by itself, and the app does not read the rows again.
 
 ## Text search
 
