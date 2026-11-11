@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, text};
 use super::rig_events::events;
-use super::rig_tests::{bound, Rig, World};
+use super::rig_tests::{bound, Fault, Rig, World};
 use super::upload_fixtures::add_message_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::tape::Rows;
@@ -103,7 +103,6 @@ async fn out_local_set_local_same() {
 
 fn missing(error: &DbError, model: &str, row: &str) -> bool { matches!(error, DbError::NotFound { detail } if detail.contains(model) && detail.contains(row)) }
 
-/// P-OUT-40 out_submit_missing_row_not_found: `update`, `act` and `destroy` on an absent row, or on a row that a pending `destroy` hides, end `NotFound` and send nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_submit_missing_row_not_found() {
     let rig = rig().await;
@@ -128,7 +127,6 @@ async fn out_submit_missing_row_not_found() {
     rig.database.close_now();
 }
 
-/// P-OUT-41 out_create_existing_id_already_exists: `create` with the id of a stored row or of a row that a pending `destroy` hides ends `AlreadyExists` and sends nothing; a stale epoch is refused first.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_create_existing_id_already_exists() {
     let rig = rig().await;
@@ -158,7 +156,6 @@ fn extra(models: &mut serde_json::Value, fields: Vec<crate::schema::FieldSpec>) 
     for field in fields { message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap()); }
 }
 
-/// P-OUT-42 out_create_fills_zero_values: `create` fills a required field without a value with the zero of its type; nullable, optional and defaulted fields and `id` stay as they are.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_create_fills_zero_values() {
     use crate::schema::FieldSpec;
@@ -190,7 +187,6 @@ async fn out_create_fills_zero_values() {
     rig.database.close_now();
 }
 
-/// P-OUT-43 out_local_receipt_without_operation: a write of a `storage: local` model and an `act` without `mutation` answer a receipt without an operation, with the revision of the batch and the row of the batch; nothing is sent.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_local_receipt_without_operation() {
     use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, RootShape, Storage};
@@ -222,7 +218,6 @@ async fn out_local_receipt_without_operation() {
     rig.database.close_now();
 }
 
-/// P-OUT-53 out_act_without_optimistic_sends: an `act` that declares no optimistic effect leaves the row as it was and the mutation goes out.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_act_without_optimistic_sends() {
     let rig = rig().await;
@@ -244,7 +239,6 @@ async fn out_act_without_optimistic_sends() {
     rig.database.close_now();
 }
 
-/// P-OUT-44 out_confirmed_checks_epoch_end: `confirmed` refuses a changed receipt before it looks at the end of the epoch, answers the cause when the epoch ended, and `Closed` after the close.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_confirmed_checks_epoch_end() {
     let rig = rig().await;
@@ -266,4 +260,126 @@ async fn out_confirmed_checks_epoch_end() {
     rig.database.close_now();
     let closed = bound(rig.database.confirmed(receipt, false)).await.unwrap_err();
     assert!(matches!(closed, DbError::Closed { .. }), "{closed:?}");
+}
+
+#[test]
+fn out_failure_kinds() {
+    use crate::owners::write::failure::{of_cause, parse};
+    use crate::transport::SessionCode;
+    use crate::value::sync::FailureKind;
+    let kinds = [
+        (FailureKind::Network, "network"),
+        (FailureKind::Server, "server"),
+        (FailureKind::Rejected, "rejected"),
+        (FailureKind::MissingFile, "missing_file"),
+        (FailureKind::SourceFailed, "source_failed"),
+        (FailureKind::Session(SessionCode::SessionEnded), "session:SESSION_ENDED"),
+        (FailureKind::RequestTooLarge { size: 9, limit: 4 }, "request_too_large"),
+        (FailureKind::ResponseTooLarge { limit: 4 }, "response_too_large"),
+        (FailureKind::Unrecognized, "unrecognized"),
+        (FailureKind::Protocol, "protocol"),
+        (FailureKind::Refused, "refused"),
+        (FailureKind::Expired, "expired"),
+    ];
+    for (kind, name) in kinds {
+        let shown = crate::ffi::wire::failure(&parse(&of_cause(kind)));
+        assert_eq!(shown.kind, name, "{kind:?}");
+    }
+}
+
+fn all_groups(rig: &Rig) -> Vec<(String, String)> {
+    let params = json!({"chatId": "c1"}).as_object().unwrap().clone();
+    let key = rig.database.db.spec("Message").unwrap().selection_key("thread", &params).unwrap();
+    rig.database.db.scope_members("Message", key.as_str()).unwrap()
+}
+
+async fn send_text(rig: &Rig, epoch: u64, text: &str, at: i64) -> crate::ffi::WireOperationReceipt {
+    bound(rig.database.send(command("Message", json!({"chatId": "c1", "text": text, "at": at}), epoch, None))).await.unwrap()
+}
+
+async fn three_groups(rig: &Rig, epoch: u64) -> Vec<String> {
+    let mut ids = Vec::new();
+    for number in 0..3 {
+        let receipt = send_text(rig, epoch, &format!("text{number}"), number).await;
+        ids.push(bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id);
+    }
+    rig.settle().await;
+    ids
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_destroy_rollback_restores_place() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let ids = three_groups(&rig, epoch).await;
+    let before = all_groups(&rig);
+    assert_eq!(before.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(), ids.iter().rev().cloned().collect::<Vec<_>>(), "the newest message stands first");
+    let values = bound(rig.database.read_row(epoch, "Message".into(), ids[1].clone())).await.unwrap().unwrap();
+
+    let hold = rig.world.hold_then("MessageDelete", Fault::Business);
+    let receipt = bound(rig.database.destroy(epoch, "Message".into(), ids[1].clone())).await.unwrap();
+    hold.entered().await;
+    assert_eq!(all_groups(&rig).len(), 2, "the destroyed group leaves the list");
+    hold.release();
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: false, .. })));
+    rig.settle().await;
+    assert_eq!(all_groups(&rig), before, "the group is back with its place key");
+    assert_eq!(bound(rig.database.read_row(epoch, "Message".into(), ids[1].clone())).await.unwrap().unwrap().cells, values.cells);
+
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_swap_keeps_place() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let ids = three_groups(&rig, epoch).await;
+    let before = all_groups(&rig);
+
+    let hold = rig.world.hold_next("SendMessage");
+    let receipt = send_text(&rig, epoch, "fresh", 3).await;
+    hold.entered().await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    let with_temp = all_groups(&rig);
+    let place = with_temp.iter().find(|(id, _)| *id == temporary).map(|(_, key)| key.clone()).expect("the temporary row stands in the list");
+    hold.release();
+    let real = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id;
+    rig.settle().await;
+    let after = all_groups(&rig);
+    assert_eq!(after.iter().find(|(id, _)| *id == real).map(|(_, key)| key.clone()), Some(place.clone()), "the real id takes the place key of the temporary one");
+    assert!(after.iter().all(|(id, _)| *id != temporary) && after.len() == before.len() + 1);
+
+    let hold = rig.world.hold_next("SendMessage");
+    let receipt = send_text(&rig, epoch, "second", 4).await;
+    hold.entered().await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    let place = all_groups(&rig).into_iter().find(|(id, _)| *id == temporary).map(|(_, key)| key).expect("the temporary row stands in the list");
+    rig.land("Message", json!({"id": "m5", "chatId": "c1", "text": "second", "at": 4})).await;
+    assert!(all_groups(&rig).iter().any(|(id, _)| id == "m5"), "the real row stands in the list");
+    hold.release();
+    let real = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id;
+    rig.settle().await;
+    let after = all_groups(&rig);
+    assert_eq!((real.as_str(), after.iter().filter(|(id, _)| *id == real).count(), after.iter().find(|(id, _)| *id == real).map(|(_, key)| key.clone())), ("m5", 1, Some(place)), "the real row takes the place of the temporary one");
+    assert!(after.iter().all(|(id, _)| *id != temporary));
+    let _ = ids;
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_create_rollback_drops_local() {
+    let rig = rig().await;
+    let rows = thread(&rig).await;
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_then("SendMessage", Fault::Business);
+    let receipt = bound(rig.database.send(command("Message", json!({"chatId": "c1", "text": "x", "at": 1}), epoch, None))).await.unwrap();
+    hold.entered().await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    bound(rig.database.set_local(epoch, "Message".into(), temporary.clone(), "localPreviewUrl".into(), json!("file:///a").to_string())).await.unwrap();
+    settled(&rig, "the preview stands on the temporary row", || rows.0.lock().unwrap().iter().any(|row| row.id == temporary && cell(&rig, "Message", row, "localPreviewUrl") == text("file:///a"))).await;
+    hold.release();
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: false, .. })));
+    settled(&rig, "the thread is empty", || rows.len() == 0).await;
+    assert!(bound(rig.database.read_row(epoch, "Message".into(), temporary)).await.unwrap().is_none());
+    rig.database.close_now();
 }
