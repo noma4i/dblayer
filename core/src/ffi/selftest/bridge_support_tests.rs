@@ -87,10 +87,7 @@ pub(super) async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args:
 }
 
 pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
-    let spec = rig.database.db.spec("Member").unwrap();
-    let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
-    let key = spec.selection_key("group_members", &params).unwrap();
-    rig.database.db.scope_members("Member", key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
+    super::flow_fixtures::selection_members(rig, "Member", "group_members", json!({"groupId": group, "order": order})).into_iter().map(|(id, _)| id).collect()
 }
 
 /// The server holds the members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 in a third list that no action touches. The core reads the three lists.

@@ -5,6 +5,12 @@ use crate::ffi::wire::{wire_fields, Cell, WireRow};
 use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, FieldSpec, ModelSpec, Newer, RelationSpec};
 use crate::value::ScalarKind;
 
+/// The stored members of one selection of `model`: row id and place key, in list order.
+pub(super) fn selection_members(rig: &Rig, model: &str, selection: &str, params: Value) -> Vec<(String, String)> {
+    let key = rig.database.db.spec(model).unwrap().selection_key(selection, params.as_object().unwrap()).unwrap();
+    rig.database.db.scope_members(model, key.as_str()).unwrap()
+}
+
 fn optional(name: &str, kind: ScalarKind) -> FieldSpec { FieldSpec::scalar(name, kind).nullable().optional() }
 
 /// A chat that points at its last message and keeps counters, as chat rows of a messenger do.

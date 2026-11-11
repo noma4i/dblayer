@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, text};
+use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, selection_members, text};
 use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::upload_fixtures::add_message_file;
@@ -253,7 +253,7 @@ async fn out_confirmed_checks_epoch_end() {
     rig.database.session_reset().await.unwrap();
     let ended = bound(rig.database.confirmed(receipt.clone(), false)).await.unwrap_err();
     let ended_changed = bound(rig.database.confirmed(changed, false)).await.unwrap_err();
-    assert!(matches!(ended, DbError::Interrupted { .. } | DbError::NoSession { .. }), "{ended:?}");
+    assert!(matches!(ended, DbError::NoSession { .. }), "{ended:?}");
     assert!(matches!(ended_changed, DbError::Invalid { .. }), "{ended_changed:?}");
 
     hold.release();
@@ -287,11 +287,7 @@ fn out_failure_kinds() {
     }
 }
 
-fn all_groups(rig: &Rig) -> Vec<(String, String)> {
-    let params = json!({"chatId": "c1"}).as_object().unwrap().clone();
-    let key = rig.database.db.spec("Message").unwrap().selection_key("thread", &params).unwrap();
-    rig.database.db.scope_members("Message", key.as_str()).unwrap()
-}
+fn all_groups(rig: &Rig) -> Vec<(String, String)> { selection_members(rig, "Message", "thread", json!({"chatId": "c1"})) }
 
 async fn send_text(rig: &Rig, epoch: u64, text: &str, at: i64) -> crate::ffi::WireOperationReceipt {
     bound(rig.database.send(command("Message", json!({"chatId": "c1", "text": text, "at": at}), epoch, None))).await.unwrap()
@@ -333,7 +329,7 @@ async fn out_destroy_rollback_restores_place() {
 async fn out_swap_keeps_place() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    let ids = three_groups(&rig, epoch).await;
+    three_groups(&rig, epoch).await;
     let before = all_groups(&rig);
 
     let hold = rig.world.hold_next("SendMessage");
@@ -349,7 +345,6 @@ async fn out_swap_keeps_place() {
     assert_eq!(after.iter().find(|(id, _)| *id == real).map(|(_, key)| key.clone()), Some(place.clone()), "the real id takes the place key of the temporary one");
     assert!(after.iter().all(|(id, _)| *id != temporary) && after.len() == before.len() + 1);
 
-    let _ = ids;
     rig.database.close_now();
 }
 
