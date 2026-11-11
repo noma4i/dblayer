@@ -1,6 +1,7 @@
 use super::*;
 
 fn carries_temp_id(body: &str) -> bool {
+    if !body.contains(crate::identity::TEMP_ID_PREFIX) { return false; }
     let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body) else { return false };
     let mut found = false;
     crate::identity::walk_temp_ids(&mut body, &mut |_| found = true);
