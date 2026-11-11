@@ -505,6 +505,7 @@ mod window_gap_landing_tests;
 use window_gap_landing_tests::*;
 mod window_gap_property_tests;
 mod window_fresh_tests;
+mod window_phase_tests;
 mod window_saving_tests;
 mod window_pages_tests;
 mod window_media_tests;
