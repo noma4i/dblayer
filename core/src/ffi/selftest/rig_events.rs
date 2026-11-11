@@ -61,12 +61,13 @@ impl Rig {
         seen
     }
 
-    pub(super) async fn land_together(&self, frames: &[(&str, Value)], debounce_ms: u64) -> Vec<Option<ReadValue>> {
+    /// The rows of several models arrive in 1 frame: their events land in 1 batch.
+    pub(super) async fn land_frame(&self, rows: &[(&str, Value)]) -> Vec<Option<ReadValue>> {
         let mut streams = Vec::new();
-        for (model, _) in frames { streams.push(self.event_stream(model).await); }
+        for (model, _) in rows { streams.push(self.event_stream(model).await); }
         let token = bound(self.switch.events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
-        for (model, row) in frames { assert!(self.switch.events.peer.event(&token, json!({"data": {"rigEvents": {*model: row}}})), "the subscription is open"); }
-        self.clock.advance(debounce_ms);
+        let frame: serde_json::Map<String, Value> = rows.iter().map(|(model, row)| (model.to_string(), row.clone())).collect();
+        assert!(self.switch.events.peer.event(&token, json!({"data": {"rigEvents": frame}})), "the subscription is open");
         let mut seen = Vec::new();
         for (stream, reader) in streams { seen.push(bound(stream.pull(reader)).await); }
         self.settle().await;
