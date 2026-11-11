@@ -84,7 +84,7 @@ impl EpochGate {
         if let Some(variables) = variables {
             let mut found = false;
             crate::identity::walk_temp_ids(variables, &mut |_| found = true);
-            if found { return Err(TransportError::Decode("the request carries a temporary id".into())); }
+            if found { return Err(TransportError::Invalid("the request carries a temporary id".into())); }
         }
         #[cfg(test)]
         self.recorder.sent("lend");

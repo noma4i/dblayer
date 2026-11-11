@@ -24,6 +24,8 @@ pub enum TransportError {
     Interrupted(String),
     #[error("the session ended")]
     NoSession,
+    #[error("invalid request: {0}")]
+    Invalid(String),
     #[error("decode: {0}")]
     Decode(String),
     #[error("no scripted reply for {0}")]

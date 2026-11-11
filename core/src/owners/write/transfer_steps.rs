@@ -334,6 +334,12 @@ impl TransferState {
                 self.remove_with_batch(id, Removal::Confirmed { revision, result, row_id }, fx)
             }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
+            OutboxOutcome::Rejected { error } if super::failure::is_row_never_created(&error) => {
+                let cycle = self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id);
+                if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; transfer.has_operation = false; }
+                self.confirmed_discards.insert(id, (cycle, error));
+                self.remove_with_batch(id, Removal::Discarded, fx)
+            }
             OutboxOutcome::Rejected { .. } if waiting && !failed_waiting => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Failed { .. } if waiting && !failed_waiting => {}
             _ if failed_waiting => {}

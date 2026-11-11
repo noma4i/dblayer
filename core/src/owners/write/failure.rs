@@ -82,4 +82,6 @@ pub fn protocol(message: &str) -> String { text(&OperationFailure::new(FailureKi
 pub fn expired() -> String { text(&OperationFailure::new(FailureKind::Expired, "expired")) }
 
 /// The row the operation acts on never reached the server: its `create` ended.
-pub fn row_never_created() -> String { text(&OperationFailure::new(FailureKind::Rejected, "the row of the operation was never created")) }
+pub fn row_never_created() -> String { text(&OperationFailure::new(FailureKind::Refused, "the row of the operation was never created")) }
+
+pub fn is_row_never_created(error: &str) -> bool { matches!(parse(error).kind, FailureKind::Refused) }

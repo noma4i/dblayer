@@ -40,7 +40,7 @@ impl RetryClass {
             }
             TransportError::GraphqlAnswer { response } => if matches!(response.kind, Some(super::AnswerKind::Transient { .. })) { RetryClass::Retriable } else { RetryClass::Fatal },
             TransportError::SentAnswerTooLarge { .. } => RetryClass::Retriable,
-            TransportError::RequestTooLarge { .. } | TransportError::ResponseTooLarge { .. } | TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::NoSession | TransportError::Decode(_) | TransportError::Unscripted(_) | TransportError::Storage(_) | TransportError::Internal(_) => RetryClass::Fatal,
+            TransportError::RequestTooLarge { .. } | TransportError::ResponseTooLarge { .. } | TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::NoSession | TransportError::Decode(_) | TransportError::Invalid(_) | TransportError::Unscripted(_) | TransportError::Storage(_) | TransportError::Internal(_) => RetryClass::Fatal,
         }
     }
 
