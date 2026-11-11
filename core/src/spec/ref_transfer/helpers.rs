@@ -126,7 +126,7 @@ pub fn new_transfer(g: &mut G, key: TransferKey, source: Source, epoch: u64, now
     g.next_seq += 1;
     Transfer {
         id, key, op_id: None, epoch, source, st: St::Reserving, seq, pos, cycle_id: 1, batch, size: 0, sha256: None, parts: 1, upload_id: None, confirmed: vec![],
-        attempts: 0, complete_attempts: 0, signed_id: None, created_at: now, accepted_at: now, error: None, copy_present: false, has_effects, held_step: None, round_error: None,
+        attempts: 0, complete_attempts: 0, signed_id: None, created_at: now, accepted_at: now, failed_at: None, error: None, copy_present: false, has_effects, held_step: None, round_error: None,
         replies: Replies::default(), outcome_waiters: BTreeMap::new(), outcomes: BTreeMap::new(), intent_live: false, write_retry: None, intent_after_ready: false, local_url: false, cached: None, aborted: false, values, variables: vec![],
         stored_shown: None,
     }
@@ -189,6 +189,7 @@ pub fn run_on(s: &mut State, id: TransferId, i: &Input, e: &mut Vec<Effect>) {
     let mut t = match s.transfers.remove(&id) { Some(t) => t, None => { row(e, "stray_unknown_transfer"); return; } };
     let before = shown(&s.g, &t);
     tx(&mut s.g, &mut t, i, e);
+    if t.st == St::Failed && t.failed_at.is_none() { t.failed_at = Some(s.g.now); }
     write_shown(&mut s.g, &t, &before, e);
     after(s, t);
     run_post(s, e);

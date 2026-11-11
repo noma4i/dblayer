@@ -5,7 +5,7 @@ pub fn tx(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
         Input::Online(_) | Input::PowerSaving(_) | Input::SlotFreed => tx_signal(g, t, i, e),
         Input::RegisterOperations { .. } => tx_register(g, t, e),
         Input::RestoreReady { .. } => tx_awaiting_only(g, t, i, e),
-        Input::Tick { now, kind } => tx_tick(g, t, *now, kind, e),
+        Input::Tick { kind, .. } => tx_tick(g, t, g.now, kind, e),
         Input::Cancel { reply, .. } => tx_cancel(g, t, *reply, true, e),
         Input::Discard { reply, .. } => tx_cancel(g, t, *reply, false, e),
         Input::Retry { source, reply, .. } => tx_retry(g, t, source, *reply, e),
@@ -153,8 +153,9 @@ pub fn tick_expire(g: &mut G, t: &mut Transfer, now: u64, e: &mut Vec<Effect>) {
     let age = now.saturating_sub(t.created_at);
     match t.st.clone() {
         St::Failed => {
-            if age > EXPIRY_MS { row(e, "xfer_expired"); failed_remove(g, t, None, true, e); }
-            else if age == EXPIRY_MS { row(e, "xfer_expiry_exact_week_keeps"); }
+            let Some(failed_age) = t.failed_at.map(|at| now.saturating_sub(at)) else { row(e, "xfer_not_expired"); return; };
+            if failed_age > EXPIRY_MS { row(e, "xfer_expired"); failed_remove(g, t, None, true, e); }
+            else if failed_age == EXPIRY_MS { row(e, "xfer_expiry_exact_week_keeps"); }
             else { row(e, "xfer_not_expired"); }
         }
         St::AwaitingSource => {

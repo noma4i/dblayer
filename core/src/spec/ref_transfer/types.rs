@@ -256,7 +256,7 @@ pub struct Transfer {
     pub id: TransferId, pub key: TransferKey, pub op_id: Option<OpId>, pub epoch: u64, pub source: Source, pub st: St,
     pub seq: u64, pub pos: u32, pub cycle_id: u64, pub batch: Option<GroupId>, pub size: u64, pub sha256: Option<String>, pub parts: u32,
     pub upload_id: Option<String>, pub confirmed: Vec<(u32, Option<String>)>, pub attempts: u32, pub complete_attempts: u32, pub signed_id: Option<String>,
-    pub created_at: u64, pub accepted_at: u64, pub error: Option<Failure>, pub copy_present: bool, pub has_effects: bool, pub held_step: Option<ReqId>,
+    pub created_at: u64, pub accepted_at: u64, pub failed_at: Option<u64>, pub error: Option<Failure>, pub copy_present: bool, pub has_effects: bool, pub held_step: Option<ReqId>,
     pub round_error: Option<String>, pub replies: Replies, pub outcome_waiters: BTreeMap<u64, Vec<ReplyId>>, pub outcomes: BTreeMap<u64, Outcome>,
     pub intent_live: bool, pub write_retry: Option<AttemptId>, pub intent_after_ready: bool, pub local_url: bool, pub cached: Option<Cached>, pub aborted: bool, pub values: Vec<String>, pub variables: Vec<String>,
     pub stored_shown: Option<Shown>,

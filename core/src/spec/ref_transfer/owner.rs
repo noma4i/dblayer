@@ -13,9 +13,9 @@ pub fn owner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
                 e.push(Effect::NetworkSnapshotRequest { epoch: *epoch });
             }
         }
-        Input::Accept { epoch, now, item, reply: r } => accept(s, *epoch, *now, item.clone(), *r, e),
-        Input::AcceptBatch { epoch, now, minimum, maximum, items, reply: r } => accept_batch(s, *epoch, *now, *minimum, *maximum, items.clone(), *r, e),
-        Input::Restored { epoch, now, orphans, uploads, transfer_outcomes, held_orphan, .. } => { s.g.now = *now; restored(s, *epoch, orphans, uploads, transfer_outcomes, held_orphan, e) }
+        Input::Accept { epoch, item, reply: r, .. } => accept(s, *epoch, s.g.now, item.clone(), *r, e),
+        Input::AcceptBatch { epoch, minimum, maximum, items, reply: r, .. } => accept_batch(s, *epoch, s.g.now, *minimum, *maximum, items.clone(), *r, e),
+        Input::Restored { epoch, orphans, uploads, transfer_outcomes, held_orphan, .. } => { restored(s, *epoch, orphans, uploads, transfer_outcomes, held_orphan, e) }
         Input::RestoreReady { epoch } => {
             if *epoch == s.g.epoch && s.g.phase == Phase::Classified {
                 row(e, "xfer_restore_ready");
@@ -44,8 +44,7 @@ pub fn owner(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
         }
         Input::PowerSaving(b) => { s.g.saving = *b; broadcast(s, i, e); }
         Input::SlotFreed => broadcast(s, i, e),
-        Input::Tick { now, kind } => {
-            s.g.now = *now;
+        Input::Tick { kind, .. } => {
             match kind {
                 TickKind::Expire => broadcast(s, i, e),
                 TickKind::Retry { transfer_id, .. } | TickKind::PutTimeout { transfer_id, .. } => run_on(s, *transfer_id, i, e),
@@ -111,7 +110,6 @@ pub fn invalid_item(it: &Item) -> bool {
 }
 
 pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &mut Vec<Effect>) {
-    s.g.now = now;
     if s.g.phase == Phase::Closed { row(e, "xfer_accept_after_closing"); reply(e, r, Answer::Err(Fault::Closed)); return; }
     if epoch != s.g.epoch || s.g.phase == Phase::Idle { row(e, "xfer_accept_stale"); reply(e, r, Answer::Err(Fault::NoSession)); return; }
     if s.g.phase == Phase::Restoring {
@@ -140,7 +138,6 @@ pub fn accept(s: &mut State, epoch: u64, now: u64, item: Item, r: ReplyId, e: &m
 }
 
 pub fn accept_batch(s: &mut State, epoch: u64, now: u64, minimum: usize, maximum: usize, items: Vec<Item>, r: ReplyId, e: &mut Vec<Effect>) {
-    s.g.now = now;
     if s.g.phase == Phase::Closed { row(e, "xfer_accept_after_closing"); reply(e, r, Answer::Err(Fault::Closed)); return; }
     if epoch != s.g.epoch || s.g.phase == Phase::Idle { row(e, "xfer_accept_batch_invalid"); reply(e, r, Answer::Err(Fault::NoSession)); return; }
     if s.g.phase == Phase::Restoring {
@@ -246,6 +243,7 @@ pub fn classify(s: &mut State, item: &RestoreItem, outs: &BTreeMap<TransferId, B
             t.id = *id;
             t.seq = *seq;
             t.st = St::Failed;
+            t.failed_at = Some(s.g.now);
             let er = Failure { kind: ErrKind::RestoreFailed, message: error.message.clone() };
             t.error = Some(er.clone());
             fix_outcome(&mut t, e, Outcome::Failed { error: er });
@@ -255,6 +253,7 @@ pub fn classify(s: &mut State, item: &RestoreItem, outs: &BTreeMap<TransferId, B
         RestoreItem::Row(r) => {
             let mut t = stored_to_transfer(&mut s.g, r);
             classify_row(&mut s.g, &mut t, r, item, outs, e);
+            if t.st == St::Failed && t.failed_at.is_none() { t.failed_at = Some(s.g.now); }
             t.stored_shown = Some(shown(&s.g, &t));
             if t.st == St::Done { after(s, t); } else { s.transfers.insert(t.id, t); }
         }
