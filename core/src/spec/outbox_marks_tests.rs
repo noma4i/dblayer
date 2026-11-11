@@ -4,7 +4,7 @@ use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RReason, St};
 use crate::owners::contract::{Online, RejectReason};
-use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
+use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 
 #[test]
 fn out_marking_failed_committed() {
@@ -291,4 +291,38 @@ fn out_mark_failed_rejected_no_outcome() {
     assert_eq!(twin.stage(id), Some(St::Failed));
     assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Failed { .. }))), "{done:?}");
     assert!(matches!(transfer_outcomes(&done).as_slice(), [OutboxOutcome::Failed { .. }]), "Failed reaches the waiter and Transfer only after Committed: {done:?}");
+}
+
+/// P-OUT-60: a data error of an operation batch ends the operation with the `invalid` mark, the batch is not written again and no timer is set; a storage failure is retried by the timer.
+#[test]
+fn out_invalid_plan_is_not_retried() {
+    let reach: [(&str, CommitKind, fn(&mut Twin) -> OpId); 3] = [
+        ("attempt", CommitKind::Attempt, |twin| persisting(twin, false)),
+        ("landing", CommitKind::Land, |twin| {
+            let id = sending(twin, Policy::Rollback, false);
+            twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+            id
+        }),
+        ("rollback", CommitKind::Rollback, |twin| {
+            let id = sending(twin, Policy::Rollback, false);
+            twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+            id
+        }),
+    ];
+    for (name, kind, arrive) in reach {
+        let mut twin = Twin::new();
+        let id = arrive(&mut twin);
+        let invalid = refuse(&mut twin, id, RejectReason::Invalid);
+        assert_eq!((kinds(&invalid), timers(&invalid), sends(&invalid), invalid.len()), (vec![CommitKind::ErrorMark], 0, 0, 1), "{name}: only the mark is written: {invalid:?}");
+        assert_eq!((twin.stage(id), twin.state().ops[&id].error.as_deref()), (Some(St::MarkingFailed), Some("Internal(Invalid)")), "{name}");
+        let marked = twin.committed(id);
+        assert_eq!((twin.stage(id), kinds(&marked), timers(&marked)), (Some(St::Failed), Vec::new(), 0), "{name}");
+
+        let mut twin = Twin::new();
+        let id = arrive(&mut twin);
+        let storage = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        assert_eq!(timers(&storage), 1, "{name}: a storage failure sets the retry timer");
+        let again = tick(&mut twin, id);
+        assert_eq!(kinds(&again), vec![kind], "{name}: the same batch is written again");
+    }
 }
