@@ -92,7 +92,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         return Err(StoreError::Constraint(format!("unknown event operation: {op}")));
     }
     let hidden = writer.feed_hidden.as_ref().cloned().unwrap_or_default();
-    let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, (writer.now, writer.revision, writer.generation), Some(writer.originals), Some((&mut writer.current, &hidden, writer.event.get_or_insert_with(Default::default))))?;
+    let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, (writer.now, writer.revision, writer.generation), Some(writer.originals), Some((&mut writer.current, &hidden, writer.event.as_mut().ok_or_else(|| StoreError::Poisoned("a feed event lands without its undo journal".into()))?)))?;
     if !envelope.operation_transitions.is_empty() {
         let hidden = super::apply::hidden_rows(writer.connection, &[])?;
         let reader = Reader::new(writer.connection, writer.models);

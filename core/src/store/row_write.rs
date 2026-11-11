@@ -131,6 +131,7 @@ impl RowWrite<'_> {
     }
 
     pub fn apply(&mut self, envelope: &BatchPlan) -> Result<CommitResult, StoreError> {
+        if self.event.is_some() { return Err(StoreError::Poisoned("a batch plan applies while a feed event lands".into())); }
         let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
         let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
         let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, (self.now, self.revision, self.generation), Some(self.originals), Some((&mut self.current, &hidden, &mut EventUndo::default())))?;
