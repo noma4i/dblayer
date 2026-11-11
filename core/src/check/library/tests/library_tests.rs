@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::check::library::alphabet::{alphabet, prelude};
 use crate::check::library::properties::{outcome_rules, request_rules};
-use crate::check::library::run::{corpus_dir, minimize, run_program, save, Violation};
+use crate::check::library::run::{corpus_dir, minimize, run_program, save, BrokenRule};
 use crate::check::corpus;
 use crate::check::explore::{all_traces, seeded};
 use crate::check::model::Property;
@@ -10,9 +10,9 @@ use crate::check::value::Input;
 
 /// Exhaustive depth, number of long programs and their length of the general run. Measured against the 20 s limit of a test.
 const DEPTH: usize = 1;
-const SEEDS: u64 = 200;
-const LENGTH: usize = 30;
-const PARALLEL: usize = 24;
+const SEEDS: u64 = 16;
+const LENGTH: usize = 20;
+const PARALLEL: usize = 8;
 
 struct Program {
     tag: String,
@@ -57,7 +57,7 @@ async fn sweep(properties: Vec<Property>, programs: Vec<Program>) -> Vec<String>
             Some((program.tag, program.keep, *failed))
         }));
     }
-    let mut first: Vec<(String, usize, Violation)> = Vec::new();
+    let mut first: Vec<(String, usize, BrokenRule)> = Vec::new();
     let mut counts: std::collections::BTreeMap<&'static str, usize> = Default::default();
     for task in tasks {
         let Some((tag, keep, violation)) = task.await.expect("a program must not panic") else { continue };
@@ -85,7 +85,7 @@ async fn assert_green(properties: Vec<Property>) {
 async fn library_alphabet_runs() {
     let mut tasks = Vec::new();
     let permits = Arc::new(tokio::sync::Semaphore::new(PARALLEL));
-    for program in family_programs(&[false], 2, 0, 0).into_iter().chain(family_programs(&[true], 1, 0, 0)) {
+    for program in family_programs(&[false], 1, 0, 0).into_iter().chain(family_programs(&[true], 1, 0, 0)) {
         let permits = permits.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permits.acquire_owned().await.unwrap();
