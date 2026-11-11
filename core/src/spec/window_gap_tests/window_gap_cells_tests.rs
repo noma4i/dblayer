@@ -1,27 +1,31 @@
+use super::window_fresh_tests::{opening_twin, saved};
 use super::*;
 
 #[test]
 fn win_preload_created() {
-    let mut twin = Twin::with_preload();
-    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-    let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
-    let (got, _) = twin.split(take(&twin.log));
-    assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key loads without a stream to tell");
-    assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    for (read, asked) in [(Read::None, 1), (saved(NOW - 10_000, false), 0)] {
+        let mut twin = Twin::with_preload();
+        twin.hold.store(true, Ordering::SeqCst);
+        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
+        twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
+        let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
+        let (got, _) = twin.split(take(&twin.log));
+        assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key reads the saved window first");
+        assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
+        assert_eq!(requests(&twin.step(Input::Read(read))), asked, "the preload key with the saved window {read:?}");
+        assert_eq!(twin.stage(), Some(if asked == 1 { WindowStage::Loading } else { WindowStage::Idle }));
+    }
 }
 
 #[test]
 fn win_preload_derived() {
-    let mut twin = Twin::new();
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
-    let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
-    let (got, _) = twin.split(take(&twin.log));
-    assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>());
+    let mut twin = opening_twin();
+    twin.step(Input::InterestPlus { id: PRELOAD });
     assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
+    take(&twin.log);
     twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
     assert!(take(&twin.log).is_empty(), "a key that has a machine is not created again");
+    assert_eq!(requests(&twin.step(Input::Read(Read::None))), 1);
 }
 
 #[test]
