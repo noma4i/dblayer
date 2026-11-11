@@ -25,6 +25,9 @@ fn response_rows_select_the_membership_field_of_their_scopes() {
         ("`upsert from` without the field", models.clone(), SCHEMA.to_string(), DOCUMENTS.replace("note { id text } chat { id title lists }", "note { id text } chat { id title }"), Some("response field `lists`: operation `NotePin`")),
         ("a scope without `insert_on` asks nothing", models.replace("scope :list, insert_on: [:event, :response] do", "scope :list do"), SCHEMA.to_string(), DOCUMENTS.replace("{ chat { id title lists } } }\nmutation ChatArchive", "{ chat { id title } } }\nmutation ChatArchive"), None),
         ("the field under the `from:` path of its attribute", nested_models.clone(), nested(SCHEMA), nested(DOCUMENTS), None),
+        ("`response ignore` with no field in the selection", models.replace("    response from: \"chatRename.chat\"\n", "    response :ignore\n"), SCHEMA.to_string(), DOCUMENTS.replace("{ chat { id title lists } } }\nmutation ChatArchive", "{ chat { id title } } }\nmutation ChatArchive"), None),
+        ("`destroy` on the default root with no field in the selection", models.replace("    response from: \"chatDestroy.chat\"\n", ""), SCHEMA.replace("chatDestroy(id: ID!): ChatPayload", "chatDestroy(id: ID!): Chat"), DOCUMENTS.replace("chatDestroy(id: $id) { chat { id } }", "chatDestroy(id: $id) { id }"), None),
+        ("the membership field is a local attribute", models.replace("as: ChatList\n", "as: ChatList, optional: true, local: true\n"), SCHEMA.to_string(), DOCUMENTS.replace(" title lists", " title"), None),
         ("`response from` without the `from:` path of the field", nested_models.clone(), nested(SCHEMA), nested(DOCUMENTS).replace("{ chat { id title viewer { lists } } } }\nmutation ChatArchive", "{ chat { id title } } }\nmutation ChatArchive"), Some("response field `viewer.lists`: operation `ChatRename`")),
     ] {
         fs::write(&model, source).unwrap();
