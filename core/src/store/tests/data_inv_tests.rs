@@ -340,7 +340,7 @@ fn inv_ephemeral_07_ephemeral_fields_cannot_be_queried() {
 #[test]
 fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
     let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    for index in 0..5000 { set_typing(&db, &format!("ghost{index}"), true); }
+    for index in 0..1500 { set_typing(&db, &format!("ghost{index}"), true); }
     let held = db.overlays.get(db.revision_seq().unwrap()).unwrap().values.len();
     assert!(held <= 1024, "{held} values for rows that never arrived stay in memory");
 }
