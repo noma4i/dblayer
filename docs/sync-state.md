@@ -123,7 +123,7 @@ scope.operations().collect { item ->
 
 The network decides what happens to a mutation that did not get an answer:
 
-- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send one such record again, call `retry(action)`.
+- A send that fails without an answer (no connection, connection refused, a dropped request): the library sends the same request again. The record stays `sending` while it waits between tries, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change is `failed` for retry or discard. To send one such record again, call `retry(action)`.
 
 Later changes to the same record wait behind it.
 - Offline (the platform reports no network): the change waits and spends no attempts. When the network returns, waiting changes are sent by themselves.
@@ -139,8 +139,9 @@ Temporary GraphQL codes keep optimistic changes pending on both transports.
 | The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one, references to it are rewritten |
 | The server permanently refuses | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
 | A temporary GraphQL code, HTTP 408 or HTTP 429 | `pending` until the outbox budget is exhausted | the optimistic edit remains and sending resumes after a pause |
-| Unreachable before the transfer starts | `pending`, then `failed` after 40 attempts | retains the edit and encrypted Pending owner for retry or discard |
-| The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry(action)` |
+| No network or a busy send slot | `pending` | the change waits in the queue and goes when the network or the slot is free |
+| A send fails without an answer | `sending` while the library waits between attempts, then `failed` after 40 attempts | retains the edit and encrypted Pending owner for retry or discard |
+| The action names a mutation that is not registered in `open(operations:)` | the call throws `Invalid` | nothing is written and nothing is sent |
 | No answer after a plain transfer started, including HTTP 5xx | `sending` | the library repeats the saved request, the server answers it once |
 | Temporary encrypted HTTP failure with saved Pending | `pending` until the outbox budget is exhausted | the next attempt uses the saved request identity |
 
@@ -167,7 +168,7 @@ operation :like do
 end
 ```
 
-`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with its files and list positions, `state = failed` and the error, attempts and time in `sync`. `retry(action)` hides the record again and sends the destroy. `discard(action)` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
+`destroy` has no `on_failure`: the record is hidden at once. A refusal of the server rolls the destroy back: the record comes back with its files and list positions, without a `failed` state, and `confirmed` throws `Rejected` with `kept: false`. After 40 unreached attempts the destroy is `failed` with the error, attempts and time in `sync`: `retry(action)` sends it again, `discard(action)` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
 
 A record in `failed` has two gestures:
 
