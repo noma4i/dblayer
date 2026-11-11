@@ -539,6 +539,7 @@ for path in files:
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")
+    print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
     for finding in findings:
         print(" -", finding)
     sys.exit(1)

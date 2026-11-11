@@ -88,7 +88,10 @@ fn inv_zoo_01_a_public_type_name_is_defined_once_in_core() {
         .filter_map(|line| line.split('#').next()?.trim().strip_prefix("type:").map(str::to_string))
         .collect();
     let duplicated: Vec<_> = places.iter().filter(|(name, found)| found.len() > 1 && !allowed.contains(name)).collect();
-    assert!(duplicated.is_empty(), "public types defined in several places: {duplicated:?}");
+    assert!(
+        duplicated.is_empty(),
+        "a public type name is declared in several files: {duplicated:?}\nTwo declarations of one name mean a second type for one meaning or a second mechanism for one question. Find the cause: read both declarations, name the one that owns the meaning, delete the other and use the owner, extend the owner when a field is missing. Renaming a type or adding its name to scripts/zoo_allowlist.txt hides the duplicate and is refused at review."
+    );
 }
 
 #[test]
