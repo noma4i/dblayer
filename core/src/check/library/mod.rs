@@ -6,13 +6,15 @@ use super::value::Input;
 
 pub mod alphabet;
 pub mod properties;
+pub mod reference;
 
 #[cfg(test)]
 mod tests;
 
-/// The whole library on the stand in symbolic mode, with the properties it is asked for and no reference model.
+/// The whole library on the stand in symbolic mode, with the properties it is asked for and, when `reference` is set, the reference model of `reference/`.
 pub struct LibraryOwner {
     pub properties: Vec<Property>,
+    pub reference: bool,
 }
 
 #[async_trait]
@@ -26,7 +28,7 @@ impl Owner for LibraryOwner {
     }
 
     fn model(&self) -> Option<Box<dyn RefModel>> {
-        None
+        self.reference.then(|| Box::new(reference::LibraryRef::default()) as Box<dyn RefModel>)
     }
 
     async fn real(&self) -> Box<dyn Sut> {

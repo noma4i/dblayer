@@ -88,7 +88,7 @@ async fn sweep(owner: Arc<LibraryOwner>, programs: Vec<Program>) -> Vec<String> 
 }
 
 async fn assert_green(properties: Vec<Property>) {
-    let found = sweep(Arc::new(LibraryOwner { properties }), programs(DEPTH, seeds(), LENGTH)).await;
+    let found = sweep(Arc::new(LibraryOwner { properties, reference: false }), programs(DEPTH, seeds(), LENGTH)).await;
     assert!(found.is_empty(), "{}", found.join("\n\n"));
 }
 
@@ -98,7 +98,7 @@ async fn assert_green(properties: Vec<Property>) {
 async fn library_alphabet_runs() {
     let mut tasks = Vec::new();
     let permits = Arc::new(tokio::sync::Semaphore::new(PARALLEL));
-    let owner = Arc::new(LibraryOwner { properties: Vec::new() });
+    let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: false });
     for program in family_programs(&[false], 1, 0, 0).into_iter().chain(family_programs(&[true], 1, 0, 0)) {
         let (permits, owner) = (permits.clone(), owner.clone());
         tasks.push(tokio::spawn(async move {
@@ -133,7 +133,7 @@ async fn library_seed_outcomes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn library_corpus_is_green() {
     let traces = if corpus_dir().exists() { corpus::read_dir(&corpus_dir()).unwrap() } else { Vec::new() };
-    let owner = LibraryOwner { properties: [request_rules(), outcome_rules()].concat() };
+    let owner = LibraryOwner { properties: [request_rules(), outcome_rules()].concat(), reference: false };
     let mut red = Vec::new();
     for trace in traces {
         if let Err(divergence) = run(&owner, "library", &trace.inputs()).await {
