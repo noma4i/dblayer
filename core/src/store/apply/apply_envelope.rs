@@ -40,6 +40,35 @@ pub(in super::super) fn apply_envelope_at(
             }
         }
     }
+    let Some((current, hidden)) = feed_cache else { return write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut Undo::default()) };
+    let mut undo = Undo::default();
+    undo.rows = envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }).collect();
+    let outcome = write_followed(connection, models, envelope, (now_ms, revision), originals.as_deref_mut(), Some((&mut *current, hidden)), &mut undo);
+    if outcome.is_err() {
+        for (key, before) in undo.rows.into_iter().rev() {
+            match before { Some(row) => { current.insert(key, row); } None => { current.remove(&key); } }
+        }
+        if let Some(originals) = originals { for row in undo.originals { originals.remove(&row); } }
+    }
+    outcome
+}
+
+/// What one write changed in the memory of the feed writer: the cached rows before it and the originals it added, given back when the write fails.
+#[derive(Default)]
+struct Undo {
+    rows: Vec<((String, String), Option<Option<crate::store::StoredRow>>)>,
+    originals: Vec<RowRef>,
+}
+
+fn write_followed(
+    connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
+    envelope: &BatchPlan,
+    (now_ms, revision): (i64, i64),
+    originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
+    mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
+    undo: &mut Undo,
+) -> Result<CommitResult, StoreError> {
     let mut wrote = false;
     let mut tombstoned = false;
     let mut files_changed = false;
@@ -53,22 +82,30 @@ pub(in super::super) fn apply_envelope_at(
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
     let hidden = if let Some((_, hidden)) = &feed_cache { (*hidden).clone() } else if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
-    let mut prefetched = if let Some((current, _)) = &mut feed_cache {
-        let mut found = std::mem::take(*current);
-        let missing: Vec<_> = envelope.entity_ops.iter().filter(|op| {
-            let row = op.row_ref();
-            !found.contains_key(&(row.model.to_string(), row.id.to_string()))
-        }).cloned().collect();
-        found.extend(prefetch_stored(connection, models, &missing, &hidden)?);
-        found
-    } else { prefetch_stored(connection, models, &envelope.entity_ops, &hidden)? };
-    let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, &prefetched)?;
+    let mut local;
+    let feed = feed_cache.is_some();
+    let prefetched: &mut Prefetched = match feed_cache.as_mut() {
+        Some((current, _)) => {
+            let missing: Vec<_> = envelope.entity_ops.iter().filter(|op| {
+                let row = op.row_ref();
+                !current.contains_key(&(row.model.to_string(), row.id.to_string()))
+            }).cloned().collect();
+            let found = prefetch_stored(connection, models, &missing, &hidden)?;
+            current.extend(found);
+            &mut **current
+        }
+        None => {
+            local = prefetch_stored(connection, models, &envelope.entity_ops, &hidden)?;
+            &mut local
+        }
+    };
+    let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, prefetched)?;
 
     for operation in &envelope.entity_ops {
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut prefetched, pending: &mut pending, windows: &mut windows, threshold_windows: &mut threshold_windows, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
+                apply_upsert(connection, info, model, row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut *prefetched, pending: &mut pending, windows: &mut windows, threshold_windows: &mut threshold_windows, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
@@ -99,7 +136,6 @@ pub(in super::super) fn apply_envelope_at(
         }
     }
 
-    if let Some((current, _)) = &mut feed_cache { **current = prefetched; }
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
@@ -111,8 +147,9 @@ pub(in super::super) fn apply_envelope_at(
             let Ok(row_id) = crate::identity::RowId::new(id) else { continue };
             let row = RowRef::new(ModelKey::new(model), row_id);
             if originals.contains_key(&row) { continue; }
-            if let Some((current, _)) = &feed_cache {
-                if let Some(stored) = current.get(&(model.clone(), id.clone())) {
+            if feed {
+                if let Some(stored) = prefetched.get(&(model.clone(), id.clone())) {
+                    undo.originals.push(row.clone());
                     originals.insert(row, stored.as_ref().map(|stored| stored.row.clone()));
                     continue;
                 }
@@ -124,8 +161,13 @@ pub(in super::super) fn apply_envelope_at(
             for id in ids {
                 let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
                 let stored = rows.remove(&id);
-                originals.insert(RowRef::new(ModelKey::new(&model), row_id), stored.as_ref().map(|row| row.row.clone()));
-                if let Some((current, _)) = &mut feed_cache { current.insert((model.clone(), id), stored); }
+                let row = RowRef::new(ModelKey::new(&model), row_id);
+                undo.originals.push(row.clone());
+                originals.insert(row, stored.as_ref().map(|row| row.row.clone()));
+                if feed {
+                    undo.rows.push(((model.clone(), id.clone()), prefetched.get(&(model.clone(), id.clone())).cloned()));
+                    prefetched.insert((model.clone(), id), stored);
+                }
             }
         }
     }

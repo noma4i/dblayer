@@ -116,14 +116,16 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     }
     let hidden = writer.feed_hidden.as_ref().cloned().unwrap_or_default();
     let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, (writer.now, writer.revision, writer.generation), Some(writer.originals), Some((&mut writer.current, &hidden)))?;
-    if op == "delete" { writer.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), writer.revision); }
     if !envelope.operation_transitions.is_empty() {
-        writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);
+        let hidden = super::apply::hidden_rows(writer.connection, &[])?;
         let reader = Reader::new(writer.connection, writer.models);
         let mut ids = BTreeMap::<String, Vec<String>>::new();
         for (model, id) in writer.current.keys() { ids.entry(model.clone()).or_default().push(id.clone()); }
-        for (model, ids) in ids { writer.feed_fields.insert((model.clone(), None), unconfirmed_fields(&reader, None, &model, &ids)?); }
+        let fields = ids.into_iter().map(|(model, ids)| Ok(((model.clone(), None), unconfirmed_fields(&reader, None, &model, &ids)?))).collect::<Result<Vec<_>, StoreError>>()?;
+        writer.feed_hidden = Some(hidden);
+        writer.feed_fields.extend(fields);
     }
+    if op == "delete" { writer.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), writer.revision); }
     Ok(Some(result))
 }
 
@@ -153,7 +155,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
     let mut refused = Vec::new();
     for (at, (model, payload)) in parsed.iter().enumerate() {
         writer.connection.execute_batch("SAVEPOINT feed_event")?;
-        let landed_overlay = overlay.len();
+        let (landed_overlay, candidates) = (overlay.len(), writer.candidates);
         match landing(writer, model, payload, overlay) {
             Ok(result) => {
                 writer.connection.execute_batch("RELEASE feed_event")?;
@@ -162,10 +164,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
             Err(error) if matches!(error.reject_reason(), crate::owners::contract::RejectReason::Invalid) => {
                 writer.connection.execute_batch("ROLLBACK TO feed_event; RELEASE feed_event")?;
                 overlay.truncate(landed_overlay);
-                let read: Vec<(String, String)> = std::mem::take(&mut writer.current).into_keys().collect();
-                let mut again = BTreeMap::<String, Vec<String>>::new();
-                for (model, id) in read { again.entry(model).or_default().push(id); }
-                for (model, ids) in again { writer.prefetch(&model, &ids, None)?; }
+                writer.candidates = candidates;
                 refused.push(at);
             }
             Err(error) => return Err(error),
