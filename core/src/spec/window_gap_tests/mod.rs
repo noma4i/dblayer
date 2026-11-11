@@ -147,7 +147,7 @@ struct Twin {
     generation: u64,
     pin_revision: Arc<AtomicU64>,
     online_seq: u64,
-    /// The `now` the inputs carry.
+    /// The time of the next step: it only grows, the owner never sees the clock go back.
     now: i64,
     held: HeldReads,
     hold: Arc<std::sync::atomic::AtomicBool>,

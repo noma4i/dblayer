@@ -186,7 +186,7 @@ pub(in super::super) struct Window {
     pub(in super::super) phase: Phase,
     pub(in super::super) settled: bool,
     pub(in super::super) outcomes: Vec<(u32, Result3)>,
-    /// The `now` of the input, set by the test before every step.
+    /// The time of the step, set by the test before every step.
     pub(in super::super) now: i64,
     pub(in super::super) landed_at: i64,
     pub(in super::super) fresh_until: i64,

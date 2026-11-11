@@ -1,4 +1,4 @@
-use super::window_fresh_tests::{fresh_idle, opening_twin, saved, LIFE};
+use super::window_fresh_tests::{opening_twin, saved, LIFE};
 use super::window_media_tests::{answer_marker, commits, marker};
 use super::window_orders_tests::{at, orders, outcomes_of, run, settle, Ev, Seen};
 use super::*;
@@ -31,41 +31,6 @@ fn win_orders_dictionary_fields() {
         settle(&mut twin, &mut seen);
         assert!(twin.commit.contains(&format!("\"Moment\": {}", twin.generation)), "{order:?}: the basis is the generation of the dictionary: {}", twin.commit);
         assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}");
-    }
-}
-
-/// P-WIN-17, P-WIN-18: the first input whose own `now` is at or after `fresh_until`, or before `landed_at`, gives the one load; inputs inside the lifetime give none, in any order.
-#[test]
-fn win_orders_input_time() {
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    enum Tick { Inside, Edge, Expired, Back }
-    use Tick::*;
-    let all = orders(&[Inside, Edge, Expired, Back], &[]);
-    assert_eq!(all.len(), 24);
-    for order in all {
-        let mut twin = fresh_idle();
-        let mut seen = Seen::default();
-        let mut asking = false;
-        for tick in order.iter().copied() {
-            let before = seen.requests;
-            twin.now = match tick {
-                Inside => NOW + 1_000,
-                Edge => NOW + LIFE - 1,
-                Expired => NOW + LIFE,
-                Back => NOW - LIFE,
-            };
-            let effects = match tick {
-                Inside => twin.watch(),
-                Edge => twin.step(Input::Online(true)),
-                Expired => twin.call(2, Goal::First),
-                Back => twin.call(3, Goal::First),
-            };
-            seen.add(&effects);
-            let first_bad = !asking && matches!(tick, Expired | Back);
-            asking |= first_bad;
-            assert_eq!(seen.requests - before, usize::from(first_bad), "{order:?}: {tick:?} at now {}", twin.now);
-        }
-        assert_eq!(seen.requests, 1, "{order:?}");
     }
 }
 

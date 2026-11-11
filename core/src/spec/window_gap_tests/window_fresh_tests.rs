@@ -1,6 +1,6 @@
 use super::*;
 
-// Rows of `window.md` for `Opening` and freshness by the `now` of the input: the owner against the reference, the read pool answers when the test says so.
+// Rows of `window.md` for `Opening` and freshness by the time of the step: the owner against the reference, the read pool answers when the test says so.
 
 pub(super) const LIFE: i64 = 300_000;
 pub(super) const EMPTY_LIFE: i64 = 60_000;
@@ -14,7 +14,7 @@ pub(super) fn opening_twin() -> Twin {
 
 pub(super) fn saved(landed_at: i64, stale: bool) -> Read { Read::Saved { landed_at, fresh_until: landed_at + LIFE, stale, generation_ok: true } }
 
-/// The fresh window of a stream and a call has no interest: the next input decides by its own `now`.
+/// The fresh window of a stream and a call has no interest: the next input decides by the time of its step.
 pub(super) fn fresh_idle() -> Twin {
     let mut twin = fresh_watched();
     twin.step(Input::InterestMinus { id: STREAM });
@@ -339,13 +339,13 @@ fn win_prop_fresh_for_any_input_times() {
 
 #[test]
 fn win_prop_clock_back() {
-    for (before, asked) in [(1, 0), (LIFE - 1, 0), (LIFE, 1), (LIFE + 1, 1)] {
-        let mut twin = fresh_idle();
-        twin.now = NOW - before;
-        assert_eq!(requests(&twin.watch()), asked, "a stream stamped {before} ms before landed_at");
-        let mut twin = fresh_idle();
-        twin.now = NOW - before;
-        assert_eq!(requests(&twin.call(2, Goal::First)), asked, "a call stamped {before} ms before landed_at");
+    for (ahead, asked) in [(1, 0), (LIFE - 1, 0), (LIFE, 1), (LIFE + 1, 1)] {
+        let mut twin = opening_twin();
+        twin.watch();
+        assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a stream: the saved window landed {ahead} ms after the step time");
+        let mut twin = opening_twin();
+        twin.call(1, Goal::First);
+        assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a call: the saved window landed {ahead} ms after the step time");
     }
 }
 
