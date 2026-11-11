@@ -83,7 +83,7 @@ impl Rig {
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
         let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), reference: Chan::new(channels()), store_batches };
-        rig.post(FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+        rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
 
@@ -157,21 +157,21 @@ impl Rig {
         words
     }
 
-    fn want(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantPlus { model: model.into(), id, stream: true, scoped: Vec::new(), now: crate::runtime::Time(0) }) }
+    fn want(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantPlus { model: model.into(), id, stream: true, scoped: Vec::new() }) }
 
     fn want_window(&mut self, id: u64, slug: &str, channel: &str) -> Vec<String> {
         let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!(slug))]);
-        let input = FeedInput::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![ScopedChannel { subscription: "S".into(), variables }], now: crate::runtime::Time(0) };
+        let input = FeedInput::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![ScopedChannel { subscription: "S".into(), variables }] };
         self.post_row(input, Some(In::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![channel.to_string()] }))
     }
 
-    fn unwant(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantMinus { model: model.into(), id, now: crate::runtime::Time(0) }) }
+    fn unwant(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantMinus { model: model.into(), id }) }
 
-    fn handshake(&mut self) -> Vec<String> { self.post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7, now: crate::runtime::Time(0) }) }
+    fn handshake(&mut self) -> Vec<String> { self.post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 }) }
 
     fn confirm(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: channel.into() }) }
 
-    fn end(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: channel.into(), error: None, now: crate::runtime::Time(0) }) }
+    fn end(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: channel.into(), error: None }) }
 
     fn event(&mut self, channel: &str, model: &str, payload: &str) -> Vec<String> {
         self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false } })
@@ -206,7 +206,7 @@ fn feed_dropped_stale_survives_crash() {
     take(&rig.store_batches);
     rig.owner_post(FeedInput::Dropped { connection_id: FIRST });
     let connection = rig.state().opening_connection().unwrap();
-    rig.owner_post(FeedInput::HandshakeDone { connection_id: connection, key_id: 7, now: crate::runtime::Time(0) });
+    rig.owner_post(FeedInput::HandshakeDone { connection_id: connection, key_id: 7 });
     rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "A".into() });
     rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "B".into() });
     let batches = take(&rig.store_batches);
@@ -306,14 +306,14 @@ fn feed_chan_event_before_confirm() {
 fn feed_changes_refused_held() {
     for handshaken in [false, true] {
         let mut rig = Rig::new();
-        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new(), now: crate::runtime::Time(0) });
+        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new() });
         if handshaken {
-            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7, now: crate::runtime::Time(0) });
+            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
         }
         assert!(rig.refused_event("A", "Chat").is_empty(), "handshaken {handshaken}: nothing before the model is ready");
         assert_eq!((rig.state().held(), rig.state().position("Chat"), rig.state().refused()), (1, 1, 0), "handshaken {handshaken}: held with its position, not counted yet");
         if !handshaken {
-            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7, now: crate::runtime::Time(0) });
+            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
         }
         rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "A".into() });
         let seat = rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "B".into() });
@@ -415,9 +415,9 @@ fn feed_chan_unwant_last_user() {
 #[test]
 fn feed_chan_ended_resubscribes() {
     let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) }), ["commit", "schedule:channel"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None }), ["commit", "schedule:channel"]);
     assert_eq!(rig.state().confirmed(), ["A"], "the channel left the confirmed channels");
-    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
+    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
     assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, its windows turn Stale with the cause Lost, and no second ready");
@@ -428,18 +428,18 @@ fn feed_chan_ended_retryable() {
     let mut timed = Rig::live();
     for attempt in 1..=2 {
         take(&timed.log);
-        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) });
+        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }) });
         timed.det.run_until_quiet(10_000).unwrap();
         let emitted = take(&timed.log);
         let delays: Vec<_> = emitted.iter().filter_map(|entry| match entry { Emitted::Schedule { after, input, .. } if input.starts_with("ChannelResubscribe") => Some(*after), _ => None }).collect();
         assert_eq!(delays, vec![crate::runtime::RetryPolicy::Cable.delay_seeded(attempt, 0)]);
-        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
         timed.det.run_until_quiet(10_000).unwrap();
     }
     let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) }), ["commit", "schedule:channel"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }) }), ["commit", "schedule:channel"]);
     assert_eq!(rig.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
-    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
+    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
     assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, no second ready");
@@ -448,9 +448,9 @@ fn feed_chan_ended_retryable() {
 #[test]
 fn feed_chan_gap_cause_names_last_online() {
     let mut rig = Rig::live();
-    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) });
-    rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
-    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None });
+    rig.post(FeedInput::Online { online: Online(true), online_seq: 2 });
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
     let mut shown = rig.confirm("B");
     shown.sort();
     assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap2", "stale:Post:gap2"]);
@@ -461,39 +461,39 @@ fn feed_chan_ended_error() {
     let mut rig = Rig::live();
     rig.want("Third", THIRD);
     rig.confirm("C");
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "C".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }), now: crate::runtime::Time(0) }), ["modelinvalid:3"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "C".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }) }), ["modelinvalid:3"]);
     assert_eq!(rig.state().wants(), ["Chat", "Post"], "the model of the refused channel left want");
     assert_eq!(rig.state().subscribed(), ["A", "B"]);
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into(), now: crate::runtime::Time(0) }).is_empty(), "no resubscribe after an error of the request");
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty(), "no resubscribe after an error of the request");
 }
 
 #[test]
 fn feed_chan_resubscribe() {
     let mut rig = Rig::live();
-    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) });
-    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None });
+    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
 }
 
 #[test]
 fn feed_chan_resubscribe_confirmed() {
     let mut rig = Rig::live();
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }).is_empty());
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
 }
 
 #[test]
 fn feed_chan_resubscribe_unwanted() {
     let mut rig = Rig::live();
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into(), now: crate::runtime::Time(0) }).is_empty());
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty());
 }
 
 #[test]
 fn feed_live_graphql_error() {
     let mut rig = Rig::live();
-    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }), now: crate::runtime::Time(0) });
+    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }) });
     ended.sort();
     assert_eq!(ended.iter().filter(|event| event.starts_with("modelinvalid:")).cloned().collect::<Vec<_>>(), ["modelinvalid:1", "modelinvalid:2"]);
     assert!(rig.state().wants().is_empty());
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }).is_empty());
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
 }
 
 /// P-FEED-21: every channel of `wanted` gets exactly one subscribe on the connection, a channel outside it none, and without a wanted model no connection opens.
@@ -609,7 +609,7 @@ fn feed_chan_want_during_recovery() {
 fn feed_gap_same_online_seq_stale_lost() {
     let mut rig = Rig::live();
     rig.end("B");
-    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
     let mut got = rig.confirm("B");
     got.sort();
     assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"]);
@@ -619,8 +619,8 @@ fn feed_gap_same_online_seq_stale_lost() {
 fn feed_gap_after_online_return_stale_gap() {
     let mut rig = Rig::live();
     rig.end("B");
-    rig.post(FeedInput::Online { online: Online(true), online_seq: 2, now: crate::runtime::Time(0) });
-    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+    rig.post(FeedInput::Online { online: Online(true), online_seq: 2 });
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
     let mut got = rig.confirm("B");
     got.sort();
     assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat:gap2", "stale:Post:gap2"]);

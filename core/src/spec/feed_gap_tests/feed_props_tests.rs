@@ -159,7 +159,7 @@ pub(super) struct Answerer;
 impl EffectRunner<Spy<Feed>> for Answerer {
     fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Spy<Feed>>) {
         if let FeedEffect::Connect { connection, .. } = effect {
-            back.reply(stamp, FeedInput::HandshakeDone { connection_id: connection, key_id: 1, now: crate::runtime::Time(0) });
+            back.reply(stamp, FeedInput::HandshakeDone { connection_id: connection, key_id: 1 });
         }
     }
 }
@@ -223,7 +223,7 @@ pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>) -> DetScheduler {
     let feed = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers(), debounces(debounce_ms), channels()), &new_log()), Answerer);
     let feed = Address::<Feed>::new(feed.index());
     det.start_epoch(EPOCH);
-    let setup = [FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) }, FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new(), now: crate::runtime::Time(0) }, FeedInput::WantPlus { model: "Post".into(), id: POST, stream: true, scoped: Vec::new(), now: crate::runtime::Time(0) }];
+    let setup = [FeedInput::Online { online: Online(true), online_seq: 1 }, FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new() }, FeedInput::WantPlus { model: "Post".into(), id: POST, stream: true, scoped: Vec::new() }];
     for input in setup {
         det.post(feed, EpochStamp::Epoch(EPOCH), input);
         det.run_until_quiet(1_000).expect("the setup is quiet");
@@ -232,7 +232,7 @@ pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>) -> DetScheduler {
     let [first, second] = [first, second].map(|part| part.into_iter().map(|(_, frame)| frame).collect::<Vec<_>>());
     let transport = det.add::<Source<Feed>>("transport", SourceState { to: feed, script: first }, Silent);
     let reader = det.add::<Source<Feed>>("reader", SourceState { to: feed, script: second }, Silent);
-    let clock = det.add::<Source<Feed>>("clock", SourceState { to: feed, script: vec![FeedInput::Tick(Time(1)), FeedInput::Tick(Time(2))] }, Silent);
+    let clock = det.add::<Source<Feed>>("clock", SourceState { to: feed, script: vec![FeedInput::Tick, FeedInput::Tick] }, Silent);
     for source in [transport, reader, clock] {
         det.post(source, EpochStamp::Control, SourceInput::Go);
     }

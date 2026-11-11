@@ -9,7 +9,7 @@ fn feed_created() {
     twin.post(FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
     let requests = take(&twin.log);
     assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
-    twin.post(FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
+    twin.post(FeedInput::Online { online: Online(true), online_seq: 1 });
     twin.reference.online = Some(true);
     twin.step(plus("Chat"));
     twin.step(Input::HandshakeDone);
@@ -758,7 +758,7 @@ fn feed_changes_entry_incomplete() {
     let counter = twin.counter(connection, Counter::Expected);
     let events = vec![framed("", "refused", &Reread::None, true), framed("Chat", "c1", &Reread::None, false)];
     take(&twin.log);
-    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Events { id: CHANNEL.into(), events }, now: crate::runtime::Time(0) });
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Events { id: CHANNEL.into(), events } });
     let emitted = take(&twin.log);
     let (got, seen) = twin.split(emitted);
     assert_eq!((got, seen), (vec![Effect::Commit], vec![]), "the entry takes no position, the next entry of the frame goes to the Store");

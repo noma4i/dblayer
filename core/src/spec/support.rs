@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::owners::contract::{BatchId, Committed, RejectReason, Rejected};
 use crate::owners::store::StoreInput;
-use crate::runtime::{Address, Back, Cause, Control, Effect, EffectRunner, Effects, Epoch, EpochStamp, Outbound, ScheduleId, StateOwner, Time};
+use crate::runtime::{Address, Back, Cause, Control, Effect, EffectRunner, Effects, Epoch, EpochStamp, Outbound, ScheduleId, StateOwner};
 
 pub(crate) type Log<E> = Arc<Mutex<Vec<E>>>;
 
@@ -169,7 +169,6 @@ where
             .collect()
     }
 
-    fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
 
     fn epoch_started(epoch: Epoch) -> Option<O::Input> { O::epoch_started(epoch) }
 
@@ -212,7 +211,6 @@ impl<O: StateOwner> StateOwner for Sink<O> {
         Vec::new()
     }
 
-    fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
 
