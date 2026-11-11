@@ -3,6 +3,7 @@ use super::*;
 mod attempt_tests;
 mod close_orders_tests;
 mod stop_tests;
+mod store_runner_reject_tests;
 mod call_rule_tests;
 mod calls_runner_tests;
 mod life_tests;
