@@ -5,6 +5,7 @@
 ### Fixed
 
 - Send one request when a stream and a load share a fresh window.
+- Load a media window whose pages share a related row.
 
 ## 6.26.1 - 2026-11-11
 
