@@ -4,7 +4,6 @@
 
 ### Changed
 
-- Refuse an operation response row without the membership field of a list it joins.
 - Fail generation when an operation response omits the membership field of a joined list.
 - Add an event row to the head of a loaded `[:event, :response]` window.
 - Add a created row to the head of loaded membership lists of its parameters.
