@@ -293,11 +293,7 @@ impl TransferState {
     }
 
     /// `Rejected(Storage)` of a write of a part or of `completed`: durable `Failed` only by a write.
-    pub(super) fn persist_failed(&mut self, now: crate::runtime::Time, id: TransferId, reason: RejectReason, fx: &mut Fx) {
-        let error = match reason {
-            RejectReason::Storage(error) => error,
-            RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => "storage".into(),
-        };
+    pub(super) fn persist_failed(&mut self, now: crate::runtime::Time, id: TransferId, error: String, fx: &mut Fx) {
         self.begin_failure(now, id, error, false, fx);
     }
 
@@ -363,8 +359,11 @@ impl TransferState {
 
     pub(super) fn discard_outcome(&mut self, key: &str, result: Result<(), Fault>, fx: &mut Fx) {
         let Some(id) = self.open_id(key).filter(|id| self.waits_for_discard(*id)) else { return };
-        if let (Err(Fault::Rejected(RejectReason::Storage(detail))), Some((_, error))) = (&result, self.confirmed_discards.get(&id).cloned()) {
-            self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")))), fx);
+        if let (Err(Fault::Rejected(reason)), Some((_, error))) = (&result, self.confirmed_discards.get(&id).cloned()) {
+            match reason {
+                RejectReason::Storage(detail) => self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")))), fx),
+                RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid => {}
+            }
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let Err(fault) = result else { return };

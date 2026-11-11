@@ -307,16 +307,18 @@ impl TransferState {
     }
 
     pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        if !matches!(reason, RejectReason::Storage(_)) {
-            for &id in ids {
-                self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
+        let storage = match &reason {
+            RejectReason::Storage(detail) => detail.clone(),
+            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid => {
+                for &id in ids {
+                    self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
+                }
+                return;
             }
-            return;
-        }
+        };
         for &id in ids {
             if let Some((_, error)) = self.confirmed_discards.get(&id).cloned() {
-                let detail = match &reason { RejectReason::Storage(detail) => format!("{detail}: {error}"), RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => error };
-                self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(detail))), fx);
+                self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{storage}: {error}")))), fx);
             }
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let removal = transfer.removal.take();

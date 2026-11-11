@@ -588,13 +588,18 @@ impl TransferState {
 
     fn rejected(&mut self, now: Time, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        let (ends, storage) = match &rejected.reason {
+            RejectReason::Closed | RejectReason::NoSession => (true, None),
+            RejectReason::Storage(detail) => (false, Some(detail.clone())),
+            RejectReason::StaleGeneration { .. } | RejectReason::Invalid => (false, None),
+        };
         if pending.kind == StoreKind::SyncUpload {
             for id in &pending.ids {
                 if let Some((old, _)) = self.replacements.remove(id) {
                     if let Some(transfer) = self.transfers.get_mut(&old) { transfer.stage = TransferStage::Failed; transfer.removal = None; transfer.prior = None; }
                     fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(*id), committed: false })));
                     run(fx, TransferEffect::DeleteFile { path: file_id(*id) });
-                    if matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession) { self.interrupt(old, super::outbox_types::end_cause(&rejected.reason), fx); }
+                    if ends { self.interrupt(old, super::outbox_types::end_cause(&rejected.reason), fx); }
                 }
             }
         }
@@ -610,8 +615,7 @@ impl TransferState {
                 (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
                 (None, None) => None,
             };
-            let rescheduled = !matches!(rejected.reason, RejectReason::Closed | RejectReason::NoSession);
-            if rescheduled {
+            if !ends {
                 self.owe_minted(&pending, fx);
             } else if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
                 let attempt_id = self.next_attempt;
@@ -622,51 +626,53 @@ impl TransferState {
             }
             return;
         }
-        if pending.kind == StoreKind::MixedOutcomes && matches!(&rejected.reason, RejectReason::Storage(_)) {
+        if pending.kind == StoreKind::MixedOutcomes && storage.is_some() {
             self.schedule_retry(pending.ids[0], fx);
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
-        let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
         let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
-        if let (RejectReason::StaleGeneration { generations, .. }, true) = (&rejected.reason, persisting) {
-            self.generations.extend(generations.clone());
-            return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
-        }
-        if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
-            if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
-                self.source_rejected(pending.ids[0], Fault::Invalid, fx);
+        match (&rejected.reason, persisting) {
+            (RejectReason::StaleGeneration { generations, .. }, true) => {
+                self.generations.extend(generations.clone());
+                return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
+            }
+            (RejectReason::Invalid, true) => {
+                if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
+                    self.source_rejected(pending.ids[0], Fault::Invalid, fx);
+                    return;
+                }
+                if stage == Some(TransferStage::PersistingFailure) {
+                    if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+                }
+                if stage == Some(TransferStage::PersistingBatchIntent) {
+                    for &id in &pending.ids { self.mark_failure(now, id, "Internal(Invalid)".into(), fx); }
+                    self.store(&pending.ids, StoreKind::Failed, fx);
+                    return;
+                }
+                self.invalid_write(now, &pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
+                self.start_in_order(now, fx);
                 return;
             }
-            if stage == Some(TransferStage::PersistingFailure) {
-                if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
-            }
-            if stage == Some(TransferStage::PersistingBatchIntent) {
-                for &id in &pending.ids { self.mark_failure(now, id, "Internal(Invalid)".into(), fx); }
-                self.store(&pending.ids, StoreKind::Failed, fx);
-                return;
-            }
-            self.invalid_write(now, &pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
-            self.start_in_order(now, fx);
-            return;
+            (RejectReason::StaleGeneration { .. } | RejectReason::Invalid, false) | (RejectReason::NoSession | RejectReason::Closed | RejectReason::Storage(_), _) => {}
         }
-        match (stage, interrupts) {
+        match (stage, storage) {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::Removing), _) => self.removing_rejected(now, &pending.ids, rejected.reason, fx),
-            (Some(TransferStage::PersistingRetry), false) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
-            (Some(TransferStage::PersistingBatchIntent), false) => self.schedule_retry(pending.ids[0], fx),
-            (Some(TransferStage::PersistingFailure), false) => self.failure_rejected(pending.ids[0], fx),
-            (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, rejected.reason, fx),
-            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => {
-                self.persist_failed(now, pending.ids[0], rejected.reason, fx);
+            (Some(TransferStage::PersistingRetry), Some(_)) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
+            (Some(TransferStage::PersistingBatchIntent), Some(_)) => self.schedule_retry(pending.ids[0], fx),
+            (Some(TransferStage::PersistingFailure), Some(_)) => self.failure_rejected(pending.ids[0], fx),
+            (Some(TransferStage::PersistingCopy), Some(_)) => self.copy_rejected(&pending.ids, rejected.reason, fx),
+            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(error)) => {
+                self.persist_failed(now, pending.ids[0], error, fx);
                 self.start_in_order(now, fx);
             }
-            (Some(_), true) => {
+            (Some(_), None) => {
                 for id in pending.ids {
                     self.interrupt(id, super::outbox_types::end_cause(&rejected.reason), fx);
                 }
             }
-            _ => {}
+            (None, _) | (Some(_), Some(_)) => {}
         }
         self.maybe_drained(fx);
     }
