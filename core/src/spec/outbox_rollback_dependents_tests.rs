@@ -37,14 +37,16 @@ fn out_rollback_retry_keeps_the_dependents() {
     let first_ops = rollback_ops(&twin.store_text);
     assert_eq!(first_ops.len(), 2, "the first rollback batch carries the create and its dependent: {}", twin.store_text);
     let first_batch = twin.batches[&create];
-    let again = twin.reject_batch(first_batch, RReason::Storage);
+    let refused = twin.reject_batch(first_batch, RReason::Storage);
+    let due = super::outbox_cells_tests::tick(&mut twin, create);
     let second_ops = rollback_ops(&twin.store_text);
     assert_eq!(second_ops, first_ops, "the repeated rollback batch carries the same operations: {}", twin.store_text);
     let second_batch = twin.stores.iter().map(|(id, _)| *id).max().expect("the repeated batch");
     let done = twin.commit_batch(second_batch);
 
     let mut effects = first;
-    effects.extend(again);
+    effects.extend(refused);
+    effects.extend(due);
     effects.extend(done);
     assert!(twin.state().ops.values().all(|operation| operation.stage == crate::owners::write::outbox::Stage::Done) || twin.state().ops.is_empty(), "no operation is left in the queue: {:?}", twin.state().ops.keys().collect::<Vec<_>>());
     let create_ends = outcomes(&effects, CREATE_WAITER);
