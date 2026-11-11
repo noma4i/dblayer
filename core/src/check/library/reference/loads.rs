@@ -91,7 +91,7 @@ impl LibraryRef {
         }
     }
 
-    /// library.md section 4 "любая загрузка | нет связи в запросе | 0 | `Invalid` (K28, G3)": the stand models declare no `nodes` relation for `Container`.
+    /// library.md section 4, row "any load / no relation in the request / 0 / `Invalid` (K28, G3)": the stand models declare no `nodes` relation for `Container`.
     fn nodes_call(&mut self, name: String) -> Vec<Observation> {
         vec![shapes::tag(shapes::error("invalid"), &name)]
     }
