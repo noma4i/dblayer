@@ -294,6 +294,7 @@ impl FeedState {
                     self.commit_gap(models, fx);
                 }
                 Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
+                Some(RejectReason::Invalid) => Self::stale_all(&models, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
                 _ => {},
             }
