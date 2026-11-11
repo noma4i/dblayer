@@ -1,6 +1,6 @@
 //! Owner-level tests of the `outbox` machine: the opening classes that classify a restored intent and defer its network to `RestoreReady`. Names are the `Test` column.
 
-use super::outbox_cells_tests::{kinds, sends, transfer_outcomes};
+use super::outbox_cells_tests::{kinds, persisting, sends, transfer_outcomes};
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::Online;
@@ -129,4 +129,62 @@ fn out_restored_attempt_without_pending() {
         assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&started), sends(&started)), (Some(St::Sending), attempts, vec![], 1));
         assert_eq!(sends(&ready(&mut twin)), 0);
     }
+}
+
+enum Step {
+    In(OutboxInput),
+    Drain,
+}
+
+/// P-OUT-61: one written attempt gives one `Mutate`, wherever the network goes off among the inputs of an operation that already left once.
+#[test]
+fn out_prop_attempt_counted_once_for_any_input_order() {
+    let offline = || Step::In(OutboxInput::Online(Online(false)));
+    let online = || Step::In(OutboxInput::Online(Online(true)));
+    let opening = |offline_at: usize| {
+        let mut steps = vec![Step::In(OutboxInput::Restored { ops: vec![StoredOp { pending: Some((41, 1)), ..stored(7, "r") }], pending_lost: false }), Step::In(OutboxInput::RestoreReady { epoch: EPOCH }), Step::Drain, online(), Step::Drain];
+        steps.insert(offline_at, offline());
+        steps
+    };
+    let cases: Vec<(&str, bool, Vec<Step>, (usize, usize, u32))> = vec![
+        ("a: offline before Restored", true, opening(0), (1, 1, 2)),
+        ("b: offline between Restored and RestoreReady", true, opening(1), (1, 1, 2)),
+        ("c: offline between the attempt batch and its Committed", true, opening(2), (1, 1, 2)),
+        ("d: a live repeat, offline between the attempt batch and its Committed", false, vec![offline(), Step::Drain, online(), Step::Drain], (0, 1, 2)),
+    ];
+    let mut wrong = Vec::new();
+    for (case, restored, steps, want) in cases {
+        let (mut twin, id) = if restored {
+            let mut twin = Twin::bare();
+            declare(&mut twin);
+            (twin, 7)
+        } else {
+            let mut twin = Twin::new();
+            let id = persisting(&mut twin, false);
+            (twin, id)
+        };
+        let (mut written, mut sent, mut open_batch) = (0, 0, !restored);
+        let mut count = |effects: &[OutboxEffect], open_batch: &mut bool| {
+            written += kinds(effects).iter().filter(|kind| **kind == CommitKind::Attempt).count();
+            sent += sends(effects);
+            *open_batch |= !kinds(effects).is_empty();
+        };
+        for step in steps {
+            match step {
+                Step::In(input) => count(&twin.post(input), &mut open_batch),
+                Step::Drain => {
+                    for _ in 0..8 {
+                        if !open_batch { break; }
+                        open_batch = false;
+                        count(&twin.committed(id), &mut open_batch);
+                    }
+                }
+            }
+        }
+        let got = (written, sent, twin.state().ops[&id].attempts);
+        if got != want {
+            wrong.push(format!("{case}: (attempt batches, Mutate, attempts) = {got:?}, the spec asks {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
 }
