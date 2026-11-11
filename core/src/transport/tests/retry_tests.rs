@@ -43,8 +43,8 @@ async fn retry_progress_reports_unlimited_attempts_and_capped_jittered_sleeps() 
     struct Time<'a>(Mutex<Vec<(Duration, RetrySnapshot)>>, &'a RetryCalls);
     impl crate::runtime::Clock for Time<'_> {
         fn now(&self) -> Duration { Duration::ZERO }
-        fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-            self.0.lock().unwrap().push((duration, self.1.current()));
+        fn sleep_until(&self, deadline: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            self.0.lock().unwrap().push((deadline, self.1.current()));
             Box::pin(std::future::ready(()))
         }
     }
@@ -82,7 +82,7 @@ async fn dropping_backoff_drops_the_clock_sleep() {
     struct Time(Arc<AtomicBool>);
     impl crate::runtime::Clock for Time {
         fn now(&self) -> Duration { Duration::ZERO }
-        fn sleep(&self, _: Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> { Box::pin(Sleeping(self.0.clone())) }
+        fn sleep_until(&self, _: Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> { Box::pin(Sleeping(self.0.clone())) }
     }
     let dropped = Arc::new(AtomicBool::new(false));
     let clock = Time(dropped.clone());
@@ -177,9 +177,9 @@ async fn retry_wait_keeps_its_deadline_when_the_clock_moves() {
     impl crate::runtime::Clock for Moving {
         fn now(&self) -> std::time::Duration { self.inner.now() }
 
-        fn sleep(&self, duration: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        fn sleep_until(&self, deadline: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
             self.inner.advance(self.by);
-            crate::runtime::Clock::sleep(&self.inner, duration)
+            crate::runtime::Clock::sleep_until(&self.inner, deadline)
         }
     }
     let delay = std::time::Duration::from_millis(1_000);

@@ -11,7 +11,7 @@ async fn audit_manual_clock_wakes_sleep_without_tokio_time() {
     let awake = Arc::new(Awake(AtomicBool::new(false)));
     let waker = Waker::from(awake.clone());
     let clock = ManualClock::default();
-    let mut sleep = clock.sleep(Duration::from_secs(10));
+    let mut sleep = clock.sleep_until(Duration::from_secs(10));
     assert!(sleep.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
     clock.advance(Duration::from_secs(10));
     assert!(awake.0.load(Ordering::SeqCst));

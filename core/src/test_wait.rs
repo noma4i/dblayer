@@ -278,7 +278,7 @@ pub(crate) fn world_clock() -> Option<crate::runtime::TestClock> {
 
 pub(crate) async fn pass(duration: Duration) {
     match world_clock() {
-        Some(clock) => crate::runtime::Clock::sleep(&clock, duration).await,
+        Some(clock) => crate::runtime::Clock::sleep_until(&clock, crate::runtime::Clock::now(&clock).saturating_add(duration)).await,
         None => tokio::time::sleep(duration).await,
     }
 }

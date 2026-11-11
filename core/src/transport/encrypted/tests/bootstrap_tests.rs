@@ -227,9 +227,9 @@ struct Waits<'a> {
 
 impl crate::runtime::Clock for Waits<'_> {
     fn now(&self) -> std::time::Duration { self.clock.now() }
-    fn sleep(&self, duration: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+    fn sleep_until(&self, deadline: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         self.during.lock().unwrap().push(self.progress.current());
-        self.clock.sleep(duration)
+        self.clock.sleep_until(deadline)
     }
     fn on_advance(&self, wake: Arc<dyn Fn() + Send + Sync>) { self.clock.on_advance(wake) }
     fn armed(&self, count: u64) { self.clock.armed(count) }
