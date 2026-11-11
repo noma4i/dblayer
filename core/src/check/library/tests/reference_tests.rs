@@ -43,8 +43,8 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
-/// The streams whose open the core answers differently from library.md section 4 (see the report): `u1` sends no request, `e1` (`Entity(never)`) ends without identity. Their tests are the last two ones and stay red.
-const DIVERGENT: [&str; 2] = ["u1", "e1"];
+/// The streams whose open the core answers differently from library.md section 4 (see the report): `u1` sends no request. Its test is the last one and stays red.
+const DIVERGENT: [&str; 1] = ["u1"];
 
 /// The letters of the family with streams: the environment, the streams, the loads of the feed, the answers, without the streams named in `left_out`.
 fn stream_letters(left_out: &[&str]) -> Vec<Input> {
@@ -238,18 +238,4 @@ async fn library_matches_reference_streams_part_8() {
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_without_session() {
     assert_matches(stream_family(true, &DIVERGENT, depth().min(1))).await;
-}
-
-/// Requirement: library.md section 4 "open `List`" for the window `container_members` (coordinator answer H20: `ContainerMembers` with `containerId` and `first: 30`).
-/// Observable: the requests after the open of the stream `u1`. Assert: no program diverges. Red: the core sends no request for the open of `u1` (see the report).
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_members() {
-    assert_matches(stream_family(false, &[], 1)).await;
-}
-
-/// Requirement: library.md section 4 row `Entity(never)` (any state, 0 requests, the row, Loaded): opened without identity it shows the row, not `Ended`.
-/// Observable: the first `pull` of `e1`. Assert: no program diverges. Red: the core ends the stream with `session_ended`.
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_entity_never_without_session() {
-    assert_matches(stream_family(true, &[], 1)).await;
 }

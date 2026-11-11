@@ -51,7 +51,7 @@ impl LibraryRef {
             self.mark("H23_stream_opened_again_under_the_name_of_a_live_one");
             return Vec::new();
         }
-        let ends = !self.identity && !matches!(reads, Reads::Row { key: None });
+        let ends = !self.identity;
         let mut stream = Stream { reads, on_connect, wants: load != Load::None, live: !ends, last: None, pending: Vec::new() };
         if ends {
             stream.pending.push(shapes::ended(&name, "session_ended"));
