@@ -878,7 +878,7 @@ Observers receive 1 change for the removal.
 Observing a model opens the shared subscription. The last cancel releases it.
 After a reconnect that lost events, the watched reads of the affected models are reread once, fresh or not. A load after the network returns covers gaps that began before that return. A connection break without a network change triggers a reread.
 Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
-A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving.
+A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. At open the scope first reads its saved window: a window whose saved data is still fresh sends no request. It waits for the end of power saving.
 The library reloads every `preload` scope when the window of the scope is stale. There is no call to reload all scopes at once.
 Expiration alone starts no request. A later reconnect or read checks freshness again.
 Received events reread immediately. The first `Ready` does not trigger an extra reread.
