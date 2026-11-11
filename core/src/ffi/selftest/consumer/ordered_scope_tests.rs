@@ -224,3 +224,30 @@ async fn consumer_ordered_owned_page_limit() {
 async fn consumer_ordered_compass_page_limit() {
     ordered_limit(Case { model: "Moment", scope: "compass", operation: "meCompass", params: r#"{}"#, media: "", ascending: false }).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_chat_media_chain_pages_share_an_author() {
+    let case = Case { model: "Message", scope: "visual_media", operation: "chatMedia", params: r#"{"chatId":"c1"}"#, media: "IMAGE", ascending: false };
+    let stand = Stand::prepare().await;
+    stand.answer("chatMediaState", media_marker("1", case.scope, 4, 4));
+    for (numbers, more, cursor) in [([4, 3], true, "c1"), ([2, 1], false, "c2")] {
+        let mut page = answer(case, &numbers, more, cursor);
+        page["node"]["messages"]["totalCount"] = json!(4);
+        for edge in page["node"]["messages"]["edges"].as_array_mut().unwrap() {
+            edge["node"]["author"] = json!({"id": "u7", "fullName": "Ann", "username": "ann", "avatarUrl": null, "online": false, "lastSeenAt": null, "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-01T00:00:00Z", "relationship": null});
+        }
+        stand.answer_next("chatMedia", json!({"data": page}));
+    }
+    stand.sign_in().await;
+    let query = QuerySpec::json(json!({"model":case.model, "relation":case.scope, "params":{"chatId":"c1"}}).to_string());
+    let rows = Arc::new(Rows::default());
+    let _stream = stand.database.watch(ReadRequest::List { query }, rows.clone());
+    settled(&stand, "the whole chain", || rows.len() == 4).await;
+    stand.settle().await;
+    assert_eq!(ids(&rows), ["m4", "m3", "m2", "m1"]);
+    assert!(rows.last().unwrap().error.is_none(), "{:?}", rows.last().unwrap().error);
+    let author = stand.entity("User", "u7", crate::ffi::ReadFetch::Never);
+    settled(&stand, "the author row", || author.len() == 1).await;
+    assert_eq!(author.len(), 1);
+    stand.database.close_now();
+}
