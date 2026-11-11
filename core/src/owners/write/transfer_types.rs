@@ -581,7 +581,6 @@ pub struct TransferState {
     pub(super) next_attempt: AttemptId,
     pub(super) next_timer: u64,
     pub put_timeout: std::time::Duration,
-    pub now: Time,
     pub drained: bool,
     /// The root of the answer of the abort operation.
     pub abort_root: String,
@@ -630,7 +629,6 @@ impl TransferState {
             next_attempt: 1,
             next_timer: 1,
             put_timeout: super::upload::UploadConfig::default().put_timeout,
-            now: Time(0),
             drained: false,
             abort_root: "abortMultipart".into(),
             starts_held: false,

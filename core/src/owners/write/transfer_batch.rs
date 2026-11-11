@@ -141,14 +141,14 @@ impl TransferState {
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
-    pub(super) fn batch_intent_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
+    pub(super) fn batch_intent_committed(&mut self, now: crate::runtime::Time, ids: &[TransferId], fx: &mut Fx) {
         let Some(&first) = ids.first() else { return };
         let Some(group) = self.group_entry(first) else {
             self.set(first, TransferStage::Mutating);
             if let Some(transfer) = self.transfers.get_mut(&first) { transfer.intent_live = true; transfer.has_operation = true; }
             self.show(first, Shown::Uploading { progress: 100 }, fx);
             self.submit_mutation(first, fx);
-            return self.start_in_order(fx);
+            return self.start_in_order(now, fx);
         };
         let Some(entry) = self.groups.get_mut(&group) else { return };
         let joint = entry.phase == BatchPhase::Mutating;
@@ -160,11 +160,11 @@ impl TransferState {
             self.show(id, Shown::Uploading { progress: 100 }, fx);
         }
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op })));
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     /// The outcome of the mutation of the whole batch.
-    pub(super) fn finish_batch(&mut self, group: u64, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>, intent_removed: bool, fx: &mut Fx) {
+    pub(super) fn finish_batch(&mut self, now: crate::runtime::Time, group: u64, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>, intent_removed: bool, fx: &mut Fx) {
         if self.phase_of(group) != Some(BatchPhase::Mutating) {
             return;
         }
@@ -174,7 +174,7 @@ impl TransferState {
                 OutboxOutcome::Confirmed { revision, result, row_id } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone(), row_id: row_id.clone() }, fx),
                 OutboxOutcome::Discarded => self.remove_with(id, Removal::Discarded, fx),
                 OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => {
-                    self.mark_failure(id, error.clone(), fx);
+                    self.mark_failure(now, id, error.clone(), fx);
                     if intent_removed {
                         if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
                     }

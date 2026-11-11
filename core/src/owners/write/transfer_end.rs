@@ -20,7 +20,7 @@ impl TransferState {
     }
 
     /// `cancel_upload` (`cancel`) and `discard`: the rows of the table by the state of the transfer.
-    pub(super) fn cancel(&mut self, key: &str, rep: ReplyId, cancel: bool, fx: &mut Fx) {
+    pub(super) fn cancel(&mut self, now: crate::runtime::Time, key: &str, rep: ReplyId, cancel: bool, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (stage, batched) = (transfer.stage, transfer.batch_id.is_some());
@@ -37,7 +37,7 @@ impl TransferState {
             }
             TransferStage::Ready => {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
-                self.start_in_order(fx);
+                self.start_in_order(now, fx);
             }
             TransferStage::Uploading | TransferStage::Completing => {
                 transfer.next_step = if stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
@@ -45,7 +45,7 @@ impl TransferState {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
                 }
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
-                self.start_in_order(fx);
+                self.start_in_order(now, fx);
             }
             TransferStage::Failed => self.discard_failed(id, Some((rep, cancel)), fx),
             TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
@@ -162,7 +162,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn retry_committed(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn retry_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.cycle_id += 1;
         transfer.stage = TransferStage::Ready;
@@ -175,7 +175,7 @@ impl TransferState {
         }
         self.show(id, Shown::Queued, fx);
         self.rounds_needed(vec![id], fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     pub(super) fn retry_recreate_committed(&mut self, id: TransferId, fx: &mut Fx) {
@@ -272,7 +272,7 @@ impl TransferState {
         transfer.stage == TransferStage::Removing && matches!(transfer.removal, Some(Removal::Confirmed { row_id: Some(_), .. }))
     }
 
-    pub(super) fn removing_committed(&mut self, ids: &[TransferId], mut rows: BTreeMap<TransferId, crate::store::Row>, fx: &mut Fx) {
+    pub(super) fn removing_committed(&mut self, now: crate::runtime::Time, ids: &[TransferId], mut rows: BTreeMap<TransferId, crate::store::Row>, fx: &mut Fx) {
         for &id in ids {
             let Some(removal) = self.transfers.get_mut(&id).and_then(|transfer| transfer.removal.take()) else { continue };
             self.removal_replies(id, &removal, fx);
@@ -303,10 +303,10 @@ impl TransferState {
             }
         }
         self.send_orphans(false, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
-    pub(super) fn removing_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
+    pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         if !matches!(reason, RejectReason::Storage(_)) {
             for &id in ids {
                 self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
@@ -333,7 +333,7 @@ impl TransferState {
                         self.show(id, Shown::Uploading { progress: 100 }, fx);
                     }
                 }
-                (None, Some(Removal::Confirmed { .. } | Removal::Discarded)) => self.begin_failure(id, "storage".into(), false, fx),
+                (None, Some(Removal::Confirmed { .. } | Removal::Discarded)) => self.begin_failure(now, id, "storage".into(), false, fx),
                 (None, _) => {
                     for rep in [transfer.cancel_reply.take().map(|(rep, _)| rep), transfer.accept_reply.take()].into_iter().flatten() {
                         Self::refuse(fx, rep, Fault::Rejected(reason.clone()));
@@ -342,7 +342,7 @@ impl TransferState {
                 }
             }
         }
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     /// `Online(true)` asks for the check of the `Failed` transfers at once.
@@ -353,8 +353,8 @@ impl TransferState {
     }
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
-    pub(super) fn expire(&mut self, fx: &mut Fx) {
-        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && transfer.failed_at.is_some_and(|failed_at| self.now.0.saturating_sub(failed_at.0) > EXPIRY_MS)).map(|transfer| transfer.transfer_id).collect();
+    pub(super) fn expire(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
+        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && transfer.failed_at.is_some_and(|failed_at| now.0.saturating_sub(failed_at.0) > EXPIRY_MS)).map(|transfer| transfer.transfer_id).collect();
         for id in old {
             self.discard_failed(id, None, fx);
         }

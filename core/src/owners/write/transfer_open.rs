@@ -84,7 +84,7 @@ impl TransferState {
     }
 
     /// Every restored row has exactly one class.
-    pub(super) fn classify(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
+    pub(super) fn classify(&mut self, now: crate::runtime::Time, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         if row.restore_failed.is_some() {
             let id = self.insert_restored(&row, TransferStage::Failed);
             return self.failed_restored(id, "RestoreFailed".into(), fx);
@@ -94,10 +94,10 @@ impl TransferState {
             self.waiting.insert(id, (row, outcomes.clone()));
             return;
         }
-        self.classify_declared(row, outcomes, fx);
+        self.classify_declared(now, row, outcomes, fx);
     }
 
-    fn classify_declared(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
+    fn classify_declared(&mut self, now: crate::runtime::Time, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         let id = self.insert_restored(&row, TransferStage::Ready);
         if row.staged { run(fx, TransferEffect::PromoteStaged { transfer_id: id }); }
         if let Some(saved) = outcomes.get(&id) {
@@ -105,14 +105,14 @@ impl TransferState {
         }
         if row.awaiting_source {
             self.schedule_expire(fx);
-            return self.begin_failure(id, "missing_file".into(), false, fx);
+            return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.copying {
-            return self.restore_copy(id, &row, fx);
+            return self.restore_copy(now, id, &row, fx);
         }
         if row.completed {
             if let Some(saved) = outcomes.get(&id).and_then(|cycles| cycles.get(&row.cycle_id.max(1))) {
-                return self.restore_completed(id, &row, Some(saved), fx);
+                return self.restore_completed(now, id, &row, Some(saved), fx);
             }
             if let Some(error) = row.failed.clone() {
                 return self.failed_restored(id, error, fx);
@@ -126,7 +126,7 @@ impl TransferState {
                 self.set(id, TransferStage::PersistingBatchIntent);
                 return self.show(id, Shown::Uploading { progress: 100 }, fx);
             }
-            return self.restore_completed(id, &row, None, fx);
+            return self.restore_completed(now, id, &row, None, fx);
         }
         if let Some(error) = row.failed.clone() {
             return self.failed_restored(id, error, fx);
@@ -135,7 +135,7 @@ impl TransferState {
             if let Some(transfer) = self.transfers.get_mut(&id) {
                 transfer.stage = TransferStage::PersistingFailure;
             }
-            return self.begin_failure(id, "missing_file".into(), false, fx);
+            return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         let shown = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { Shown::Uploading { progress: 100 } } else { Shown::Queued };
         self.show(id, shown, fx);
@@ -143,9 +143,9 @@ impl TransferState {
         self.schedule_expire(fx);
     }
 
-    fn restore_copy(&mut self, id: TransferId, row: &StoredTransfer, fx: &mut Fx) {
+    fn restore_copy(&mut self, now: crate::runtime::Time, id: TransferId, row: &StoredTransfer, fx: &mut Fx) {
         if !row.file_present {
-            return self.begin_failure(id, "missing_file".into(), false, fx);
+            return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -158,7 +158,7 @@ impl TransferState {
         self.rounds_needed(vec![id], fx);
     }
 
-    fn restore_completed(&mut self, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {
+    fn restore_completed(&mut self, now: crate::runtime::Time, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {
         match saved {
             Some(OutboxOutcome::Confirmed { revision, result, row_id }) => {
                 self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone(), row_id: row_id.clone() }, fx);
@@ -173,7 +173,7 @@ impl TransferState {
                     self.failed_restored(id, saved_error.clone(), fx);
                 } else {
                     self.set(id, TransferStage::PersistingFailure);
-                    self.begin_failure_at(id, error.clone(), false, row.failed_at, fx);
+                    self.begin_failure_at(now, id, error.clone(), false, row.failed_at, fx);
                 }
             }
             Some(OutboxOutcome::Ended(cause)) => {
@@ -205,7 +205,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn restored(&mut self, mut uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, fx: &mut Fx) {
+    pub(super) fn restored(&mut self, now: crate::runtime::Time, mut uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, fx: &mut Fx) {
         uploads.sort_by_key(|row| row.seq);
         self.open_groups = uploads.iter().filter_map(|row| row.batch).collect();
         let held: BTreeSet<TransferId> = uploads.iter().map(|row| row.transfer_id).collect();
@@ -214,15 +214,15 @@ impl TransferState {
             if row.batch.is_some_and(|group| self.groups.get(&group).is_none_or(|entry| entry.op_id.is_none())) {
                 row.restore_failed = Some("invalid batch provenance".into());
             }
-            self.classify(row, &outcomes, fx);
+            self.classify(now, row, &outcomes, fx);
         }
         self.phase = Phase::Classified;
         run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
-        self.replay_held_accepts(fx);
+        self.replay_held_accepts(now, fx);
     }
 
     /// A declaration arrives: a transfer that waits for it is classified again.
-    pub(super) fn register(&mut self, declarations: Vec<(String, String)>, fx: &mut Fx) {
+    pub(super) fn register(&mut self, now: crate::runtime::Time, declarations: Vec<(String, String)>, fx: &mut Fx) {
         self.declarations.extend(declarations);
         if self.phase == Phase::Restoring {
             return;
@@ -231,23 +231,23 @@ impl TransferState {
         let classified = !ready.is_empty();
         for id in ready {
             if let Some((row, outcomes)) = self.waiting.remove(&id) {
-                self.classify_declared(row, &outcomes, fx);
+                self.classify_declared(now, row, &outcomes, fx);
             }
         }
         if self.phase == Phase::Ready {
             self.send_orphans(false, fx);
-            if classified { self.start_in_order(fx); }
+            if classified { self.start_in_order(now, fx); }
         }
     }
 
     /// `RestoreReady`: the network start of the restored transfers goes in the order of `seq`.
-    pub(super) fn restore_ready(&mut self, epoch: crate::runtime::Epoch, fx: &mut Fx) {
+    pub(super) fn restore_ready(&mut self, now: crate::runtime::Time, epoch: crate::runtime::Epoch, fx: &mut Fx) {
         if epoch != self.epoch || self.phase != Phase::Classified {
             return;
         }
         self.phase = Phase::Ready;
         self.send_orphans(true, fx);
-        self.replay_held(fx);
+        self.replay_held(now, fx);
         let groups: Vec<_> = self.groups.keys().copied().collect();
         for group in groups {
             if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
@@ -255,6 +255,6 @@ impl TransferState {
         }
         let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 }

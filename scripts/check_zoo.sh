@@ -647,6 +647,20 @@ for path in sorted((source / "owners" / "read" / "deliveries").rglob("*.rs")):
         if not inside and re.search(r"\bWindowState \{ (phase|error|loaded|has_more|settled|total)\b", line):
             findings.append(f"Z53 the state of a stream value is built only in Delivery::delivered (P-DLV-32): {path.relative_to(root)}:{number}")
 
+for path in sorted((source / "owners" / "write").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    text = path.read_text()
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.search(r"\bTime\(0\)", line):
+            findings.append(f"Z54 the time of the turn is the argument now of the step, no floor: {path.relative_to(root)}:{number}")
+    for name in ("OutboxState", "TransferState"):
+        start = text.find(f"pub struct {name} {{")
+        if start < 0: continue
+        body = text[start:text.find("\n}\n", start)]
+        for found in re.finditer(r"^\s*pub(\([a-z]+\))? now:", body, re.M):
+            number = text.count("\n", 0, start + found.start()) + 2
+            findings.append(f"Z54 the state keeps no copy of the time of the turn (R5): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

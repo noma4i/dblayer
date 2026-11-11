@@ -37,13 +37,13 @@ impl TransferState {
     }
 
     /// Ready transfers start by `(seq, position)` while a slot is free, the network is up and `saving` allows. A due retry competes in the same order.
-    pub(super) fn start_in_order(&mut self, fx: &mut Fx) {
+    pub(super) fn start_in_order(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
         if self.starts_held { return; }
         while self.online == Some(true) {
             let next = self.scan().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
             if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts < source.parts)) {
-                self.begin_failure(id, "Exhausted".into(), abort, fx);
+                self.begin_failure(now, id, "Exhausted".into(), abort, fx);
                 continue;
             }
             if self.active() >= self.slots { return; }
@@ -58,18 +58,18 @@ impl TransferState {
         }
     }
 
-    pub(super) fn attempt_committed(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn attempt_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(operation) = self.transfers.get(&id).map(|transfer| self.operation_of(transfer)) else { return };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if self.online != Some(true) || (self.saving && !transfer.urgent) {
             transfer.stage = TransferStage::Ready;
             transfer.in_flight = false;
-            self.start_in_order(fx);
+            self.start_in_order(now, fx);
             return;
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-        let Some(effect) = Self::step_effect(transfer, operation) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
-        let Some(progress) = (if transfer.stage == TransferStage::Completing { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(effect) = Self::step_effect(transfer, operation) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(progress) = (if transfer.stage == TransferStage::Completing { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         let shown = Shown::Uploading { progress };
         let (uploading, attempt_id) = (transfer.stage == TransferStage::Uploading, transfer.attempt_id);
         self.show(id, shown, fx);
@@ -100,13 +100,12 @@ impl TransferState {
 
     fn live(&self, id: TransferId, stage: TransferStage, attempt_id: AttemptId) -> bool { self.transfers.get(&id).is_some_and(|transfer| transfer.stage == stage && transfer.in_flight && transfer.attempt_id == attempt_id) }
 
-    pub(super) fn step_ok(&mut self, id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String>, fx: &mut Fx) {
+    pub(super) fn step_ok(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String>, fx: &mut Fx) {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
         self.step_answered(id);
         fx.push(Effect::Cancel(put_timer(attempt_id)));
-        let now = self.now;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if part.is_some_and(|part| part != transfer.confirmed_parts + 1) {
             return;
@@ -122,13 +121,12 @@ impl TransferState {
         transfer.in_flight = false;
         transfer.stage = TransferStage::PersistingPart;
         self.store(&[id], StoreKind::ConfirmedParts, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     /// A permanent error or the last attempt: the failure is written, `abort` goes out when a multipart upload exists.
-    pub(super) fn mark_failure(&mut self, id: TransferId, error: String, fx: &mut Fx) {
+    pub(super) fn mark_failure(&mut self, now: crate::runtime::Time, id: TransferId, error: String, fx: &mut Fx) {
         self.release_step(id, fx);
-        let now = self.now;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.failed_at = Some(now);
         transfer.stage = TransferStage::PersistingFailure;
@@ -138,12 +136,12 @@ impl TransferState {
         transfer.error = Some(error);
     }
 
-    pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
-        self.begin_failure_at(id, error, abort, None, fx);
+    pub(super) fn begin_failure(&mut self, now: crate::runtime::Time, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
+        self.begin_failure_at(now, id, error, abort, None, fx);
     }
 
-    pub(super) fn begin_failure_at(&mut self, id: TransferId, error: String, abort: bool, at: Option<crate::runtime::Time>, fx: &mut Fx) {
-        self.mark_failure(id, error, fx);
+    pub(super) fn begin_failure_at(&mut self, now: crate::runtime::Time, id: TransferId, error: String, abort: bool, at: Option<crate::runtime::Time>, fx: &mut Fx) {
+        self.mark_failure(now, id, error, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if let Some(at) = at { transfer.failed_at = Some(at); }
         transfer.failure_abort = abort;
@@ -173,7 +171,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn step_error(&mut self, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
+    pub(super) fn step_error(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
@@ -183,12 +181,12 @@ impl TransferState {
         if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
         } else {
-            self.begin_failure(id, error, true, fx);
+            self.begin_failure(now, id, error, true, fx);
         }
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
-    pub(super) fn completed(&mut self, id: TransferId, attempt_id: AttemptId, signed_id: Option<String>, fx: &mut Fx) {
+    pub(super) fn completed(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, signed_id: Option<String>, fx: &mut Fx) {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
@@ -199,10 +197,10 @@ impl TransferState {
             transfer.stage = TransferStage::PersistingComplete;
         }
         self.store(&[id], StoreKind::Completed, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
-    pub(super) fn complete_error(&mut self, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
+    pub(super) fn complete_error(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, (temporary, error): (bool, String), fx: &mut Fx) {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
@@ -210,18 +208,18 @@ impl TransferState {
         if temporary && self.transfers.get(&id).is_some_and(|transfer| transfer.attempts < ATTEMPT_LIMIT) {
             self.schedule_retry(id, fx);
         } else {
-            self.begin_failure(id, error, false, fx);
+            self.begin_failure(now, id, error, false, fx);
         }
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
-    pub(super) fn tick(&mut self, kind: TransferTick, fx: &mut Fx) {
+    pub(super) fn tick(&mut self, now: crate::runtime::Time, kind: TransferTick, fx: &mut Fx) {
         match kind {
-            TransferTick::Expire => self.expire(fx),
-            TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(transfer_id, attempt_id, fx),
+            TransferTick::Expire => self.expire(now, fx),
+            TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(now, transfer_id, attempt_id, fx),
             TransferTick::Minted { upload_id, attempt_id } => self.tick_minted(&upload_id, attempt_id, fx),
             TransferTick::StagedRestore { transfer_id } => { if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.staged_failed.is_some()) { self.write_restored(transfer_id, fx); } }
-            TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(transfer_id, attempt_id, fx),
+            TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(now, transfer_id, attempt_id, fx),
         }
     }
 
@@ -240,15 +238,15 @@ impl TransferState {
         }
     }
 
-    fn tick_put_timeout(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
+    fn tick_put_timeout(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
         run(fx, TransferEffect::CancelStep { transfer_id: id });
-        self.step_error(id, attempt_id, (true, super::failure::of_transport(&crate::transport::TransportError::Network("the upload timed out".into()))), fx);
+        self.step_error(now, id, attempt_id, (true, super::failure::of_transport(&crate::transport::TransportError::Network("the upload timed out".into()))), fx);
     }
 
-    fn tick_retry(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
+    fn tick_retry(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
         if transfer.attempt_id != attempt_id {
             return;
@@ -258,7 +256,7 @@ impl TransferState {
                 let Some(transfer) = self.transfers.get_mut(&id) else { return };
                 transfer.stage = TransferStage::Ready;
                 transfer.waiting_retry = false;
-                self.start_in_order(fx);
+                self.start_in_order(now, fx);
             }
             TransferStage::PersistingFailure | TransferStage::Removing if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) => {
                 let ids = self.group_entry(id).map(|group| self.groups[&group].ids.iter().copied().filter(|member| matches!(self.stage_of(*member), Some(TransferStage::Removing | TransferStage::PersistingFailure))).collect::<Vec<_>>()).unwrap_or_default();
@@ -273,43 +271,43 @@ impl TransferState {
         }
     }
 
-    pub(super) fn part_committed(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn part_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Ready;
         transfer.next_step = if transfer.last_part { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
-        let Some(progress) = (if transfer.last_part { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(progress) = (if transfer.last_part { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         self.show(id, Shown::Uploading { progress }, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
-    pub(super) fn complete_committed(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn complete_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         if let Some(group) = self.group_entry(id) {
             self.batch_ready(id, group, fx);
-            return self.start_in_order(fx);
+            return self.start_in_order(now, fx);
         }
         self.set(id, TransferStage::Mutating);
         if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = true; transfer.has_operation = true; }
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.submit_mutation(id, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     /// `Rejected(Storage)` of a write of a part or of `completed`: durable `Failed` only by a write.
-    pub(super) fn persist_failed(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
+    pub(super) fn persist_failed(&mut self, now: crate::runtime::Time, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         let error = match reason {
             RejectReason::Storage(error) => error,
             _ => "storage".into(),
         };
-        self.begin_failure(id, error, false, fx);
+        self.begin_failure(now, id, error, false, fx);
     }
 
     /// `Rejected(Invalid)`: the write is wrong, no retry helps. `Failed` is written; the write of `Failed` that is invalid stays in memory.
-    pub(super) fn invalid_write(&mut self, ids: &[TransferId], marking: bool, fx: &mut Fx) {
+    pub(super) fn invalid_write(&mut self, now: crate::runtime::Time, ids: &[TransferId], marking: bool, fx: &mut Fx) {
         for &id in ids {
             if marking {
                 self.failure_committed(id, fx);
             } else {
-                self.begin_failure(id, "Internal(Invalid)".into(), false, fx);
+                self.begin_failure(now, id, "Internal(Invalid)".into(), false, fx);
             }
         }
     }
@@ -318,7 +316,7 @@ impl TransferState {
         self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Mutating || (transfer.stage == TransferStage::Failed && transfer.discard_sent))
     }
 
-    pub(super) fn mutation_outcome(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
+    pub(super) fn mutation_outcome(&mut self, now: crate::runtime::Time, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
         if !self.waits_for_discard(id) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
         let failed_waiting = waiting && self.stage_of(id) == Some(TransferStage::Failed);
@@ -345,9 +343,9 @@ impl TransferState {
             _ if failed_waiting => {}
             OutboxOutcome::Rejected { error } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; transfer.has_operation = false; }
-                self.begin_failure(id, error, false, fx);
+                self.begin_failure(now, id, error, false, fx);
             }
-            OutboxOutcome::Failed { error } => self.begin_failure(id, error, false, fx),
+            OutboxOutcome::Failed { error } => self.begin_failure(now, id, error, false, fx),
             OutboxOutcome::Ended(cause) => {
                 self.interrupt(id, cause, fx);
                 self.rounds_idle(id, fx);

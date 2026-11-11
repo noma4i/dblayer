@@ -41,7 +41,7 @@ impl TransferState {
         self.rounds_needed(vec![id], fx);
     }
 
-    pub(super) fn source_failed(&mut self, epoch: Epoch, key: &str, message: String, rep: ReplyId, fx: &mut Fx) {
+    pub(super) fn source_failed(&mut self, now: Time, epoch: Epoch, key: &str, message: String, rep: ReplyId, fx: &mut Fx) {
         if epoch != self.epoch { return reply(fx, rep, TransferAnswer::Err(Fault::NoSession)); }
         let Some(id) = self.open_id(key) else { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)) };
         if self.stage_of(id) != Some(TransferStage::AwaitingSource) {
@@ -49,7 +49,7 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Err(if busy { Fault::InFlight } else { Fault::Invalid }));
         }
         if let Some(transfer) = self.transfers.get_mut(&id) { transfer.supply_reply = Some(rep); }
-        self.begin_failure(id, format!("source_failed:{message}"), false, fx);
+        self.begin_failure(now, id, format!("source_failed:{message}"), false, fx);
     }
 
     pub(super) fn create(&mut self, item: BatchItem, batch_id: Option<u64>, now: Time, stage: TransferStage) -> TransferId {
@@ -137,7 +137,7 @@ impl TransferState {
     }
 
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
-    pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, fx: &mut Fx) {
+    pub(super) fn accept(&mut self, now: Time, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Closed } else { Fault::NoSession }));
         }
@@ -155,7 +155,7 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
-            self.create(item, group, self.now, TransferStage::Reserving)
+            self.create(item, group, now, TransferStage::Reserving)
         }).collect();
         for (&id, old) in ids.iter().zip(old) {
             if let Some(old) = old {
@@ -361,7 +361,7 @@ impl TransferState {
     }
 
     /// The temporary file took the place of the copy: the marker of the row goes, a call that waits for the swap gets its answer.
-    pub(super) fn staged_promoted(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn staged_promoted(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
         let Some((key, waiting)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage == TransferStage::PersistingCopy)) else { return };
         if let Some(previous) = self.transfers.get_mut(&id).and_then(|transfer| transfer.previous.take()) {
             if let Some(upload_id) = previous.upload_id {
@@ -371,7 +371,7 @@ impl TransferState {
         }
         let batch = self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
         self.pending.insert(batch, Pending { ids: vec![id], kind: StoreKind::StagedCleared, orphan: None, written: BTreeMap::new() });
-        if waiting { self.copy_committed(&[id], fx); }
+        if waiting { self.copy_committed(now, &[id], fx); }
     }
 
     /// The rename of the temporary file failed: the old copy and its metadata stay, only the temporary file goes, the call that waits for the swap learns it.
@@ -420,7 +420,7 @@ impl TransferState {
     }
 
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
-    pub(super) fn copy_committed(&mut self, ids: &[TransferId], fx: &mut Fx) {
+    pub(super) fn copy_committed(&mut self, now: Time, ids: &[TransferId], fx: &mut Fx) {
         let swapping: Vec<TransferId> = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(|transfer| transfer.previous.is_some())).collect();
         for &id in &swapping {
             run(fx, TransferEffect::PromoteStaged { transfer_id: id });
@@ -482,7 +482,7 @@ impl TransferState {
             }
         }
         self.rounds_needed(accepted, fx);
-        self.start_in_order(fx);
+        self.start_in_order(now, fx);
     }
 
     /// `PersistingCopy x Rejected(Storage)`: the copy is not durable, the whole batch is removed.
