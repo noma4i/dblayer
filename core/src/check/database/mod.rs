@@ -442,8 +442,9 @@ impl DatabaseSut {
             "node" => {
                 let (Some(relation), Some(row)) = (text("relation"), text("row")) else { return Some(error("arguments")) };
                 let id = self.id_of(&row);
+                let force = input.flag("force").unwrap_or(false);
                 self.launch_named(call.clone(), async move {
-                    match database.node(epoch, model, relation, id, input.flag("force").unwrap_or(false)).await {
+                    match database.node(epoch, model, relation, id, force).await {
                         Ok(found) => done("node", json!({ "row": row, "present": found.is_some() })),
                         Err(error) => failed(&error),
                     }

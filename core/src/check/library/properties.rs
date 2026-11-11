@@ -40,6 +40,8 @@ struct Window {
     /// Stale signs seen, and the extra first-page loads they still allow.
     signs: u32,
     allowance: u32,
+    /// A forced load (refresh, node with force, entity with force) is running: its request may be sent again after a network return.
+    forced: bool,
 }
 
 struct Interest {
@@ -160,7 +162,11 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         for _ in kinds(observed, "request").filter(|item| item.value["kind"] == "subscription") {
             walk.subscriptions += 1;
             if walk.subscriptions > 1 {
-                for window in walk.windows.values_mut() {
+                let mut operations: Vec<String> = walk.windows.keys().cloned().chain(walk.held.iter().map(|(_, operation)| operation.clone())).chain(walk.streams.values().map(|interest| interest.operation.to_string())).collect();
+                operations.sort_unstable();
+                operations.dedup();
+                for operation in operations {
+                    let window = walk.windows.entry(operation).or_default();
                     window.signs += 1;
                     window.allowance += 1;
                 }
@@ -184,17 +190,30 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             if walk.streaks.get(&operation) == Some(&(0, 0)) {
                 walk.streaks.remove(&operation);
             }
+            if !matches!(how, "temporary" | "drop" | "server") {
+                if let Some(window) = walk.windows.get_mut(&operation) {
+                    window.forced = false;
+                }
+            }
             let landed_ok = how == "page" && first_page && !kinds(observed, "error").any(|item| !REFUSALS.contains(&error_kind(item)));
             if landed_ok {
                 let window = walk.windows.entry(operation).or_default();
                 (window.landed, window.failed, window.lost) = (Some(walk.now), false, false);
-            } else if first_page && how != "page" {
-                walk.windows.entry(operation).or_default().failed = true;
+            } else if how != "page" {
+                let (network, server) = walk.streaks.get(&operation).copied().unwrap_or((0, 0));
+                let exhausted = network >= NETWORK_ATTEMPTS || server >= SERVER_ATTEMPTS || !matches!(how, "temporary" | "drop" | "server");
+                if first_page || exhausted {
+                    walk.windows.entry(operation).or_default().failed = true;
+                }
             }
         }
+        let forcing = input.name == "refresh" || (input.name == "node" && input.flag("force") == Some(true)) || (input.name == "open_entity" && input.text("fetch") == Some("force"));
         for item in kinds(observed, "sent") {
             let operation = item.value["operation"].as_str().unwrap_or("");
             if !operation.starts_with("session") {
+                if forcing {
+                    walk.windows.entry(operation.to_string()).or_default().forced = true;
+                }
                 walk.held.push((item.value["id"].as_str().unwrap_or("").to_string(), operation.to_string()));
             }
         }
@@ -221,7 +240,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         }
         if input.name == "open_list" || input.name == "open_count" {
             if let (Some(name), Some(operation)) = (input.text("as"), input.text("relation").and_then(operation_of)) {
-                if !refused("not_open") && !refused("arguments") {
+                if !refused("not_open") && !refused("arguments") && walk.logged {
                     walk.streams.insert(name.to_string(), Interest { operation, on_connect: input.flag("refresh_on_connect").unwrap_or(false) });
                 }
             }
@@ -300,6 +319,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                         continue;
                     }
                     let Some(window) = walk.windows.get_mut(&request.operation) else { continue };
+                    if window.forced {
+                        continue;
+                    }
                     if window.allowance > 0 {
                         window.allowance -= 1;
                         continue;
