@@ -34,22 +34,19 @@ fn feed_keepalive_stale() {
     }
 }
 
-fn ping_due() -> (Twin, ConnectionId, u64) {
+fn ping_due() -> (Twin, ConnectionId, Vec<Emitted<FeedEffect>>) {
     let mut twin = live();
     let connection = twin.connection(To::Active);
-    let counter = match twin.state().protocol(connection).unwrap() { Protocol::Established { send_counter, .. } => send_counter, _ => panic!("established") };
-    twin.det.tick(Time(25_000));
-    twin.post(FeedInput::Tick);
     take(&twin.log);
-    (twin, connection, counter)
+    twin.det.tick(Time(25_000));
+    twin.run();
+    let emitted = take(&twin.log);
+    (twin, connection, emitted)
 }
 
 #[test]
 fn feed_keepalive_ping() {
-    let (mut twin, connection, counter) = ping_due();
-    twin.det.tick(Time(25_000));
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
-    let emitted = take(&twin.log);
+    let (twin, connection, emitted) = ping_due();
     assert_eq!(twin.state().mode(), f::Mode::Live);
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { connection: found, frame: Outgoing::Ping { ts: 25_000 }, .. }) if *found == connection)));
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == std::time::Duration::from_secs(10) && input.starts_with("PongDeadline"))));
@@ -57,31 +54,21 @@ fn feed_keepalive_ping() {
 
 #[test]
 fn feed_keepalive_pong() {
-    let (mut twin, connection, counter) = ping_due();
-    twin.det.tick(Time(25_000));
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
-    take(&twin.log);
+    let (mut twin, connection, _) = ping_due();
     let recv_counter = twin.counter(connection, Counter::Expected);
-    twin.det.tick(Time(25_000));
     twin.post(FeedInput::FrameOpened { connection_id: connection, counter: recv_counter, frame: Frame::Pong });
     take(&twin.log);
-    twin.det.tick(Time(25_000));
-    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    twin.det.tick(Time(35_000));
+    twin.run();
     assert!(take(&twin.log).is_empty());
     assert_eq!(twin.state().mode(), f::Mode::Live);
 }
 
 #[test]
 fn feed_keepalive_half_open() {
-    let (mut twin, connection, counter) = ping_due();
-    twin.det.tick(Time(25_000));
-    twin.post(FeedInput::Keepalive { connection_id: connection, counter });
-    take(&twin.log);
+    let (mut twin, connection, _) = ping_due();
     twin.det.tick(Time(35_000));
-    twin.post(FeedInput::Tick);
-    take(&twin.log);
-    twin.det.tick(Time(35_000));
-    twin.post(FeedInput::PongDeadline { connection_id: connection, counter });
+    twin.run();
     let emitted = take(&twin.log);
     assert!(emitted.iter().any(|effect| matches!(effect, Emitted::Run(FeedEffect::Cancel { connection: found }) if *found == connection)));
     assert_ne!(twin.state().mode(), f::Mode::Live);
