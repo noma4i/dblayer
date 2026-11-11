@@ -124,3 +124,31 @@ fn win_loading_error_keeps_the_type_of_the_failure() {
         assert_eq!(outcome_of(&effects), Some(WindowOutcome::Failed { failure: failure.clone() }), "{failure:?}");
     }
 }
+
+/// P-WIN-34: a change that arrives while the request is on its way marks the next load, the batch of the load in flight keeps the source of its own load.
+#[test]
+fn win_change_during_the_request_marks_the_next_load() {
+    use crate::owners::read::windows::{StaleCause, StaleKeys};
+    use crate::schema::RowSource::{NodeReread, Page};
+    let key = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("n1"))].into_iter().collect());
+    let now = crate::runtime::Time(0);
+    let mut state = state();
+    let _ = Windows::step(&mut state, WindowsInput::InterestPassive { key: key.clone(), id: 9 }, now);
+    let _ = Windows::step(&mut state, WindowsInput::WindowRead { key: key.clone(), read_id: 1, result: Ok(None) }, now);
+    let mut pending = store_inputs(Windows::step(&mut state, WindowsInput::Load { key: key.clone(), id: 1, goal: Goal::First, force: true, store_revision: 0 }, now));
+    let mut sources = Vec::new();
+    for change_in_flight in [true, false] {
+        let request = pending.iter().find_map(|input| match input { StoreInput::Pin { request_id, .. } => Some(*request_id), _ => None }).expect("the load pins its request");
+        let asked = Windows::step(&mut state, WindowsInput::Pinned { request_id: request, base_revision: 1 }, now);
+        let attempt = asked.iter().find_map(|effect| match effect { Effect::Run(WindowsEffect::Window { effect: WindowEffect::Request { attempt, .. }, .. }) => Some(*attempt), _ => None }).expect("the pinned load asks the network");
+        if change_in_flight {
+            let _ = Windows::step(&mut state, WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: StaleCause::Change }, now);
+        }
+        let landed = store_inputs(Windows::step(&mut state, WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec![], None) }, now));
+        let batch = landed.iter().find_map(|input| match input { StoreInput::Commit(batch) => Some(batch.clone()), _ => None }).expect("the answer lands");
+        sources.extend(batch.ops.iter().filter_map(|op| match op { StoreOp::Window { source, .. } => Some(*source), _ => None }));
+        let committed = crate::owners::contract::Committed { batch: batch.id, revision: 5, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+        pending = store_inputs(Windows::step(&mut state, WindowsInput::Committed(committed), now));
+    }
+    assert_eq!(sources, vec![Page, NodeReread], "the load asked before the change lands as a page, the reread asked after it carries the mark");
+}
