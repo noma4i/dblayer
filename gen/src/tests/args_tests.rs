@@ -82,3 +82,10 @@ fn expires_after_is_lowered_into_the_operation_spec() {
     assert_eq!(expires, [Some(90), None]);
     assert!(failure("operation :create, expires_after: 0 do\n  mutation \"CreateSample\"\nend").1.contains("expires_after"));
 }
+
+#[test]
+fn gen_create_maps_own_id_refused() {
+    let errors = parse_models(&model("operation :create do\n  mutation \"A\"\n  variables name: :name, ownerId: :id\nend")).unwrap_err();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].message.contains("create") && errors[0].message.contains("`id`"), "{}", errors[0].message);
+}
