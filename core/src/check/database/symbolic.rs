@@ -21,7 +21,18 @@ pub(super) struct Symbolic {
     shown: std::collections::HashMap<String, String>,
     live: bool,
     dir: Option<std::path::PathBuf>,
+    seen: std::collections::HashMap<String, Seen>,
 }
+
+/// What a stream showed in symbolic mode: its rows (or count) and the last value it showed. A state-only value and a delta are shown as the whole value.
+#[derive(Default)]
+struct Seen {
+    rows: Vec<Value>,
+    count: Option<Value>,
+    last: Option<Observation>,
+}
+
+const VALUES: [&str; 4] = ["snapshot", "count", "delta", "state"];
 
 static DIRS: AtomicU64 = AtomicU64::new(0);
 
@@ -99,6 +110,74 @@ impl DatabaseSut {
             let (operation, variables) = operation_of(&body);
             mode.held.push(Held { id: shown, mock, operation, variables });
         }
+    }
+
+    /// The error kinds of the values a `pull` will fold, in the order of the folded values.
+    fn unread_errors(&self, input: &Input) -> Vec<Option<&'static str>> {
+        let Some(pulled) = input.text("stream").and_then(|name| self.streams.get(name)) else { return Vec::new() };
+        let unread: Vec<ReadValue> = pulled.queue.lock().unwrap().iter().map(|(_, value)| value.clone()).collect();
+        fold::fold(unread)
+            .iter()
+            .map(|folded| {
+                let state = match folded {
+                    fold::Folded::Delta { state, .. } => Some(state),
+                    fold::Folded::Value(ReadValue::Snapshot { state, .. } | ReadValue::Count { state, .. } | ReadValue::State { state, .. }) => Some(state),
+                    fold::Folded::Value(_) => None,
+                };
+                state.and_then(|state| state.error.as_ref()).map(error_kind)
+            })
+            .collect()
+    }
+
+    /// The values of a `pull` as the spec names them (library.md section 1): rows, `phase`, the kind of the `error`, `loaded` present or not. No revisions, no texts.
+    /// A delta and a state-only value are the whole value, the values of one pull are one (the last), a value equal to the one shown before is no new value.
+    fn shape_pull(&mut self, stream: &str, observed: Vec<Observation>, errors: Vec<Option<&'static str>>) -> Vec<Observation> {
+        let mut rest = observed;
+        let tail = rest.split_off(errors.len().min(rest.len()));
+        let mut values: Vec<Observation> = Vec::new();
+        for (item, error) in rest.into_iter().zip(errors) {
+            if !VALUES.contains(&item.kind.as_str()) {
+                values.push(item);
+                continue;
+            }
+            let stream = item.value["stream"].as_str().unwrap_or("").to_string();
+            let seen = self.mode().seen.entry(stream).or_default();
+            let mut fields = item.value.as_object().cloned().unwrap_or_default();
+            match item.kind.as_str() {
+                "snapshot" => seen.rows = fields.get("rows").and_then(Value::as_array).cloned().unwrap_or_default(),
+                "count" => seen.count = fields.get("count").cloned(),
+                "delta" => {
+                    let removed = fields.get("removed").and_then(Value::as_array).cloned().unwrap_or_default();
+                    seen.rows.retain(|row| !removed.contains(row));
+                    for row in fields.get("rows").and_then(Value::as_array).cloned().unwrap_or_default() {
+                        if !seen.rows.contains(&row) { seen.rows.push(row); }
+                    }
+                }
+                _ => {}
+            }
+            ["revision", "base", "removed"].iter().for_each(|key| { fields.remove(*key); });
+            if fields.contains_key("loaded") { fields.insert("loaded".into(), true.into()); }
+            match error { Some(kind) => fields.insert("error".into(), kind.into()), None => fields.remove("error") };
+            let kind = if seen.count.is_some() { "count" } else { "snapshot" };
+            match &seen.count { Some(count) => fields.insert("count".into(), count.clone()), None => fields.insert("rows".into(), Value::Array(seen.rows.clone())) };
+            let stream_name = fields.get("stream").cloned().unwrap_or_default();
+            values.retain(|earlier| !(VALUES.contains(&earlier.kind.as_str()) && earlier.value["stream"] == stream_name));
+            values.push(Observation::new(kind, Value::Object(fields)));
+        }
+        let mut shown = Vec::new();
+        for item in values {
+            if VALUES.contains(&item.kind.as_str()) {
+                let seen = self.mode().seen.entry(item.value["stream"].as_str().unwrap_or("").to_string()).or_default();
+                if seen.last.as_ref() == Some(&item) { continue; }
+                seen.last = Some(item.clone());
+            }
+            shown.push(item);
+        }
+        if shown.is_empty() && !tail.iter().any(|item| item.kind == "empty" || item.kind == "error") {
+            shown.push(Observation::new("empty", json!({ "stream": stream })));
+        }
+        shown.extend(tail);
+        shown
     }
 
     /// The `request` observations of an input show the shown ids, in the order of those ids.
@@ -181,8 +260,16 @@ impl DatabaseSut {
                 let kind = input.text("kind").unwrap_or("temporary").to_string();
                 return self.reply(&kind.clone(), |held| if kind == "drop" { Input::new("drop").with("id", held.mock.as_str()) } else { Input::new("error").with("id", held.mock.as_str()).with("kind", kind.as_str()) }).await;
             }
+            "pull" => {
+                let errors = self.unread_errors(input);
+                let observed = self.play(input).await;
+                self.shape_pull(input.text("stream").unwrap_or(""), observed, errors)
+            }
             _ => self.play(input).await,
         };
+        if input.name.starts_with("open_") {
+            if let Some(name) = input.text("as") { self.mode().seen.remove(name); }
+        }
         self.note_requests();
         let observed = self.relabel(observed);
         for item in &observed {
