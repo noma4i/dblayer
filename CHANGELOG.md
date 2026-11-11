@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Remove a row from a loaded window when a page of another window changes its membership.
+
 ## 6.26.2 - 2026-11-11
 
 ### Fixed
