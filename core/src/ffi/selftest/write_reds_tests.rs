@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use super::nested_storage_tests::wrapper_models;
-use super::rig_tests::{bound, Rig, World};
+use super::rig_tests::{bound, Fault, Rig, World};
 
 const PARENT_AND_CHILD: &str = r#"[{"name":"CreateContainer","document":"mutation CreateContainer($title: String!) { createContainer(title: $title) { id title } }"},{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt reactions { body userId } } }"}]"#;
 
@@ -51,5 +51,30 @@ async fn write_child_create_sends_the_real_parent_id() {
         assert!(variables.iter().any(|value| value == "k1"), "the child request does not carry the real parent id k1: {variables:?}");
         assert!(!variables.contains(&temp), "the child request carries the temporary id {temp}: {variables:?}");
     }
+    rig.database.close_now();
+}
+
+async fn message_rig() -> Rig {
+    Rig::signed_as(World::new("server", "A", true), false, super::rig_events::events(|_| {})).await
+}
+
+/// I4 and D-288: operations queued on a temp row end when the create of that row is refused. They do not go to the server with the temp id.
+#[tokio::test(flavor = "multi_thread")]
+async fn write_ops_on_a_temp_row_end_when_its_create_is_refused() {
+    let rig = message_rig().await;
+    let epoch = rig.database.session_epoch();
+    let refused = rig.world.hold_then("SendMessage", Fault::Business);
+    let create = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":"hi","at":1}).to_string(), "{}".into())).await.unwrap();
+    let temp = create.optimistic_value.clone().unwrap().id;
+    refused.entered().await;
+    let edit = bound(rig.database.act(epoch, "Message".into(), temp.clone(), "edit".into(), json!({"text":"edited"}).to_string(), "{}".into())).await.unwrap();
+    refused.release();
+    let created = bound(rig.database.confirmed(create, false)).await;
+    assert!(created.is_err(), "the refused create did not end in an error: {created:?}");
+    let ended = bound(rig.database.confirmed(edit, false)).await;
+    println!("confirmed(edit) = {ended:?}");
+    assert!(ended.is_err(), "the operation on the refused temp row did not end in an error: {ended:?}");
+    let sent = sent_strings(&rig, "MessageEdit");
+    assert!(sent.is_empty(), "the server got an edit of the refused temp row {temp}: {sent:?}");
     rig.database.close_now();
 }
