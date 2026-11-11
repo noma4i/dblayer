@@ -7,7 +7,7 @@
 - Skip the request of a preload window whose saved data is still fresh at open.
 - Send the real parent id in a write that names a row created before it.
 - End a write on a row whose create was refused, without a request.
-- Refuse a query whose variables hold a temporary id.
+- Refuse a query, a mutation call and a session call whose body holds a temporary id.
 - Refuse a generator `create` that maps a variable to the row `id`.
 
 ## 6.26.3 - 2026-11-11

@@ -189,7 +189,7 @@ impl OutboxState {
         if !creates_own && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
         if operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) {
             if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&operation.op.body) {
-                super::outbox_commit::walk_strings(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
+                crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
             }
         }
         let mut dependency = TempDependency::Clear;

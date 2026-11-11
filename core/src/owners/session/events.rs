@@ -1,5 +1,12 @@
 use super::*;
 
+fn carries_temp_id(body: &str) -> bool {
+    let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body) else { return false };
+    let mut found = false;
+    crate::identity::walk_temp_ids(&mut body, &mut |_| found = true);
+    found
+}
+
 impl SessionState {
     fn retry_direct(&mut self, pending: PendingCall, attempts: u64, error: SessionError, fx: &mut Vec<SessionEffect>) {
         let exhausted = crate::runtime::RetryPolicy::Http.limit().is_some_and(|limit| attempts + 1 >= u64::from(limit));
@@ -103,6 +110,19 @@ impl SessionState {
                 }
                 _ => {}
             }
+        }
+        match &input {
+            SessionInput::SessionCall { reply: id, body, .. } if carries_temp_id(body) => {
+                self.phase = phase;
+                reply(fx, *id, Err(SessionError::Invalid));
+                return;
+            }
+            SessionInput::Mutate { author, req_id, epoch, body, .. } if *epoch == self.epoch && carries_temp_id(body) => {
+                self.phase = phase;
+                author_error(fx, *author, *req_id, ErrorClass::Permanent, SessionError::Invalid);
+                return;
+            }
+            _ => {}
         }
         match input {
             SessionInput::Closing => self.closing(phase, fx),

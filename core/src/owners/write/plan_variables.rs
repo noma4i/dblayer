@@ -36,7 +36,7 @@ pub(crate) fn upload_variables(declaration: &ActionDeclaration, input: Value, ke
 
 fn plain_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>, is_id: &dyn Fn(&str) -> bool) -> Value {
     let Some(input) = input.as_object() else { return Value::Object(Map::new()) };
-    let own_temp = |field: &str, value: &Value| field == "id" && temp.is_some_and(|temp| value.as_str() == Some(temp.as_str()));
+    let own_temp = |field: &str, value: &Value| field == "id" && (declaration.variables.is_empty() || declaration.name == "create") && temp.is_some_and(|temp| value.as_str() == Some(temp.as_str()));
     if declaration.variables.is_empty() {
         return Value::Object(input.iter().filter(|(name, value)| !declaration.local.contains(name) && !own_temp(name, value)).map(|(name, value)| (name.clone(), wire(name, value, is_id))).collect());
     }

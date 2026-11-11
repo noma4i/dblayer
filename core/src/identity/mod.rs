@@ -11,6 +11,16 @@ pub fn is_temp_id(id: &str) -> bool {
     id.starts_with(TEMP_ID_PREFIX)
 }
 
+/// Calls `visit` on every string of `value`, on any depth, that is a temporary id.
+pub fn walk_temp_ids(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
+    match value {
+        serde_json::Value::String(text) if is_temp_id(text) => visit(text),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| walk_temp_ids(item, visit)),
+        serde_json::Value::Object(members) => members.values_mut().for_each(|member| walk_temp_ids(member, visit)),
+        _ => {}
+    }
+}
+
 /// 0 for a temporary id: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.
 pub fn permanent_row_flag(column: &str) -> String {
     format!("substr({column}, 1, {}) <> '{TEMP_ID_PREFIX}'", TEMP_ID_PREFIX.len())
