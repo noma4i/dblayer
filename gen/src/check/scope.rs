@@ -106,7 +106,7 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
     if scope.members_complete && (scope.paginate.is_none() || scope.paginate.as_ref().is_some_and(|page| page.max_pages.is_some())) {
         report(scope.pos, "`members_complete` needs pagination without `max_pages`".into());
     }
-    check_remote_scope(scope, report);
+    check_remote_scope(node, scope, report);
 }
 
 pub(super) fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, all: &[ModelDecl], report: &mut impl FnMut(Pos, String)) {
@@ -251,7 +251,7 @@ pub(super) fn check_row_rules(node: &ModelDecl, scope: &ScopeDecl, linked: &[&st
     }
 }
 
-pub(super) fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+pub(super) fn check_remote_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
     let paginated = scope.paginate.is_some();
     let listed = scope.response.as_ref().is_some_and(|read| read.shape == Some(ResponseShape::List));
@@ -274,6 +274,8 @@ pub(super) fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos,
         let without_node: Vec<_> = sorted.iter().copied().filter(|value| *value != crate::decl::InsertOn::Node as u8).collect();
         if sorted != [create] && (!automatic || (!without_node.is_empty() && without_node != events)) {
             report(insert.pos, format!("scope `{name}`: `insert_on` is `[:create]` or `[:event, :response]`, with optional `:node`, or `[:node]`"));
+        } else if insert.item.contains(&crate::decl::InsertOn::Node) && !node.scopes.iter().any(|candidate| candidate.node == Some(NodeRead::One)) {
+            report(insert.pos, format!("scope `{name}`: `insert_on` with `:node` needs the `node` scope of the model"));
         } else if automatic && !linked {
             report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and needs `where`"));
         } else if automatic && server_only {

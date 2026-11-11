@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Fail generation when `insert_on` lists `:node` and the model has no `node` scope.
 - Fail generation when a scope without `node:` declares the parameter `nodeId`.
 - Fail generation when an operation response omits the membership field of a joined list.
 - Add an event row to the head of a loaded `[:event, :response]` window.
