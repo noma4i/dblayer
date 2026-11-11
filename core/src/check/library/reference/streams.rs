@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 
 use super::ops::Fetch;
 use super::shapes;
-use super::window::{Key, Outcome};
+use super::window::Key;
 use super::{LibraryRef, Load, Reads, Stream};
 use crate::check::value::Observation;
 
@@ -13,7 +13,7 @@ impl LibraryRef {
         self.calls.iter().any(|call| call.key == Some(key)) || self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key))
     }
 
-    /// The last interest went away (section 3 `phase`): the request is taken back, the window is not fresh any more and its phase follows the rows.
+    /// The last interest went away (section 3 `phase`): the request is taken back, the window is not fresh any more and a refusal goes.
     pub(super) fn leave(&mut self, key: Key) {
         if self.interest(key) {
             return;
@@ -22,7 +22,7 @@ impl LibraryRef {
             self.kill(&run);
             self.win(key).unfresh = true;
         }
-        self.win(key).outcome = Some(Outcome::Left);
+        self.win(key).interest_left();
     }
 
     pub(super) fn open_feed(&mut self, name: String, key: Key, count: bool, on_connect: bool) -> Vec<Observation> {
@@ -64,6 +64,9 @@ impl LibraryRef {
             Load::Force => true,
             Load::Stale | Load::None => !window.fresh(now),
         };
+        if !wanted {
+            window.enter_fresh();
+        }
         if wanted && window.load.is_none() {
             self.start_run(key, 1);
         }
@@ -81,7 +84,7 @@ impl LibraryRef {
             Reads::Row { .. } => usize::from(self.row),
             Reads::Window { .. } => window.as_ref().map_or(0, |window| window.members as usize),
         };
-        fields.insert("phase".into(), window.as_ref().map_or("loaded", |window| window.phase(self.now, rows > 0)).into());
+        fields.insert("phase".into(), window.as_ref().map_or("loaded", |window| window.phase(rows > 0)).into());
         if let Some(window) = &window {
             if let Some(error) = window.error {
                 fields.insert("error".into(), error.into());

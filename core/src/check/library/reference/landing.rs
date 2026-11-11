@@ -77,7 +77,7 @@ impl LibraryRef {
     fn fail(&mut self, key: Key, kind: &'static str) {
         let window = self.win(key);
         window.unfresh = true;
-        window.outcome = Some(Outcome::Failed);
+        window.outcome = Outcome::Failed;
         window.error = Some(kind);
         let waiting: Vec<u64> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| call.id).collect();
         for id in waiting {

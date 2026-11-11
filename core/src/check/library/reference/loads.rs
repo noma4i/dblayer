@@ -115,6 +115,9 @@ impl LibraryRef {
             self.win(key).refuse_offline();
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
+        if !forced && fresh {
+            self.win(key).enter_fresh();
+        }
         let id = self.add_call(form, &name, Some(key));
         if form == Form::BeginLoad {
             self.handles.insert(name, id);
@@ -167,6 +170,7 @@ impl LibraryRef {
             return Vec::new();
         }
         if fresh && !force && !cursor {
+            self.win(Key::Feed).enter_fresh();
             self.finish(id, Ending::Done);
         } else if fresh && !force {
             self.start_run(Key::Feed, pages + 1);

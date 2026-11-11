@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::landing::Reply;
 use super::shapes;
-use super::window::{Key, Phase, Run};
+use super::window::{Key, Outcome, Phase, Run};
 use super::{Ending, Held, LibraryRef, Login, Owner, Sent};
 use crate::check::value::Observation;
 
@@ -122,7 +122,7 @@ impl LibraryRef {
         for window in self.windows.values_mut() {
             window.load = None;
             window.unfresh = false;
-            window.outcome = None;
+            window.outcome = Outcome::None;
             window.error = None;
             window.landed_run = false;
         }
