@@ -136,40 +136,63 @@ enum Step {
     Drain,
 }
 
-/// P-OUT-61: one written attempt gives one `Mutate`, wherever the network goes off among the inputs of an operation that already left once.
+/// P-OUT-61: one written attempt gives one `Mutate`, wherever the network goes off among the inputs of an operation.
 #[test]
 fn out_prop_attempt_counted_once_for_any_input_order() {
-    let offline = || Step::In(OutboxInput::Online(Online(false)));
-    let online = || Step::In(OutboxInput::Online(Online(true)));
-    let opening = |offline_at: usize| {
+    use super::outbox_cells_tests::{marking_retry, sending};
+    enum Start {
+        Restored,
+        Persisting,
+        Sending,
+        MarkingRetry,
+    }
+    fn offline() -> Step { Step::In(OutboxInput::Online(Online(false))) }
+    fn online() -> Step { Step::In(OutboxInput::Online(Online(true))) }
+    fn opening(offline_at: usize) -> Vec<Step> {
         let mut steps = vec![Step::In(OutboxInput::Restored { ops: vec![StoredOp { pending: Some((41, 1)), ..stored(7, "r") }], pending_lost: false }), Step::In(OutboxInput::RestoreReady { epoch: EPOCH }), Step::Drain, online(), Step::Drain];
         steps.insert(offline_at, offline());
         steps
-    };
-    let cases: Vec<(&str, bool, Vec<Step>, (usize, usize, u32))> = vec![
-        ("a: offline before Restored", true, opening(0), (1, 1, 2)),
-        ("b: offline between Restored and RestoreReady", true, opening(1), (1, 1, 2)),
-        ("c: offline between the attempt batch and its Committed", true, opening(2), (1, 1, 2)),
-        ("d: a live repeat, offline between the attempt batch and its Committed", false, vec![offline(), Step::Drain, online(), Step::Drain], (0, 1, 2)),
+    }
+    type Steps = Box<dyn Fn(u64) -> Vec<Step>>;
+    let cases: Vec<(&str, Start, Steps, (usize, usize, u32))> = vec![
+        ("a: offline before Restored", Start::Restored, Box::new(|_| opening(0)), (1, 1, 2)),
+        ("b: offline between Restored and RestoreReady", Start::Restored, Box::new(|_| opening(1)), (1, 1, 2)),
+        ("c: offline between the attempt batch and its Committed", Start::Restored, Box::new(|_| opening(2)), (1, 1, 2)),
+        ("d: a live repeat, offline between the attempt batch and its Committed", Start::Persisting, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 2)),
+        ("e: a sent attempt fails offline, the repeat writes its own attempt", Start::Sending, Box::new(|id| vec![offline(), Step::In(OutboxInput::TransportError { op_id: id, temporary: true }), Step::Drain, online(), Step::Drain]), (1, 1, 2)),
+        ("f: a new cycle of Retry, offline before its Committed", Start::MarkingRetry, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 1)),
     ];
     let mut wrong = Vec::new();
-    for (case, restored, steps, want) in cases {
-        let (mut twin, id) = if restored {
-            let mut twin = Twin::bare();
-            declare(&mut twin);
-            (twin, 7)
-        } else {
-            let mut twin = Twin::new();
-            let id = persisting(&mut twin, false);
-            (twin, id)
+    for (case, start, steps, want) in cases {
+        let (mut twin, id, mut open_batch) = match start {
+            Start::Restored => {
+                let mut twin = Twin::bare();
+                declare(&mut twin);
+                (twin, 7, false)
+            }
+            Start::Persisting => {
+                let mut twin = Twin::new();
+                let id = persisting(&mut twin, false);
+                (twin, id, true)
+            }
+            Start::Sending => {
+                let mut twin = Twin::new();
+                let id = sending(&mut twin, Policy::Rollback, false);
+                (twin, id, false)
+            }
+            Start::MarkingRetry => {
+                let mut twin = Twin::new();
+                let id = marking_retry(&mut twin);
+                (twin, id, true)
+            }
         };
-        let (mut written, mut sent, mut open_batch) = (0, 0, !restored);
+        let (mut written, mut sent) = (0, 0);
         let mut count = |effects: &[OutboxEffect], open_batch: &mut bool| {
             written += kinds(effects).iter().filter(|kind| **kind == CommitKind::Attempt).count();
             sent += sends(effects);
             *open_batch |= !kinds(effects).is_empty();
         };
-        for step in steps {
+        for step in steps(id) {
             match step {
                 Step::In(input) => count(&twin.post(input), &mut open_batch),
                 Step::Drain => {
