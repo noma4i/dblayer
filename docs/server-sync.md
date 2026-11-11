@@ -363,7 +363,7 @@ Upload steps cap delays at 15 seconds with 50% jitter and preserve their attempt
 An explicit outbox backoff keeps its configured seed and delays.
 Clock drives retry waits, upload deadlines, subscription debounce and socket deadlines.
 Offline requests wait for online without making HTTP attempts or running retry timers.
-Loads return Offline immediately, including when connectivity disappears during an in-flight request or retry wait.
+`refresh()`, `loadMore()` and `readNode(force: true)` return `Offline` at once without the network. Other loads wait for it. When connectivity disappears during an in-flight request or retry wait, the request is cancelled and the load waits for the network and starts again when it returns.
 Callers of the same load share one request. Cancelling the caller that runs it does not fail the others: the first waiting caller sends the request again and the rest keep waiting for it.
 Bootstrap receives Connectivity before a database exists and waits for online before its first HTTP attempt.
 No timer runs without a failed request awaiting another attempt.
