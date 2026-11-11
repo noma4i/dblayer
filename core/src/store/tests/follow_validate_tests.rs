@@ -22,9 +22,10 @@ fn snapshot(store: &Store) -> (i64, i64, i64, i64) {
     (store.revision_seq().unwrap(), count(store, "SELECT COUNT(*) FROM row_chats"), count(store, "SELECT COUNT(*) FROM row_messages"), count(store, "SELECT COUNT(*) FROM row_vibes"))
 }
 
-fn nodes_batch(store: &Store, roots: &[&str]) -> StoreBatch {
-    let key = WindowKey::nodes("moments", roots);
-    let roots = roots.iter().map(|id| RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": "served"}).to_string() }).collect();
+fn nodes_batch(store: &Store, roots: &[(&str, &str)]) -> StoreBatch {
+    let ids: Vec<&str> = roots.iter().map(|(id, _)| *id).collect();
+    let key = WindowKey::nodes("moments", &ids);
+    let roots = roots.iter().map(|(id, text)| RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": text}).to_string() }).collect();
     let page = StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: store.revision_seq().unwrap() };
     StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] }
 }
@@ -54,10 +55,12 @@ fn store_follow_ops_are_validated() {
     check(&mut failures, "removed_by", outcome, before, snapshot(&removed));
 
     let nodes = open(false);
-    let before = snapshot(&nodes);
-    let batch = nodes_batch(&nodes, &["m1", "m1"]);
-    let outcome = nodes.write_batch(&batch, nodes.files(), nodes.pointer_guards(), None).map(|_| ());
-    check(&mut failures, "nodes window", outcome, before, snapshot(&nodes));
+    let batch = nodes_batch(&nodes, &[("m1", "first"), ("m1", "last")]);
+    let outcome = nodes.write_batch(&batch, nodes.files(), nodes.pointer_guards(), None);
+    let stored = text(&nodes, "SELECT text FROM row_moments WHERE id = 'm1'");
+    if outcome.is_err() { failures.push(format!("nodes repeated root: expected Ok, got {:?}", outcome.map(|_| ()))); }
+    if count(&nodes, "SELECT COUNT(*) FROM row_moments") != 1 { failures.push("nodes repeated root: expected 1 row".into()); }
+    if stored.as_deref() != Some("last") { failures.push(format!("nodes repeated root: expected the last value, got {stored:?}")); }
 
     assert!(failures.is_empty(), "{failures:#?}");
 }
