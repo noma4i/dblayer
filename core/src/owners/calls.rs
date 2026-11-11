@@ -11,6 +11,9 @@ pub type CallId = u64;
 use super::contract::ReplyId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallDefinition { pub kind: CallKind, pub document: String, pub root: String }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallError {
     NoSession,
     Invalid,
@@ -68,7 +71,7 @@ pub enum CallPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallsEffect {
-    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String, kind: CallKind, epoch: Epoch },
+    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String, definition: CallDefinition, epoch: Epoch },
     Cancel { request_id: RequestId, kind: CallKind },
     /// Session `Release{req_id}`: the pair of a dropped mutation stays with Session, Calls gives up its outcome.
     Release { request_id: RequestId },
@@ -82,7 +85,7 @@ pub enum CallsInput {
     /// `epoch` is the epoch of the caller: the table answers `NoSession` when it is not the current one.
     Run { epoch: Epoch, operation: String, variables: String, reply: ReplyId },
     /// Operations declared by `register_operations` after the open.
-    Declare(Vec<(String, CallKind)>),
+    Declare(Vec<(String, CallDefinition)>),
     /// `body` is the root of the operation, `None` when the response has no root.
     Response { call_id: CallId, body: Option<String>, data: Option<serde_json::Value>, errors: Vec<crate::transport::GraphQLError>, kind: crate::transport::AnswerKind },
     TransportError { call_id: CallId, error: CallError },
@@ -103,13 +106,13 @@ pub enum CallsInput {
 pub struct CallsState {
     epoch: Epoch,
     online: Option<bool>,
-    declared: BTreeMap<String, CallKind>,
+    declared: BTreeMap<String, CallDefinition>,
     generation: u64,
     calls: BTreeMap<CallId, (CallPhase, ReplyId)>,
     by_reply: BTreeMap<ReplyId, CallId>,
     attempts: BTreeMap<CallId, CallAttempt>,
     /// `Run` calls that came before the addressed snapshot of the epoch.
-    awaiting: BTreeMap<ReplyId, (CallId, String, String)>,
+    awaiting: BTreeMap<ReplyId, (CallId, String, String, CallDefinition, u64)>,
     awaiting_by_id: BTreeMap<CallId, ReplyId>,
     next: u64,
     drained: bool,
@@ -117,6 +120,7 @@ pub struct CallsState {
 
 struct CallAttempt {
     operation: String,
+    definition: CallDefinition,
     variables: String,
     epoch: Epoch,
     attempt: u32,
@@ -137,7 +141,7 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
 
 impl CallsState {
     pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), CallDefinition { kind: *kind, document: String::new(), root: String::new() })).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
@@ -154,26 +158,27 @@ impl CallsState {
         }
     }
 
-    fn run(&mut self, (operation, variables, reply): (String, String, ReplyId), held: Option<CallId>, fx: &mut Vec<CallsEffect>, deadlines: &mut Vec<CallId>, finished: &mut Vec<CallId>) {
+    fn run(&mut self, (operation, variables, reply): (String, String, ReplyId), held: Option<(CallId, CallDefinition, u64)>, fx: &mut Vec<CallsEffect>, deadlines: &mut Vec<CallId>, finished: &mut Vec<CallId>) {
         if self.online != Some(true) {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) });
-            if let Some(id) = held { finished.push(id); }
+            if let Some((id, _, _)) = held { finished.push(id); }
             return;
         }
-        let Some(kind) = self.declared.get(&operation).copied() else {
+        let Some((definition, generation)) = held.as_ref().map(|(_, definition, generation)| (definition.clone(), *generation)).or_else(|| self.declared.get(&operation).cloned().map(|definition| (definition, self.generation))) else {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) });
-            if let Some(id) = held { finished.push(id); }
+            if let Some((id, _, _)) = held { finished.push(id); }
             return;
         };
-        let id = held.unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
-        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: self.generation }, reply));
+        let id = held.map(|(id, _, _)| id).unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
+        let kind = definition.kind;
+        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation }, reply));
         self.by_reply.insert(reply, id);
-        self.attempts.insert(id, CallAttempt { operation: operation.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
-        fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: self.epoch });
+        self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
+        fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, definition, epoch: self.epoch });
     }
 
     fn interrupt(&mut self, end: CallError, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
-        for (reply, (id, _, _)) in std::mem::take(&mut self.awaiting) {
+        for (reply, (id, _, _, _, _)) in std::mem::take(&mut self.awaiting) {
             fx.push(CallsEffect::Reply { id: reply, answer: Err(end.clone()) });
             finished.push(id);
         }
@@ -214,7 +219,7 @@ impl CallsState {
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
         attempt.waiting_retry = false;
         attempt.waiting_network = false;
-        fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), kind, epoch: attempt.epoch });
+        fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), definition: attempt.definition.clone(), epoch: attempt.epoch });
     }
 }
 
@@ -236,7 +241,8 @@ impl StateOwner for Calls {
             CallsInput::Run { operation, variables, reply, .. } if state.online.is_none() => {
                 let id = state.next;
                 state.next += 1;
-                state.awaiting.insert(reply, (id, operation, variables));
+                let definition = state.declared[&operation].clone();
+                state.awaiting.insert(reply, (id, operation, variables, definition, state.generation));
                 state.awaiting_by_id.insert(id, reply);
                 deadlines.push(id);
             }
@@ -278,7 +284,7 @@ impl StateOwner for Calls {
                 }
             }
             CallsInput::CallerCancel { reply } => {
-                if let Some((id, _, _)) = state.awaiting.remove(&reply) { state.awaiting_by_id.remove(&id); finished.push(id); }
+                if let Some((id, _, _, _, _)) = state.awaiting.remove(&reply) { state.awaiting_by_id.remove(&id); finished.push(id); }
                 if let Some((call_id, phase)) = state.by_reply.remove(&reply).and_then(|id| state.phase(id).map(|phase| (id, phase))) {
                     state.calls.insert(call_id, (CallPhase::Done, reply));
                     state.attempts.remove(&call_id);
@@ -308,9 +314,9 @@ impl StateOwner for Calls {
             CallsInput::Online(_) => {}
             CallsInput::Snapshot(Online(online)) => {
                 state.online = Some(online);
-                for (reply, (id, operation, variables)) in std::mem::take(&mut state.awaiting) {
+                for (reply, (id, operation, variables, kind, generation)) in std::mem::take(&mut state.awaiting) {
                     state.awaiting_by_id.remove(&id);
-                    state.run((operation, variables, reply), Some(id), &mut fx, &mut deadlines, &mut finished);
+                    state.run((operation, variables, reply), Some((id, kind, generation)), &mut fx, &mut deadlines, &mut finished);
                 }
             }
             CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch;

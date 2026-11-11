@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use crate::test_wait::limited;
 
 const LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -13,7 +11,6 @@ fn seq(items: &[&str]) -> Vec<Input> {
         Some(("drain", owner)) => Input::new("drain").with("owner", owner),
         Some(("call_data", epoch)) => Input::new("call_data").with("epoch", epoch),
         Some(("create", name)) => Input::new("create").with("as", name),
-        _ if *item == "reset_models" => Input::new("reset_models").with("models", json!(["Moment"])),
         _ => Input::new(item),
     }).collect()
 }

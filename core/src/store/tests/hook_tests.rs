@@ -31,10 +31,9 @@ fn inv_conc_01_a_store_hook_may_call_the_store_it_was_announced_from() {
     let worker = store.clone();
     completes(move || {
         written(&worker, "m1");
-        worker.erase_models(worker.generation().next(), &["messages"].map(String::from)).unwrap();
         worker.erase_account(worker.generation().next(), false).unwrap();
     });
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3, "one announcement for the commit and one for each reset");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "one announcement for the commit and one for the reset");
 }
 
 #[test]
@@ -85,9 +84,8 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
         log.lock().unwrap().push((inside.writer_is_free(), inside.models.try_write().is_ok()));
     })).unwrap();
     written(&store, "m1");
-    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     store.erase_account(store.generation().next(), false).unwrap();
-    assert_eq!(*probes.lock().unwrap(), vec![(true, true); 3]);
+    assert_eq!(*probes.lock().unwrap(), vec![(true, true); 2]);
 }
 
 fn deferred<'a>(store: &'a Store, row_id: &str) -> Committed<'a> {

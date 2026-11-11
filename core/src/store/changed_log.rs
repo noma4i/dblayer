@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use crate::lock::lock as held;
 
 use super::CommitResult;
+use crate::owners::contract::CommittedBroadcast;
+use crate::owners::read::deliveries::{touches, View};
 
 const MAX_LOGGED_ROWS: usize = 8192;
 
@@ -33,11 +35,42 @@ struct Entries {
     start_revision: i64,
     dropped_through: (i64, u64),
     logged_through: i64,
+    pending: Option<Entry>,
 }
 
 struct Entry {
     at: (i64, u64),
-    rows: Option<Vec<ChangedRow>>,
+    notice: Option<CommittedBroadcast>,
+}
+
+pub(crate) struct Prepared<'a> {
+    log: &'a ChangedLog,
+    finished: bool,
+}
+
+impl Prepared<'_> {
+    pub(crate) fn finish(mut self) {
+        let mut log = held(&self.log.0);
+        if let Some(entry) = log.pending.take() { push(&mut log, entry); }
+        self.finished = true;
+    }
+}
+
+impl Drop for Prepared<'_> {
+    fn drop(&mut self) {
+        if !self.finished { held(&self.log.0).pending = None; }
+    }
+}
+
+fn push(log: &mut Entries, entry: Entry) {
+    log.logged_through = log.logged_through.max(entry.at.0);
+    log.rows += entry.notice.as_ref().and_then(|notice| notice.rows.as_ref()).map_or(1, |rows| rows.len().max(1));
+    log.items.push_back(entry);
+    while log.rows > MAX_LOGGED_ROWS {
+        let Some(dropped) = log.items.pop_front() else { break };
+        log.rows -= dropped.notice.as_ref().and_then(|notice| notice.rows.as_ref()).map_or(1, |rows| rows.len().max(1));
+        log.dropped_through = log.dropped_through.max(dropped.at);
+    }
 }
 
 impl ChangedLog {
@@ -47,37 +80,49 @@ impl ChangedLog {
         log.logged_through = revision;
     }
 
-    pub(crate) fn log_commit(&self, result: &CommitResult) {
-        let Some(revision) = result.revision else { return };
-        self.push(Entry { at: (revision, result.position), rows: Some(changed_rows(result)) });
+    pub(crate) fn prepare_commit(&self, result: &CommitResult) -> Option<Prepared<'_>> {
+        let revision = result.revision?;
+        Some(self.prepare(Entry { at: (revision, result.position), notice: Some(CommittedBroadcast::of_commit(result)) }))
     }
 
-    pub(crate) fn log_unknown(&self, revision: i64) { self.push(Entry { at: (revision, 0), rows: None }); }
+    pub(crate) fn prepare_reset(&self, revision: i64) -> Prepared<'_> { self.prepare(Entry { at: (revision, 0), notice: None }) }
 
-    fn push(&self, entry: Entry) {
+    fn prepare(&self, entry: Entry) -> Prepared<'_> {
         let mut log = held(&self.0);
-        log.logged_through = log.logged_through.max(entry.at.0);
-        log.rows += entry.rows.as_ref().map_or(1, Vec::len);
-        log.items.push_back(entry);
-        while log.rows > MAX_LOGGED_ROWS {
-            let Some(dropped) = log.items.pop_front() else { break };
-            log.rows -= dropped.rows.as_ref().map_or(1, Vec::len);
-            log.dropped_through = log.dropped_through.max(dropped.at);
-        }
+        assert!(log.pending.is_none());
+        log.pending = Some(entry);
+        Prepared { log: self, finished: false }
     }
 
-    pub(crate) fn changed_between(&self, from: (i64, u64), upto: i64, limit: usize) -> Option<BTreeSet<ChangedRow>> {
+    pub(crate) fn changed_between(&self, from: (i64, u64), upto: (i64, u64), limit: usize) -> Option<BTreeSet<ChangedRow>> {
         let log = held(&self.0);
-        if upto > log.logged_through || from.0 < log.start_revision || from < log.dropped_through {
+        let logged = log.pending.as_ref().map_or(log.logged_through, |entry| log.logged_through.max(entry.at.0));
+        if upto.0 > logged || from.0 < log.start_revision || from < log.dropped_through {
             return None;
         }
         let mut changed = BTreeSet::new();
-        for entry in log.items.iter().filter(|entry| entry.at > from && entry.at.0 <= upto) {
-            changed.extend(entry.rows.iter().flatten().cloned());
-            if entry.rows.is_none() || changed.len() > limit {
+        for entry in log.items.iter().chain(log.pending.iter()).filter(|entry| entry.at > from && entry.at <= upto) {
+            let Some(rows) = entry.notice.as_ref().and_then(|notice| notice.rows.as_ref()) else { return None };
+            changed.extend(rows.iter().cloned());
+            if changed.len() > limit {
                 return None;
             }
         }
         Some(changed)
+    }
+
+    pub(crate) fn relevant(&self, view: &View, from: (i64, u64), upto: (i64, u64)) -> Option<(i64, u64)> {
+        let log = held(&self.0);
+        let logged = log.pending.as_ref().map_or(log.logged_through, |entry| log.logged_through.max(entry.at.0));
+        let mut covered = upto.0 <= logged && from.0 >= log.start_revision && from >= log.dropped_through;
+        let mut latest = None;
+        for entry in log.items.iter().chain(log.pending.iter()).filter(|entry| entry.at > from && entry.at <= upto) {
+            match &entry.notice {
+                Some(notice) if touches(view, &notice.models, &notice.tables, &notice.rows) => latest = Some(entry.at),
+                None => covered = false,
+                _ => {}
+            }
+        }
+        latest.or_else(|| (!covered).then_some(upto))
     }
 }

@@ -39,13 +39,25 @@ fn life_closed_refuses() {
     twin.feed_all(drain_all());
     twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
     twin.feed(reset(5));
-    twin.feed(reset_models(&["Moment"], 6));
     twin.feed(close(7));
     twin.feed_all([Event::Saved(999), Event::ExecutorFailed]);
-    for id in [5, 6] {
+    for id in [5] {
         assert!(twin.replies().contains(&(id, Err(LifecycleError::Closed))));
     }
     assert!(twin.replies().contains(&(7, Ok(()))), "a repeated close after Closed succeeds");
+}
+
+#[test]
+fn life_closed_close_ok() {
+    let mut twin = closing_session();
+    twin.feed_all(drain_all());
+    twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
+    assert_eq!(*twin.state(), RefState::Closed);
+    let before = twin.replies().len();
+    let effects = twin.feed(close(77));
+    assert!(effects.is_empty(), "repeated close must not start work: {effects:?}");
+    assert_eq!(&twin.replies()[before..], &[(77, Ok(()))]);
+    assert_eq!(*twin.state(), RefState::Closed);
 }
 
 #[test]
@@ -104,9 +116,7 @@ pub(super) fn random_event(seed: &mut u64, step: u64, twin: &Twin) -> Event {
         0 | 1 => Event::Credential(identity),
         2 => Event::SessionReset(Some(step)),
         3 => Event::ServerEnded(1 + next(seed) % 6),
-        4 => Event::ResetModels(models(&["Moment"]), Some(step)),
         5 | 6 => Event::Cleared(erase),
-        7 | 8 => Event::ModelsCleared(1 + next(seed) % 8, erase),
         9 => Event::ClearFailed(erase),
         10 => Event::Close(step),
         11..=14 => Event::Saved(publication),
@@ -152,7 +162,6 @@ fn life_prop_no_work_after_end() {
         for effect in &twin.history {
             match effect {
                 LifecycleEffect::EpochEnded { epoch, .. } => { ended.insert(*epoch); }
-                LifecycleEffect::ClearModels { epoch, .. } | LifecycleEffect::ModelsReset { epoch, .. } => assert!(!ended.contains(epoch), "work in the ended epoch {epoch}"),
                 LifecycleEffect::EpochStarted { epoch, .. } => assert!(!ended.contains(epoch), "the ended epoch {epoch} starts again"),
                 _ => {}
             }
@@ -240,7 +249,7 @@ fn life_prop_session_kept() {
         let mut handed = BTreeSet::new();
         for effect in &twin.history {
             match effect {
-                LifecycleEffect::ClearAccount { generation_new, erase_id, .. } | LifecycleEffect::ClearModels { generation_new, erase_id, .. } => {
+                LifecycleEffect::ClearAccount { generation_new, erase_id, .. } => {
                     assert!(handed.insert(*erase_id), "the erase id {erase_id} is handed twice");
                     let _ = generation_new;
                 }
@@ -261,7 +270,7 @@ fn life_prop_generation_distinct() {
         for (event, effects) in &twin.steps {
             for effect in effects {
                 match effect {
-                    LifecycleEffect::ClearAccount { generation_new, .. } | LifecycleEffect::ClearModels { generation_new, .. } => {
+                    LifecycleEffect::ClearAccount { generation_new, .. } => {
                         assert!(!open.contains(generation_new), "generation {generation_new} handed to two erases in flight");
                         open.push(*generation_new);
                     }
@@ -282,21 +291,6 @@ fn life_prop_idle() {
     assert!(twin.drain().0.is_empty(), "no input, no effect");
 }
 
-#[test]
-fn life_prop_credential_kept() {
-    for credential_id in [1, 2] {
-        let mut twin = resetting_signed_out();
-        twin.feed(credential(credential_id));
-        let done = models_cleared(&twin, 1);
-        twin.feed(done);
-        assert_eq!(twin.published().identity, Some(credential_id));
-    }
-    let mut twin = resetting_signed_out();
-    twin.feed(credential(2));
-    let failed = clear_failed(&twin);
-    twin.feed(failed);
-    assert_eq!(twin.published().identity, Some(2));
-}
 
 #[test]
 fn life_prop_every_epoch_ends() {
@@ -350,12 +344,6 @@ fn life_findings() {
     identity.settle();
     assert_eq!(*identity.state(), RefState::Session { epoch: 4, identity: 2 }, "a change of identity clears first, then starts");
 
-    let mut models_reset = session(1);
-    models_reset.feed(reset_models(&["Other"], 1));
-    let done = models_cleared(&models_reset, 1);
-    models_reset.feed(done);
-    assert_eq!(models_reset.published().generation, 1);
-
     let mut closing_during_clear = ending();
     closing_during_clear.feed(close(2));
     closing_during_clear.feed_all(drain_all());
@@ -370,12 +358,6 @@ fn life_findings() {
     double_reset.feed(done);
     double_reset.settle();
     assert_eq!(double_reset.history.iter().filter(|e| matches!(e, LifecycleEffect::Reply { result: Ok(()), .. })).count(), 2 + 1, "both resets are answered");
-
-    let mut signed_out = resetting_signed_out();
-    signed_out.feed(credential(2));
-    let failed = clear_failed(&signed_out);
-    signed_out.feed(failed);
-    assert_eq!(signed_out.published().identity, Some(2));
 
     let mut opened = Twin::new();
     opened.feed(credential(1));

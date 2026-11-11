@@ -225,6 +225,7 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
   func next(
     _ what: String = "the next element",
     timeout: Duration = hangGuard,
+    detail: @Sendable () -> String = { "" },
     sourceLocation: SourceLocation = #_sourceLocation
   ) async -> Sequence.Element? {
     let element: Sequence.Element?? = await withTaskGroup(of: Sequence.Element??.self) { group in
@@ -239,7 +240,7 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
     }
     guard let element else {
       if Task.isCancelled { return nil }
-      Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
+      Issue.record("timed out after \(timeout) waiting for \(what) \(detail())", sourceLocation: sourceLocation)
       return nil
     }
     return element

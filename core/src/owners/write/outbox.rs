@@ -86,8 +86,6 @@ pub struct OutboxState {
     pub(super) orphan_transfers: BTreeSet<OpId>,
     pub(super) removing: BTreeSet<OpId>,
     pub(super) aliases: BTreeMap<(String, String), String>,
-    pub(super) copying: BTreeMap<u64, (ReplyId, LocalCall, Time)>,
-    pub(super) next_copy: u64,
 }
 
 impl OutboxState {
@@ -143,8 +141,6 @@ impl OutboxState {
             orphan_transfers: BTreeSet::new(),
             removing: BTreeSet::new(),
             aliases: BTreeMap::new(),
-            copying: BTreeMap::new(),
-            next_copy: 1,
         }
     }
 
@@ -222,6 +218,7 @@ impl OutboxState {
                 pair_in_flight: false,
                 waiting_retry: false,
                 landing: Vec::new(),
+                missing_destroy: false,
                 swaps: Vec::new(),
                 missing: Vec::new(),
                 result: None,
@@ -282,6 +279,7 @@ impl OutboxState {
                 .iter()
                 .map(|(temp, real)| StoreOp::Swap { model: operation.op.model.clone(), temp: temp.clone(), real: real.clone() })
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
+                .chain(operation.missing_destroy.then(|| StoreOp::RemoveServerRows { model: operation.op.model.clone(), ids: vec![operation.op.row_id.clone()] }))
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
                 .chain(Self::landing_shows_of(operation))
@@ -469,8 +467,8 @@ impl OutboxState {
         if self.slots_taken() >= DRAIN_LIMIT {
             return;
         }
-        if !operation.sent && operation.attempts <= 1 {
-            self.start_sending(op_id, fx);
+        if !operation.sent && operation.attempts >= 1 {
+            if self.phase == Phase::Ready { self.start_sending(op_id, fx); }
         } else if operation.attempts < ATTEMPT_LIMIT {
             self.begin_attempt(op_id, fx);
         } else {
@@ -655,7 +653,7 @@ impl OutboxState {
 
     pub(super) fn handle(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
         let answered = match &input {
-            OutboxInput::Response { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
+            OutboxInput::Response { op_id, .. } | OutboxInput::MissingDestroy { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
             OutboxInput::Answered { req_id, .. } => self.ops.values().find(|operation| operation.request_id == *req_id).map(|operation| operation.op_id),
             _ => None,
         };
@@ -701,7 +699,8 @@ impl OutboxState {
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),
             OutboxInput::Committed(committed) => self.committed(committed, fx),
             OutboxInput::Rejected(rejected) => self.rejected(rejected, fx),
-            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing }, errors, fx),
+            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false }, errors, fx),
+            OutboxInput::MissingDestroy { op_id, stale } => self.on_response(op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true }, None, fx),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(op_id, temporary, None, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, None, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),
@@ -732,11 +731,6 @@ impl OutboxState {
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
-            OutboxInput::ModelsReset(reset) => {
-                for model in reset.models {
-                    self.generation.insert(model, reset.generation);
-                }
-            }
             OutboxInput::EpochEnded(ended) => self.interrupt_all(Fault::of_end(ended.cause), fx),
             OutboxInput::Closing => {
                 self.interrupt_all(Fault::Closed, fx);
@@ -745,8 +739,6 @@ impl OutboxState {
             }
             OutboxInput::RetryDue { op_id, cycle_id } => self.retry_due(op_id, cycle_id, fx),
             OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => self.local_write(LocalCall { model, kind: write, row, values }, epoch, (reply, now), fx),
-            OutboxInput::CopyDone { id } => self.copy_done(id, fx),
-            OutboxInput::CopyFailed { id } => self.copy_failed(id, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),
             OutboxInput::ArmExpiry { model, row, revision, deadline } => self.arm_expiry(model, row, revision, deadline, fx),
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
@@ -769,13 +761,18 @@ impl StateOwner for Outbox {
     type Input = OutboxInput;
     type Effect = OutboxEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &Self::State) -> Option<String> {
+        let ops = state.ops.iter().map(|(id, op)| format!("{id}:{:?}:retry={}", op.stage, op.waiting_retry)).collect::<Vec<_>>();
+        Some(format!("phase={:?}, online={}, ops={ops:?}, batches={:?}, quiet_waiters={:?}", state.phase, state.online, state.batches.keys().collect::<Vec<_>>(), state.quiet_waiters))
+    }
+
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
         if state.closing {
             match &input {
                 OutboxInput::Committed(committed) if matches!(state.batches.get(&committed.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
                 OutboxInput::Rejected(rejected) if matches!(state.batches.get(&rejected.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
-                OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } => { state.handle(input, &mut fx); return fx; }
                 _ => {}
             }
             match &input {

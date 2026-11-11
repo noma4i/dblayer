@@ -24,7 +24,7 @@ fn count(db: &Store, sql: &str) -> i64 {
 #[test]
 fn store_prop_cascade_no_orphans() {
     for via_event in [false, true] {
-        let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
+        let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "users", json!({"id": "u1", "name": "Ann"}));
         put(&db, "users", json!({"id": "u2", "name": "Bob"}));
         put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
@@ -54,7 +54,7 @@ fn row_with_file(db: &Arc<Store>, bytes: Vec<u8>) {
 
 #[test]
 fn store_erased_file_orphans() {
-    let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     row_with_file(&db, vec![1, 2, 3]);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM file"), 1);
     db.erase_account(db.generation().next(), false).unwrap();
@@ -62,10 +62,25 @@ fn store_erased_file_orphans() {
 }
 
 #[test]
+fn store_reset_models_removes_unheld_file() {
+    for size in [64, 300_000] {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("data.sqlite");
+        let db = Arc::new(Store::open_models(Some(&database), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+        row_with_file(&db, vec![7; size]);
+        let path = db.url("moments", &id("m1"), "media").unwrap().unwrap();
+        assert!(path.exists(), "file must exist before reset: {path:?}");
+        db.erase_account(db.generation().next(), false).unwrap();
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM file"), 0);
+        assert!(!path.exists(), "reset left the unheld file at {path:?}, size {size}");
+    }
+}
+
+#[test]
 fn store_url_small_file_cached() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("data.sqlite");
-    let db = Arc::new(Store::open_models(Some(&database), all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(Some(&database), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     row_with_file(&db, vec![7; 64]);
     let descriptor = db.file("moments", &id("m1"), "media").unwrap().unwrap();
     let path = db.url("moments", &id("m1"), "media").unwrap().unwrap();
@@ -79,7 +94,7 @@ fn store_url_small_file_cached() {
 fn page(db: &Store, relation: &str, rows: &[(&str, Value)], replace_all: bool) -> StoreOp {
     let key = WindowKey::relation("moments", relation, &row(json!({})));
     let roots = rows.iter().map(|(id, edge)| RowValue { row_id: (*id).into(), values: json!({"id": id, "text": "same", "@edge": edge}).to_string() }).collect();
-    StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+    StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn edges(db: &Store, ids: &[&str]) -> Value {
@@ -88,7 +103,7 @@ fn edges(db: &Store, ids: &[&str]) -> Value {
 }
 
 fn open_feed() -> Arc<Store> {
-    Arc::new(Store::open_models(None, crate::schema_fixtures::specs(), None).unwrap())
+    Arc::new(Store::open_models(None, crate::schema_fixtures::specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 #[test]
@@ -123,6 +138,6 @@ fn store_prop_edge_read() {
     let after = db.counters();
     assert_eq!(after.edge_read_scans - before.edge_read_scans, 0);
     assert!(after.edge_read_steps - before.edge_read_steps < 100);
-    db.erase_models(db.generation().next(), &["moments"].map(String::from)).unwrap();
+    db.erase_account(db.generation().next(), false).unwrap();
     assert_eq!(edges(&db, &["m1"]), json!({}));
 }

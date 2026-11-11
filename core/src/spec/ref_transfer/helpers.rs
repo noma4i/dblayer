@@ -40,7 +40,12 @@ pub fn shown(g: &G, t: &Transfer) -> Shown {
     Shown { status, wait_reason, sent_bytes: sent, total_bytes: t.size, error: if matches!(t.st, St::Failed) { t.error.clone() } else { None }, local_url: t.local_url, round_error: t.round_error.clone() }
 }
 
-pub fn commit(g: &mut G, t: &Transfer, e: &mut Vec<Effect>, ops: Vec<Op>) -> StoreBatch {
+pub fn commit(g: &mut G, t: &Transfer, e: &mut Vec<Effect>, mut ops: Vec<Op>) -> StoreBatch {
+    if ops.iter().any(|op| matches!(op, Op::Retrying { .. })) {
+        if let Some(Outcome::Failed { error }) = t.outcomes.get(&t.cycle_id) {
+            ops.push(Op::FailedOutcome { transfer_id: t.id, cycle_id: t.cycle_id, error: error.clone() });
+        }
+    }
     let b = g.next_batch;
     g.next_batch += 1;
     g.batches.insert(b, BatchKind::Own { ids: vec![t.id], ops: ops.clone() });

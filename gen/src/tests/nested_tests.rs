@@ -20,7 +20,7 @@ end"#;
     let models = parse_models(source).unwrap();
     let patch = models[0].actions[0].optimistic.clone();
     assert!(!patch.is_empty(), "the keyed reactions are declared on the action");
-    dblayer::store::Store::open_models(None, models, None).unwrap();
+    dblayer::store::Store::open_models(None, models, None, std::sync::Arc::new(dblayer::runtime::SystemClock)).unwrap();
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn nested_types_keep_optional_fields_and_work_in_local_models() {
     for (source, read) in [(emit_swift(&models, &[], &SchemaTypes::default()), "    public let note: String?\n"), (emit_kotlin(&models, &[], &SchemaTypes::default()), "val note: String? = null")] {
         assert!(source.contains(read), "optional note was lost: {read}");
     }
-    dblayer::store::Store::open_models(None, models, None).unwrap();
+    dblayer::store::Store::open_models(None, models, None, std::sync::Arc::new(dblayer::runtime::SystemClock)).unwrap();
 }
 
 #[test]

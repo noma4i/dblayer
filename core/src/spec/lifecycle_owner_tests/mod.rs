@@ -70,7 +70,6 @@ fn pub_state(state: PublishedState) -> PubState {
         PublishedState::Session => PubState::Session,
         PublishedState::Ending => PubState::Ending,
         PublishedState::EndingFailed => PubState::EndingFailed,
-        PublishedState::Resetting => PubState::Resetting,
         PublishedState::StorageFailed => PubState::StorageFailed,
         PublishedState::Closing => PubState::Closing,
     }
@@ -89,7 +88,6 @@ fn state_of(phase: &LifecyclePhase) -> RefState {
         LifecyclePhase::NoSession { epoch } => RefState::NoSession { epoch: *epoch },
         LifecyclePhase::Session { epoch, identity } => RefState::Session { epoch: *epoch, identity: *identity },
         LifecyclePhase::Ending { epoch_old, cause: c, next, failed, erase_credential, erases } => RefState::Ending { epoch_old: *epoch_old, cause: cause(*c), next: *next, failed: *failed, erase_credential: *erase_credential, erases: erases_of(erases) },
-        LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases } => RefState::Resetting { epoch: *epoch, identity: *identity, models: models.clone(), queued_models: queued_models.clone(), queued_replies: queued_replies.clone(), pending_credential: *pending_credential, erases: erases_of(erases) },
         LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped } => RefState::Closing { waiting: waiting.iter().map(|p| ref_owner(*p)).collect(), erases: erases_of(erases), close_replies: close_replies.clone(), store_closing: *store_closing, store_closed: *store_closed, observers_stopped: *observers_stopped },
         LifecyclePhase::Closed => RefState::Closed,
     }
@@ -101,11 +99,9 @@ fn effect_of(effect: &LifecycleEffect) -> Option<RefEffect> {
         LifecycleEffect::PublishCell(p) => RefEffect::PublishCell(published(p)),
         LifecycleEffect::EpochStarted { epoch, identity, generation } => RefEffect::EpochStarted(*epoch, *identity, *generation),
         LifecycleEffect::EpochEnded { epoch, cause: c } => RefEffect::EpochEnded(*epoch, cause(*c)),
-        LifecycleEffect::ModelsReset { epoch, generation, models } => RefEffect::ModelsReset(*epoch, *generation, models.clone()),
         LifecycleEffect::Closing => RefEffect::Closing,
         LifecycleEffect::StopObserving => RefEffect::StopObserving,
         LifecycleEffect::ClearAccount { epoch_old, cause: c, generation_new, erase_id } => RefEffect::ClearAccount { epoch_old: *epoch_old, cause: cause(*c), generation_new: *generation_new, erase_id: *erase_id },
-        LifecycleEffect::ClearModels { epoch, generation_new, models, erase_id } => RefEffect::ClearModels { epoch: *epoch, generation_new: *generation_new, models: models.clone(), erase_id: *erase_id },
         LifecycleEffect::ReadIntents { epoch } => RefEffect::ReadIntents(*epoch),
         LifecycleEffect::RestoreReady { epoch } => RefEffect::RestoreReady(*epoch),
         LifecycleEffect::StoreClose => RefEffect::StoreClose,
@@ -113,7 +109,6 @@ fn effect_of(effect: &LifecycleEffect) -> Option<RefEffect> {
     })
 }
 
-fn models(names: &[&str]) -> BTreeSet<String> { names.iter().map(|name| name.to_string()).collect() }
 
 pub(super) const SQL: &str = "disk";
 
@@ -195,7 +190,7 @@ impl Twin {
     /// The erases in the Store without an answer, oldest first.
     pub fn erases(&self) -> Vec<RefErase> {
         match &self.reference.state {
-            RefState::Ending { erases, .. } | RefState::Resetting { erases, .. } | RefState::Closing { erases, .. } => erases.clone(),
+            RefState::Ending { erases, .. } | RefState::Closing { erases, .. } => erases.clone(),
             _ => Vec::new(),
         }
     }
@@ -240,7 +235,6 @@ impl Twin {
             Event::Credential(identity) => LifecycleInput::CredentialCommitted(CredentialCommitted { identity }),
             Event::SessionReset(reply) => LifecycleInput::SessionReset { reply },
             Event::ServerEnded(epoch) => LifecycleInput::ServerEnded(ServerEnded { epoch }),
-            Event::ResetModels(names, reply) => LifecycleInput::ResetModels { models: names, reply },
             Event::Cleared(erase_id) => LifecycleInput::Cleared { erase_id },
             Event::ModelsCleared(generation_new, erase_id) => LifecycleInput::ModelsCleared { generation_new, erase_id },
             Event::ClearFailed(erase_id) => LifecycleInput::ClearFailed { erase_id, error: SQL.into() },
@@ -275,7 +269,6 @@ impl Twin {
 
 fn credential(identity: u64) -> Event { Event::Credential(identity) }
 fn reset(reply: u64) -> Event { Event::SessionReset(Some(reply)) }
-fn reset_models(names: &[&str], reply: u64) -> Event { Event::ResetModels(models(names), Some(reply)) }
 fn close(reply: u64) -> Event { Event::Close(reply) }
 fn drain_all() -> Vec<Event> { OWNERS.into_iter().map(Event::Drained).collect() }
 
@@ -293,30 +286,15 @@ fn ending() -> Twin {
     twin.settle();
     twin
 }
-/// Session 1, `ResetModels` issued, the Store has not answered.
-fn resetting() -> Twin {
-    let mut twin = session(1);
-    twin.feed(reset_models(&["Moment"], 1));
-    twin.settle();
-    twin
-}
-/// NoSession, `ResetModels` issued.
-fn resetting_signed_out() -> Twin {
-    let mut twin = Twin::new();
-    twin.feed(reset_models(&["Moment"], 1));
-    twin.settle();
-    twin
-}
 fn closing_session() -> Twin {
     let mut twin = session(1);
     twin.feed(close(1));
     twin.settle();
     twin
 }
-fn stray_erase_events() -> [Event; 3] { [Event::Cleared(999), Event::ModelsCleared(9, 999), Event::ClearFailed(999)] }
+fn stray_erase_events() -> [Event; 2] { [Event::Cleared(999), Event::ClearFailed(999)] }
 /// `Cleared` for the oldest erase.
 fn cleared(twin: &Twin) -> Event { Event::Cleared(twin.erase()) }
-fn models_cleared(twin: &Twin, generation: u64) -> Event { Event::ModelsCleared(generation, twin.erase()) }
 fn clear_failed(twin: &Twin) -> Event { Event::ClearFailed(twin.erase()) }
 
 #[test]
@@ -370,9 +348,6 @@ fn life_nosession_reset() { Twin::new().feed(reset(1)); }
 fn life_nosession_server_ended() { Twin::new().feed(Event::ServerEnded(1)); }
 
 #[test]
-fn life_nosession_reset_models() { resetting_signed_out(); }
-
-#[test]
 fn life_nosession_stray_store() { Twin::new().feed_all(stray_erase_events()); }
 
 #[test]
@@ -395,9 +370,6 @@ fn life_session_server_ended() { session(1).feed(Event::ServerEnded(2)); }
 
 #[test]
 fn life_session_stale_server_ended() { session(1).feed(Event::ServerEnded(1)); }
-
-#[test]
-fn life_session_reset_models() { resetting(); }
 
 #[test]
 fn life_session_stray_store() { session(1).feed_all(stray_erase_events()); }
@@ -453,12 +425,6 @@ fn life_restore_classified_every_order() {
     }
 }
 
-/// The `Published` of the owner while a models reset waits for the Store (state `Resetting`, identity kept).
-pub(crate) fn resetting_published() -> crate::owners::contract::Published {
-    let twin = resetting();
-    twin.det.state(twin.addr).expect("the owner state").published().clone()
-}
-
 #[test]
 fn matrix_owner_state_input_lifecycle() {
     use crate::test_matrix::{state_input_pairs, Matrix};
@@ -467,7 +433,7 @@ fn matrix_owner_state_input_lifecycle() {
     fn one_session() -> Twin { session(1) }
     let mut alphabet: Vec<(&str, Event)> = vec![
         ("Credential 1", credential(1)), ("Credential 2", credential(2)), ("SessionReset", reset(5)), ("SessionReset without a reply", Event::SessionReset(None)), ("ServerEnded", Event::ServerEnded(1)),
-        ("ResetModels Moment", reset_models(&["Moment"], 6)), ("Cleared stray", Event::Cleared(999)), ("ModelsCleared stray", Event::ModelsCleared(9, 999)), ("ClearFailed stray", Event::ClearFailed(999)),
+        ("Cleared stray", Event::Cleared(999)), ("ClearFailed stray", Event::ClearFailed(999)),
         ("Saved 1", Event::Saved(1)), ("Saved stray", Event::Saved(99)), ("SaveFailed 1", Event::SaveFailed(1)), ("StoreClosed", Event::StoreClosed), ("ObserversStopped", Event::ObserversStopped), ("ExecutorFailed", Event::ExecutorFailed),
         ("Close", close(7)),
     ];
@@ -476,7 +442,7 @@ fn matrix_owner_state_input_lifecycle() {
         alphabet.push((Box::leak(format!("RestoreClassified {owner:?}").into_boxed_str()), Event::RestoreClassified(owner, 1)));
         alphabet.push((Box::leak(format!("Drained {owner:?}").into_boxed_str()), Event::Drained(owner)));
     }
-    state_input_pairs(&mut matrix, "reference ref_lifecycle", vec![("open, no session", signed_out), ("session 1", one_session), ("ending", ending), ("resetting models", resetting), ("resetting signed out", resetting_signed_out), ("closing a session", closing_session)], alphabet, |twin: &mut Twin, event| { twin.feed(event); });
+    state_input_pairs(&mut matrix, "reference ref_lifecycle", vec![("open, no session", signed_out), ("session 1", one_session), ("ending", ending), ("closing a session", closing_session)], alphabet, |twin: &mut Twin, event| { twin.feed(event); });
     matrix.finish();
 }
 

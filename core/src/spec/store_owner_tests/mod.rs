@@ -38,11 +38,9 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::Write { batch, .. } => Action::Write(batch.id),
         StoreEffect::Pinned { .. } => return None,
         StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => Action::EraseAccount { io_id: *io_id, generation_new: *generation_new, erase_encrypted: *erase_encrypted },
-        StoreEffect::EraseModels { io_id, models, .. } => Action::EraseModels { io_id: *io_id, models: models.clone() },
         StoreEffect::ClearSecret { io_id } => Action::ClearSecret { io_id: *io_id },
         StoreEffect::SavePublished { io_id, publication_id, .. } => Action::SavePublished { io_id: *io_id, publication_id: *publication_id },
         StoreEffect::Cleared { epoch_old, erase_id } => Action::Cleared { epoch_old: *epoch_old, erase_id: *erase_id },
-        StoreEffect::ModelsCleared { generation_new, erase_id } => Action::ModelsCleared { generation_new: *generation_new, erase_id: *erase_id },
         StoreEffect::ClearFailed { erase_id, error } => Action::ClearFailed { erase_id: *erase_id, closed: error == "closed" },
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
@@ -101,7 +99,7 @@ impl Twin {
 
     fn head_io(&self) -> Option<u64> {
         self.history.iter().rev().find_map(|effect| match effect {
-            StoreEffect::SavePublished { io_id, .. } | StoreEffect::EraseAccount { io_id, .. } | StoreEffect::EraseModels { io_id, .. } | StoreEffect::ClearSecret { io_id } => Some(*io_id),
+            StoreEffect::SavePublished { io_id, .. } | StoreEffect::EraseAccount { io_id, .. } | StoreEffect::ClearSecret { io_id } => Some(*io_id),
             _ => None,
         })
     }
@@ -134,7 +132,6 @@ impl Twin {
         match request.clone() {
             Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(batch.epoch), basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential, ops: Vec::new() }),
             Request::ClearAccount { epoch_old, cause: c, generation_new, erase_id } => StoreInput::ClearAccount { epoch_old, cause: cause(c), generation_new, erase_id },
-            Request::ClearModels { epoch, generation_new, models, erase_id } => StoreInput::ClearModels { epoch, generation_new, models, erase_id },
             Request::Published { publication_id, epoch, generation, active } => StoreInput::Published { publication_id, published: Published { epoch, identity: None, generation, state: if active { PublishedState::Session } else { PublishedState::Ending }, closed: false } },
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
             Request::ReadIntents { epoch } => StoreInput::ReadIntents { epoch },
@@ -203,16 +200,6 @@ impl Twin {
         actions
     }
 
-    fn clear_models(&mut self, generation_new: u64, models: &[&str], sqlite_ok: bool) -> Vec<Action> {
-        self.erase += 1;
-        let erase_id = self.erase;
-        let mut actions = self.feed(Request::ClearModels { epoch: 1, generation_new, models: names(models), erase_id });
-        if let Some(io_id) = actions.iter().find_map(|action| match action { Action::EraseModels { io_id, .. } => Some(*io_id), _ => None }) {
-            actions.extend(self.feed(Request::Erased { io_id, result: if sqlite_ok { Ok(self.reference.revision + 1) } else { Err(()) } }));
-        }
-        actions
-    }
-
     fn boot(&mut self, found: Boot, saved: (u64, u64, Option<u64>)) -> Option<StoreEffect> {
         self.reference.saved_epoch = saved.0;
         self.reference.saved_generation = saved.1;
@@ -252,7 +239,6 @@ impl Twin {
     }
 }
 
-fn names(items: &[&str]) -> BTreeSet<String> { items.iter().map(|item| item.to_string()).collect() }
 
 mod store_owner_cells_tests;
 mod store_owner_trace_tests;
@@ -267,7 +253,6 @@ fn matrix_owner_state_input_store() {
     let alphabet: Vec<(&str, Request)> = vec![
         ("Commit epoch 1", commit(2, 1)), ("Commit stale epoch", commit(3, 9)),
         ("ClearAccount", Request::ClearAccount { epoch_old: 1, cause: RefCause::SessionReset, generation_new: 1, erase_id: 5 }), ("ClearAccount stale epoch", Request::ClearAccount { epoch_old: 9, cause: RefCause::SessionReset, generation_new: 1, erase_id: 6 }),
-        ("ClearModels", Request::ClearModels { epoch: 1, generation_new: 1, models: names(&["Moment"]), erase_id: 7 }),
         ("Published active", Request::Published { publication_id: 50, epoch: 1, generation: 0, active: true }), ("Published new epoch", Request::Published { publication_id: 51, epoch: 2, generation: 0, active: true }),
         ("EpochEnded", Request::EpochEnded { epoch: 1 }), ("ReadIntents", Request::ReadIntents { epoch: 1 }), ("Close", Request::Close),
         ("Written ok", Request::Written { id: 1, result: Ok(1) }), ("Written failed", Request::Written { id: 1, result: Err(()) }), ("Written stray", Request::Written { id: 77, result: Ok(2) }),

@@ -270,8 +270,6 @@ private final class DatabaseRunner {
       return observation("gap", ["stream": stream])
     case .changes(let revision, let rows):
       return observation("changes", ["stream": stream, "revision": revision, "rows": rows.count])
-    case .retry:
-      return observation("unsupported", "retry")
     case .event(let position, let area, let kind, let id, _, _):
       return observation("event", ["stream": stream, "position": position, "area": area, "kind": kind, "row": nameOf(id)])
     case .lost(let first, let last):

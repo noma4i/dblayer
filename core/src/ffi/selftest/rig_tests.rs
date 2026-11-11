@@ -12,7 +12,6 @@ use crate::ffi::{
     ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, EncryptedSessionOperation, OpenDatabase, PutReply,
     TestClock, Transport, TransportRequest,
 };
-use crate::test_wait::within_secs;
 
 use super::rig_held::Held;
 use super::rig_models::{add_reactions, plain_models, plain_operations};
@@ -21,7 +20,11 @@ use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, sea
 /// Every call of a sequence returns within this many seconds or the test fails instead of hanging.
 pub(super) const BOUND: u64 = 8;
 
-pub(super) async fn bound<T>(work: impl std::future::Future<Output = T>) -> T { within_secs(BOUND, work).await }
+#[track_caller]
+pub(super) fn bound<T>(work: impl std::future::Future<Output = T>) -> impl std::future::Future<Output = T> {
+    let place = std::panic::Location::caller();
+    async move { crate::test_wait::within_named(BOUND, &format!("bounded wait at {place}"), work).await }
+}
 
 pub(super) struct Gate {
     account: Mutex<Option<String>>,

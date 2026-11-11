@@ -1,7 +1,6 @@
 //! Tests of the executors of direction A on the threaded `Runtime` and a real `Store`: every input enters through `Life`, the observable is
 //! the published value, the answer of the waiter and the rows of the database. Each wait has a limit of 5 s.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::json;
@@ -11,7 +10,6 @@ use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use crate::store::Store;
 use crate::owners::calls::CallError;
-use crate::owners::lifecycle::LifecycleError;
 use crate::runtime::Waiter;
 use crate::transport::{MockTransport, Reply as MockReply};
 
@@ -35,7 +33,7 @@ fn ports(db: std::sync::Arc<Store>, transport: Arc<MockTransport>) -> Ports {
 
 fn moments_spec() -> ModelSpec { ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-pub(in super::super) fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], None).map(std::sync::Arc::new).unwrap() }
+pub(in super::super) fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap() }
 
 fn session_row(db: &Store) {
     let inner = db.lock();
@@ -119,7 +117,7 @@ async fn life_open_session_continues_the_saved_epoch() {
 /// net_set_online_changed: `set_online` answers, and after the close it answers `closed`.
 #[tokio::test(flavor = "multi_thread")]
 async fn net_set_online_answers() {
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
@@ -131,7 +129,7 @@ async fn net_set_online_answers() {
 /// call_run, call_run_offline, call_run_stale: the answer of the transport, offline refusal and the epoch rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn call_run_answers_by_epoch_and_network() {
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
@@ -151,11 +149,96 @@ async fn call_run_answers_by_epoch_and_network() {
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Closed, "life_call_closed");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn call_awaiting_snapshot_keeps_document() {
+    use crate::owners::calls::{CallKind, Calls, CallsInput, CallsState};
+    use crate::runtime::{DetScheduler, EpochStamp};
+    const ORIGINAL: &str = "query Op { original }";
+    for replacement in [Some(("query Op { changed }".to_string(), "changed".to_string())), None] {
+        let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+        let transport = Arc::new(MockTransport::new());
+        let documents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = documents.clone();
+        let received = Arc::new(tokio::sync::Notify::new());
+        let signal = received.clone();
+        transport.respond_with(move |request| {
+            seen.lock().unwrap().push(request.document.clone());
+            signal.notify_one();
+            Some(MockReply::data(json!({"original": true, "changed": true})))
+        });
+        let lookup = Arc::new(std::sync::RwLock::new(Some((ORIGINAL.to_string(), "original".to_string()))));
+        let source = lookup.clone();
+        let mut setup = ports(db.clone(), transport.clone());
+        setup.operations = Arc::new(move |_| source.read().unwrap().clone());
+        let mut runner_ports = ports(db, transport.clone());
+        runner_ports.operations = setup.operations.clone();
+        let life = tokio::task::spawn_blocking(move || Life::start(setup).unwrap()).await.unwrap();
+        let runner = super::calls_runner::CallsRunner::new(life.wiring.clone(), &runner_ports);
+        let mut det = DetScheduler::new(9);
+        let calls = det.add::<Calls>("calls", CallsState::new(1, None, &[("Op", CallKind::Query)]), runner);
+        det.start_epoch(1);
+        det.run_until_quiet(1000).unwrap();
+        det.post(calls, EpochStamp::Control, CallsInput::Declare(vec![("Op".into(), crate::owners::calls::CallDefinition { kind: CallKind::Query, document: ORIGINAL.into(), root: "original".into() })]));
+        det.run_until_quiet(1000).unwrap();
+        det.post(calls, EpochStamp::Epoch(1), CallsInput::Run { epoch: 1, operation: "Op".into(), variables: "{}".into(), reply: 1 });
+        det.run_until_quiet(1000).unwrap();
+        *lookup.write().unwrap() = replacement;
+        det.post(calls, EpochStamp::Epoch(1), CallsInput::Snapshot(crate::owners::contract::Online(true)));
+        det.run_until_quiet(1000).unwrap();
+        crate::test_wait::signalled(&received, "the request document arrived", || !documents.lock().unwrap().is_empty()).await;
+        assert_eq!(*documents.lock().unwrap(), vec![ORIGINAL.to_string()]);
+        closed(&life).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_mutate_plain_goes_through_epoch_gate() {
+    use crate::transport::{GraphQLRequest, PutReply, PutRequest, Response, TransportError, Upstream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct HeldMutation { entered: tokio::sync::Notify, release: tokio::sync::Notify, calls: AtomicUsize }
+    #[async_trait::async_trait]
+    impl Upstream for HeldMutation {
+        async fn query(&self, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
+        async fn mutate(&self, _: GraphQLRequest) -> Result<Response, TransportError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.entered.notify_one();
+            crate::test_wait::within(self.release.notified()).await;
+            Ok(Response::data(json!({"change": true})))
+        }
+        async fn put(&self, _: PutRequest) -> Result<PutReply, TransportError> { unreachable!() }
+    }
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+    let mock = Arc::new(MockTransport::new());
+    let held = Arc::new(HeldMutation { entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new(), calls: AtomicUsize::new(0) });
+    let mut setup = ports(db, mock);
+    setup.transport = Some(held.clone());
+    setup.operations = Arc::new(|name| (name == "Change").then(|| ("mutation Change { change }".into(), "change".into())));
+    let life = tokio::task::spawn_blocking(move || Life::start(setup).unwrap()).await.unwrap();
+    life.register_operations(vec![("Change".into(), crate::owners::calls::CallKind::Mutate)], Vec::new());
+    life.credential_committed(IDENTITY);
+    crate::test_wait::settled(&life, "the identity was published", || life.published().identity == Some(IDENTITY)).await;
+    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    let epoch = life.published().epoch;
+    let first = life.run(epoch, "Change".into(), "{}".into());
+    crate::test_wait::signalled(&held.entered, "mutation entered the transport", || held.calls.load(Ordering::SeqCst) == 1).await;
+    life.credential_committed(2);
+    crate::test_wait::settled(&life, "the next epoch was published", || life.published().identity == Some(2)).await;
+    assert!(matches!(crate::test_wait::within(first.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
+    let waiting = life.waiting_calls();
+    held.release.notify_one();
+    life.wiring.to_calls_at(crate::runtime::EpochStamp::Epoch(epoch), crate::owners::calls::CallsInput::Response { call_id: 1, body: Some("true".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } });
+    crate::test_wait::settled(&life, "the late response was discarded", || life.waiting_calls() == waiting).await;
+    let old = life.run(epoch, "Change".into(), "{}".into());
+    assert!(matches!(crate::test_wait::within(old.wait()).await, crate::runtime::Outcome::EpochEnded(_) | crate::runtime::Outcome::Value(Reply::Call(Err(CallError::NoSession)))));
+    crate::test_wait::settled(&life, "old mutation must not reach transport", || held.calls.load(Ordering::SeqCst) == 1).await;
+    closed(&life).await;
+}
+
 /// life_session_reset, life_prop_session_kept: `session_reset` erases the credential rows and ends the epoch, `IdentityChanged` keeps them.
 #[tokio::test(flavor = "multi_thread")]
 async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it() {
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     let life = start(&db, &transport).await;
     assert_eq!(life.published().identity, Some(IDENTITY));
@@ -167,7 +250,7 @@ async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it()
     assert!(db.revision_seq().unwrap() > revision, "the clearing is a commit");
     closed(&life).await;
 
-    let other = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let other = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&other);
     let life = start(&other, &transport).await;
     life.credential_committed(2);
@@ -175,21 +258,6 @@ async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it()
     let published = life.published();
     assert_eq!((published.identity, published.generation), (Some(2), 1));
     assert_eq!(stored_digest(&other).as_deref(), Some(DIGEST), "IdentityChanged keeps encrypted_session");
-    closed(&life).await;
-}
-
-/// life_resetting_cleared: `reset_models` clears the cache of the models and raises the generation, intents stay.
-#[tokio::test(flavor = "multi_thread")]
-async fn life_reset_models_raises_the_generation() {
-    let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
-    let life = start(&db, &transport).await;
-    let models: BTreeSet<String> = ["moments".to_string()].into();
-    assert_eq!(answer(life.reset_models(models)).await, Reply::Life(Ok(())));
-    assert_eq!((life.published().epoch, life.published().generation), (1, 1));
-    let bad: BTreeSet<String> = ["unknown".to_string()].into();
-    assert_eq!(answer(life.reset_models(bad)).await, Reply::Life(Err(LifecycleError::Storage)), "an erase failure answers Err(Storage)");
-    assert_eq!(life.published().generation, 1, "a failed clearing keeps the generation");
     closed(&life).await;
 }
 
@@ -217,7 +285,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(Some(&path), vec![paged_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(Some(&path), vec![paged_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     transport.enqueue("Mine", MockReply::data(json!({"mine": {"edges": [{"node": {"id": "m1", "userId": "u1", "text": "one"}}, {"node": {"id": "m2", "userId": "u1", "text": "two"}}], "pageInfo": {"hasNextPage": false, "endCursor": null}}})));
     let mut setup = ports(db.clone(), transport.clone());
@@ -271,7 +339,7 @@ async fn net_open_power_saving() {
 /// net_prop_connectivity_not_database: after the open only `SetOnline` changes the `online` of the owners.
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_connectivity_not_database() {
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
@@ -286,7 +354,7 @@ async fn net_prop_connectivity_not_database() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_no_request_before_snapshot() {
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
@@ -304,7 +372,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     use crate::owners::contract::NetworkEvent;
     use crate::owners::lifecycle::Peer;
     use std::sync::Mutex;
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.barrier();
@@ -348,7 +416,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
     use crate::owners::lifecycle::Peer;
     use crate::owners::network::NetworkInput;
     use std::sync::Mutex;
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let heard: Arc<Mutex<Vec<NetworkEvent>>> = Arc::default();
@@ -366,7 +434,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
 async fn the_rows_of_a_batch_land_through_the_common_path() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -391,7 +459,7 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
 async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     use crate::owners::contract::{BatchAuthor, Models};
     use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let (replies, reply) = std::sync::mpsc::channel();
@@ -415,7 +483,7 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
 async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
     use crate::owners::lifecycle::Peer;
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     {
         let inner = db.lock();

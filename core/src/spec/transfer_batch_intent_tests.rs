@@ -46,7 +46,7 @@ fn xfer_batch_intent_ended() {
 #[test]
 fn xfer_batch_intent_stale() {
     let (mut twin, ids) = persisting_joint();
-    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 7 });
+    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 7)].into() });
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
     assert_eq!((out.writes(), out.submits()), (1, 0));
     assert_eq!(out.batches[0].basis.get("Moment"), Some(&7));

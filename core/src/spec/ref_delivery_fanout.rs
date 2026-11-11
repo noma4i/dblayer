@@ -29,7 +29,7 @@ pub(crate) struct Write {
     pub(crate) queue: bool,
 }
 
-/// What the broadcast says: a reset (no row stream reads on Committed, D-254: the re-read comes with ModelsReset), or the tables and the rows of the write.
+/// What the broadcast says: a reset (no row stream reads on Committed, D-254), or the tables and the rows of the write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Notice {
     Reset,

@@ -24,15 +24,15 @@ const STREAM: u64 = 7;
 
 fn people() -> ModelSpec { ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new(), query: None } }
+fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new(), deferred_rows: Vec::new(), query: None } }
 
 struct SqliteSnapshots {
     path: std::path::PathBuf,
 }
 
 impl Snapshots for SqliteSnapshots {
-    fn read(&self, _: &View, revision: i64, _: i64, mode: d::ReadMode) -> Result<(i64, d::ReadData), String> {
-        if mode != d::ReadMode::Snapshot { return Err("the rig keeps no journal of changes".into()); }
+    fn read(&self, _: &View, revision: i64, _: i64, mode: d::ReadMode) -> Result<(d::ReadVersion, d::ReadData), String> {
+        if !matches!(mode, d::ReadMode::Snapshot { .. }) { return Err("the rig keeps no journal of changes".into()); }
         let statement = compile_keys(&Query::new("people"), &people()).map_err(|error| error.to_string())?;
         let connection = Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
         let snapshot = connection.unchecked_transaction().map_err(|error| error.to_string())?;
@@ -43,7 +43,7 @@ impl Snapshots for SqliteSnapshots {
         }
         let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None }).collect();
         drop(snapshot);
-        Ok((seen, d::ReadData::Rows { rows, replaced: Vec::new(), total: None }))
+        Ok((d::ReadVersion { revision: seen, position: 0, relevant: Some((seen, 0)) }, d::ReadData::Rows { rows, replaced: Vec::new(), total: None }))
     }
 }
 
@@ -138,7 +138,7 @@ fn delivery_io_read_older_snapshot() {
 struct Panicking;
 
 impl Snapshots for Panicking {
-    fn read(&self, _: &View, _: i64, _: i64, _: d::ReadMode) -> Result<(i64, d::ReadData), String> { panic!("the snapshot read failed") }
+    fn read(&self, _: &View, _: i64, _: i64, _: d::ReadMode) -> Result<(d::ReadVersion, d::ReadData), String> { panic!("the snapshot read failed") }
 }
 
 #[test]

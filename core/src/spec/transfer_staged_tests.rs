@@ -24,6 +24,22 @@ fn xfer_retry_source_replaces_copy() {
 }
 
 #[test]
+fn xfer_retry_source_orphans_old() {
+    let mut row = stored(1, KEY, 2);
+    row.failed = Some("refused".into());
+    row.upload_id = Some("previous-upload".into());
+    row.confirmed_parts = 1;
+    let (mut twin, _) = Twin::opened(vec![row], Default::default());
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    twin.retry(KEY, Some(fresh()));
+    let out = twin.copy_done(1);
+    assert_eq!(out.orphans_written(), vec![("previous-upload".into(), KEY.into())]);
+    assert!(!out.rows().is_empty());
+    assert_eq!(out.writes(), 1);
+    assert!(out.orphan_aborts().is_empty());
+}
+
+#[test]
 fn xfer_retry_source_failure_keeps_copy() {
     for store_fails in [false, true] {
         let mut twin = Twin::new();

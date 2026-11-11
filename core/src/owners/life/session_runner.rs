@@ -23,6 +23,13 @@ use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
 use crate::transport::{NetworkPurpose, TransportError};
 
+pub(super) fn session_erasure_ops(remove_pending: bool, end_journal: bool) -> Vec<StoreOp> {
+    let mut ops = vec![StoreOp::EraseSession];
+    if remove_pending { ops.push(StoreOp::RemovePending); }
+    if end_journal { ops.push(StoreOp::JournalSessionEnd); }
+    ops
+}
+
 struct Wire {
     id: String,
     key: String,
@@ -61,6 +68,7 @@ pub(crate) struct Restored {
     pub pending: Option<PendingCall>,
     pub dropped_pending: bool,
     pub answers: std::collections::BTreeMap<RequestId, crate::owners::session::StoredAnswer>,
+    pub resume_answer: Option<crate::owners::session::SessionAnswer>,
     pub secret: SecretState,
     pub restore_error: Option<String>,
     pub unowned_pending: bool,
@@ -93,7 +101,7 @@ impl SessionRunner {
                     Ok::<_, TransportError>(crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence }))
                 }).transpose()?.flatten();
                 let unowned_pending = store.read_locked(crate::store::session_state::unowned_pending).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
-                Ok(Restored { credential, pending: None, dropped_pending: false, answers: Default::default(), secret, restore_error: Some(error.to_string()), unowned_pending, wire: None, digest: None })
+                Ok(Restored { credential, pending: None, dropped_pending: false, answers: Default::default(), resume_answer: None, secret, restore_error: Some(error.to_string()), unowned_pending, wire: None, digest: None })
             }
         }
     }
@@ -110,10 +118,11 @@ impl SessionRunner {
         };
         let secret = SecretState::Missing;
         let answers = stored_answers(store)?;
+        let resume_answer = store.read_locked(crate::store::session_state::resume_answer).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
         let dropped_pending = dropped_pending(store)?;
         let row = if dropped_pending { None } else { stored_pending(store)? };
         let Some(row) = row else {
-            return Ok(Restored { credential, pending: None, dropped_pending, answers, secret, restore_error: None, unowned_pending: false, wire: None, digest: None });
+            return Ok(Restored { credential, pending: None, dropped_pending, answers, resume_answer, secret, restore_error: None, unowned_pending: false, wire: None, digest: None });
         };
         let sequence = u64::try_from(row.sequence).map_err(|_| TransportError::Decode(format!("the stored pending has the sequence {}", row.sequence)))?;
         let sessionless = row.credential_digest.is_empty();
@@ -140,7 +149,7 @@ impl SessionRunner {
         };
         let digest = identity.map(|identity| (identity, row.credential_digest));
         let unowned_pending = pending.author.is_none();
-        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key, cut: 0 })), digest })
+        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, resume_answer, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key, cut: 0 })), digest })
     }
 
     fn take_minted(&mut self) {
@@ -208,7 +217,8 @@ pub(super) fn session_input(request_id: RequestId, attempt_id: AttemptId, _logou
             SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status, too_large, security: None, body: None }
         }
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id, attempt_id },
-        Err(TransportError::ResponseTooLarge { limit }) => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced },
+        Err(TransportError::ResponseTooLarge { limit }) => SessionInput::AnswerTooLarge { request_id, attempt_id, limit },
+        Err(TransportError::Http { status, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status, too_large: None, security: None, body: None },
         Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, status: 0, too_large: None, security: None, body: None },
     }
 }
@@ -262,7 +272,12 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     Ok(digest) => digest,
                     Err(error) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(error.to_string()) })),
                 };
-                let wire = Wire { id: uuid::Uuid::new_v4().to_string(), key: random_token(), cut: self.wiring.gate.cut() };
+                let wire = if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_some() {
+                    let Some(wire) = self.wires.get(&pending.request_id) else {
+                        return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage("the pending request has no wire identity".into()) }));
+                    };
+                    Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wire.cut }
+                } else { Wire { id: uuid::Uuid::new_v4().to_string(), key: random_token(), cut: self.wiring.gate.cut() } };
                 let mut ops = vec![StoreOp::Pending { pending: pending.clone(), credential_digest: credential_digest.clone(), wire_id: wire.id.clone(), response_key: wire.key.clone() }];
                 if session.is_some() { ops.push(StoreOp::Session { digest: Some(credential_digest), sequence: Some(0) }); }
                 self.wires.clear();
@@ -271,16 +286,18 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 if let Some(crate::transport::RequestOwner::Operation { seq }) = pending.owner { self.operations.insert(pending.request_id, seq); }
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => {
+            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, resume_answer, erase_session, end_journal } => {
                 let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
-                let mut ops = if erase_session { vec![StoreOp::EraseSession, StoreOp::RemovePending] } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
+                let mut ops = if erase_session { session_erasure_ops(true, end_journal) } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
+                ops.extend(resume_answer.map(|answer| StoreOp::ResumeAnswer { answer }));
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitRevoked { batch, epoch } => self.commit(batch, epoch, vec![StoreOp::EraseSession]),
+            SessionEffect::CommitRevoked { batch, epoch } => self.commit(batch, epoch, session_erasure_ops(false, true)),
+            SessionEffect::CommitResumeAnswer { batch, epoch, answer } => self.commit(batch, epoch, vec![match answer { Some(answer) => StoreOp::ResumeAnswer { answer }, None => StoreOp::RemoveResumeAnswer }]),
             SessionEffect::HttpRequest { pending, attempt_id } => {
                 let request_id = pending.request_id;
                 if pending.class == OperationClass::Sessionless && pending.author.is_none() && !self.sent.insert(request_id) {
@@ -331,7 +348,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     crate::lock::effect(|| task.abort());
                 }
             }
-            SessionEffect::ScheduleTick { .. } | SessionEffect::RetryState { .. } => {}
+            SessionEffect::ScheduleTick { .. } => {}
             SessionEffect::CredentialCommitted(committed) => self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(committed)),
             SessionEffect::ServerEnded(ended) => self.wiring.to_lifecycle(LifecycleInput::ServerEnded(ended)),
             SessionEffect::SessionReset => self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: None }),

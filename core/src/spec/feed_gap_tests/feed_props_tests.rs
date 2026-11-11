@@ -7,8 +7,14 @@ fn feed_prop_gap_visible() {
     let mut twin = live();
     twin.step(plus("Post"));
     let before = (twin.state().position("Chat"), twin.state().position("Post"));
-    twin.step(Input::Dropped { to: To::Active });
+    let before_drop = twin.history.len();
+    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Connect]);
+    let batches: Vec<_> = twin.history[before_drop..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\", \"Post\"], keys: [] }]"), "the loss marks both models in one batch: {batches:?}");
+    let effects_before = twin.history.len();
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]);
+    assert!(!twin.history[effects_before..].iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, .. })), "confirmation must not write the same debt twice");
     assert_eq!((twin.state().position("Chat"), twin.state().position("Post")), before, "no position for a break of unknown length");
     let after_break: Vec<&Obs> = twin.shown.iter().filter(|obs| !matches!(obs, Obs::Gap { .. })).collect();
     assert!(after_break.is_empty(), "the break shows no Lost: {after_break:?}");
@@ -196,7 +202,7 @@ pub(super) const ACTIVE: ConnectionId = 2;
 
 pub(super) fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::Event { connection_id: ACTIVE, channel: CHANNEL.into(), event: framed(model, payload, &Reread::None, false) } }
 
-pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) -> DetScheduler {
+pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>) -> DetScheduler {
     let mut det = DetScheduler::new(1);
     let log: Log<Saw> = new_log();
     let post_generation = Arc::new(AtomicU64::new(0));
@@ -232,10 +238,6 @@ pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) ->
     for source in [transport, reader, clock] {
         det.post(source, EpochStamp::Control, SourceInput::Go);
     }
-    if with_reset {
-        let reset = det.add::<Reset<Feed>>("lifecycle", ResetState { to: feed, input: FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Post".into()] }), generation: 1 }, StoreGeneration(post_generation.clone()));
-        det.post(reset, EpochStamp::Control, SourceInput::Go);
-    }
     SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new(log)));
     det
 }
@@ -262,13 +264,11 @@ pub(super) fn covers(positions: &[(u64, u64)]) -> Result<u64, String> {
     Ok(next - 1)
 }
 
-pub(super) fn lost_counts(model: &str, count: u64) -> FeedInput { FeedInput::ChannelLost { connection_id: ACTIVE, dropped: Some(BTreeMap::from([(model.to_string(), count)])) } }
-
 /// P-FEED-01: for every model the delivered events and the lost positions are 1..position without gaps and repeats, whatever the order.
 #[test]
 fn feed_prop_cover() {
-    let frames = vec![event_input("Chat", "c1"), event_input("Post", "p1"), event_input("Chat", "c2"), lost_counts("Chat", 2), FeedInput::Dropped { connection_id: ACTIVE }, event_input("Chat", "c3")];
-    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), LIMITS, |_| {
+    let frames = vec![event_input("Chat", "c1"), event_input("Post", "p1"), event_input("Chat", "c2"), FeedInput::Dropped { connection_id: ACTIVE }, event_input("Chat", "c3")];
+    let report = explore(|| rig(DEBOUNCE_MS, frames.clone()), LIMITS, |_| {
         let log = seen();
         for model in ["Chat", "Post"] {
             covers(&positions(&log, model))?;
@@ -283,7 +283,7 @@ fn feed_prop_cover() {
 #[test]
 fn feed_prop_pending_never_vanishes() {
     let frames = vec![event_input("Chat", "c1"), event_input("Chat", "c2"), FeedInput::Dropped { connection_id: ACTIVE }, event_input("Chat", "c3")];
-    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), Limits { depth: 40, max_traces: 4_000 }, |det| {
+    let report = explore(|| rig(DEBOUNCE_MS, frames.clone()), Limits { depth: 40, max_traces: 4_000 }, |det| {
         if !det.ready().is_empty() {
             return Ok(());
         }
@@ -303,20 +303,6 @@ fn feed_prop_pending_never_vanishes() {
     assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-/// P-FEED-04: a reset of the model `Post` does not lose the events of `Chat`.
-#[test]
-fn feed_prop_reset_other_model() {
-    let frames = vec![event_input("Chat", "c1"), event_input("Post", "p1"), event_input("Chat", "c2")];
-    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), true), LIMITS, |_| {
-        if snapshot(&seen()).into_iter().any(|saw| matches!(saw, Saw::Lost { model: "Chat", .. })) {
-            return Err("a Chat event was lost".into());
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
-}
-
-/// P-FEED-05: a frame of a connection that is not the current one changes nothing and is not delivered.
 #[test]
 fn feed_prop_stale_connection() {
     let report = explore(
@@ -324,9 +310,8 @@ fn feed_prop_stale_connection() {
             let frames = vec![
                 FeedInput::Event { connection_id: 77, channel: CHANNEL.into(), event: framed("Chat", "x", &Reread::None, false) },
                 FeedInput::Dropped { connection_id: 77 },
-                FeedInput::ChannelLost { connection_id: 77, dropped: Some(BTreeMap::from([("Chat".to_string(), 3)])) },
             ];
-            rig(0, frames, false)
+            rig(0, frames)
         },
         LIMITS,
         |_| {
@@ -342,7 +327,7 @@ fn feed_prop_stale_connection() {
 /// P-FEED-26: after any close of an established connection the four ends of a drain come in any order: one timer, one `cancel`, one `Drained` only for `Closing`.
 #[test]
 fn feed_drain_vs_cancel_orders() {
-    let ends = [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::ChannelLost { to: To::Draining, dropped: None }, Input::Drain { own: true }];
+    let ends = [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::Drain { own: true }];
     let closes = [Input::Closing, Input::Online(false), minus("Chat"), Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: Vec::new() }];
     for (close, order) in closes.iter().flat_map(|close| crate::test_wait::permutations(&ends).into_iter().map(move |order| (close, order))) {
         let mut twin = live();

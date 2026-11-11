@@ -242,7 +242,7 @@ fn reply_once(steps: &[Step]) -> Result<(), String> {
         for (_, observation) in step.observed.iter().enumerate().filter(|(_, o)| o.kind == "reply") {
             let id = observation.value["id"].as_u64().unwrap_or(0);
             if seen.contains(&id) { return Err(format!("step {} answers {id} twice", index + 1)); }
-            if id == 0 || id as usize > index + 1 || !matches!(steps[id as usize - 1].input.name.as_str(), "session_reset" | "close" | "reset_models" | "login" | "logout" | "credential_other") { return Err(format!("step {} answers {id}, which is no command", index + 1)); }
+            if id == 0 || id as usize > index + 1 || !matches!(steps[id as usize - 1].input.name.as_str(), "session_reset" | "close" | "login" | "logout" | "credential_other") { return Err(format!("step {} answers {id}, which is no command", index + 1)); }
             seen.push(id);
         }
         let issued = matches!(step.input.name.as_str(), "session_reset" | "close") && !held;
@@ -281,7 +281,7 @@ fn generation(steps: &[Step]) -> Result<(), String> {
     for index in 0..steps.len() {
         for (_, observation) in find_all(&steps[index..=index], "reply") {
             let id = observation.value["id"].as_u64().unwrap_or(0) as usize;
-            if id == 0 || observation.value["ok"] != true || !matches!(steps[id - 1].input.name.as_str(), "session_reset" | "reset_models") { continue; }
+            if id == 0 || observation.value["ok"] != true || !matches!(steps[id - 1].input.name.as_str(), "session_reset") { continue; }
             let before = if id >= 2 { values[id - 2].unwrap_or(0) } else { 0 };
             if let Some(now) = values[index] { if now <= before { return Err(format!("step {} answers a clearing, generation {now} not above {before}", index + 1)); } }
         }
@@ -336,7 +336,7 @@ impl LifecycleOwner {
 
     pub fn full(only: Option<&'static str>) -> Self {
         let mut alphabet = Self::public(None).alphabet;
-        alphabet.extend([input("credential_other"), input("server_ended_stale"), Input::new("reset_models").with("models", json!(["Moment"])), input("store_hold"), input("store_ok"), input("store_fail"), input("store_release"), input("server_ended"), input("stray_cleared"), input("stray_models_cleared"), input("stray_clear_failed"), input("stray_drained"), Input::new("drain").with("owner", "Feed")]);
+        alphabet.extend([input("credential_other"), input("server_ended_stale"), input("store_hold"), input("store_ok"), input("store_fail"), input("store_release"), input("server_ended"), input("stray_cleared"), input("stray_models_cleared"), input("stray_clear_failed"), input("stray_drained"), Input::new("drain").with("owner", "Feed")]);
         Self { full: true, only, alphabet }
     }
 }

@@ -115,14 +115,14 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         marker: None, stale_since: None, key, scope, has_next: cursor.is_some(), cursor,
         total: page.total.or(stored.as_ref().filter(|_| remote.total_from.is_some()).and_then(|window| window.total)),
         pages: i64::from(pages),
-        anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(writer.now),
+        anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(page.landed_at),
     });
     envelope.validate(writer.generation)?;
     writer.apply(&envelope)
 }
 
 /// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.
-pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, marker: &WindowMarker) -> Result<CommitResult, StoreError> {
+pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, marker: &WindowMarker, landed_at: Option<i64>) -> Result<CommitResult, StoreError> {
     let model = key.model.as_str();
     let WindowKind::Relation { relation, params } = key.kind() else { return Err(fault("a marker belongs to a relation window")) };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
@@ -135,7 +135,7 @@ pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows
     for (field, value) in &marker.values {
         insert.execute(rusqlite::params![window_key, generation, marker.sequence, field, value])?;
     }
-    writer.connection.execute(include_str!("sql/window_write/mark_update_query_window.sql"), rusqlite::params![writer.now, window_key])?;
+    writer.connection.execute(include_str!("sql/window_write/mark_update_query_window.sql"), rusqlite::params![landed_at, window_key])?;
     Ok(CommitResult::noop(uuid::Uuid::new_v4()))
 }
 

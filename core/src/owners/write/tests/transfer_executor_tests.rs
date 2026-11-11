@@ -287,7 +287,7 @@ fn xfer_confirmed_waits_file_delete() {
 #[test]
 fn xfer_confirmed_delete_spawn_failed() {
     let mut w = world();
-    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap());
+    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let path = w.source(KEY, &vec![5u8; 300 * 1024]);
     w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
     w.accept(KEY, path, 1);
@@ -298,7 +298,7 @@ fn xfer_confirmed_delete_spawn_failed() {
     w.post(TransferInput::Outcome { receipt, reply: 2, discard_on_failure: true });
     assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 2 && matches!(answer, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if error.contains("400"))));
     assert!(copy.exists());
-    let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap();
+    let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(!copy.exists());
     drop(reopened);
 }
@@ -307,7 +307,7 @@ fn xfer_confirmed_delete_spawn_failed() {
 fn xfer_confirmed_delete_failure_keeps_rejection() {
     use std::os::unix::fs::PermissionsExt;
     let mut w = world();
-    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap());
+    drop(crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let path = w.source(KEY, &vec![5u8; 300 * 1024]);
     w.stub.script([Act::Reply(Err(TransportError::Http { status: 400, body: "refused".into() }))]);
     w.accept(KEY, path, 1);
@@ -321,7 +321,7 @@ fn xfer_confirmed_delete_failure_keeps_rejection() {
     std::fs::set_permissions(directory, permissions).unwrap();
     assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 2 && matches!(answer, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if error.contains("400"))));
     assert!(copy.exists());
-    let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None).unwrap();
+    let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(!copy.exists());
     drop(reopened);
 }

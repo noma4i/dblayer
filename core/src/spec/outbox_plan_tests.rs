@@ -116,6 +116,24 @@ fn out_submit_leaves_scope() {
 }
 
 #[test]
+fn out_submit_join_missing_row_batch() {
+    use super::outbox_cells_tests::submit_op;
+    use super::outbox_harness::{model_op, Policy, Twin};
+    use crate::owners::write::outbox::NewOp;
+    let members = changes(&seeded(), ScopeEffectKind::Join, json!(["u7"])).into_iter().filter_map(|change| match change {
+        ListChange::Join { model, list, id, order_key: Some(order_key), .. } => Some(crate::owners::store::EffectMember { model, list: list.to_string(), row_id: id, order_key, leave: false }),
+        _ => None,
+    }).collect();
+    let effects = crate::owners::store::IntentEffects { members, ..Default::default() };
+    let mut twin = Twin::new();
+    let id = submit_op(&mut twin, NewOp { effects, ..model_op("r", Policy::Rollback, false) }, 901);
+    assert_eq!(twin.stores.len(), 1);
+    assert!(twin.store_text.contains(&format!("Intent {{ op_id: {id}")), "{}", twin.store_text);
+    assert!(twin.store_text.contains("members: []"), "{}", twin.store_text);
+    assert!(!twin.store_text.contains("u7"), "{}", twin.store_text);
+}
+
+#[test]
 fn out_submit_join_missing_row() {
     let base = seeded();
     let joining = changes(&base, ScopeEffectKind::Join, json!(["u7", "u3", "u3", "u1"]));

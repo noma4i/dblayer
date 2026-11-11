@@ -157,7 +157,7 @@ end
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     assert!(swift.contains("func inFolder(") && swift.contains("func create("), "{swift}");
     assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
-    dblayer::store::Store::open_models(None, models, None).unwrap();
+    dblayer::store::Store::open_models(None, models, None, std::sync::Arc::new(dblayer::runtime::SystemClock)).unwrap();
 }
 
 /// B4 (old line emit/mod.rs creates_locally): a model whose create the server answers gets the typed `create` in both languages, so the app never writes the generic call.

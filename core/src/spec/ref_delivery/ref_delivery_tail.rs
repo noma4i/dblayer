@@ -16,13 +16,11 @@ impl Delivery {
         }
     }
 
-    /// D-73: the value carries the revision of the last commit that touched the stream; a read nobody asked a commit for carries what it saw.
-    pub(super) fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
-
-    pub(super) fn live_rows(&mut self, seen: i64, rows: Vec<Row>, fx: &mut Vec<Effect>) {
+    pub(super) fn live_rows(&mut self, seen: i64, relevant: Option<(i64, u64)>, rows: Vec<Row>, fx: &mut Vec<Effect>) {
         if rows == self.rows && self.incoming_total == self.total { self.same_rows(seen, fx); return; }
         let state = self.state_at(seen);
-        let revision = self.shown_revision(seen);
+        let (revision, position) = relevant.expect("changed rows have a relevant version");
+        self.value_position = position;
         self.rows = rows.clone();
         self.total = self.incoming_total;
         self.revision = revision;
@@ -79,12 +77,6 @@ impl Delivery {
         self.append(Val::Status { revision, state }, fx);
     }
 
-    pub(super) fn retry(&mut self, attempts: u32, fx: &mut Vec<Effect>) {
-        if self.last_retry == Some(attempts) { return; }
-        self.stage = Stage::Live;
-        self.last_retry = Some(attempts);
-        self.append(Val::Retry { attempts }, fx);
-    }
 }
 
 /// The steps from `old` to `new` and the number of rows they touch: removals from the back, then each inserted or out-of-order row at its place, then the rows whose stamp changed.

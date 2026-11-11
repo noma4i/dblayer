@@ -4,7 +4,7 @@ use crate::store::ddl::RecreateReason;
 
 #[test]
 fn in_memory_store_creates_core_tables_at_boot() {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(!store.table_exists("manifest").unwrap());
     store.boot(&[], None).unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'format_version'"), 1);
@@ -19,7 +19,7 @@ fn in_memory_store_creates_core_tables_at_boot() {
 fn open_creates_file_and_parent_directory_without_model_tables() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("nested").join("a.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(path.exists());
     assert!(!store.table_exists("row_messages").unwrap());
     assert_eq!(store.journal_mode().unwrap().to_lowercase(), "wal");
@@ -28,8 +28,8 @@ fn open_creates_file_and_parent_directory_without_model_tables() {
 #[test]
 fn separate_user_files_do_not_share_rows() {
     let directory = tempfile::tempdir().unwrap();
-    let first = Store::open(&directory.path().join("a.sqlite")).unwrap();
-    let second = Store::open(&directory.path().join("b.sqlite")).unwrap();
+    let first = Store::open(&directory.path().join("a.sqlite"), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let second = Store::open(&directory.path().join("b.sqlite"), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     first.boot(&[messages_spec()], None).unwrap();
     second.boot(&[messages_spec()], None).unwrap();
     first.commit(envelope(&first, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
@@ -51,7 +51,7 @@ fn inv_open_01_a_file_that_does_not_fit_this_build_is_recreated_once() {
         (
             "changed core format",
             |path| {
-                let store = Store::open(path).unwrap();
+                let store = Store::open(path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
                 store.boot(&[messages_spec()], None).unwrap();
                 exec(&store, "CREATE TABLE marker (value TEXT); UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
             },
@@ -62,12 +62,12 @@ fn inv_open_01_a_file_that_does_not_fit_this_build_is_recreated_once() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("a.sqlite");
         plant(&path);
-        let store = Store::open(&path).unwrap();
+        let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let report = store.boot(&[messages_spec()], None).unwrap();
         assert_eq!(report.recreated, Some(reason), "{case}");
         assert!(!store.table_exists("marker").unwrap(), "{case}: old content");
         drop(store);
-        assert_eq!(Store::open(&path).unwrap().boot(&[messages_spec()], None).unwrap().recreated, None, "{case}: second open");
+        assert_eq!(Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap().boot(&[messages_spec()], None).unwrap().recreated, None, "{case}: second open");
     }
 }
 
@@ -92,7 +92,7 @@ fn inv_open_02_recreate_removes_every_file_of_the_old_database() {
     std::fs::write(beside(".files").join("f1"), "bytes").unwrap();
     std::fs::write(beside(".files").join("cache").join("f1"), "bytes").unwrap();
 
-    let store = Store::open(&path).unwrap();
+    let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let report = store.boot(&[messages_spec()], None).unwrap();
 
     assert_eq!(report.recreated, Some(RecreateReason::SchemaVersion));

@@ -138,7 +138,6 @@ pub enum Input {
     EpochEnded { epoch: u64, cause: EndCause },
     Closing,
     EpochStarted { epoch: u64, generation: u64 },
-    ModelsReset { models: Vec<String>, generation: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +154,7 @@ pub enum Op {
     ConfirmedParts { part: Option<u32>, upload_id: Option<String>, all: bool },
     Failed { clear_upload: bool },
     Retrying { reset_budget: bool, new_cycle: bool },
+    FailedOutcome { transfer_id: TransferId, cycle_id: u64, error: Failure },
     UploadId { upload_id: String },
     RoundError(Option<String>),
     RemoveUpload { transfer_id: TransferId },

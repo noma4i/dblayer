@@ -5,7 +5,7 @@ use crate::schema_fixtures::{moments_spec, users_spec};
 fn job(body: &str) -> DecodeJob { DecodeJob { op_id: 1, model: "moments".into(), action: "star".into(), temp: None, batch: None, body: body.into() } }
 
 fn decoded(body: &str) -> Decoded {
-    let db = Store::open_models(None, vec![moments_spec(), users_spec()], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec(), users_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     decode_answer(&db, &|_| Some("starMoment".to_string()), &job(body))
 }
 

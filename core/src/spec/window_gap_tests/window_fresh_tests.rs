@@ -145,7 +145,10 @@ fn win_landing_fresh_until() {
     twin.watch();
     let (request, attempt) = twin.ref_request();
     twin.step(Input::Response { request, attempt, cursor: None, rows: false });
+    assert!(twin.commit.contains(&format!("landed_at: {NOW}")), "{}", twin.commit);
+    twin.now = NOW + 500;
     twin.land();
+    twin.now = NOW;
     twin.step(Input::InterestMinus { id: STREAM });
     twin.now = NOW + EMPTY_LIFE - 1;
     assert_eq!(requests(&twin.call(1, Goal::First)), 0, "an empty page is fresh for empty_in");

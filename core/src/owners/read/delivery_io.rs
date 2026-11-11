@@ -43,7 +43,7 @@ impl DeliveryIo {
         spawn_blocking_on(&self.handle, launch, move || {
             let _watch = back.watch(read_task(stream, read_id));
             let answer = match snapshots.read(&view, revision, after, mode) {
-                Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },
+                Ok((version, data)) => DeliveryInput::ReadDone { stream, read_id, revision: version.revision, position: version.position, relevant: version.relevant, data },
                 Err(error) => DeliveryInput::ReadFailed { stream, read_id, revision, error },
             };
             back.reply(stamp, answer);

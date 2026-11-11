@@ -11,7 +11,6 @@ pub enum QuarantineReason {
     OrphanTempRow,
     ReplaceNormalizeRejected,
     SchemaChanged,
-    CorruptResetIntent,
 }
 
 impl QuarantineReason {
@@ -20,7 +19,6 @@ impl QuarantineReason {
             QuarantineReason::OrphanTempRow => "orphan-temp-row",
             QuarantineReason::ReplaceNormalizeRejected => "replace-normalize-rejected",
             QuarantineReason::SchemaChanged => "schema-changed",
-            QuarantineReason::CorruptResetIntent => "corrupt-reset-intent",
         }
     }
 }

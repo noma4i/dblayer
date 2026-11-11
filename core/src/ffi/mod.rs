@@ -10,10 +10,10 @@ pub(crate) async fn owners_drained(database: &Database) -> Result<(), DbError> {
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     loop {
-        database.operations_quiet().await;
-        owners_drained(database).await?;
+        { let _phase = crate::test_wait::SettledPhase::enter(&database.life, "operations_quiet"); database.operations_quiet().await; }
+        { let _phase = crate::test_wait::SettledPhase::enter(&database.life, "owners_drained"); owners_drained(database).await?; }
         if database.life.requests_in_flight() == 0 { return Ok(()); }
-        database.life.requests_none().await;
+        { let _phase = crate::test_wait::SettledPhase::enter(&database.life, "requests_none"); database.life.requests_none().await; }
     }
 }
 #[cfg(test)]

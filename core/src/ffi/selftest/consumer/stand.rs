@@ -18,6 +18,7 @@ pub(super) const OPERATIONS: &str = include_str!("../../../../tests/corpus/consu
 struct Cable {
     peer: CablePeer,
     puts: StdMutex<Vec<crate::transport::PutFile>>,
+    put_progress: StdMutex<Vec<Arc<crate::ffi::ByteProgress>>>,
     put_script: StdMutex<VecDeque<(u16, Option<String>)>>,
     hold_put: std::sync::atomic::AtomicBool,
     put_started: tokio::sync::watch::Sender<usize>,
@@ -31,6 +32,7 @@ impl FakeTransport for Cable {
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, progress: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> {
         self.puts.lock().unwrap().push(file.clone());
+        self.put_progress.lock().unwrap().push(progress.clone());
         progress.sent(2);
         crate::lock::effect(|| self.put_started.send_modify(|count| *count += 1));
         if self.hold_put.swap(false, std::sync::atomic::Ordering::SeqCst) { self.put_release.notified().await; }
@@ -84,12 +86,36 @@ impl FakeHttp for Server {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let answer = if path == "/api/auth/login_link" {
+            let mut held = self.held.subscribe();
+            let waiting = held.borrow().contains("login_link");
+            if waiting {
+                self.asked.lock().unwrap().push(("login_link".into(), request["body"].clone()));
+                crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
+                held.wait_for(|operations| !operations.contains("login_link")).await.unwrap();
+            }
             let sequence = request["sequence"].as_i64().unwrap_or(0);
             self.sequenced.lock().unwrap().push(("login_link".into(), sequence));
+            let failure = self.next_failures.lock().unwrap().get_mut("login_link").and_then(|queue| queue.pop_front());
+            if let Some(failure) = failure {
+                crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
+                return Err(failure);
+            }
             if sequence > 0 { self.contract.lock().unwrap().set_last(sequence); }
+            crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
             json!({"sessionId": request["body"]["account"]})
+        } else if path == "/api/logout" {
+            self.asked.lock().unwrap().push(("logout".into(), request["body"].clone()));
+            crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
+            let mut held = self.held.subscribe();
+            held.wait_for(|operations| !operations.contains("logout")).await.unwrap();
+            crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
+            json!({"revoked": true})
         } else if path == "/api/auth/otp" {
-            json!({"sent": true})
+            self.asked.lock().unwrap().push(("otp".into(), request["body"].clone()));
+            crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
+            let mut held = self.held.subscribe();
+            held.wait_for(|operations| !operations.contains("otp")).await.unwrap();
+            json!({"sent": true, "marker": "resume-after-crash"})
         } else {
             let operation = request["body"]["operationName"].as_str().unwrap().to_string();
             let contract_request = Request::from_wire("stand", &request);
@@ -109,13 +135,16 @@ impl FakeHttp for Server {
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
             }
             let failure = self.next_failures.lock().unwrap().get_mut(&operation).and_then(|queue| queue.pop_front());
-            if let Some(failure) = failure { return Err(failure); }
+            if let Some(failure) = failure {
+                crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
+                return Err(failure);
+            }
             let mut held = self.held.subscribe();
             held.wait_for(|operations| !operations.contains(&operation)).await.unwrap();
             let queued = self.next_answers.lock().unwrap().get_mut(&operation).and_then(|queue| queue.pop_front());
             let answer = queued.unwrap_or_else(|| self.answers.lock().unwrap().get(&operation).cloned().unwrap_or_else(|| json!({"data": {}})));
-            crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
             self.contract.lock().unwrap().settle(&contract_request, answer.clone());
+            crate::lock::effect(|| self.answered.send_modify(|count| *count += 1));
             answer
         };
         Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), answer) })
@@ -135,6 +164,7 @@ impl Stand {
     pub(super) async fn open() -> Stand {
         let stand = Stand::prepare().await;
         stand.sign_in().await;
+        stand.settle().await;
         stand
     }
 
@@ -151,18 +181,26 @@ impl Stand {
     }
 
     pub(super) async fn prepare_online(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>, online: bool) -> Stand {
+        Self::prepare_at(path, credentials, contract, online, 1_000_000).await
+    }
+
+    pub(super) async fn prepare_at(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>, online: bool, now: u64) -> Stand {
+        Self::prepare_at_with_spec(path, credentials, contract, online, now, SPEC.into()).await
+    }
+
+    pub(super) async fn prepare_at_with_spec(path: Option<String>, credentials: Arc<dyn crate::ffi::CredentialStore>, contract: Option<Arc<StdMutex<crate::server_contract::CableContract>>>, online: bool, now: u64, spec: String) -> Stand {
         let server = Arc::new(Server::default());
         server.register_documents(OPERATIONS);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("otp".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
         let (opened, subscribed) = tokio::sync::mpsc::unbounded_channel();
-        let clock = crate::ffi::TestClock::new(1_000_000);
+        let clock = crate::ffi::TestClock::new(now);
         let mut peer = CablePeer::observed(encrypted.clone(), move |event| { if let PeerEvent::Subscribed(token) = event { crate::lock::effect(|| { let _ = opened.send(token); }); } });
         if let Some(contract) = contract { peer = peer.with_contract(contract, clock.manual()); }
-        let cable = Arc::new(Cable { peer, puts: StdMutex::default(), put_script: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
+        let cable = Arc::new(Cable { peer, puts: StdMutex::default(), put_progress: StdMutex::default(), put_script: StdMutex::default(), hold_put: false.into(), put_started: tokio::sync::watch::channel(0).0, put_release: tokio::sync::Notify::new() });
         let ports = crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(credentials.clone()), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
-        let database = bound(Database::open_with_clock(Config { path, data_version: None }, SPEC.into(), ports, clock.clone())).await.unwrap();
+        let database = bound(Database::open_with_clock(Config { path, data_version: None }, spec, ports, clock.clone())).await.unwrap();
         database.set_online(online).unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
         Stand { database, server, cable, subscribed: tokio::sync::Mutex::new(subscribed), clock }
@@ -204,7 +242,25 @@ impl Stand {
     /// How many times the core asked the server for the operation.
     pub(super) fn requests(&self, operation: &str) -> usize { self.server.asked.lock().unwrap().iter().filter(|(asked, _)| asked == operation).count() }
 
+    pub(super) fn request_mark(&self) -> usize { self.server.asked.lock().unwrap().len() }
+
+    pub(super) fn requests_after(&self, mark: usize, operation: &str, variable: Option<(&str, &str)>) -> usize {
+        self.server.asked.lock().unwrap()[mark..].iter().filter(|(name, variables)| name == operation && variable.is_none_or(|(key, value)| variables[key] == value)).count()
+    }
+
+    pub(super) async fn receive_after(&self, mark: usize, operation: &str, variable: Option<(&str, &str)>, count: usize) {
+        let mut signal = self.server.received.subscribe();
+        bound(async {
+            loop {
+                if self.requests_after(mark, operation, variable) >= count { break; }
+                signal.changed().await.unwrap();
+            }
+        }).await;
+    }
+
     pub(super) fn puts(&self) -> usize { self.cable.puts.lock().unwrap().len() }
+
+    pub(super) fn put_cancelled(&self, index: usize) -> bool { self.cable.put_progress.lock().unwrap()[index].is_cancelled() }
 
     pub(super) fn put_files(&self) -> Vec<crate::transport::PutFile> { self.cable.puts.lock().unwrap().clone() }
 
@@ -232,9 +288,7 @@ impl Stand {
 
     /// The server has answered `count` requests in all.
     pub(super) async fn answered(&self, count: usize) { bound(self.server.answered.subscribe().wait_for(|answered| *answered >= count)).await.unwrap(); }
-
-    /// The server has received `count` requests in all, answered or held.
-    pub(super) async fn received(&self, count: usize) { bound(self.server.received.subscribe().wait_for(|received| *received >= count)).await.unwrap(); }
+    pub(super) fn answered_count(&self) -> usize { *self.server.answered.borrow() }
 
     /// The next subscription the cable opened: its token.
     pub(super) async fn next_subscription(&self) -> String { let mut subscribed = self.subscribed.lock().await; bound(async { subscribed.recv().await }).await.expect("the cable is open") }
@@ -242,11 +296,22 @@ impl Stand {
     /// The socket of the subscription breaks.
     pub(super) fn drop_cable(&self, token: &str) { assert!(self.cable.peer.close(token), "the socket is open"); }
 
+    pub(super) fn hold_cable_confirmations(&self) { self.cable.peer.hold_confirmations(); }
+
     pub(super) fn expire_cable(&self, token: &str) { self.cable.peer.expire_idle(token); }
 
     pub(super) fn cable_connects(&self) -> usize { self.cable.peer.connects() }
 
+    pub(super) fn cable_close_codes(&self, token: &str) -> Vec<u16> { self.cable.peer.close_codes(token) }
+
     pub(super) fn cable_ping(&self, token: &str) { self.cable.peer.emit(token, json!({"t":"ping", "ts":1})); }
+
+    pub(super) fn overflow_cable(&self, token: &str, entry: Value) {
+        let mut frames = vec![json!({"t":"ping", "ts":1}); crate::ffi::cable::MAILBOX_FRAMES * 4];
+        let id = self.cable.peer.subscription_id(token).expect("the subscription is open");
+        frames.push(json!({"t":"next", "id":id, "result":{"data":{"viewerChanges":{"changes":[entry]}}}}));
+        self.cable.peer.emit_burst(token, frames);
+    }
 
     /// The events of the model: its stream opens the change feed of the app.
     pub(super) async fn events(&self, model: &str) -> (Arc<ReadStream>, String) {

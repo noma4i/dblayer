@@ -1,6 +1,6 @@
 //! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
-use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Landed as RefLanded, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, RetryPhase, Secret, Session as Ref, State as RefState};
+use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Landed as RefLanded, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
 use crate::owners::session::Landed;
@@ -67,6 +67,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::ResponseTooLarge { limit } => Fail::ResponseTooLarge { limit: *limit },
         SessionError::Security { code, detail } => Fail::Security { code: *code, detail: detail.clone() },
         SessionError::Http { .. } => Fail::Http,
+        SessionError::Network => Fail::Network,
         SessionError::TooLarge { size, limit } => Fail::TooLarge { size: *size, limit: *limit },
         SessionError::Interrupted => Fail::Interrupted,
         SessionError::NoSession => Fail::NoSession,
@@ -174,22 +175,13 @@ fn phase_of(phase: &SessionPhase) -> RefState {
     }
 }
 
-fn retry_phase(phase: owner::RetryPhase) -> RetryPhase {
-    match phase {
-        owner::RetryPhase::Idle => RetryPhase::Idle,
-        owner::RetryPhase::InFlight => RetryPhase::InFlight,
-        owner::RetryPhase::WaitingRetry => RetryPhase::WaitingRetry,
-        owner::RetryPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
-        owner::RetryPhase::WaitingSecret => RetryPhase::WaitingSecret,
-    }
-}
-
 fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
     Some(match effect {
         SessionEffect::SealProbe { seal_id, pending, credential } => RefEffect::SealProbe { seal_id: *seal_id, pending: pending_of(pending), credential: *credential },
         SessionEffect::CommitPending { batch, epoch, pending, session } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending), session: *session },
-        SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), erase_session: *erase_session },
-        SessionEffect::CommitRevoked { batch, epoch } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: None, sequence: None, answer: None, erase_session: true },
+        SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, resume_answer, erase_session, end_journal } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), resume_answer: resume_answer.as_ref().map(|answer| answer.clone().map_err(|error| fail_of(&error))), erase_session: *erase_session, end_journal: *end_journal },
+        SessionEffect::CommitRevoked { batch, epoch } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: None, sequence: None, answer: None, resume_answer: None, erase_session: true, end_journal: true },
+        SessionEffect::CommitResumeAnswer { .. } => return None,
         SessionEffect::HttpRequest { pending, attempt_id } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id },
         SessionEffect::HttpCancel { attempt_id } => RefEffect::HttpCancel { attempt_id: *attempt_id },
         SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
@@ -203,7 +195,6 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::RestoreClassified { epoch } => RefEffect::RestoreClassified { epoch: *epoch },
         SessionEffect::SnapshotRequest { epoch } => RefEffect::SnapshotRequest { epoch: *epoch },
         SessionEffect::Answer { author, req_id, outcome } => RefEffect::Answer { author: *author, req_id: *req_id, outcome: outcome_of(outcome) },
-        SessionEffect::RetryState { stream_id, attempts, phase } => RefEffect::RetryState { stream: *stream_id, attempts: *attempts, phase: retry_phase(*phase) },
         SessionEffect::Drained(_) => RefEffect::Drained,
         SessionEffect::Reply { .. } | SessionEffect::ResumeReply { .. } | SessionEffect::ExecutorFailed => return None,
     })
@@ -267,15 +258,13 @@ impl Twin {
             Input::SecretMissing { request_id, attempt_id, lost } => SessionInput::SecretMissing { request_id, attempt_id, lost },
             Input::GateClosed { request_id, attempt_id } => SessionInput::GateClosed { request_id, attempt_id },
             Input::Foreground => SessionInput::Foreground { seq: 1 },
-            Input::InterestPlus(stream_id) => SessionInput::InterestPlus { stream_id },
-            Input::InterestMinus(stream_id) => SessionInput::InterestMinus { stream_id },
             Input::RestoreReady { epoch } => SessionInput::RestoreReady { epoch },
             Input::RestoreFailed { epoch, error } => SessionInput::RestoreFailed { epoch, error },
-            Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
+            Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false, resume_answer: None },
             Input::Response { request_id, attempt_id, body, sequence, refusal } => { let kind = kind_of(&self.history, request_id, &body, sequence); SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } }
             Input::Revoked { request_id, attempt_id, body, author_ref } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: EPOCH },
             Input::HttpError { request_id, attempt_id, temporary, auth, security, body } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, status: 0, too_large: None, security, body },
-            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced },
+            Input::AnswerTooLarge { request_id, attempt_id, limit } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
@@ -320,7 +309,6 @@ impl Twin {
         assert_eq!(phase_of(state.phase()), self.reference.state, "the same state");
         assert_eq!(state.credential().map(|c| RefCredential { digest: c.digest, sequence: c.sequence }), self.reference.credential, "the same credential");
         assert_eq!(state.queued(), self.reference.queue.len(), "the same queue");
-        assert_eq!(state.subscribers(), self.reference.subscribers.len(), "the same subscribers");
         assert_eq!(state.awaiting_publication().map(|(reply, wait)| (reply, match wait { crate::owners::session::PublishWait::EpochAfter(epoch) => Some(epoch), crate::owners::session::PublishWait::Identity => None })), self.reference.awaiting(), "the same answer after publish");
         assert_eq!(state.restored_direct().map(pending_of), self.reference.restored_direct, "the same restored direct pending");
         assert_eq!(state.restored_detached().map(pending_of), self.reference.restored_detached, "the same restored detached pending");
@@ -475,7 +463,7 @@ enum Abstract {
     Revoked,
     HttpTemporary,
     HttpAuth,
-    AnswerTooLarge(bool, bool),
+    AnswerTooLarge(bool),
     Dropped,
     Cancel,
     Release,
@@ -500,7 +488,7 @@ fn concrete(twin: &Twin, input: Abstract) -> Input {
         Abstract::Revoked => Input::Revoked { request_id, attempt_id, body: "{}".into(), author_ref: None },
         Abstract::HttpTemporary => Input::HttpError { request_id, attempt_id, temporary: true, auth: false, security: None, body: None },
         Abstract::HttpAuth => Input::HttpError { request_id, attempt_id, temporary: false, auth: true, security: None, body: None },
-        Abstract::AnswerTooLarge(sequenced, foreign) => Input::AnswerTooLarge { request_id: request_id + u64::from(foreign), attempt_id, limit: 64, sequenced },
+        Abstract::AnswerTooLarge(foreign) => Input::AnswerTooLarge { request_id: request_id + u64::from(foreign), attempt_id, limit: 64 },
         Abstract::Dropped => Input::Dropped { request_id, attempt_id },
         Abstract::Cancel => Input::Cancel { req_id: 11 },
         Abstract::Release => Input::Release { req_id: 11 },
@@ -521,7 +509,7 @@ fn matrix_owner_state_input_session() {
         ("SessionCall", Abstract::Call), ("Mutate", Abstract::Mutate), ("Sealed", Abstract::Sealed), ("Committed", Abstract::Committed), ("Rejected storage", Abstract::RejectedStorage),
         ("Response sequence 1", Abstract::Response(1)), ("Response sequence 5", Abstract::Response(5)), ("Response refused", Abstract::ResponseRefused), ("Revoked", Abstract::Revoked),
         ("HttpError temporary", Abstract::HttpTemporary), ("HttpError auth", Abstract::HttpAuth), ("Dropped", Abstract::Dropped), ("Cancel", Abstract::Cancel), ("Release", Abstract::Release),
-        ("AnswerTooLarge read", Abstract::AnswerTooLarge(false, false)), ("AnswerTooLarge mutation", Abstract::AnswerTooLarge(true, false)), ("AnswerTooLarge foreign", Abstract::AnswerTooLarge(true, true)),
+        ("AnswerTooLarge", Abstract::AnswerTooLarge(false)), ("AnswerTooLarge foreign", Abstract::AnswerTooLarge(true)),
         ("Foreground", Abstract::Foreground), ("Tick", Abstract::Tick), ("Online false", Abstract::Online(false)), ("Online true", Abstract::Online(true)), ("EpochEnded", Abstract::EpochEnded), ("Closing", Abstract::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_session", vec![("idle", Twin::new), ("persisting", persisting), ("calling", calling), ("calling a mutation", calling_mutate), ("pending held", held), ("generating a credential", generating), ("storing a credential", storing), ("clearing", clearing), ("landing", landing_one), ("blocked storage", blocked_storage)], alphabet, |twin: &mut Twin, input| { let input = concrete(twin, input); twin.feed(input); });

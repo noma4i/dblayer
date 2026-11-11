@@ -25,7 +25,8 @@ pub(crate) struct ActiveTransfer {
     pub transfer_id: i64,
     /// The operation of the transfer in the queue: the reserved one, or the one of its group.
     pub op_id: Option<i64>,
-    pub info: crate::owners::write::upload::UploadInfo,
+    pub info: Option<crate::owners::write::upload::UploadInfo>,
+    pub restore_error: Option<String>,
 }
 
 /// A query with the relation of its window: `Some((name, params))` when the relation is remote and watched.
@@ -47,9 +48,15 @@ pub(crate) struct HeldVersion {
 
 
 /// The revision of a snapshot, what the query read in it and the temporary ids swapped for server ids up to it.
-pub(crate) type ViewSnapshot = (i64, ViewRead, Vec<(RowId, RowId)>);
+pub(crate) type ViewSnapshot = (i64, u64, Option<(i64, u64)>, ViewRead, Vec<(RowId, RowId)>);
 
 impl Store {
+    fn view_version(&self, reader: &Reader<'_>, view: &crate::owners::read::deliveries::View, from: (i64, u64)) -> Result<crate::owners::read::deliveries::ReadVersion, CoreError> {
+        let revision = reader.revision_seq()?;
+        let position = reader.position();
+        let relevant = self.context.changed.relevant(view, from, (revision, position));
+        Ok(crate::owners::read::deliveries::ReadVersion { revision, position, relevant })
+    }
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, CoreError> {
         self.load_with_sync(reader, model, ids).map(|(rows, _)| rows)
     }
@@ -170,7 +177,7 @@ impl Store {
     }
 
     /// The open operations and the active transfers in one snapshot not older than `floor`. A transfer is addressed by its key and linked to its operation by identity: its row may not exist.
-    pub(crate) fn read_queue(&self, floor: i64) -> Result<(i64, Vec<crate::owners::write::operation_status::Operation>, Vec<ActiveTransfer>), CoreError> {
+    pub(crate) fn read_queue(&self, floor: i64, from: (i64, u64), view: &crate::owners::read::deliveries::View) -> Result<(crate::owners::read::deliveries::ReadVersion, Vec<crate::owners::write::operation_status::Operation>, Vec<ActiveTransfer>), CoreError> {
         let models: Vec<String> = self.read_models(&[], |reader| {
             let mut statement = reader.connection().prepare_cached("SELECT DISTINCT model FROM sync_upload WHERE transfer_id IS NOT NULL")?;
             let found = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -178,7 +185,8 @@ impl Store {
         })?;
         let pinned: Vec<&str> = models.iter().map(String::as_str).collect();
         self.read_models(&pinned, |reader| {
-            let seen = reader.revision_seq()?;
+            let version = self.view_version(reader, view, from)?;
+            let seen = version.revision;
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
@@ -201,10 +209,18 @@ impl Store {
             let mut transfers = Vec::new();
             for (model, row_id, action, transfer_id, reserved) in keys {
                 if let Some(info) = shown.get(&(model.clone(), row_id.clone())).and_then(|uploads| uploads.get(&action)).cloned() {
-                    transfers.push(ActiveTransfer { op_id: linked.get(&transfer_id).copied().or(reserved), model, row_id, action, transfer_id, info });
+                    transfers.push(ActiveTransfer { op_id: linked.get(&transfer_id).copied().or(reserved), model, row_id, action, transfer_id, info: Some(info), restore_error: None });
                 }
             }
-            Ok((seen, crate::store::operation::open_operations(connection)?, transfers))
+            if let Some(virtual_transfers) = reader.virtual_transfers() {
+                for (key, transfer) in virtual_transfers {
+                    let Some((model, row_id, action)) = super::upload_rows::split_transfer_key(key) else { continue };
+                    let transfer_id = i64::try_from(transfer.transfer_id).map_err(|_| CoreError::Internal("transfer id overflow".into()))?;
+                    let op_id = transfer.op_id.and_then(|id| i64::try_from(id).ok());
+                    transfers.push(ActiveTransfer { model: model.into(), row_id: row_id.into(), action: action.into(), transfer_id, op_id, info: None, restore_error: Some(transfer.error.clone()) });
+                }
+            }
+            Ok((version, crate::store::operation::open_operations(connection)?, transfers))
         })
     }
 
@@ -219,41 +235,46 @@ impl Store {
     }
 
     /// The value of `uploads[action]` of a transfer by its key, whether or not the row exists.
-    pub(crate) fn read_transfer(&self, model: &str, id: &RowId, action: &str, floor: i64) -> Result<(i64, Option<crate::owners::write::upload::UploadInfo>), CoreError> {
+    pub(crate) fn read_transfer(&self, model: &str, id: &RowId, action: &str, floor: i64, from: (i64, u64), view: &crate::owners::read::deliveries::View) -> Result<(crate::owners::read::deliveries::ReadVersion, Option<crate::owners::write::upload::UploadInfo>), CoreError> {
         self.spec(model)?;
         self.read_models(&[model], |reader| {
-            let seen = reader.revision_seq()?;
+            let version = self.view_version(reader, view, from)?;
+            let seen = version.revision;
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
-            Ok((seen, self.transfer_info(reader, (model, id.as_str()), action)?))
+            Ok((version, self.transfer_info(reader, (model, id.as_str()), action)?))
         })
     }
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot and the temporary ids swapped for server ids after `after` up to it.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<ViewSnapshot, CoreError> {
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>, view: &crate::owners::read::deliveries::View, from: (i64, u64)) -> Result<ViewSnapshot, CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
-            let seen = reader.revision_seq()?;
+            let version = self.view_version(reader, view, from)?;
+            let seen = version.revision;
             if seen < floor {
                 return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
+            let position = version.position;
+            let relevant = version.relevant;
             if count {
                 let statement = compile_count(query, self.spec(model)?)?;
-                return Ok((seen, ViewRead::Count(fetch_count(reader.connection(), &statement)?), Vec::new()));
+                return Ok((seen, position, relevant, ViewRead::Count(fetch_count(reader.connection(), &statement)?), Vec::new()));
             }
             let named = match held {
-                Some(held) if super::plan::nested_ref::link_targets(self.spec(model)?).is_empty() => self.context.changed.changed_between(held.from, seen, held.limit),
+                Some(held) if super::plan::nested_ref::link_targets(self.spec(model)?).is_empty() => self.context.changed.changed_between(held.from, (seen, reader.position()), held.limit),
                 _ => None,
             };
             if held.is_some() && named.is_none() {
-                return Ok((seen, ViewRead::Overflow, Vec::new()));
+                return Ok((seen, position, relevant, ViewRead::Overflow, Vec::new()));
             }
             let keys = self.query_keys(reader, query)?;
+            let table = crate::store::ddl::table_name(model);
             let wanted: Vec<RowKey> = match &named {
-                Some(named) => keys.iter().filter(|(id, _)| named.contains(&(model.to_string(), id.clone()))).cloned().collect(),
+                Some(named) => keys.iter().filter(|(id, _)| named.contains(&(table.clone(), id.clone()))).cloned().collect(),
                 None => keys.clone(),
             };
             let rows = self.rows_for_keys(reader, model, &wanted)?;
@@ -277,7 +298,7 @@ impl Store {
             };
             let stamped = wanted.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect();
             let replaced = self.replaced_of(reader, model, &keys, after, seen)?;
-            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, replaced))
+            Ok((seen, position, relevant, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, replaced))
         })
     }
 }

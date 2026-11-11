@@ -22,13 +22,13 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
             None | Some("17") => {
                 let expected = if value.is_none() { 0 } else { 17 };
                 assert_eq!(store.revision_seq().unwrap(), expected);
-                store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
+                store.erase_account(store.generation().next(), false).unwrap();
                 assert_eq!(store.revision_seq().unwrap(), expected + 1);
             }
             _ => {
                 let read = store.revision_seq();
                 assert!(matches!(read, Err(StoreError::Constraint(_))), "{value:?} {read:?}");
-                let erased = store.erase_models(store.generation().next(), &["messages"].map(String::from));
+                let erased = store.erase_account(store.generation().next(), false);
                 assert!(matches!(erased, Err(StoreError::Constraint(_))), "{value:?} {erased:?}");
             }
         }
@@ -73,7 +73,7 @@ fn keyword_columns_preserve_values_across_insert_update_and_read() {
         crate::schema::FieldSpec::scalar("default", crate::value::ScalarKind::Str).indexed(),
         crate::schema::FieldSpec::scalar("select", crate::value::ScalarKind::Str),
     ]);
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&[spec], None).unwrap();
     store.mark_ready();
     for value in ["first", "changed"] {

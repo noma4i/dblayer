@@ -24,9 +24,123 @@ fn document_answer() -> Value {
     json!({"userPhotoUpdate": {"moment": {"id": "m1"}, "userPhoto": {"id":"p1","kind":"MAIN_PICTURE","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","reason":null,"status":"GOOD","media":{"thumbUrl":"https://t/1"}}, "viewer": {"user": {"id":"u1","fullName":"Ann","username":"ann","online":true,"shareUrl":"s","createdAt":"2026-11-08T00:00:00Z","updatedAt":"2026-11-08T00:00:00Z","avatarUrl":"a","fullAvatarUrl":null,"age":null,"gender":null,"description":null,"story":null,"lastSeenAt":null,"distance":null,"relationship":null}}}})
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_upload_attempt_survives_death_after_mutate() {
+    use rusqlite::OptionalExtension;
+
+    fn copy_files(from: &std::path::Path, to: &std::path::Path) {
+        if !from.exists() { return; }
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() { copy_files(&entry.path(), &to.join(entry.file_name())); }
+            else { std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap(); }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("attempt.sqlite");
+    let base = directory.path().join("base.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let stand = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    stand.sign_in().await;
+    stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    stand.script_put(200, Some("etag"));
+    stand.hold(&["UserPhotoUpdate"]);
+    stand.settle().await;
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let checkpoint: (i64, i64, i64) = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+    assert_eq!(checkpoint.0, 0);
+    drop(connection);
+    let mark = stand.request_mark();
+    let _receipt = bound(stand.database.upload(stand.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    stand.receive_after(mark, "UserPhotoUpdate", None, 1).await;
+    std::fs::copy(&path, &base).unwrap();
+    let wal = std::fs::read(format!("{}-wal", path.display())).unwrap();
+    let page_size = u32::from_be_bytes(wal[8..12].try_into().unwrap()) as usize;
+    let frame_size = 24 + if page_size == 1 { 65536 } else { page_size };
+    let commits: Vec<_> = (32..wal.len()).step_by(frame_size).filter(|offset| u32::from_be_bytes(wal[offset + 4..offset + 8].try_into().unwrap()) != 0).map(|offset| offset + frame_size).collect();
+    let mut checked = 0;
+    for (index, end) in commits.into_iter().enumerate() {
+        let image = directory.path().join(format!("image-{index}.sqlite"));
+        std::fs::copy(&base, &image).unwrap();
+        std::fs::write(format!("{}-wal", image.display()), &wal[..end]).unwrap();
+        copy_files(std::path::Path::new(&format!("{}.files", path.display())), std::path::Path::new(&format!("{}.files", image.display())));
+        let connection = rusqlite::Connection::open(&image).unwrap();
+        let attempts: Option<i64> = connection.query_row("SELECT attempts FROM op WHERE origin_kind = 'transfer'", [], |row| row.get(0)).optional().unwrap();
+        let pending: i64 = connection.query_row("SELECT count(*) FROM encrypted_pending", [], |row| row.get(0)).unwrap();
+        drop(connection);
+        let Some(attempts) = attempts else { continue };
+        assert_eq!(attempts, 1, "commit {index}: first mutation attempt");
+        let reopened = Stand::prepare_online(Some(image.to_string_lossy().into_owned()), credentials.clone(), None, false).await;
+        reopened.hold(&["UserPhotoUpdate"]);
+        let mark = reopened.request_mark();
+        reopened.database.set_online(true).unwrap();
+        reopened.receive_after(mark, "UserPhotoUpdate", None, 1).await;
+        let after: i64 = rusqlite::Connection::open(&image).unwrap().query_row("SELECT attempts FROM op WHERE origin_kind = 'transfer'", [], |row| row.get(0)).unwrap();
+        assert_eq!(after, attempts + i64::from(pending > 0), "commit {index}, pending={pending}");
+        checked += 1;
+        bound(reopened.database.close_database()).await.unwrap();
+    }
+    assert!(checked > 0, "WAL must contain the final mutation intent");
+    bound(stand.database.close_database()).await.unwrap();
+}
+
 async fn seed_moment(stand: &Stand) {
     stand.answer("MomentNode", json!({"node": super::stand::moment("m1", 0)}));
     bound(stand.database.node(stand.database.session_epoch(), "Moment".into(), "node".into(), "m1".into(), true)).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_power_saving_reaches_uploads() {
+    use crate::ffi::wire::WireUploadStatus;
+
+    for in_flight in [false, true] {
+        let stand = Stand::open().await;
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = viewer();
+        profile["user"]["id"] = json!("singleton");
+        stand.answer("myProfile", json!({"viewer": profile}));
+        let epoch = stand.database.session_epoch();
+        bound(stand.database.refresh(epoch, "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+        stand.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+        stand.answer("UserPhotoUpdate", photo_answer("Confirmed"));
+        stand.script_put(200, Some("etag"));
+        stand.script_put(200, Some("etag"));
+        let sink = stand.database.online_sink().unwrap();
+        if in_flight {
+            stand.hold_put();
+        } else {
+            sink.set_power_saving(true);
+            stand.settle().await;
+            stand.hold(&["CreateBlob"]);
+        }
+        let receipt = bound(stand.database.upload(epoch, "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+        if in_flight {
+            stand.put_started().await;
+            assert!(!stand.put_cancelled(0));
+            sink.set_power_saving(true);
+        }
+        stand.settle().await;
+        let row = bound(stand.database.read_row(epoch, "CurrentUser".into(), "singleton".into())).await.unwrap().unwrap();
+        let upload = &row.uploads.iter().find(|entry| entry.action == "update_photo").unwrap().upload;
+        assert_eq!((upload.status, upload.wait_reason.as_deref()), (WireUploadStatus::Queued, None), "in_flight={in_flight}: {upload:?}");
+        if in_flight {
+            assert!(stand.put_cancelled(0), "the in-flight PUT must be cancelled");
+            assert_eq!(stand.puts(), 1);
+        } else {
+            assert_eq!((stand.requests("CreateBlob"), stand.puts()), (0, 0), "power saving blocks the first upload step");
+        }
+        assert_eq!(stand.requests("UserPhotoUpdate"), 0);
+        sink.set_power_saving(false);
+        stand.release(&["CreateBlob"]);
+        stand.release_put();
+        assert!(bound(stand.database.confirmed(receipt, false)).await.is_ok());
+        stand.settle().await;
+        assert_eq!(stand.puts(), if in_flight { 2 } else { 1 });
+        assert!(stand.requests("CreateBlob") >= 1);
+        assert_eq!(stand.requests("UserPhotoUpdate"), 1);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -113,12 +227,9 @@ async fn consumer_avatar_reopen_discards_orphan_and_sends_pending() {
     assert!(failed_copy.exists());
     first.hold(&["UserPhotoUpdate"]);
     first.script_put(200, Some("etag"));
+    let mark = first.request_mark();
     let _pending = bound(first.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    loop {
-        let received = first.asked().len();
-        if first.requests("UserPhotoUpdate") >= 2 { break; }
-        first.received(received + 1).await;
-    }
+    first.receive_after(mark, "UserPhotoUpdate", None, 1).await;
     assert_eq!(first.requests("UserPhotoUpdate"), 2);
     let items = operations(&first).await;
     let url = items.iter().find(|item| item.row_id == "other").unwrap().upload.as_ref().unwrap().local_url.as_ref().unwrap();
@@ -169,12 +280,9 @@ async fn repair_after_orphan(refused: bool) {
     assert!(matches!(bound(first.database.confirmed(old, false)).await, Err(DbError::Rejected { kept: true, .. })));
     first.hold(&["UserPhotoUpdate"]);
     first.script_put(200, Some("etag"));
+    let mark = first.request_mark();
     bound(first.database.upload(epoch, "CurrentUser".into(), "other".into(), "update_photo".into(), photo(&directory))).await.unwrap();
-    loop {
-        let received = first.asked().len();
-        if first.requests("UserPhotoUpdate") >= 2 { break; }
-        first.received(received + 1).await;
-    }
+    first.receive_after(mark, "UserPhotoUpdate", None, 1).await;
     let items = operations(&first).await;
     let copy_url = items.iter().find(|item| item.row_id == "other").unwrap().upload.as_ref().unwrap().local_url.as_ref().unwrap();
     let copy = std::path::PathBuf::from(copy_url.strip_prefix("file://").unwrap());
@@ -452,7 +560,7 @@ async fn consumer_rowless_retry_after_refusal() {
 
 /// The server has received the first request of `operation`.
 async fn arrived(stand: &Stand, operation: &str) {
-    while stand.requests(operation) == 0 { stand.received(stand.asked().len() + 1).await; }
+    stand.receive_after(0, operation, None, 1).await;
 }
 
 async fn operations_until(stream: &crate::ffi::ReadStream, what: &str, found: impl Fn(&[OperationInfo]) -> bool) -> (i64, Vec<OperationInfo>) {
@@ -863,4 +971,146 @@ async fn consumer_second_upload_after_reopen() {
     assert_eq!((reopened.requests("CreateBlob"), reopened.puts(), reopened.requests("UserPhotoUpdate")), (1, 1, 1));
     assert!(operations(&reopened).await.is_empty());
     reopened.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_avatar_failure_kind_survives_reopen() {
+    for initially_offline in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("failure.sqlite").to_string_lossy().into_owned();
+        let credentials = Arc::new(WatchedHeld::default());
+        let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+        first.sign_in().await;
+        let mut profile = viewer();
+        profile["user"]["id"] = json!("singleton");
+        first.answer("myProfile", json!({"viewer": profile}));
+        bound(first.database.refresh(first.database.session_epoch(), "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+        if initially_offline { first.database.set_online(false).unwrap(); }
+        first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+        first.answer_next("UserPhotoUpdate", json!({"data":{"userPhotoUpdate":null},"errors":[{"message":"no face","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+        first.script_put(200, Some("etag"));
+        let receipt = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+        if initially_offline {
+            bound(first.database.close_database()).await.unwrap();
+            drop(first);
+            let reopened = Stand::prepare_online(Some(path.clone()), credentials.clone(), None, false).await;
+            reopened.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+            reopened.answer_next("UserPhotoUpdate", json!({"data":{"userPhotoUpdate":null},"errors":[{"message":"no face","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+            reopened.script_put(200, Some("etag"));
+            reopened.database.set_online(true).unwrap();
+            reopened.settle().await;
+            check_avatar_failure_kind(&reopened, &path).await;
+            bound(reopened.database.close_database()).await.unwrap();
+        } else {
+            assert!(matches!(bound(first.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
+            check_avatar_failure_kind(&first, &path).await;
+            bound(first.database.close_database()).await.unwrap();
+        }
+        let reopened = Stand::prepare_online(Some(path.clone()), credentials, None, false).await;
+        reopened.settle().await;
+        check_avatar_failure_kind(&reopened, &path).await;
+        bound(reopened.database.close_database()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_failed_upload_consistent_at_every_commit() {
+    use crate::ffi::OperationQueueStatus;
+
+    fn copy_files(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() { copy_files(&entry.path(), &target); }
+            else { std::fs::copy(entry.path(), target).unwrap(); }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("live.sqlite");
+    let base = directory.path().join("base.sqlite");
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.to_string_lossy().into_owned()), credentials.clone()).await;
+    first.sign_in().await;
+    let mut profile = viewer();
+    profile["user"]["id"] = json!("singleton");
+    first.answer("myProfile", json!({"viewer": profile}));
+    bound(first.database.refresh(first.database.session_epoch(), "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    first.settle().await;
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let checkpoint: (i64, i64, i64) = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+    assert_eq!(checkpoint.0, 0, "checkpoint: {checkpoint:?}");
+    drop(connection);
+    first.answer("CreateBlob", serde_json::from_str(BLOB).unwrap());
+    first.answer_next("UserPhotoUpdate", json!({"data":{"userPhotoUpdate":null},"errors":[{"message":"no face","extensions":{"code":"FORBIDDEN","reasonCode":"no_face_detected"}}]}));
+    first.script_put(200, Some("etag"));
+    let receipt = bound(first.database.upload(first.database.session_epoch(), "CurrentUser".into(), "singleton".into(), "update_photo".into(), photo(&directory))).await.unwrap();
+    assert!(matches!(bound(first.database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
+    first.settle().await;
+    std::fs::copy(&path, &base).unwrap();
+    let wal = std::fs::read(format!("{}-wal", path.display())).unwrap();
+    assert!(wal.len() >= 32);
+    let page_size = u32::from_be_bytes(wal[8..12].try_into().unwrap()) as usize;
+    let frame_size = 24 + if page_size == 1 { 65536 } else { page_size };
+    assert!(page_size >= 512 && (wal.len() - 32) % frame_size == 0);
+    let commits: Vec<_> = (32..wal.len()).step_by(frame_size).filter(|offset| u32::from_be_bytes(wal[offset + 4..offset + 8].try_into().unwrap()) != 0).map(|offset| offset + frame_size).collect();
+    assert!(commits.len() >= 2 && (wal.len() - 32) / frame_size < 1000, "WAL must retain multiple commits");
+    let files = format!("{}.files", path.display());
+    let mut observations = Vec::new();
+    for (k, end) in std::iter::once(32).chain(commits).enumerate() {
+        let image = directory.path().join(format!("image-{k}.sqlite"));
+        std::fs::copy(&base, &image).unwrap();
+        std::fs::write(format!("{}-wal", image.display()), &wal[..end]).unwrap();
+        let image_files = format!("{}.files", image.display());
+        if std::path::Path::new(&files).exists() {
+            copy_files(std::path::Path::new(&files), std::path::Path::new(&image_files));
+        }
+        let (raw, terminal_at) = {
+            let connection = rusqlite::Connection::open_with_flags(&image, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            let mut rows = Vec::new();
+            for (table, query) in [
+                ("op", "SELECT printf('%d|%s|%s|%d|%s|%s', seq, status, origin_kind, cycle_id, COALESCE(error_kind, ''), COALESCE(error_message, '')) FROM op"),
+                ("sync_upload", "SELECT printf('%d|%d|%s|%s|%d|%s|%s', transfer_id, COALESCE(cycle_id, 0), status, stage, COALESCE(completed, 0), COALESCE(error_kind, ''), COALESCE(error_message, '')) FROM sync_upload"),
+                ("transfer_outcome", "SELECT printf('%d|%d|%s|%s|%d', transfer_id, cycle_id, kind, COALESCE(value, ''), terminal_at) FROM transfer_outcome"),
+            ] {
+                let mut statement = connection.prepare(query).unwrap();
+                let values = statement.query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+                rows.push(format!("{table}={values:?}"));
+            }
+            let terminal_at = rusqlite::OptionalExtension::optional(connection.query_row("SELECT terminal_at FROM transfer_outcome WHERE transfer_id = 1 AND cycle_id = 1 AND kind = 'failed'", [], |row| row.get::<_, i64>(0))).unwrap();
+            (rows.join(" "), terminal_at)
+        };
+        let reopened = Stand::prepare_at(Some(image.to_string_lossy().into_owned()), credentials.clone(), None, false, 2_000_000).await;
+        reopened.settle().await;
+        let items = operations(&reopened).await;
+        let operation = items.iter().find(|item| item.action == "update_photo");
+        let row = bound(reopened.database.read_row(reopened.database.session_epoch(), "CurrentUser".into(), "singleton".into())).await.unwrap().unwrap();
+        let upload = row.uploads.iter().find(|entry| entry.action == "update_photo").map(|entry| &entry.upload);
+        observations.push(format!("k={k}: before=[{raw}], operation={operation:?}, upload={upload:?}"));
+        if let Some(operation) = operation.filter(|operation| operation.status == OperationQueueStatus::Failed) {
+            assert!(operation.error.is_some() && upload.and_then(|upload| upload.error.as_ref()) == operation.error.as_ref(), "{}", observations.join("\n"));
+            if let Some(terminal_at) = terminal_at {
+                let connection = rusqlite::Connection::open(&image).unwrap();
+                let failed_at: Option<i64> = connection.query_row("SELECT failed_at FROM sync_upload WHERE transfer_id = 1", [], |row| row.get(0)).unwrap();
+                assert_eq!(failed_at, Some(terminal_at), "{}", observations.join("\n"));
+            }
+        }
+        bound(reopened.database.close_database()).await.unwrap();
+    }
+    bound(first.database.close_database()).await.unwrap();
+}
+
+async fn check_avatar_failure_kind(stand: &Stand, path: &str) {
+    let items = operations(stand).await;
+    let operation = items.iter().find(|item| item.action == "update_photo").expect("the refused operation remains");
+    let failure = operation.error.as_ref().expect("the operation has a failure");
+    assert_eq!(failure.kind, "rejected");
+    assert_eq!(failure.extensions.as_ref().and_then(|e| e.fields.get("reasonCode")).map(String::as_str), Some("\"no_face_detected\""));
+    let row = bound(stand.database.read_row(stand.database.session_epoch(), "CurrentUser".into(), "singleton".into())).await.unwrap().unwrap();
+    let upload = &row.uploads.iter().find(|entry| entry.action == "update_photo").unwrap().upload;
+    assert_eq!(upload.error.as_ref(), Some(failure), "the row and operation expose the same failure");
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let (operation_kind, upload_kind): (String, String) = connection.query_row("SELECT op.error_kind, sync_upload.error_kind FROM op JOIN sync_upload ON sync_upload.op_id = op.seq WHERE sync_upload.model = 'CurrentUser' AND sync_upload.action = 'update_photo'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(upload_kind, operation_kind, "the durable transfer and operation kinds agree");
 }

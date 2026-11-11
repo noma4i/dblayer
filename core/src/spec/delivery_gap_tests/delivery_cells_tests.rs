@@ -117,19 +117,6 @@ fn dlv_live_read_total_only() {
 }
 
 #[test]
-fn dlv_opening_models_reset() {
-    let mut twin = open_rows();
-    twin.step(Input::Committed { revision: 2, touches: true });
-    assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Read(2)]);
-}
-
-#[test]
-fn dlv_opening_models_other() {
-    let mut twin = open_rows();
-    assert!(twin.step(Input::ModelsReset { own_model: false }).is_empty());
-}
-
-#[test]
 fn dlv_cancel() {
     for mut twin in [live_rows(), open_rows()] {
         assert_eq!(twin.step(Input::Cancel { reply: 7 }), [Effect::InterestMinus, Effect::CloseSink], "the reply waits for SinkClosed");
@@ -167,7 +154,7 @@ fn dlv_cancel_sink_closed_released() {
 fn dlv_cancelling_other() {
     let mut twin = live_rows();
     twin.step(Input::Cancel { reply: 1 });
-    for input in [Input::Committed { revision: 2, touches: true }, Input::ReadDone { revision: 2, rows: rows(&["r2"]) }, Input::ReadFailed { revision: 2 }, Input::WindowState(Ws::loaded_at(2)), Input::Joined { position: 1 }, Input::ModelReady, Input::ModelGap, Input::Transfer { state: "x".into(), revision: 41 }, Input::ModelsReset { own_model: true }] {
+    for input in [Input::Committed { revision: 2, touches: true }, Input::ReadDone { revision: 2, rows: rows(&["r2"]) }, Input::ReadFailed { revision: 2 }, Input::WindowState(Ws::loaded_at(2)), Input::Joined { position: 1 }, Input::ModelReady, Input::ModelGap, Input::Transfer { state: "x".into(), revision: 41 }] {
         assert!(twin.step(input).is_empty());
     }
     assert!(twin.step(Input::Pull).is_empty(), "a Pull waits for Ended");
@@ -296,13 +283,77 @@ fn dlv_live_read_unread_snapshot() {
 /// P-DLV-18 (D-73): the value carries the revision of the last commit that touched the stream, whether the read saw the head of the database or an older one.
 #[test]
 fn dlv_prop_value_revision_relevant_commit() {
+    let mut opened = open_rows();
+    opened.step(Input::WindowState(Ws::loaded_at(1)));
+    let (_, first) = opened.step_read(Input::ReadDone { revision: 5, rows: rows(&["r1"]) });
+    assert_eq!(first, [snap(5, &["r1"], Ws::loaded_at(1))]);
+    opened.step(Input::Resync);
+    let (_, again) = opened.step_read(Input::ReadDone { revision: 7, rows: rows(&["r1"]) });
+    assert_eq!(again, [snap(5, &["r1"], Ws::loaded_at(1))]);
+    let mut pending = open_rows();
+    pending.step(Input::WindowState(Ws::loaded_at(1)));
+    pending.step_read(Input::ReadDone { revision: 5, rows: rows(&["r1"]) });
+    pending.step(Input::Committed { revision: 6, touches: true });
+    pending.step(Input::Resync);
+    let (_, after_commit) = pending.step_read(Input::ReadRelevant { revision: 7, position: 0, relevant: Some((6, 0)), rows: rows(&["r1", "r2"]) });
+    assert_eq!(after_commit, [snap(6, &["r1", "r2"], Ws::loaded_at(1))]);
     for seen in [3, 4] {
         let mut twin = live_rows();
         twin.step(Input::WindowState(Ws::loaded_at(2)));
         twin.step(Input::Committed { revision: 3, touches: true });
         twin.step(Input::Committed { revision: 4, touches: false });
-        let (_, values) = twin.step_read(Input::ReadDone { revision: seen, rows: rows(&["r1", "r2"]) });
+        let (_, values) = twin.step_read(Input::ReadRelevant { revision: seen, position: 0, relevant: Some((3, 0)), rows: rows(&["r1", "r2"]) });
         assert_eq!(values, [Val::Delta { base: 1, revision: 3, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }], "seen {seen}");
+    }
+}
+
+#[test]
+fn dlv_prop_commit_during_read_is_delivered() {
+    fn commit(twin: &mut Twin, revision: i64) -> Vec<Effect> {
+        twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        Twin::modelled(take(&twin.log))
+    }
+    fn complete(twin: &mut Twin, read_id: u64, revision: i64, values: &[&str]) {
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(values)), replaced: Vec::new(), total: None } });
+        take(&twin.log);
+    }
+    fn pull(twin: &mut Twin) -> Val {
+        let outcome = twin.answers.register(EPOCH).id();
+        twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
+        Twin::modelled(take(&twin.log)).into_iter().find_map(|effect| match effect { Effect::Answer(Pulled::Value(value)) => Some(value), _ => None }).expect("a value is ready")
+    }
+    for commit_first in [false, true] {
+        for first_snapshot in [5, 6] {
+            let mut twin = live_rows();
+            assert_eq!(commit(&mut twin, 5), [Effect::Read(5)]);
+            let first_id = twin.read_id();
+            if commit_first { assert_eq!(commit(&mut twin, 6), [Effect::Read(6)]); }
+            complete(&mut twin, first_id, first_snapshot, if first_snapshot == 5 { &["r1", "r5"] } else { &["r1", "r5", "r6"] });
+            if commit_first {
+                let read_id = twin.read_id();
+                complete(&mut twin, read_id, 6, &["r1", "r5", "r6"]);
+            } else {
+                let first = pull(&mut twin);
+                assert!(matches!(&first, Val::Delta { revision, .. } if *revision == first_snapshot), "snapshot {first_snapshot}: {first:?}");
+                let effects = commit(&mut twin, 6);
+                assert_eq!(effects, if first_snapshot == 5 { vec![Effect::Read(6)] } else { vec![] });
+                if first_snapshot == 6 { continue; }
+                let read_id = twin.read_id();
+                complete(&mut twin, read_id, 6, &["r1", "r5", "r6"]);
+            }
+            let last = pull(&mut twin);
+            assert!(matches!(&last, Val::Delta { revision: 6, .. }), "commit_first={commit_first}, snapshot={first_snapshot}: {last:?}");
+        }
+    }
+}
+
+#[test]
+fn dlv_changed_read_without_current_relevant_version_ends() {
+    for relevant in [None, Some((0, 0))] {
+        let mut twin = live_rows();
+        twin.step(Input::Committed { revision: 2, touches: true });
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant, data: d::ReadData::Rows { rows: rows_of(&rows(&["r1", "r2"])), replaced: Vec::new(), total: None } });
+        assert!(matches!(twin.state().journal(STREAM).last(), Some(d::Value::Ended(d::EndCause::Internal { .. }))), "{relevant:?}");
     }
 }
 
@@ -375,6 +426,20 @@ fn dlv_live_window_held() {
     let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(2)));
     assert!(values.is_empty(), "the state is visible only with revision 2");
     assert_eq!(effects, [Effect::Read(2)], "a state past the last read starts a read");
+    let mut additional = 0;
+    for _ in 0..20 {
+        additional += twin.step(Input::WindowState(Ws::loading_after(2))).iter().filter(|effect| matches!(effect, Effect::Read(_))).count();
+        additional += twin.step(Input::WindowState(Ws::loaded_at(2))).iter().filter(|effect| matches!(effect, Effect::Read(_))).count();
+    }
+    assert!(twin.step(Input::WindowState(Ws::loading_after(2))).is_empty());
+    assert_eq!(additional, 0, "40 states at the same bound need only the initial read");
+    let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
+    assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loading_after(2) }]);
+
+    let mut twin = live_rows();
+    let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(2)));
+    assert_eq!(effects, [Effect::Read(2)]);
+    assert!(values.is_empty());
     let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
     assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }]);
 }
@@ -384,6 +449,10 @@ fn dlv_live_window_same() {
     let mut twin = live_rows();
     let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(1)));
     assert!(effects.is_empty() && values.is_empty());
+    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::loaded_at(2)) });
+    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(2)]);
+    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::loaded_at(2)) });
+    assert!(Twin::modelled(take(&twin.log)).is_empty(), "the same held state does not start another read");
 }
 
 #[test]
@@ -502,20 +571,6 @@ fn dlv_live_event_rows_kind() {
 }
 
 #[test]
-fn dlv_live_models_reset() {
-    let mut twin = live_rows();
-    assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Read(1)]);
-}
-
-#[test]
-fn dlv_live_models_other() {
-    let mut rows = live_rows();
-    assert!(rows.step(Input::ModelsReset { own_model: false }).is_empty());
-    let mut events = open_events();
-    assert!(events.step(Input::ModelsReset { own_model: true }).is_empty());
-}
-
-#[test]
 fn dlv_live_pull() {
     let mut twin = live_rows();
     twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
@@ -572,10 +627,24 @@ fn dlv_ended_cancel_wait() {
 #[test]
 fn dlv_ended() {
     let mut twin = ended_by_epoch();
-    for input in [Input::Committed { revision: 9, touches: true }, Input::ReadDone { revision: 9, rows: rows(&["r9"]) }, Input::WindowState(Ws::loading_after(9)), Input::ModelsReset { own_model: true }, Input::ModelReady] {
+    for input in [Input::Committed { revision: 9, touches: true }, Input::ReadDone { revision: 9, rows: rows(&["r9"]) }, Input::WindowState(Ws::loading_after(9)), Input::ModelReady] {
         assert!(twin.step(input).is_empty());
     }
     assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
+    let mut queue = Twin::new();
+    let mut queue_view = view(Kind::List);
+    queue_view.kind = d::Kind::Operations;
+    queue_view.tables = vec!["op".into()];
+    queue_view.local = true;
+    queue_view.remote = false;
+    queue.call(d::DeliveryInput::Open { stream: STREAM, view: queue_view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
+    let read_id = queue.read_id();
+    queue.call(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 });
+    queue.call(d::DeliveryInput::SinkClosed { stream: STREAM });
+    take(&queue.log);
+    queue.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 0, error: "late".into() });
+    assert!(Twin::modelled(take(&queue.log)).is_empty(), "a late queue read cannot publish after the end");
+    assert!(matches!(queue.state().journal(STREAM).as_slice(), [d::Value::Ended(d::EndCause::Cancelled)]));
 }
 
 #[test]

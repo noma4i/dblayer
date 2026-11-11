@@ -40,6 +40,7 @@ unsafe extern "C" fn count_selects(_: u32, context: *mut std::ffi::c_void, _: *m
 
 async fn reference_batch(size: usize) -> BTreeMap<u64, usize> {
     let stand = Stand::open().await;
+    let start = stand.request_mark();
     let epoch = stand.database.session_epoch();
     let user = |id: String| json!({"__typename":"User", "id":id, "fullName":"A", "username":"a", "online":false, "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"});
     let visitors: Vec<_> = (0..2).map(|i| json!({"node":user(format!("u{i}"))})).collect();
@@ -56,11 +57,11 @@ async fn reference_batch(size: usize) -> BTreeMap<u64, usize> {
     root["similarMoments"] = json!(similar);
     stand.answer("meCompass", json!({"viewer":{"compassMoments":{"edges":[{"node":root}], "pageInfo":{"hasNextPage":false,"endCursor":null}}}}));
     stand.settle().await;
-    let received = stand.asked().len();
+    let received = stand.request_mark();
     stand.hold(&["meCompass"]);
     let database = stand.database.clone();
     let refresh = tokio::spawn(async move { database.refresh(epoch, "Moment".into(), Some("compass".into()), "{}".into()).await });
-    stand.received(received + 1).await;
+    stand.receive_after(received, "meCompass", None, 1).await;
     let selects = Arc::new(SqlCount::new());
     let connection = stand.database.db.lock();
     let result = unsafe { rusqlite::ffi::sqlite3_trace_v2(connection.connection.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(count_selects), Arc::as_ptr(&selects).cast_mut().cast()) };
@@ -76,7 +77,7 @@ async fn reference_batch(size: usize) -> BTreeMap<u64, usize> {
     assert_eq!(stand.cell("Moment", &row, "similarIds"), ids("m"));
     for i in 0..2 { assert!(bound(stand.database.read_row(epoch, "User".into(), format!("u{i}"))).await.unwrap().is_some()); }
     for i in 0..size { assert!(bound(stand.database.read_row(epoch, "Moment".into(), format!("m{i}"))).await.unwrap().is_some()); }
-    assert_eq!((stand.requests("MomentNode"), stand.requests("meCompass")), (1, 2));
+    assert_eq!((stand.requests_after(start, "MomentNode", None), stand.requests_after(start, "meCompass", None)), (1, 1));
     stand.database.close_now();
     reads
 }

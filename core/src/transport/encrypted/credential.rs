@@ -98,12 +98,3 @@ pub(crate) fn stored_answers(store: &Store) -> Result<std::collections::BTreeMap
 pub(crate) fn dropped_pending(store: &Store) -> Result<bool, TransportError> {
     store.read_locked(session_state::dropped_pending).map_err(storage)
 }
-
-/// The state of the session at open: a session end that did not finish clears the tables and the secret.
-pub(crate) fn finish_session_end(store: &Store, secret: &Secret) -> Result<(), TransportError> {
-    if store.take_session_end_replay() {
-        store.write(|inner| Ok(session_state::clear(&inner.connection)?)).map_err(|error| TransportError::Storage(format!("session storage: {error}")))?;
-        secret.slot.clear()?;
-    }
-    Ok(())
-}

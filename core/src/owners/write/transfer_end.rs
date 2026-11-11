@@ -289,7 +289,7 @@ impl TransferState {
                 }
                 Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
-            if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some()) {
+            if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some() || transfer.restore_element.as_ref().is_some_and(|(_, holder)| holder.is_some())) {
                 self.delete_copy(id, fx);
             }
             self.finish(id, fx);

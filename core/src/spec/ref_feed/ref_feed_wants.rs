@@ -38,7 +38,7 @@ impl Feed {
             Mode::Opening { gap } => {
                 self.mode = Mode::Off { gap };
                 self.close_all(&mut effects);
-                let lost = self.lose_held(None);
+                let lost = self.lose_held(&mut effects);
                 Self::stale(&lost, &mut effects);
             }
             Mode::Live => {
@@ -57,6 +57,7 @@ impl Feed {
         if !self.pending.is_empty() {
             self.commit_pending(effects);
         }
+        effects.push(Effect::Gap(self.models()));
         self.active = None;
         self.mode = Mode::Draining;
         self.then = Then::Reopen;
@@ -67,7 +68,7 @@ impl Feed {
         let mut effects = Vec::new();
         match (self.mode, to) {
             (Mode::Opening { .. }, To::Opening) => {
-                let lost = self.lose_held(None);
+                let lost = self.lose_held(&mut effects);
                 self.opening = Some(Proto::Handshake);
                 self.attempts += 1;
                 effects.push(Effect::ScheduleResubscribe);
@@ -77,6 +78,7 @@ impl Feed {
                 if !self.pending.is_empty() {
                     self.commit_pending(&mut effects);
                 }
+                effects.push(Effect::Gap(self.models()));
                 self.active = None;
                 self.mode = Mode::Opening { gap: true };
                 self.opening = Some(Proto::Handshake);
@@ -138,13 +140,14 @@ impl Feed {
             Mode::Opening { gap } if !on => {
                 self.mode = Mode::Off { gap };
                 self.close_all(&mut effects);
-                let lost = self.lose_held(None);
+                let lost = self.lose_held(&mut effects);
                 Self::stale(&lost, &mut effects);
             }
             Mode::Live if !on => {
                 if !self.pending.is_empty() {
                     self.commit_pending(&mut effects);
                 }
+                effects.push(Effect::Gap(self.models()));
                 self.drain_all(Then::Off { gap: true }, &mut effects);
             }
             _ => {}

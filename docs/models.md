@@ -598,6 +598,8 @@ val audio = Message.audioSince(chatId, afterSequence = 120)
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts | none |
 
+Freshness starts when the server response arrives, not when the database stores it.
+
 `loadAll()` uses the window freshness and the pages already stored, then reads the remaining pages. `loadAll(force: true)` (Kotlin `force = true`) reloads the first page even when the window is fresh, then reads the remaining pages. Concurrent calls for the same window can share one request in flight. Offline, the load waits for the network.
 
 An operation name is a string like `"MomentsFeed"` or `"feed"`.
@@ -737,7 +739,7 @@ val events = scope.events(Message).events(Message)
 events.collect { item -> when (item) { ModelEventItem.Ready -> startWork(); is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Lost -> resync(item.last - item.first + 1uL); is ModelEventItem.Ended -> report(item.cause) } }
 ```
 
-The journal of a reader in the core holds 256 values. A slower reader reads one `lost` range with the positions of the dropped events before the events that were kept, and never delays the next event of other readers. The kept events and the lost positions add up to the events sent. A failed row read publishes a `lost` position in place of the event and raises the rejected count of the subscription. Frames that the full input of a subscription dropped reach the reader as `lost` positions, one per frame. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
+The journal of a reader in the core holds 256 values. A slower reader receives `lost` with the range of missed positions before the events that were kept, without delaying other readers. The kept events and the lost positions add up to the events sent. A failed row read publishes a `lost` position in place of the event and raises the rejected count of the subscription. When the subscription input overflows or the connection breaks, the number of missed events is unknown. The reader receives `gap`, and the library rereads observed selections of affected models. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
 An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
 
@@ -981,6 +983,8 @@ val members = Projected(scope.stream(User.groupMembers(groupId)), User, screenSc
 | `scope :nodes, node: :many` with `response shape: :list` | many entities in one request, generates `Model.nodes(ids)`. The operation takes `$ids` |
 | `response from: "node.messages"` | a related list under the node: the path starts at `node` and continues inside the `... on` type |
 
+Freshness starts when the server response arrives, not when the database stores it.
+
 ```swift
 let group = try await Group.node(groupId)                      // nil when the server has no such group or the viewer cannot see it
 let fresh = try await Group.node(groupId, force: true)        // an event named this group: read it again now
@@ -1001,7 +1005,7 @@ val groups = Group.nodes(ids)
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
 - `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
-- A read waiting across a session reset ends with `NoSession`. An answer after a model cache reset ends the read with `Interrupted`. Nothing is written.
+- A read waiting across a session reset ends with `NoSession`. Nothing is written.
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 

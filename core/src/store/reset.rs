@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::store::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
-use crate::store::files::{clear_all, clear_model};
+use crate::store::files::{clear_all, clear_model, clear_unheld};
 use crate::identity::ListKey;
 use crate::store::nodes::read_trees;
 use crate::store::operation::{delete_operation, quarantine_add, read_value, QuarantineReason};
@@ -53,14 +53,16 @@ fn like_pattern(prefix: &str) -> String {
     pattern
 }
 
-pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String], now: i64) -> Result<(), StoreError> {
+pub(crate) fn write_intent(connection: &Connection, mode: &str, now: i64) -> Result<(), StoreError> {
     let transaction = connection.unchecked_transaction()?;
-    clear_intent(&transaction)?;
-    transaction.execute(include_str!("sql/reset/write_intent_insert_reset_intent.sql"), params![mode, now])?;
-    for (pos, model) in models.iter().enumerate() {
-        transaction.execute(include_str!("sql/reset/write_intent_insert_reset_intent_model.sql"), params![pos as i64, model])?;
-    }
+    write_intent_in_transaction(&transaction, mode, now)?;
     transaction.commit()?;
+    Ok(())
+}
+
+pub(crate) fn write_intent_in_transaction(connection: &Connection, mode: &str, now: i64) -> Result<(), StoreError> {
+    clear_intent(connection)?;
+    connection.execute(include_str!("sql/reset/write_intent_insert_reset_intent.sql"), params![mode, now])?;
     Ok(())
 }
 
@@ -148,6 +150,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_in
     connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_scope_member.sql"))?;
     if keep_intents {
         connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_sync_action.sql"))?;
+        clear_unheld(connection, None)?;
     } else {
         connection.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
         clear_sync(connection, None)?;
@@ -249,41 +252,23 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> Result<BTreeMap<String, Str
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
-    let models: Vec<String> = inner.connection.prepare(include_str!("sql/reset/finish_interrupted_reset.sql"))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
-    if !matches!(mode.as_str(), "cache_only" | "mismatched" | "account" | "session_end") {
-        let transaction = inner.connection.unchecked_transaction()?;
-        quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
-        clear_intent(&transaction)?;
-        transaction.commit()?;
-        return Ok(false);
+    if !matches!(mode.as_str(), "mismatched" | "account" | "session_end") {
+        return Err(StoreError::Constraint(format!("unknown reset intent mode: {mode}")));
     }
     let transaction = inner.connection.unchecked_transaction()?;
-    match mode.as_str() {
-        "cache_only" => {
-            for model in &models {
-                let table = crate::store::ddl::table_name(model);
-                wipe_model_cache(&transaction, model, &table, true)?;
-            }
-        }
-        mode => {
-            let keep_intents = mode == "mismatched";
-            wipe_all_cache(&transaction, true, keep_intents)?;
-            if !keep_intents { retire_operations(&transaction, None, None)?; }
-            let data_version = inner.data_version.clone();
-            manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner)?)?;
-        }
-    }
+    let keep_intents = mode == "mismatched";
+    wipe_all_cache(&transaction, true, keep_intents)?;
+    if !keep_intents { retire_operations(&transaction, None, None)?; }
+    if mode == "session_end" { transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?; }
+    if !keep_intents { session_state::remove_resume_answer(&transaction)?; }
+    let data_version = inner.data_version.clone();
+    manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner)?)?;
     clear_intent(&transaction)?;
     transaction.commit()?;
     Ok(true)
 }
 
 impl Store {
-    /// True once after an open that finished an interrupted session end: the credential is still to clear.
-    pub(crate) fn take_session_end_replay(&self) -> bool {
-        self.session_end_replay.swap(false, std::sync::atomic::Ordering::SeqCst)
-    }
-
     #[cfg(test)]
     pub fn reset_intent(&self) -> Result<Option<String>, StoreError> {
         let inner = self.lock();
@@ -330,10 +315,11 @@ impl Store {
         inner.generation = generation;
         self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
-        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, &[], now)?;
+        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false, false)?;
         retire_operations(&transaction, None, None)?;
+        session_state::remove_resume_answer(&transaction)?;
         if erase_encrypted {
             transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?;
         }
@@ -341,8 +327,10 @@ impl Store {
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        snapshot.clear_models(None);
+        snapshot.clear_models();
+        let journal = self.context.changed.prepare_reset(revision);
         self.overlays.commit(snapshot, transaction)?;
+        journal.finish();
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
@@ -356,40 +344,14 @@ impl Store {
         Ok(revision)
     }
 
-    /// The effect `EraseModels`: the cache of the models goes, intents and `encrypted_*` stay. Returns the new revision.
-    pub(crate) fn erase_models(&self, generation: crate::identity::Generation, models: &[String]) -> Result<i64, StoreError> {
-        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
-        let mut inner = self.lock();
-        let tables: Vec<(String, String)> = models.iter().map(|model| inner.model(model).map(|info| (model.clone(), info.table.clone()))).collect::<Result<_, _>>()?;
-        inner.generation = generation;
-        self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
-        let now = inner.now_ms();
-        write_intent(&inner.connection, "cache_only", models, now)?;
-        let transaction = inner.connection.unchecked_transaction()?;
-        for (model, table) in &tables {
-            wipe_model_cache(&transaction, model, table, false)?;
-        }
-        let revision = bump_revision(&transaction)?;
-        clear_intent(&transaction)?;
-        let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        snapshot.clear_models(Some(models));
-        self.overlays.commit(snapshot, transaction)?;
-        self.publish_revision(revision);
-        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        drop(readers);
-        let event = StoreEvent::Reset { revision, models: Some(models.to_vec()) };
-        if let Some(log) = self.commit_log.get() { log(&event); }
-        let ticket = self.line.ticket();
-        drop(inner);
-        ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(models.to_vec()) }.run();
-        Ok(revision)
-    }
 }
 
 /// A write of the effect `Write` to `encrypted_*`, resolved by the executor: strings and numbers as the tables hold them.
 pub(crate) enum RowOp {
     PutPending(Pending),
     RemovePending,
+    PutResumeAnswer(crate::owners::session::SessionAnswer),
+    RemoveResumeAnswer,
     RemoveSession,
     PutAnswer { request_id: u64, operation: Option<i64>, answer: session_state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
@@ -415,6 +377,8 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
             req_id: pending.request_id,
         }),
         StoreOp::RemovePending => RowOp::RemovePending,
+        StoreOp::ResumeAnswer { answer } => RowOp::PutResumeAnswer(answer.clone()),
+        StoreOp::RemoveResumeAnswer => RowOp::RemoveResumeAnswer,
         StoreOp::EraseSession => RowOp::RemoveSession,
         StoreOp::Answer { request_id, operation, result } => RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => RowOp::RemoveAnswer { request_id: *request_id },
@@ -433,7 +397,9 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
                 session_state::store_pending(transaction, &pending)?;
             }
             RowOp::RemovePending => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_pending.sql"), [])?; }
-            RowOp::RemoveSession => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_session.sql"), [])?; }
+            RowOp::PutResumeAnswer(answer) => session_state::store_resume_answer(transaction, &answer)?,
+            RowOp::RemoveResumeAnswer => session_state::remove_resume_answer(transaction)?,
+            RowOp::RemoveSession => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_session.sql"), [])?; session_state::remove_resume_answer(transaction)?; }
             RowOp::PutAnswer { request_id, operation, answer } => session_state::store_answer(transaction, request_id, operation, &answer)?,
             RowOp::RemoveAnswer { request_id } => session_state::remove_answer(transaction, request_id)?,
             RowOp::ReleasePendingOwner { request_id } => session_state::release_pending_owner(transaction, request_id)?,

@@ -39,13 +39,14 @@ impl TransferState {
     /// Ready transfers start by `(seq, position)` while a slot is free, the network is up and `saving` allows. A due retry competes in the same order.
     pub(super) fn start_in_order(&mut self, fx: &mut Fx) {
         if self.starts_held { return; }
-        while self.online == Some(true) && self.active() < self.slots {
+        while self.online == Some(true) {
             let next = self.scan().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
             if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts < source.parts)) {
                 self.begin_failure(id, "Exhausted".into(), abort, fx);
                 continue;
             }
+            if self.active() >= self.slots { return; }
             let attempt_id = self.attempt();
             let Some(transfer) = self.transfers.get_mut(&id) else { return };
             transfer.attempt_id = attempt_id;
@@ -138,8 +139,13 @@ impl TransferState {
     }
 
     pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
+        self.begin_failure_at(id, error, abort, None, fx);
+    }
+
+    pub(super) fn begin_failure_at(&mut self, id: TransferId, error: String, abort: bool, at: Option<crate::runtime::Time>, fx: &mut Fx) {
         self.mark_failure(id, error, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if let Some(at) = at { transfer.failed_at = Some(at); }
         transfer.failure_abort = abort;
         self.store(&[id], StoreKind::Failed, fx);
     }

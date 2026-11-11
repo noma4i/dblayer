@@ -1,6 +1,5 @@
 //! The calls of the platform to the owners: each registers a waiter, posts one input and returns the waiter.
 
-use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use super::{Life, LifeReply, WAITER_AUTHOR};
@@ -157,6 +156,7 @@ impl Life {
 
     /// The declarations of a registration reach every receiver in one step; `Windows` starts the preload last.
     pub fn register_operations(&self, calls: Vec<(String, CallKind)>, declarations: Vec<(String, String)>) {
+        let calls = calls.into_iter().filter_map(|(name, kind)| (self.operations)(&name).map(|(document, root)| (name, crate::owners::calls::CallDefinition { kind, document, root }))).collect();
         self.wiring.to_calls(CallsInput::Declare(calls));
         self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone() });
         self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations });
@@ -170,13 +170,6 @@ impl Life {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: Some(waiter.id().raw()) });
-        waiter
-    }
-
-    pub fn reset_models(&self, models: BTreeSet<String>) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_lifecycle(LifecycleInput::ResetModels { models, reply: Some(waiter.id().raw()) });
         waiter
     }
 

@@ -20,8 +20,8 @@ pub fn classify_item(s: &mut State, op: &mut Op, e: &mut Vec<Effect>) {
     op.cycle_id = item.cycle_id;
     op.request_id = item.request_id;
     op.pending_owned = s.pending_requests.contains(&item.request_id);
-    op.ever_sent = item.attempts >= 1;
-    op.cycle_sent = item.attempts >= 1;
+    op.ever_sent = op.pending_owned;
+    op.cycle_sent = op.pending_owned;
     let declared = s.declared.contains(&(op.model.clone(), op.action.clone()));
     let online = s.online_now();
     let free = row_free(s, op);
@@ -62,6 +62,9 @@ pub fn classify_item(s: &mut State, op: &mut Op, e: &mut Vec<Effect>) {
             row(e, "out_open_restores_pending_offline");
             op.stage = Stage::Queued;
         }
+    } else if item.attempts >= 1 {
+        row(e, "out_restored_attempt_without_pending");
+        op.stage = Stage::Queued;
     } else if online && free && expired_at_restore(s, op, &item) {
         row(e, "out_queued_expired");
         roll_back(op, Cause::Expired, e);

@@ -26,7 +26,7 @@ impl CredentialStore for Keychain {
 }
 
 fn stored(path: &std::path::Path) -> (String, i64) {
-    let db = crate::store::Store::open_models(Some(path), vec![], None).map(Arc::new).unwrap();
+    let db = crate::store::Store::open_models(Some(path), vec![], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     let inner = db.lock();
     let session = crate::store::session_state::session(&inner.connection).unwrap().unwrap();
     (session.credential_digest, session.sequence as i64)

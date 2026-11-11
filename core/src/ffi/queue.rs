@@ -28,6 +28,10 @@ pub struct OperationInfo {
 }
 
 impl OperationInfo {
+    pub(crate) fn of_failed_transfer(transfer: crate::store::ActiveTransfer) -> Self {
+        let error = crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Unrecognized, transfer.restore_error.unwrap_or_default());
+        Self { seq: transfer.transfer_id, model: transfer.model, row_id: transfer.row_id, action: transfer.action, status: OperationQueueStatus::Failed, attempts: 0, error: Some(failure(&error)), created_at: 0, blocked_by: None, upload: None }
+    }
     /// The queue entry of a transfer that has no operation row yet: it shows the value of the transfer.
     pub(crate) fn of_transfer(transfer: crate::store::ActiveTransfer, shown: WireUpload) -> Self {
         let status = match shown.status {

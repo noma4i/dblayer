@@ -81,27 +81,27 @@ fn feed_off_offline() {
 fn feed_off_stray() {
     let mut twin = Twin::with(Some(false), true);
     twin.step(plus("Chat"));
-    for input in [event(To::Stray, "Chat", "x"), event(To::Active, "Chat", "x"), Input::HandshakeDone, Input::ChannelLost { to: To::Active, dropped: None }, Input::Dropped { to: To::Active }, Input::Ended { to: To::Opening }, Input::Tick, Input::Resubscribe { to: To::Opening }, Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: Vec::new() }] {
+    for input in [event(To::Stray, "Chat", "x"), event(To::Active, "Chat", "x"), Input::HandshakeDone, Input::Dropped { to: To::Active }, Input::Ended { to: To::Opening }, Input::Tick, Input::Resubscribe { to: To::Opening }, Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: Vec::new() }] {
         assert!(twin.step(input).is_empty());
     }
 }
 
-#[test]
-fn feed_off_models_reset() {
-    let mut twin = Twin::with(Some(false), true);
-    assert!(twin.step(Input::ModelsReset { models: names(&["Chat"]), generation: 1 }).is_empty());
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
-}
 
 #[test]
 fn feed_landing_after_drop() {
     let mut twin = live_immediate();
     assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
+    let before = twin.history.len();
     twin.step(Input::Dropped { to: To::Active });
+    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the loss has its own stale batch: {batches:?}");
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
     twin.step(Input::Committed);
     assert_eq!(twin.reference.take_obs(), Vec::new());
-    assert_eq!(twin.state().landing(), 0, "a batch that lands after the break is settled");
+    assert_eq!(twin.state().landing(), 1, "only the stale batch remains after the event lands");
+    twin.step(Input::Committed);
+    assert_eq!(twin.state().landing(), 0, "the stale batch also settles");
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn feed_opening_ready_after_gap() {
 #[test]
 fn feed_opening_stray() {
     let mut twin = opening();
-    for input in [event(To::Stray, "Chat", "x"), Input::ChannelLost { to: To::Stray, dropped: None }, Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }, Input::FrameOpened { to: To::Stray, counter: Counter::Expected, events: Vec::new() }] {
+    for input in [event(To::Stray, "Chat", "x"), Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }, Input::FrameOpened { to: To::Stray, counter: Counter::Expected, events: Vec::new() }] {
         assert!(twin.step(input).is_empty());
     }
     assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
@@ -169,22 +169,11 @@ fn feed_opening_event() {
 }
 
 #[test]
-fn feed_opening_channel_lost() {
-    let mut twin = opening();
-    twin.step(event(To::Opening, "Chat", "c1"));
-    let counts = Some(vec![("Chat".to_string(), 2)]);
-    assert_eq!(twin.step(Input::ChannelLost { to: To::Opening, dropped: counts }), [Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_eq!(twin.state().position("Chat"), 3, "the lost positions follow the held one");
-    assert_eq!(twin.step(Input::ChannelLost { to: To::Opening, dropped: None }), [Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_eq!(twin.state().position("Chat"), 3, "an unknown number takes no position");
-}
-
-#[test]
 fn feed_opening_dropped() {
     let mut twin = opening();
     twin.step(event(To::Opening, "Chat", "c1"));
     let first = twin.state().opening_connection();
-    assert_eq!(twin.step(Input::Dropped { to: To::Opening }), [Effect::ScheduleResubscribe, Effect::Stale { model: "Chat".into(), all: true }]);
+    assert_eq!(twin.step(Input::Dropped { to: To::Opening }), [Effect::Commit, Effect::ScheduleResubscribe, Effect::Stale { model: "Chat".into(), all: true }]);
     assert_ne!(twin.state().opening_connection(), first, "the retry is a new connection");
     assert_eq!(twin.state().held(), 0);
     let mut ended = opening();
@@ -228,7 +217,11 @@ fn feed_opening_unwant() {
 fn feed_opening_last_unwant() {
     let mut twin = opening();
     twin.step(event(To::Opening, "Chat", "c1"));
-    assert_eq!(twin.step(minus("Chat")), [Effect::Close, Effect::Stale { model: "Chat".into(), all: true }]);
+    let before = twin.history.len();
+    assert_eq!(twin.step(minus("Chat")), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
+    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the lost held model is marked: {batches:?}");
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
@@ -236,7 +229,11 @@ fn feed_opening_last_unwant() {
 fn feed_opening_offline() {
     let mut twin = opening();
     twin.step(event(To::Opening, "Chat", "c1"));
-    assert_eq!(twin.step(Input::Online(false)), [Effect::Close, Effect::Stale { model: "Chat".into(), all: true }]);
+    let before = twin.history.len();
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
+    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the lost held model is marked: {batches:?}");
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
     assert_eq!(twin.step(Input::Online(true)), [Effect::Connect], "the want is kept: coming online opens the subscription again");
 }
@@ -249,17 +246,6 @@ fn feed_opening_online() {
     assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
 }
 
-#[test]
-fn feed_opening_models_reset() {
-    let mut twin = opening_with(Twin::new());
-    twin.step(plus("Post"));
-    twin.step(event(To::Opening, "Chat", "c1"));
-    twin.step(event(To::Opening, "Post", "p1"));
-    twin.generation += 1;
-    let generation = twin.generation;
-    assert_eq!(twin.step(Input::ModelsReset { models: names(&["Post"]), generation }), [Effect::Stale { model: "Post".into(), all: true }]);
-    assert_eq!(twin.state().held(), 1, "the frames of the other model stay");
-}
 
 #[test]
 fn feed_live_event() {
@@ -297,7 +283,7 @@ fn feed_live_attempts_reset_on_data() {
 #[test]
 fn feed_live_stray() {
     let mut twin = live();
-    for input in [event(To::Stray, "Chat", "x"), Input::ChannelLost { to: To::Stray, dropped: None }, Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }] {
+    for input in [event(To::Stray, "Chat", "x"), Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }] {
         assert!(twin.step(input).is_empty());
     }
     assert_eq!(twin.state().mode(), f::Mode::Live);
@@ -396,33 +382,54 @@ fn feed_live_stray_batch() {
 }
 
 #[test]
-fn feed_live_channel_lost() {
-    let mut twin = live();
-    twin.step(chat("c1"));
-    let counts = Some(vec![("Chat".to_string(), 5)]);
-    assert_eq!(twin.step(Input::ChannelLost { to: To::Active, dropped: counts }), [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_eq!(twin.reference.take_obs(), Vec::new());
-    twin.step(Input::Committed);
-    assert_eq!(twin.state().position("Chat"), 6, "the pending event and the 5 dropped hold 6 positions");
-    assert_eq!(twin.step(Input::ChannelLost { to: To::Active, dropped: None }), [Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_eq!(twin.state().position("Chat"), 6, "an unknown number takes no position");
+fn feed_dropped_gap_batches_reject_independently() {
+    for (rejected, reason) in [(0, Reject::Storage), (1, Reject::Storage), (1, Reject::StaleGeneration(names(&["Chat"])))] {
+        let mut twin = live();
+        twin.step(chat("c1"));
+        twin.step(Input::Dropped { to: To::Active });
+        twin.step(Input::HandshakeDone);
+        let before = twin.history.len();
+        let effects = twin.step(Input::RejectedAt(rejected, reason.clone()));
+        if rejected == 0 {
+            assert!(effects.iter().all(|effect| *effect != Effect::Commit));
+            twin.step(Input::Committed);
+            assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Lost { .. })));
+        } else {
+            if matches!(reason, Reject::Storage) {
+                assert!(effects.is_empty());
+                let retry = twin.step(Input::StrayBatch);
+                assert_eq!(retry, [Effect::Commit]);
+            } else {
+                assert_eq!(effects, [Effect::Commit]);
+            }
+            let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } if input.contains("MarkStale") => Some(input), _ => None }).collect();
+            assert_eq!(batches.len(), 1);
+            assert!(batches[0].contains("Chat") && !batches[0].contains("c1"), "retry must retain the debt: {batches:?}");
+            if matches!(reason, Reject::StaleGeneration(_)) {
+                assert!(batches[0].contains("basis: {\"Chat\": 4}"), "retry uses the returned generation: {batches:?}");
+            }
+            twin.step(Input::Committed);
+            assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Event { payload, .. } if payload == "c1")));
+            twin.step(Input::Committed);
+        }
+    }
 }
 
 #[test]
 fn feed_live_dropped() {
     let mut twin = live();
     twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Connect]);
+    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Commit, Effect::Connect]);
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
     let mut ended = live();
-    assert_eq!(ended.step(Input::Ended { to: To::Active }), [Effect::Connect]);
+    assert_eq!(ended.step(Input::Ended { to: To::Active }), [Effect::Commit, Effect::Connect]);
 }
 
 #[test]
 fn feed_live_offline() {
     let mut twin = live();
     twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain]);
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::Commit, Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain]);
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Off { gap: true }, .. }));
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel]);
     assert!(matches!(twin.state().mode(), f::Mode::Off { gap: true }));
@@ -435,16 +442,6 @@ fn feed_live_online() {
     assert_eq!(twin.state().mode(), f::Mode::Live);
 }
 
-#[test]
-fn feed_live_models_reset() {
-    let mut twin = live();
-    twin.step(chat("c1"));
-    twin.generation += 1;
-    let generation = twin.generation;
-    assert!(twin.step(Input::ModelsReset { models: names(&["Chat"]), generation }).is_empty(), "the Store decides about the pending events");
-    twin.step(Input::Tick);
-    assert_eq!(twin.state().landing(), 1);
-}
 
 #[test]
 fn feed_live_last_unwant() {
@@ -517,7 +514,7 @@ fn feed_drain_elapsed() {
 
 #[test]
 fn feed_drain_pre_empted() {
-    for end in [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::ChannelLost { to: To::Draining, dropped: None }] {
+    for end in [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }] {
         let mut twin = live();
         twin.step(Input::Closing);
         assert_eq!(twin.step(end), [Effect::Cancel, Effect::CancelDrain, Effect::Drained]);
@@ -609,7 +606,11 @@ fn feed_proto_frame_kinds() {
     let mut quiet = live();
     assert!(quiet.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Quiet }).is_empty());
     let mut replayed = live();
-    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::ScheduleDrain], "the counter is checked before the meaning of the frame");
+    let before = replayed.history.len();
+    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit], "the counter is checked before the meaning of the frame");
+    let batches: Vec<_> = replayed.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the broken connection marks the model: {batches:?}");
 }
 
 #[test]
@@ -624,7 +625,7 @@ fn feed_proto_frame_ok() {
 #[test]
 fn feed_proto_frame_counter_mismatch() {
     let mut twin = live();
-    assert_eq!(twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleDrain]);
+    assert_eq!(twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit]);
     assert_eq!(twin.state().pending(), 0, "a replayed frame does not sit");
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
@@ -634,7 +635,7 @@ fn feed_proto_frame_counter_mismatch() {
 #[test]
 fn feed_proto_error() {
     let mut twin = live();
-    assert_eq!(twin.step(Input::ProtocolError { to: To::Active }), [Effect::Close, Effect::ScheduleDrain]);
+    assert_eq!(twin.step(Input::ProtocolError { to: To::Active }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit]);
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
     let mut handshake = opening();

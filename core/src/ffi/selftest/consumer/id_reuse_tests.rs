@@ -20,11 +20,11 @@ async fn operation_after_reopen_does_not_take_removed_rows_answer() {
     crate::test_wait::settled(&stand, "chat loaded", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("before")).await;
     let (events, token) = stand.events("Chat").await;
     stand.settle().await;
-    let received = stand.asked().len();
+    let received = stand.request_mark();
     stand.answer("ChatPin", json!({"chatPin": {"chat": chat("c1", "old answer")}}));
     stand.hold(&["ChatPin"]);
     let _first = bound(stand.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), "{}".into(), json!({"pin":true}).to_string())).await.unwrap();
-    stand.received(received + 1).await;
+    stand.receive_after(received, "ChatPin", None, 1).await;
     assert_eq!(stand.requests("ChatPin"), 1);
     let old_id: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();
     let old_pair: (String, i64) = rusqlite::Connection::open(&path).unwrap().query_row("SELECT request_id, sequence FROM encrypted_pending", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
@@ -46,10 +46,10 @@ async fn operation_after_reopen_does_not_take_removed_rows_answer() {
     crate::test_wait::settled(&reopened, "second chat loaded", || reopened.text_of(&rows, "Chat", "c2", "name").as_deref() == Some("second")).await;
     reopened.answer("ChatPin", json!({"chatPin": {"chat": chat("c2", "new answer")}}));
     reopened.settle().await;
-    let received = reopened.asked().len();
+    let received = reopened.request_mark();
     reopened.hold(&["ChatPin"]);
     let receipt = bound(reopened.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pin":true}).to_string())).await.unwrap();
-    reopened.received(received + 1).await;
+    reopened.receive_after(received, "ChatPin", None, 1).await;
     assert_eq!(reopened.requests("ChatPin"), 1);
     let connection = rusqlite::Connection::open(&path).unwrap();
     let new_id: i64 = connection.query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();

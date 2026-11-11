@@ -14,6 +14,23 @@ use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emi
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use super::ref_feed::ref_feed_channels::{Chan, In, Out};
 
+struct CapturedStore;
+
+impl crate::runtime::StateOwner for CapturedStore {
+    const EPOCHED: bool = false;
+    type State = Log<crate::owners::store::StoreBatch>;
+    type Input = crate::owners::store::StoreInput;
+    type Effect = crate::spec::support::NoEffect;
+
+    fn step(state: &mut Self::State, input: Self::Input) -> crate::runtime::Effects<Self> {
+        if let crate::owners::store::StoreInput::Commit(batch) = input { state.lock().unwrap().push(batch); }
+        Vec::new()
+    }
+    fn tick(_: crate::runtime::Time) -> Self::Input { crate::owners::store::StoreInput::Idle }
+    fn epoch_ended(_: u64, _: crate::runtime::Cause) -> Self::Input { crate::owners::store::StoreInput::Idle }
+    fn closing() -> Self::Input { crate::owners::store::StoreInput::Idle }
+}
+
 const EPOCH: u64 = 1;
 const STORE: usize = 0;
 const WINDOWS: usize = 1;
@@ -52,19 +69,21 @@ struct Rig {
     batches: Vec<u64>,
     subscribes: Vec<Outgoing>,
     reference: Chan,
+    store_batches: Log<crate::owners::store::StoreBatch>,
 }
 
 impl Rig {
     fn new() -> Self {
         let mut det = DetScheduler::new(4);
         let log = new_log();
-        det.add::<Sink<StoreWriter>>("store", new_log(), Discard);
+        let store_batches = new_log();
+        det.add::<CapturedStore>("store", store_batches.clone(), Discard);
         det.add::<Sink<Windows>>("windows", new_log(), Discard);
         det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
         let peers = FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) };
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
-        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), reference: Chan::new(channels()) };
+        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), reference: Chan::new(channels()), store_batches };
         rig.post(FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
         rig
     }
@@ -173,6 +192,30 @@ impl Rig {
         rig.confirm("B");
         rig
     }
+}
+
+#[test]
+fn feed_dropped_stale_survives_crash() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("feed.sqlite");
+    let models = vec![crate::schema::ModelSpec::new("Chat", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)])];
+    let store = crate::store::Store::open_models(Some(&path), models.clone(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let key = crate::identity::ListKey::compose(&["Chat", "thread", "c1"]).as_str().to_string();
+    let window = crate::store::WindowRecord { key: key.clone(), cursor: None, anchor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 };
+    store.save_window(&window).unwrap();
+    let mut rig = Rig::live();
+    take(&rig.store_batches);
+    rig.owner_post(FeedInput::Dropped { connection_id: FIRST });
+    let connection = rig.state().opening_connection().unwrap();
+    rig.owner_post(FeedInput::HandshakeDone { connection_id: connection, key_id: 7, now: crate::runtime::Time(0) });
+    rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "A".into() });
+    rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "B".into() });
+    let batches = take(&rig.store_batches);
+    let batch = batches.iter().find(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::MarkStale { models, .. } if models.iter().any(|model| model == "Chat")))).expect("channel loss must commit the stale debt");
+    store.write_batch(batch, store.files(), store.pointer_guards(), None).unwrap();
+    drop(store);
+    let reopened = crate::store::Store::open_models(Some(&path), models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    assert!(reopened.window_freshness(&key).unwrap().unwrap().stale_since.is_some(), "the stale debt must survive reopen");
 }
 
 #[test]
@@ -373,7 +416,7 @@ fn feed_chan_unwant_last_user() {
 #[test]
 fn feed_chan_ended_resubscribes() {
     let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) }), ["schedule:channel"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None, now: crate::runtime::Time(0) }), ["commit", "schedule:channel"]);
     assert_eq!(rig.state().confirmed(), ["A"], "the channel left the confirmed channels");
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
@@ -383,8 +426,19 @@ fn feed_chan_ended_resubscribes() {
 
 #[test]
 fn feed_chan_ended_retryable() {
+    let mut timed = Rig::live();
+    for attempt in 1..=2 {
+        take(&timed.log);
+        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) });
+        timed.det.run_until_quiet(10_000).unwrap();
+        let emitted = take(&timed.log);
+        let delays: Vec<_> = emitted.iter().filter_map(|entry| match entry { Emitted::Schedule { after, input, .. } if input.starts_with("ChannelResubscribe") => Some(*after), _ => None }).collect();
+        assert_eq!(delays, vec![crate::runtime::RetryPolicy::Cable.delay_seeded(attempt, 0)]);
+        timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) });
+        timed.det.run_until_quiet(10_000).unwrap();
+    }
     let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) }), ["schedule:channel"]);
+    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }), now: crate::runtime::Time(0) }), ["commit", "schedule:channel"]);
     assert_eq!(rig.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into(), now: crate::runtime::Time(0) }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
@@ -538,10 +592,10 @@ fn feed_chan_want_during_recovery() {
             let commits = words.iter().filter(|word| *word == "commit").count();
             let gaps = words.iter().filter(|word| word.starts_with("modelgap")).count();
             let readied = words.iter().filter(|word| *word == &format!("modelready:{POST}")).count();
-            let expected_commits = usize::from(*step == EventA && before) + if recovered { std::mem::take(&mut held) } else { 0 };
+            let expected_commits = usize::from(*step == EventA && before) + usize::from(matches!(step, EndA | EndB)) + if recovered { std::mem::take(&mut held) } else { 0 };
             assert_eq!(commits, expected_commits, "commits at {step:?} in {order:?}");
             assert_eq!(gaps > 0, recovered, "the gap comes once the last channel is confirmed, at {step:?} in {order:?}: {words:?}");
-            if recovered { assert!(words.iter().position(|word| word.starts_with("modelgap")) < words.iter().position(|word| word == "commit") || commits == 0, "the gap comes before the held event in {order:?}: {words:?}"); }
+            if recovered && commits > 0 { assert!(words.iter().position(|word| word.starts_with("modelgap")) < words.iter().position(|word| word == "commit"), "the gap comes before the held event in {order:?}: {words:?}"); }
             let expected_ready = usize::from(waiting && after);
             assert_eq!(readied, expected_ready, "the new reader is ready once and only when all channels are confirmed, at {step:?} in {order:?}");
             second += readied;

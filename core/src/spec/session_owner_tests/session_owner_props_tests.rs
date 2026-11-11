@@ -65,7 +65,7 @@ fn http_pairs(history: &[RefEffect]) -> Vec<(u64, u64)> {
 fn at_attempt(input: Input, attempt: u64) -> Input {
     match input {
         Input::HttpError { request_id, temporary, auth, security, body, .. } => Input::HttpError { request_id, attempt_id: attempt, temporary, auth, security, body },
-        Input::AnswerTooLarge { request_id, limit, sequenced, .. } => Input::AnswerTooLarge { request_id, attempt_id: attempt, limit, sequenced },
+        Input::AnswerTooLarge { request_id, limit, .. } => Input::AnswerTooLarge { request_id, attempt_id: attempt, limit },
         Input::Revoked { request_id, body, author_ref, .. } => Input::Revoked { request_id, attempt_id: attempt, body, author_ref },
         other => other,
     }

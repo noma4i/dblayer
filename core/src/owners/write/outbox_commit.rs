@@ -204,10 +204,8 @@ impl OutboxState {
 
     pub(super) fn rejected(&mut self, rejected: Rejected, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&rejected.batch) else { return };
-        if let RejectReason::StaleGeneration { models, generation } = &rejected.reason {
-            for model in models {
-                self.generation.insert(model.clone(), *generation);
-            }
+        if let RejectReason::StaleGeneration { generations, .. } = &rejected.reason {
+            self.generation.extend(generations.clone());
         }
         match batch {
             Batch::Member { op_id } => self.member_rejected(op_id, rejected.reason, fx),

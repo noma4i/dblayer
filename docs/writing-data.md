@@ -1,8 +1,7 @@
 # Writing data
 
-Resetting a model clears its cached rows and closes its queued changes without sending or rolling them back.
-A full reset applies this to every model. Replies for closed changes are discarded.
-Signing out is `sessionReset`. It ends the work of the old session, clears the credential and performs a full reset of the data:
+Opening a database after a model schema change clears affected cached rows. Queued operations and session state remain.
+Signing out is `sessionReset`. It ends the work of the old session, clears the credential and the account data:
 
 ```swift
 try await DB.sessionReset()

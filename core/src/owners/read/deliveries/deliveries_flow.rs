@@ -44,6 +44,8 @@ impl Delivery {
     }
 
     pub(super) fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<Emit>) {
+        if !self.sink_open() { return; }
+        if read_id == self.read_id { self.read_inflight = false; }
         if read_id == self.read_id && self.view.kind == Kind::Blob {
             self.upload_read(Err(error), revision, fx);
             return;
@@ -101,15 +103,15 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening => {
                 self.held_state = Some(state);
-                if let Some((read_id, revision, data)) = self.pending_read.take().filter(|(read_id, ..)| *read_id == self.read_id) {
-                    self.settle_read(read_id, revision, data, fx);
+                if let Some((read_id, version, data)) = self.pending_read.take().filter(|(read_id, ..)| *read_id == self.read_id) {
+                    self.settle_read(read_id, version, data, fx);
                 }
             }
             DeliveryStage::Live if self.view.kind.reads_rows() => {
                 let visible = visible_after(&state);
                 if visible > self.read_seen {
                     self.held_state = Some(state);
-                    fx.push(self.new_read(visible));
+                    if !self.read_inflight || self.read_revision < visible { fx.push(self.new_read(visible)); }
                 } else if state != self.window {
                     self.window = state.clone();
                     self.held_state = None;
@@ -242,26 +244,6 @@ impl Delivery {
         self.stage = DeliveryStage::Live;
         self.blob = Some(blob.clone());
         self.push(Value::Status { revision: self.status_revision, blob }, fx);
-    }
-
-    pub(super) fn retry_state(&mut self, retry: RetryStatus, fx: &mut Vec<Emit>) {
-        if self.view.kind != Kind::RetryStatus || !self.sink_open() || self.retry.as_ref() == Some(&retry) {
-            return;
-        }
-        self.stage = DeliveryStage::Live;
-        self.retry = Some(retry.clone());
-        self.push(Value::Retry(retry), fx);
-    }
-
-    pub(super) fn models_reset(&mut self, reset: &ModelsReset, fx: &mut Vec<Emit>) {
-        if !self.view.kind.reads_rows() || !reset.models.contains(&self.view.model) {
-            return;
-        }
-        match self.stage {
-            DeliveryStage::Opening => fx.push(self.new_read(self.read_revision)),
-            DeliveryStage::Live => fx.push(self.new_read(self.revision)),
-            DeliveryStage::Cancelling | DeliveryStage::Ended => {}
-        }
     }
 
     pub(super) fn resync(&mut self, fx: &mut Vec<Emit>) {

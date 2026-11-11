@@ -14,7 +14,6 @@ fn seq(items: &[&str]) -> Vec<Input> {
             _ => Input::new("create").with("as", rest),
         },
         Some(("commit_batch", names)) => Input::new("commit_batch").with("names", json!(names.split(',').collect::<Vec<_>>())),
-        _ if *item == "reset_models" => Input::new("reset_models").with("models", json!(["Moment"])),
         _ => Input::new(item),
     }).collect()
 }

@@ -37,7 +37,7 @@ fn dlv_operations_blocked_by_table() {
 }
 
 fn queue_work(n: usize, m: usize) -> (usize, usize) {
-    let db = Store::open_models(None, all_specs(), None).unwrap();
+    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..n {
@@ -53,7 +53,7 @@ fn queue_work(n: usize, m: usize) -> (usize, usize) {
     SQL.with(|count| count.set(0));
     take_comparisons();
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
-    let (_, operations, transfers) = db.read_queue(0).unwrap();
+    let (_, operations, transfers) = db.read_queue(0, (0, 0), &crate::store::fixtures::operations_view()).unwrap();
     assert_eq!((operations.len(), transfers.len()), (n, m));
     queue_of(&operations).unwrap();
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
@@ -78,7 +78,7 @@ fn nested_work(size: usize) -> usize {
     reactions.fields = vec![FieldSpec::scalar("userId", ScalarKind::Id).nullable(), user];
     let records = ModelSpec::new("Record", vec![FieldSpec::scalar("id", ScalarKind::Id), reactions]);
     let users = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).nullable()]);
-    let db = Store::open_models(None, vec![records, users], None).unwrap();
+    let db = Store::open_models(None, vec![records, users], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for index in 0..size {
         crate::store::fixtures::put(&db, "User", json!({"id": format!("u{index}"), "name": "current"}));
         crate::store::fixtures::put(&db, "Record", json!({"id": format!("r{index}"), "reactions": [{"userId": format!("u{index}"), "user": {"name": "old"}}]}));
@@ -100,7 +100,7 @@ fn dlv_nested_refs_work_linear() {
 }
 
 fn edge_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None).unwrap();
+    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..size {
@@ -128,7 +128,7 @@ fn dlv_edges_work_linear() {
 }
 
 fn alias_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None).unwrap();
+    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for index in 0..size {
         crate::store::fixtures::put(&db, "moments", json!({"id":format!("r{index}"), "userId":"u1"}));
         db.lock().connection.execute("INSERT INTO row_alias (model, temp, real) VALUES (?1, ?2, ?3)", rusqlite::params!["moments", format!("temp-{index}"), format!("r{index}")]).unwrap();
@@ -136,7 +136,8 @@ fn alias_work(size: usize) -> usize {
     db.replaced().log_replaced(1, (0..4097).map(|index| ("moments".into(), RowId::new(&format!("temp-log-{index}")).unwrap(), RowId::new(&format!("log-{index}")).unwrap())));
     SQL.with(|count| count.set(0));
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
-    let (_, _, replaced) = db.read_view(&crate::store::query::Query::new("moments"), false, 0, 0, None, None).unwrap();
+    let query = crate::store::query::Query::new("moments");
+    let (_, _, _, _, replaced) = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap();
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
     assert_eq!(replaced.len(), size);
     assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "r0"));
@@ -151,7 +152,7 @@ fn dlv_evicted_alias_work_linear() {
 }
 
 fn restore_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None).unwrap();
+    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..size {

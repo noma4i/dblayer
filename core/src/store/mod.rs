@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::store::ddl::{layout, table_name, Layout};
 use crate::identity::Generation;
-use crate::runtime::{Clock, Counters, SystemClock};
+use crate::runtime::{Clock, Counters};
 use crate::schema::{ModelSpec, SearchPath};
 
 pub mod ddl;
@@ -134,10 +134,6 @@ impl Inner {
         i64::try_from(self.clock.now().as_millis()).unwrap_or(i64::MAX)
     }
 
-    pub(crate) fn model(&self, key: &str) -> Result<&ModelInfo, StoreError> {
-        self.models.get(key).ok_or_else(|| StoreError::UnknownModel(key.to_string()))
-    }
-
     pub(crate) fn ensure_healthy(&self) -> Result<(), StoreError> {
         match &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
             Some(reason) => Err(StoreError::Poisoned(reason.clone())),
@@ -251,7 +247,6 @@ pub struct Store {
     generation_now: std::sync::atomic::AtomicU64,
     committed_revision: Arc<std::sync::atomic::AtomicI64>,
     line: AnnounceLine,
-    session_end_replay: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
     #[cfg(test)]
@@ -265,13 +260,13 @@ pub struct Store {
 }
 
 impl Store {
-    pub(crate) fn from_connection(connection: Connection) -> Self {
+    pub(crate) fn from_connection(connection: Connection, clock: Arc<dyn Clock>) -> Self {
         let models = Arc::new(BTreeMap::new());
         let poison = Arc::new(Mutex::new(None));
         let inner = Inner {
             connection,
             models: models.clone(),
-            clock: Arc::new(SystemClock),
+            clock,
             generation: Generation::INITIAL,
             ready: false,
             poison: poison.clone(),
@@ -303,7 +298,6 @@ impl Store {
             after_network_check: Mutex::new(None),
             #[cfg(test)]
             after_commit: Mutex::new(None),
-            session_end_replay: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

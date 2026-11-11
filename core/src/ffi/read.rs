@@ -66,7 +66,6 @@ pub enum ReadValue {
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, state: String, wait_reason: Option<String>, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
-    Retry { attempts: u32, phase: String },
     /// The last value of a stream, exactly one.
     Ended { cause: EndCause },
 }
@@ -171,7 +170,6 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
-        Value::Retry(retry) => ReadValue::Retry { attempts: retry.attempts, phase: retry.phase },
         Value::Ended(cause) => ReadValue::Ended { cause },
     })
 }
@@ -352,11 +350,11 @@ impl Database {
             ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(request).map(|(view, _)| view),
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), deferred_rows: Vec::new(), query: None })
             }
-            ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
-            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
-            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
+            ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None }),
+            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None }),
+            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), deferred_rows: Vec::new(), query: None }),
         }
     }
 
@@ -391,7 +389,7 @@ impl Database {
                     _ => WindowKey { model: model.clone(), name: String::new() },
                 };
                 let remote = remote.is_some() && !waits;
-                Ok((View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote, live: live && !waits, scoped, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) }, waiting))
+                Ok((View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote, live: live && !waits, scoped, reload: asked.refresh_on_connect, window, subject: String::new(), deferred_rows: Vec::new(), query: Some(Arc::new(query)) }, waiting))
             }
             ReadRequest::Entity { model, id, fetch } => {
                 let fetch = fetch_of(*fetch);
@@ -414,7 +412,7 @@ impl Database {
                     Some(relation) if remote => crate::owners::read::scoped_channels(spec, &relation.name, &params).into(),
                     _ => Default::default(),
                 };
-                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), query: None }, if waits { vec![(model.clone(), id.to_string())] } else { Vec::new() }))
+                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), deferred_rows: Vec::new(), query: None }, if waits { vec![(model.clone(), id.to_string())] } else { Vec::new() }))
             }
             _ => Err(DbError::Internal { detail: "a stream of this kind reads no rows".into() }),
         }
@@ -444,8 +442,8 @@ pub(crate) fn status_of_published(published: &crate::owners::contract::Published
         _ if published.closed => return Err(super::command::closed()),
         State::Closing => return Err(super::command::closed()),
         State::NoSession => (SessionStanding::None, None),
-        State::Session | State::Resetting | State::StorageFailed if published.identity.is_none() => (SessionStanding::None, None),
-        State::Session | State::Resetting | State::StorageFailed => (SessionStanding::Active, published.identity),
+        State::Session | State::StorageFailed if published.identity.is_none() => (SessionStanding::None, None),
+        State::Session | State::StorageFailed => (SessionStanding::Active, published.identity),
         State::Ending | State::EndingFailed => (SessionStanding::Ending, published.identity),
     };
     Ok(SessionStatus { epoch: published.epoch, identity, phase })
@@ -467,7 +465,7 @@ impl Database {
             _ => self.view_of(&request).map(|view| (view, None)),
         } {
             Ok((view, deferred)) => (view, true, deferred),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false, None),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None }, false, None),
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision, deferred);

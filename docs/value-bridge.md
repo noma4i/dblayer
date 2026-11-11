@@ -32,9 +32,16 @@ val thread = Projected(scope.stream(Message.thread(id)), Message, screenScope)
 | --- | --- |
 | `snapshot` | The whole result at a revision. It is the first value. |
 | `delta` | The steps from the rows the reader holds to the rows after `base`: insert, rewrite, remove, move. |
+| `count` | The number of matching rows at a revision. |
+| `operations` | The queue of operations at a revision. |
 | `state` | The load state changed and the rows did not. |
+| `ready` | The event source is ready. |
+| `changes` | The rows changed at a revision. |
 | `event` | One event of a model. |
+| `cableClose` | One socket close and its position. |
 | `lost` | The events at the positions `first` to `last` are gone: the reader was slow or the event could not be read. |
+| `gap` | The subscription missed an unknown number of events. |
+| `status` | The state of a file upload. |
 | `ended` | The stream ended by itself: session ended, database closed, query invalid. |
 
 The core keeps the values of a stream in one journal of at most 256 values. The reader takes them one by one: `for await` over a `ValueStream` in Swift, `ValueStream.values` in Kotlin. Swift and Kotlin keep no buffer of their own.

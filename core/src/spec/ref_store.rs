@@ -25,8 +25,7 @@ impl Batch {
 pub enum Request {
     Commit { id: u64, batch: Batch },
     ClearAccount { epoch_old: u64, cause: Cause, generation_new: u64, erase_id: u64 },
-    ClearModels { epoch: u64, generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
-    /// `active`: the state of the publication is NoSession, Session or Resetting.
+    /// `active`: the state of the publication is NoSession or Session.
     Published { publication_id: u64, epoch: u64, generation: u64, active: bool },
     EpochEnded { epoch: u64 },
     ReadIntents { epoch: u64 },
@@ -59,11 +58,9 @@ pub enum Action {
     Rejected { id: u64, reason: Reason },
     Write(u64),
     EraseAccount { io_id: u64, generation_new: u64, erase_encrypted: bool },
-    EraseModels { io_id: u64, models: BTreeSet<String> },
     ClearSecret { io_id: u64 },
     SavePublished { io_id: u64, publication_id: u64 },
     Cleared { epoch_old: u64, erase_id: u64 },
-    ModelsCleared { generation_new: u64, erase_id: u64 },
     ClearFailed { erase_id: u64, closed: bool },
     Saved(u64),
     SaveFailed { publication_id: u64, closed: bool },
@@ -98,7 +95,6 @@ pub struct OpenMessage {
 #[derive(Clone, Debug, PartialEq)]
 enum IoKind {
     Account { epoch_old: u64, cause: Cause, generation_new: u64, erase_id: u64 },
-    Models { generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
     Secret { epoch_old: u64, erase_id: u64, revision: u64 },
     Save { publication_id: u64, epoch: u64, generation: u64, active: bool },
 }
@@ -224,7 +220,7 @@ impl Store {
         if self.state == Open::Closed {
             match request {
                 Request::Commit { id, .. } => out.push(Action::Rejected { id, reason: Reason::Closed }),
-                Request::ClearAccount { erase_id, .. } | Request::ClearModels { erase_id, .. } => out.push(Action::ClearFailed { erase_id, closed: true }),
+                Request::ClearAccount { erase_id, .. } => out.push(Action::ClearFailed { erase_id, closed: true }),
                 _ => {}
             }
             return out;
@@ -240,10 +236,10 @@ impl Store {
     }
 
     fn apply(&mut self, request: Request, out: &mut Vec<Action>) {
-        if self.closing && matches!(request, Request::Commit { .. } | Request::ClearAccount { .. } | Request::ClearModels { .. } | Request::ReadIntents { .. } | Request::Published { .. }) {
+        if self.closing && matches!(request, Request::Commit { .. } | Request::ClearAccount { .. } | Request::ReadIntents { .. } | Request::Published { .. }) {
             match request {
                 Request::Commit { id, .. } => out.push(Action::Rejected { id, reason: Reason::Closed }),
-                Request::ClearAccount { erase_id, .. } | Request::ClearModels { erase_id, .. } => out.push(Action::ClearFailed { erase_id, closed: true }),
+                Request::ClearAccount { erase_id, .. } => out.push(Action::ClearFailed { erase_id, closed: true }),
                 Request::Published { publication_id, .. } => out.push(Action::SaveFailed { publication_id, closed: true }),
                 _ => {}
             }
@@ -299,23 +295,11 @@ impl Store {
                     out.push(Action::EraseAccount { io_id, generation_new, erase_encrypted: matches!(cause, Cause::SessionReset | Cause::ServerEnded) });
                 }
             }
-            Request::ClearModels { epoch, generation_new, models, erase_id } => {
-                if self.busy() {
-                    self.deferred.push_back(Request::ClearModels { epoch, generation_new, models, erase_id });
-                } else if models.iter().any(|model| generation_new <= self.generation(model)) {
-                    out.push(Action::ClearFailed { erase_id, closed: false });
-                } else {
-                    let io_id = self.next_io;
-                    self.next_io += 1;
-                    self.io.push_back(Io { id: io_id, kind: IoKind::Models { generation_new, models: models.clone(), erase_id }, started: true });
-                    out.push(Action::EraseModels { io_id, models });
-                }
-            }
             Request::Erased { io_id, result } => {
                 if self.io.front().map(|head| head.id) != Some(io_id) { return; }
                 let head = self.io.pop_front().expect("the head exists");
                 match (head.kind, result) {
-                    (IoKind::Account { erase_id, .. }, Err(())) | (IoKind::Models { erase_id, .. }, Err(())) => out.push(Action::ClearFailed { erase_id, closed: false }),
+                    (IoKind::Account { erase_id, .. }, Err(())) => out.push(Action::ClearFailed { erase_id, closed: false }),
                     (IoKind::Save { publication_id, .. }, Err(())) => out.push(Action::SaveFailed { publication_id, closed: false }),
                     (IoKind::Account { epoch_old, cause, generation_new, erase_id }, Ok(revision)) => {
                         self.wipe_account(cause, generation_new);
@@ -332,13 +316,6 @@ impl Store {
                         self.revision = revision;
                         out.push(Action::Cleared { epoch_old, erase_id });
                         out.push(Action::BroadcastCommitted { revision, all: true, tables: BTreeSet::new(), models: BTreeSet::new(), rows: None });
-                    }
-                    (IoKind::Models { generation_new, models, erase_id }, Ok(revision)) => {
-                        self.rows.retain(|(model, _)| !models.contains(model));
-                        for model in models.iter().cloned() { self.generations.insert(model, generation_new); }
-                        self.revision = revision;
-                        out.push(Action::ModelsCleared { generation_new, erase_id });
-                        out.push(Action::BroadcastCommitted { revision, all: false, tables: models.iter().map(|model| format!("row_{model}")).collect(), models: models.clone(), rows: None });
                     }
                     (IoKind::Save { publication_id, epoch, generation, active }, Ok(_)) => {
                         if active { self.epoch = self.epoch.max(epoch); }
@@ -420,10 +397,9 @@ impl StoreRef {
     fn route(&mut self, effects: Vec<LifeEffect>) {
         for effect in effects {
             let request = match effect {
-                LifeEffect::Publish(publication_id, published) => Some(Request::Published { publication_id, epoch: published.epoch, generation: published.generation, active: matches!(published.state, super::ref_lifecycle::PubState::NoSession | super::ref_lifecycle::PubState::Session | super::ref_lifecycle::PubState::Resetting) }),
+                LifeEffect::Publish(publication_id, published) => Some(Request::Published { publication_id, epoch: published.epoch, generation: published.generation, active: matches!(published.state, super::ref_lifecycle::PubState::NoSession | super::ref_lifecycle::PubState::Session) }),
                 LifeEffect::EpochEnded(epoch, _) => Some(Request::EpochEnded { epoch }),
                 LifeEffect::ClearAccount { epoch_old, cause, generation_new, erase_id } => Some(Request::ClearAccount { epoch_old, cause, generation_new, erase_id }),
-                LifeEffect::ClearModels { epoch, generation_new, models, erase_id } => Some(Request::ClearModels { epoch, generation_new, models, erase_id }),
                 LifeEffect::StoreClose => Some(Request::Close),
                 _ => None,
             };
@@ -432,7 +408,7 @@ impl StoreRef {
     }
 
     fn queue(&mut self, request: Request) {
-        if self.held && matches!(request, Request::ClearAccount { .. } | Request::ClearModels { .. } | Request::Published { .. }) {
+        if self.held && matches!(request, Request::ClearAccount { .. } | Request::Published { .. }) {
             self.waiting.push_back(request);
         } else {
             self.send(request);
@@ -447,14 +423,13 @@ impl StoreRef {
             let actions = self.store.step(request);
             for action in actions {
                 match action {
-                    Action::EraseAccount { io_id, .. } | Action::EraseModels { io_id, .. } => {
+                    Action::EraseAccount { io_id, .. } => {
                         let ok = !std::mem::take(&mut self.fail_clear);
                         todo.push(Request::Erased { io_id, result: if ok { Ok(self.store.revision + 1) } else { Err(()) } });
                     }
                     Action::ClearSecret { io_id } => todo.push(Request::Erased { io_id, result: Ok(0) }),
                     Action::SavePublished { io_id, .. } => todo.push(Request::Erased { io_id, result: Ok(self.store.revision) }),
                     Action::Cleared { erase_id, .. } => self.feed(Event::Cleared(erase_id)),
-                    Action::ModelsCleared { generation_new, erase_id } => self.feed(Event::ModelsCleared(generation_new, erase_id)),
                     Action::ClearFailed { erase_id, .. } => self.feed(Event::ClearFailed(erase_id)),
                     Action::Saved(id) => self.feed(Event::Saved(id)),
                     Action::SaveFailed { publication_id, .. } => self.feed(Event::SaveFailed(publication_id)),
@@ -480,7 +455,7 @@ impl StoreRef {
     fn gate(&self, current: bool) -> Result<(), &'static str> {
         match &self.life.state {
             LifeState::Closing { .. } | LifeState::Closed => Err("closed"),
-            LifeState::Session { .. } | LifeState::Resetting { identity: Some(_), .. } if current => Ok(()),
+            LifeState::Session { .. } if current => Ok(()),
             _ => Err("no_session"),
         }
     }
@@ -511,10 +486,6 @@ impl StoreRef {
 
 }
 
-fn model_names(input: &Input) -> BTreeSet<String> {
-    input.args.get("models").and_then(|value| value.as_array()).map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()).unwrap_or_default()
-}
-
 impl RefModel for StoreRef {
     fn step(&mut self, input: &Input) -> Vec<Observation> {
         let mut observed = Vec::new();
@@ -522,7 +493,6 @@ impl RefModel for StoreRef {
             "login" => self.feed(Event::Credential(1)),
             "session_reset" => self.feed(Event::SessionReset(Some(1))),
             "close" => self.feed(Event::Close(1)),
-            "reset_models" => self.feed(Event::ResetModels(model_names(input), Some(1))),
             "fail_commit" => self.fail_commit = true,
             "fail_clear" => self.fail_clear = true,
             "hold_writer" => self.held = true,

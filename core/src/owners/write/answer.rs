@@ -27,6 +27,7 @@ pub struct DecodeJob {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
+    MissingDestroy { stale: Vec<(String, String)> },
     /// The rows of the answer by model and the pair of a swap.
     Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
@@ -48,7 +49,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {
         let stale = db.spec(&job.model).map(|spec| spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| (job.model.clone(), relation.name.clone())).collect()).unwrap_or_default();
-        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new() };
+        return Decoded::MissingDestroy { stale };
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();

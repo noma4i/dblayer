@@ -91,7 +91,6 @@ fn win_landing_online() {
 fn win_landing_wait() {
     let mut twin = landing();
     for input in [
-        Input::ModelsReset { own_model: true },
         Input::Response { request: 1, attempt: 1, cursor: None, rows: true },
         Input::TransportError { request: 1, attempt: 1, failure: Failure::Permanent },
         Input::Dropped { request: 1, attempt: 1 },
@@ -154,7 +153,6 @@ fn win_waiting_last_leave() {
 fn win_waiting_stale() {
     let mut twin = waiting();
     assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
-    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
 }
 
@@ -378,7 +376,6 @@ pub(super) fn seen() -> (Log<Seen>, Arc<AtomicU64>) {
     (shared.0.clone(), shared.1.clone())
 }
 
-/// Two callers, a stale mark, the network going down and up, a reset of the model: each is a source on its own.
 pub(super) struct WindowStore;
 
 impl StateOwner for WindowStore {
@@ -429,11 +426,9 @@ pub(super) fn explore_rig() -> DetScheduler {
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![load(1), load(2)] }, Silent);
     let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Change }] }, Silent);
     let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW }, w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }] }, Silent);
-    let lifecycle = det.add::<Reset<Windows>>("lifecycle", ResetState { to: windows, input: w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] }), generation: 1 }, StoreGeneration(generation.clone()));
     for source in [callers, marks, network] {
         det.post(source, EpochStamp::Control, SourceInput::Go);
     }
-    det.post(lifecycle, EpochStamp::Control, SourceInput::Go);
     SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new((log, generation))));
     det
 }

@@ -89,7 +89,7 @@ impl Context {
 
 impl Store {
     /// Opens the file (or memory), boots the models, restores the queue and installs the notice of the commits.
-    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, data_version: Option<&str>) -> Result<Store, CoreError> {
+    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, data_version: Option<&str>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Store, CoreError> {
         let mut models = models;
         resolve_types(&mut models);
         let faults = validate_models(&models, &reserved_member_names());
@@ -97,15 +97,15 @@ impl Store {
             return Err(CoreError::Invalid(faults));
         }
         let (mut store, unreadable) = match path {
-            Some(path) => match Store::open(path) {
+            Some(path) => match Store::open(path, clock.clone()) {
                 Ok(store) => (store, false),
                 Err(error) if super::is_unreadable(&error) => {
                     super::remove_database(path)?;
-                    (Store::open(path)?, true)
+                    (Store::open(path, clock.clone())?, true)
                 }
                 Err(error) => return Err(error.into()),
             },
-            None => (Store::open_in_memory()?, false),
+            None => (Store::open_in_memory(clock)?, false),
         };
         let boot = store.boot(&models, data_version)?;
         let changed_models = match &boot.verdict {
@@ -121,17 +121,15 @@ impl Store {
         let commits = Arc::new(CommitSink::default());
         let changed = Arc::new(ChangedLog::default());
         changed.start(store.revision_seq()?);
-        let (logged, journal, notified, reset_journal) = (replaced.clone(), changed.clone(), commits.clone(), changed.clone());
+        let (logged, notified) = (replaced.clone(), commits.clone());
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 logged.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.model.to_string(), from.id.clone(), to.clone())));
-                journal.log_commit(result);
             }
         }))?;
         store.set_hook(Box::new(move |event| match event {
             StoreEvent::Committed(result) => notified.notify(CommittedBroadcast::of_commit(result)),
             StoreEvent::Reset { revision, models, .. } => {
-                reset_journal.log_unknown(revision);
                 notified.notify(CommittedBroadcast::of_reset(u64::try_from(revision).unwrap_or_default(), models.as_deref()));
             }
             StoreEvent::Renewed => {}
@@ -169,7 +167,6 @@ impl Store {
         self.context.commits.0.set(Arc::new(sink)).map_err(|_| StoreError::AlreadyAttached("the commit sink"))
     }
 
-    pub fn set_clock(&self, clock: Arc<dyn crate::runtime::Clock>) { self.lock().clock = clock; }
 
     /// Reads with the models named, the failure as the error of the database.
     pub(crate) fn read_models<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, CoreError>) -> Result<T, CoreError> {

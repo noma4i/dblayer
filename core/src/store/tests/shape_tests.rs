@@ -37,7 +37,7 @@ fn gifts_spec() -> ModelSpec {
 }
 
 fn store_with_gifts() -> Store {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&[gifts_spec()], None).unwrap();
     store.mark_ready();
     store
@@ -70,7 +70,7 @@ fn nullable_defaults_preserve_absence_null_and_values_after_reopen() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("values.sqlite");
             for input in [None, Some(serde_json::Value::Null), Some(value.clone()), Some(serde_json::Value::Null)] {
-                let store = Store::open(&path).unwrap();
+                let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
                 store.boot(std::slice::from_ref(&spec), None).unwrap();
                 store.mark_ready();
                 let mut fields = serde_json::Map::new();
@@ -83,7 +83,7 @@ fn nullable_defaults_preserve_absence_null_and_values_after_reopen() {
                 };
                 put(&store, data);
                 drop(store);
-                let store = Store::open(&path).unwrap();
+                let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
                 store.boot(std::slice::from_ref(&spec), None).unwrap();
                 store.mark_ready();
                 let row = store.point("gifts", "g1").unwrap().unwrap();
@@ -116,7 +116,7 @@ fn typed_siblings_stay_in_columns_when_a_member_has_unrestricted_values() {
             value["extra"] = json!({"arbitrary": [null, 3, {"text": "kept"}]});
         }
         let spec = ModelSpec::new("gifts", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("meta"), "Meta", fields)]);
-        let store = Store::open_in_memory().unwrap();
+        let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         store.boot(&[spec], None).unwrap();
         store.mark_ready();
         put(&store, json!({"id": "g1", "meta": value}));
@@ -174,7 +174,7 @@ fn nested_dates_keep_their_text_in_objects_and_lists() {
             fields.push(FieldSpec::raw("extra"));
         }
         let spec = ModelSpec::new("gifts", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("meta"), "Meta", fields)]);
-        let store = Store::open_in_memory().unwrap();
+        let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         store.boot(&[spec], None).unwrap();
         store.mark_ready();
         put(&store, json!({"id": "g1", "meta": {"at": "2026-10-14T00:00:00Z", "dates": ["2026-10-14T10:00:00+10:00"]}}));

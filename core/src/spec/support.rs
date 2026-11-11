@@ -1,4 +1,4 @@
-//! Stubs for the owner-level tests: an effect log, a scripted source of inputs, a Lifecycle stub that bumps the model generation.
+//! Stubs for the owner-level tests: an effect log and a scripted source of inputs.
 
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,48 +75,6 @@ pub(crate) struct Silent;
 
 impl<O: StateOwner<Effect = NoEffect>> EffectRunner<O> for Silent {
     fn run(&mut self, _stamp: EpochStamp, effect: NoEffect, _back: &Back<O>) { match effect {} }
-}
-
-/// Lifecycle stub: on `Go` the Store generation becomes `generation`, then `input` goes to `to`.
-pub(crate) struct Reset<O: StateOwner>(PhantomData<fn() -> O>);
-
-pub(crate) struct ResetState<O: StateOwner> {
-    pub to: Address<O>,
-    pub input: O::Input,
-    pub generation: u64,
-}
-
-#[derive(Debug)]
-pub(crate) struct SetGeneration(pub u64);
-
-impl<O: StateOwner> StateOwner for Reset<O>
-where
-    O::Input: Clone,
-{
-    const EPOCHED: bool = false;
-
-    type State = ResetState<O>;
-    type Input = SourceInput;
-    type Effect = SetGeneration;
-
-    fn step(state: &mut ResetState<O>, input: SourceInput) -> Effects<Self> {
-        match input {
-            SourceInput::Go => vec![Effect::Run(SetGeneration(state.generation)), Effect::Send(Outbound::new(state.to, state.input.clone()))],
-            SourceInput::Idle => Vec::new(),
-        }
-    }
-
-    fn tick(_now: Time) -> SourceInput { SourceInput::Idle }
-
-    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> SourceInput { SourceInput::Idle }
-
-    fn closing() -> SourceInput { SourceInput::Idle }
-}
-
-pub(crate) struct StoreGeneration(pub Arc<AtomicU64>);
-
-impl<O: StateOwner<Effect = SetGeneration>> EffectRunner<O> for StoreGeneration {
-    fn run(&mut self, _stamp: EpochStamp, effect: SetGeneration, _back: &Back<O>) { self.0.store(effect.0, Ordering::SeqCst); }
 }
 
 /// Lifecycle stub that ends the epoch: on `Go` it broadcasts `EpochEnded(epoch, cause)`.
@@ -303,7 +261,7 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
         let stale: Vec<String> = batch.basis.iter().filter(|(model, basis)| **basis < current && state.only.is_none_or(|only| only == model.as_str())).map(|(model, _)| model.clone()).collect();
         if !stale.is_empty() {
             (state.note)(Landing::Rejected { batch: batch.id, rows: batch.rows.len() });
-            let rejected = Rejected { batch: batch.id, reason: RejectReason::StaleGeneration { models: stale, generation: current } };
+            let rejected = Rejected { batch: batch.id, reason: RejectReason::StaleGeneration { generations: stale.iter().cloned().map(|model| (model, current)).collect(), models: stale } };
             return vec![Effect::Send(Outbound::new(state.to, (state.rejected)(rejected)))];
         }
         state.revision += 1;

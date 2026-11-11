@@ -55,6 +55,8 @@ pub trait StateOwner: Sized + 'static {
     type Effect: Debug + Send + 'static;
 
     fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self>;
+    #[cfg(test)]
+    fn diagnostic(_state: &Self::State) -> Option<String> { None }
     fn epoch_started(_epoch: Epoch) -> Option<Self::Input> { None }
     fn tick(now: Time) -> Self::Input;
     fn due(input: Self::Input, now: Time) -> (Option<Self::Input>, Self::Input) { (Some(Self::tick(now)), input) }

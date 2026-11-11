@@ -110,6 +110,11 @@ pub fn operation_extensions(connection: &Connection, seq: Option<i64>) -> Result
 pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
     let Some(status) = row.get::<_, Option<String>>(first)?.map(|text| enum_from(&text)).transpose()? else { return Ok(None) };
     let stage = enum_from(&row.get::<_, String>(first + 1)?)?;
+    let error = failure_at(row, first + 6)?;
+    let error = match (error, row.get::<_, Option<String>>(first + 7)?) {
+        (Some(error), Some(message)) => Some(serde_json::from_str::<OperationFailure>(&message).ok().filter(|stored| stored.kind == error.kind).unwrap_or(error)),
+        (error, _) => error,
+    };
     Ok(Some(UploadInfo {
         status,
         stage,
@@ -117,7 +122,7 @@ pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
         total_bytes: row.get::<_, i64>(first + 3)? as u64,
         wait_reason: row.get::<_, Option<String>>(first + 4)?.map(|text| enum_from(&text)).transpose()?,
         attempts: row.get::<_, i64>(first + 5)? as u32,
-        error: failure_at(row, first + 6)?,
+        error,
         local_url: None,
         processing: None,
         copy_file: None,

@@ -78,6 +78,24 @@ fn xfer_step_answer_restart() {
 /// xfer_step_answer_restored_err (D-246, transfer.md:108, lifecycle.md P-SESS-09): the saved answer of the pair is a refusal.
 /// On reopen the refusal is applied as the step answer without a second request: the held pair is cleared and a plain attempt is written, as xfer_step_answer_failed.
 #[test]
+fn xfer_open_saved_step_answer() {
+    let body = "{\"ok\":true}";
+    let mut answered = saved();
+    answered.saved_answer = Some((STEP, crate::store::session_state::StoredAnswer::Ok(body.into())));
+    let (mut twin, _) = Twin::opened(vec![answered], Default::default());
+    twin.online(true);
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    let started = twin.commit();
+    assert!(matches!(step_effect(&started), TransferEffect::Step { seeded: Some((request_id, Ok((answer, _)))), .. } if *request_id == STEP && answer == body));
+    let applied = twin.step_ok(1, 1, Some("u1"));
+    assert_eq!(applied.writes(), 1);
+    assert!(applied.batches.iter().any(|batch| {
+        batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::RemoveAnswer { request_id } if *request_id == STEP))
+            && batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Upload { .. }))
+    }), "the step result and saved-answer removal share the batch: {applied:?}");
+}
+
+#[test]
 fn xfer_step_answer_restored_err() {
     use crate::store::session_state::StoredAnswer;
     for saved_answer in [StoredAnswer::Http { status: 500 }, StoredAnswer::Unauthorized] {

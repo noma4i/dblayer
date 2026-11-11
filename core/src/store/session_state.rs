@@ -118,15 +118,8 @@ pub fn commit(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
     transaction.commit()
 }
 
-pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(include_str!("sql/session_state/start_delete_encrypted_pending.sql"))?;
-    transaction.execute(include_str!("sql/session_state/clear.sql"), [])?;
-    transaction.commit()
-}
-
-pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<i64>, answer: &StoredAnswer) -> rusqlite::Result<()> {
-    let (outcome, detail) = match answer {
+fn encode_stored(answer: &StoredAnswer) -> (&'static str, Option<String>) {
+    match answer {
         StoredAnswer::Ok(body) => ("ok", Some(body.clone())),
         StoredAnswer::Http { status } => ("http", Some(status.to_string())),
         StoredAnswer::TooLarge { size, limit } => ("too_large", Some(format!("{size}:{limit}"))),
@@ -134,7 +127,11 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
         StoredAnswer::Security { code, detail } => ("security", Some(format!("{}:{detail}", match code { crate::transport::SecurityCode::ServerKeyMismatch => "server_key_mismatch", crate::transport::SecurityCode::ResponseAuthentication => "response_authentication", crate::transport::SecurityCode::TlsTrust => "tls_trust" }))),
         StoredAnswer::Revoked { body } => ("revoked", Some(body.clone())),
         StoredAnswer::Session { code, body } => ("session", Some(format!("{}:{body}", code.name()))),
-    };
+    }
+}
+
+pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<i64>, answer: &StoredAnswer) -> rusqlite::Result<()> {
+    let (outcome, detail) = encode_stored(answer);
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
     connection.execute(include_str!("sql/session_state/store_answer.sql"), params![request_id, outcome, detail, operation])?;
     Ok(())
@@ -167,8 +164,20 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
     let mut found = Vec::new();
     for row in rows {
         let (request_id, outcome, detail, operation) = row?;
-        let invalid = |what: &str| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("the stored answer {request_id} has {what}"))));
-        let answer = match (outcome.as_str(), detail) {
+        let answer = decode_stored(&outcome, detail)?;
+        let invalid = || rusqlite::Error::IntegralValueOutOfRange(0, request_id);
+        found.push((u64::try_from(request_id).map_err(|_| invalid())?, operation, answer));
+    }
+    Ok(found)
+}
+
+fn invalid_answer(what: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, what.to_owned())))
+}
+
+fn decode_stored(outcome: &str, detail: Option<String>) -> rusqlite::Result<StoredAnswer> {
+        let invalid = |what: &str| invalid_answer(what);
+        let answer = match (outcome, detail) {
             ("ok", Some(body)) => StoredAnswer::Ok(body),
             ("http", Some(status)) => StoredAnswer::Http { status: status.parse().map_err(|_| invalid("a status that is not a number"))? },
             ("too_large", Some(detail)) => {
@@ -188,7 +197,91 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
             },
             _ => return Err(invalid("an outcome that does not match its detail")),
         };
-        found.push((u64::try_from(request_id).map_err(|_| invalid("a negative request id"))?, operation, answer));
+        Ok(answer)
+}
+
+const RESUME_OUTCOME: &str = "resume_answer_outcome";
+const RESUME_DETAIL: &str = "resume_answer_detail";
+
+fn encode_resume(answer: &crate::owners::session::SessionAnswer) -> rusqlite::Result<(&'static str, String)> {
+    use crate::owners::contract::RejectReason;
+    use crate::owners::session::SessionError;
+    let pair = match answer {
+        Ok(body) => encode_stored(&StoredAnswer::Ok(body.clone())),
+        Err(SessionError::Http { status }) => encode_stored(&StoredAnswer::Http { status: *status }),
+        Err(SessionError::TooLarge { size, limit }) => encode_stored(&StoredAnswer::TooLarge { size: *size, limit: *limit }),
+        Err(SessionError::Unauthorized) => encode_stored(&StoredAnswer::Unauthorized),
+        Err(SessionError::Security { code, detail }) => encode_stored(&StoredAnswer::Security { code: *code, detail: detail.clone() }),
+        Err(SessionError::Revoked { body }) => encode_stored(&StoredAnswer::Revoked { body: body.clone() }),
+        Err(SessionError::Session { code, body }) => encode_stored(&StoredAnswer::Session { code: *code, body: body.clone() }),
+        Err(SessionError::Graphql { code, body }) => ("graphql", Some(serde_json::to_string(&(code, body)).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?)),
+        Err(SessionError::Rejected(RejectReason::StaleGeneration { models, generations })) => ("rejected_stale", Some(serde_json::to_string(&(models, generations)).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?)),
+        Err(SessionError::Rejected(RejectReason::Storage(detail))) => ("rejected_storage", Some(detail.clone())),
+        Err(SessionError::Rejected(RejectReason::NoSession)) => ("rejected_no_session", None),
+        Err(SessionError::Rejected(RejectReason::Closed)) => ("rejected_closed", None),
+        Err(SessionError::Rejected(RejectReason::Invalid)) => ("rejected_invalid", None),
+        Err(SessionError::Storage(detail)) => ("storage", Some(detail.clone())),
+        Err(SessionError::ResponseTooLarge { limit }) => ("response_too_large", Some(limit.to_string())),
+        Err(SessionError::Invalid) => ("invalid", None),
+        Err(SessionError::SessionExists) => ("session_exists", None),
+        Err(SessionError::NoCredential) => ("no_credential", None),
+        Err(SessionError::StateLost) => ("state_lost", None),
+        Err(SessionError::SequenceConflict) => ("sequence_conflict", None),
+        Err(SessionError::Network) => ("network", None),
+        Err(SessionError::Interrupted) => ("interrupted", None),
+        Err(SessionError::NoSession) => ("no_session", None),
+        Err(SessionError::Closed) => ("closed", None),
+    };
+    Ok((pair.0, pair.1.unwrap_or_default()))
+}
+
+fn decode_resume(outcome: &str, detail: String) -> rusqlite::Result<crate::owners::session::SessionAnswer> {
+    use crate::owners::contract::RejectReason;
+    use crate::owners::session::{session_answer, SessionError};
+    let error = match outcome {
+        "ok" | "http" | "too_large" | "security" | "revoked" | "session" => return Ok(session_answer(decode_stored(outcome, Some(detail))?)),
+        "unauthorized" => return Ok(session_answer(decode_stored(outcome, None)?)),
+        "graphql" => { let (code, body) = serde_json::from_str(&detail).map_err(|_| invalid_answer("invalid graphql answer"))?; SessionError::Graphql { code, body } },
+        "rejected_stale" => { let (models, generations) = serde_json::from_str(&detail).map_err(|_| invalid_answer("invalid rejected generations"))?; SessionError::Rejected(RejectReason::StaleGeneration { models, generations }) },
+        "rejected_storage" => SessionError::Rejected(RejectReason::Storage(detail)),
+        "rejected_no_session" => SessionError::Rejected(RejectReason::NoSession),
+        "rejected_closed" => SessionError::Rejected(RejectReason::Closed),
+        "rejected_invalid" => SessionError::Rejected(RejectReason::Invalid),
+        "storage" => SessionError::Storage(detail),
+        "response_too_large" => SessionError::ResponseTooLarge { limit: detail.parse().map_err(|_| invalid_answer("invalid response limit"))? },
+        "invalid" => SessionError::Invalid,
+        "session_exists" => SessionError::SessionExists,
+        "no_credential" => SessionError::NoCredential,
+        "state_lost" => SessionError::StateLost,
+        "sequence_conflict" => SessionError::SequenceConflict,
+        "network" => SessionError::Network,
+        "interrupted" => SessionError::Interrupted,
+        "no_session" => SessionError::NoSession,
+        "closed" => SessionError::Closed,
+        _ => return Err(invalid_answer("unknown resume outcome")),
+    };
+    Ok(Err(error))
+}
+
+pub fn store_resume_answer(connection: &Connection, answer: &crate::owners::session::SessionAnswer) -> rusqlite::Result<()> {
+    let (outcome, detail) = encode_resume(answer)?;
+    connection.execute(include_str!("sql/ddl/manifest_write.sql"), params![RESUME_OUTCOME, outcome])?;
+    connection.execute(include_str!("sql/ddl/manifest_write.sql"), params![RESUME_DETAIL, detail])?;
+    Ok(())
+}
+
+pub fn remove_resume_answer(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(include_str!("sql/boot/boot_delete_manifest.sql"), [RESUME_OUTCOME])?;
+    connection.execute(include_str!("sql/boot/boot_delete_manifest.sql"), [RESUME_DETAIL])?;
+    Ok(())
+}
+
+pub fn resume_answer(connection: &Connection) -> rusqlite::Result<Option<crate::owners::session::SessionAnswer>> {
+    let outcome: Option<String> = connection.query_row(include_str!("sql/ddl/manifest_read.sql"), [RESUME_OUTCOME], |row| row.get(0)).optional()?;
+    let detail: Option<String> = connection.query_row(include_str!("sql/ddl/manifest_read.sql"), [RESUME_DETAIL], |row| row.get(0)).optional()?;
+    match (outcome, detail) {
+        (None, None) => Ok(None),
+        (Some(outcome), Some(detail)) => decode_resume(&outcome, detail).map(Some),
+        _ => Err(invalid_answer("incomplete resume answer")),
     }
-    Ok(found)
 }

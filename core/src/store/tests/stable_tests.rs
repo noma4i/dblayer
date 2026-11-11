@@ -8,7 +8,7 @@ use crate::store::{BatchPlan, EntityOp, ScopeOp, ScopeRef, Store};
 use super::stable::LOWER_NEIGHBOUR_SQL;
 
 fn open(path: Option<&std::path::Path>, spec: crate::schema::ModelSpec) -> std::sync::Arc<Store> {
-    Store::open_models(path, vec![spec], None).map(std::sync::Arc::new).unwrap()
+    Store::open_models(path, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap()
 }
 
 fn scope_of(db: &Store) -> (ScopeRef, ListKey) {

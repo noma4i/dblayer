@@ -19,7 +19,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
 }
 
 fn rows(twin: &mut Twin, revision: i64, rows: Vec<d::StreamRow>, replaced: Vec<(String, String)>) {
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, data: d::ReadData::Rows { rows, replaced, total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows, replaced, total: None } });
 }
 
 fn commit(twin: &mut Twin, revision: i64) {
@@ -45,7 +45,7 @@ fn dlv_deferred_index_other_model() {
     take(&twin.log);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
     let read_id = twin.state().read_id(STREAM + 1);
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM + 1, read_id, revision: 0, data: d::ReadData::Rows { rows: vec![d::StreamRow::new("temp-1", 0)], replaced: vec![], total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM + 1, read_id, revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Rows { rows: vec![d::StreamRow::new("temp-1", 0)], replaced: vec![], total: None } });
     take(&twin.log);
     first_ready.store(true, Ordering::SeqCst);
     second_ready.store(true, Ordering::SeqCst);
@@ -67,7 +67,7 @@ fn dlv_alias_restart_model_isolation() {
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
-    let db = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    let db = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     put(&db, "moments", json!({"id":"temp-1", "userId":"u1"}));
     put(&db, "users", json!({"id":"temp-1"}));
     for (op_id, model, value) in [(1, "moments", json!({"id":"temp-1", "userId":"u1"})), (2, "users", json!({"id":"temp-1"}))] {
@@ -77,7 +77,7 @@ fn dlv_alias_restart_model_isolation() {
     }
     drop(db);
 
-    let db = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    let db = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let temp = RowId::new("temp-1").unwrap();
     assert_eq!(db.resolve("moments", &temp).unwrap(), temp);
     assert_eq!(db.resolve("users", &temp).unwrap(), temp);
@@ -94,7 +94,7 @@ fn dlv_alias_restart_model_isolation() {
     assert!(db.read(&["users"], |reader| reader.point("users", "temp-1")).unwrap().is_some());
     assert!(db.read(&["users"], |reader| reader.point("users", "real-1")).unwrap().is_none());
     drop(db);
-    let reopened = Store::open_models(Some(&path), all_specs(), None).unwrap();
+    let reopened = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert_eq!(reopened.resolve("moments", &temp).unwrap().as_str(), "real-1");
     assert_eq!(reopened.resolve("users", &temp).unwrap().as_str(), "temp-1");
 }

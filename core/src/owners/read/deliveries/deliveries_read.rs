@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use super::*;
 
 impl Delivery {
-    pub(super) fn new_read(&mut self, revision: i64) -> Emit { self.start_read(revision, ReadMode::Snapshot) }
+    pub(super) fn new_read(&mut self, revision: i64) -> Emit { self.start_read(revision.max(self.read_revision), ReadMode::Snapshot { from_revision: self.read_seen, from_position: self.read_position }) }
 
     fn start_read(&mut self, revision: i64, mode: ReadMode) -> Emit {
         self.read_id += 1;
         self.read_revision = revision;
+        self.read_inflight = true;
         self.upload_inflight = self.view.kind == Kind::Blob;
         Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone(), mode })
     }
@@ -15,7 +16,7 @@ impl Delivery {
     fn after_commit(&mut self, revision: i64) -> Emit {
         let mode = match self.stage {
             DeliveryStage::Live => ReadMode::Changes { from_revision: self.read_seen, from_position: self.read_position, limit: DELTA_LIMIT },
-            _ => ReadMode::Snapshot,
+            _ => ReadMode::Snapshot { from_revision: self.read_seen, from_position: self.read_position },
         };
         self.start_read(revision, mode)
     }
@@ -110,7 +111,6 @@ impl Delivery {
             Value::Delta(_) if self.journal.iter().any(Value::is_rows) => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
             Value::State { .. } => self.journal.retain(|kept| !matches!(kept, Value::State { .. })),
             Value::Status { .. } => self.journal.retain(|kept| !matches!(kept, Value::Status { .. })),
-            Value::Retry(_) => self.journal.retain(|kept| !matches!(kept, Value::Retry(_))),
             _ => {}
         }
         self.journal.push_back(value);
@@ -164,7 +164,7 @@ impl Delivery {
         }
         Some(match self.view.kind {
             Kind::Events => Emit::WantMinus,
-            Kind::Blob | Kind::RetryStatus => Emit::Run(StreamEffect::StatusInterest { plus: false, key: (self.view.kind == Kind::Blob).then(|| self.view.subject.clone()) }),
+            Kind::Blob => Emit::Run(StreamEffect::StatusInterest { plus: false, key: self.view.subject.clone() }),
             _ => Emit::InterestMinus,
         })
     }
@@ -190,27 +190,28 @@ impl Delivery {
         }
         if self.stage == DeliveryStage::Live && (committed.revision, committed.position) <= (self.read_seen, self.read_position) { return; }
         if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
-            self.reading_position = committed.position;
             fx.push(self.after_commit(committed.revision));
         }
     }
 
-    pub(super) fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<Emit>) {
+    pub(super) fn read_done(&mut self, read_id: u64, version: ReadVersion, data: ReadData, fx: &mut Vec<Emit>) {
+        if !self.sink_open() { return; }
+        if read_id == self.read_id { self.read_inflight = false; }
         if read_id == self.read_id && self.view.kind == Kind::Blob {
-            if let ReadData::Upload { wait_reason, local_url, processing } = data { self.upload_read(Ok((wait_reason, local_url, processing)), revision, fx); }
+            if let ReadData::Upload { wait_reason, local_url, processing } = data { self.upload_read(Ok((wait_reason, local_url, processing)), version.revision, fx); }
             return;
         }
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
-        if self.stage == DeliveryStage::Live && revision < self.read_seen { return; }
+        if self.stage == DeliveryStage::Live && (version.revision, version.position) < (self.read_seen, self.read_position) { return; }
         let Some(data) = self.whole(data) else {
             if self.stage == DeliveryStage::Live {
                 fx.push(self.new_read(self.read_revision));
             }
             return;
         };
-        self.settle_read(read_id, revision, data, fx);
+        self.settle_read(read_id, version, data, fx);
     }
 
     /// The view with the server ids when the data tells that a temporary id of the request was swapped and none is left.
@@ -232,17 +233,38 @@ impl Delivery {
         fx.push(self.new_read(self.read_revision));
     }
 
-    pub(super) fn settle_read(&mut self, read_id: u64, revision: i64, data: Whole, fx: &mut Vec<Emit>) {
+    pub(super) fn settle_read(&mut self, read_id: u64, version: ReadVersion, data: Whole, fx: &mut Vec<Emit>) {
         if let Some(view) = self.swapped_view(&data) {
             self.rebind(view, fx);
             return;
         }
         if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {
-            self.pending_read = Some((read_id, revision, data));
+            self.pending_read = Some((read_id, version, data));
             return;
         }
-        self.read_position = if revision > self.read_seen { self.reading_position } else { self.read_position.max(self.reading_position) };
-        self.read_seen = self.read_seen.max(revision);
+        let revision = version.revision;
+        (self.read_seen, self.read_position) = (revision, version.position);
+        let changed = match &data {
+            Whole::Rows { rows, total, .. } => *rows != self.rows || *total != self.total,
+            Whole::Count(count) => self.count != Some(*count),
+            Whole::Operations(items) => self.operations.as_ref() != Some(items),
+        };
+        let value = if self.stage == DeliveryStage::Opening {
+            (revision, version.position)
+        } else if changed {
+            let Some(relevant) = version.relevant else {
+                self.finish(EndCause::Internal { detail: "a changed view has no relevant version".into() }, false, fx);
+                return;
+            };
+            if relevant < (self.revision, self.value_position) {
+                self.finish(EndCause::Internal { detail: "a changed view has an older relevant version".into() }, false, fx);
+                return;
+            }
+            relevant
+        } else {
+            (self.revision, self.value_position)
+        };
+        self.value_position = value.1;
         if self.stage == DeliveryStage::Live && self.read_error {
             self.read_error = false;
             self.window.error = None;
@@ -278,7 +300,7 @@ impl Delivery {
             }
             (DeliveryStage::Live, Whole::Operations(items)) => {
                 if self.operations.as_ref() != Some(&items) {
-                    let shown = self.shown_revision(revision);
+                    let shown = value.0;
                     self.operations = Some(items.clone());
                     self.revision = shown;
                     self.push(Value::Operations { revision: shown, items }, fx);
@@ -295,16 +317,16 @@ impl Delivery {
                 self.resync_pending = false;
                 self.total = total;
                 self.rows = rows.clone();
-                self.revision = revision;
                 let state = self.state_at(revision);
-                let snapshot = self.snapshot(revision, rows, &replaced, state);
+                self.revision = value.0;
+                let snapshot = self.snapshot(value.0, rows, &replaced, state);
                 self.push(snapshot, fx);
             }
-            (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
+            (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, value.0, rows, replaced, total, fx),
             (DeliveryStage::Live, Whole::Count(now)) if self.view.kind == Kind::Count => {
                 if self.count != Some(now) {
                     let state = self.state_at(revision);
-                    let shown = self.shown_revision(revision);
+                    let shown = value.0;
                     self.count = Some(now);
                     self.revision = shown;
                     self.push(Value::Count { revision: shown, count: now, state }, fx);
@@ -323,11 +345,7 @@ impl Delivery {
         }
     }
 
-    /// The revision a value carries: the last commit that touched the stream, not the head of the database at the read (D-73). A read that no commit asked for (a reset of models) carries the revision it saw.
-    pub(super) fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
-
-    pub(super) fn live_rows(&mut self, seen: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
-        let revision = self.shown_revision(seen);
+    pub(super) fn live_rows(&mut self, seen: i64, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
         if rows == self.rows && total == self.total {
             self.same_rows(seen, fx);
             return;

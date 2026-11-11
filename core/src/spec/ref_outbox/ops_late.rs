@@ -45,7 +45,7 @@ pub fn landing(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
         Input::Tick { .. } => foreign(e),
         Input::Discard { reply_to, .. } => { row(e, "out_landing_discard"); in_flight(op, *reply_to, e); }
         Input::Retry { .. } => { row(e, "out_landing_retry"); reply(e, Addr::Call, op.id, "Receipt"); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_landing_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_landing_other"),
         _ => foreign(e),
     }
 }
@@ -91,7 +91,7 @@ pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) 
             if let Addr::Transfer(_) = reply_to { reply(e, *reply_to, op.id, "DiscardOutcome{Ok}"); } else { op.discard_waiters.push(*reply_to); }
         }
         Input::Retry { reply_to, .. } => { row(e, "out_rollback_retry"); refuse(op, *reply_to, "Err(InFlight)", "Err(InFlight)", e); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_rollback_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_rollback_other"),
         _ => foreign(e),
     }
 }
@@ -129,7 +129,7 @@ pub fn marking_failed(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect
         Input::Tick { .. } => foreign(e),
         Input::Discard { reply_to, .. } => { row(e, "out_marking_failed_refuses"); in_flight(op, *reply_to, e); }
         Input::Retry { reply_to, .. } => { row(e, "out_marking_failed_refuses"); refuse(op, *reply_to, "Err(InFlight)", "Err(InFlight)", e); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_marking_failed_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_marking_failed_other"),
         _ => foreign(e),
     }
 }
@@ -164,7 +164,7 @@ pub fn marking_retry(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>)
         Input::Rejected { reason: Reason::Invalid, .. } => { row(e, "out_marking_retry_invalid"); op.stage = Stage::Failed; op.retry_waiter = 0; reply(e, Addr::Call, op.id, "Err(Internal)"); }
         Input::Discard { reply_to, .. } => { row(e, "out_marking_retry_refuses"); in_flight(op, *reply_to, e); }
         Input::Retry { reply_to, .. } => { row(e, "out_marking_retry_refuses"); refuse(op, *reply_to, "Err(InFlight)", "Err(InFlight)", e); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } => row(e, "out_marking_retry_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } => row(e, "out_marking_retry_other"),
         _ => foreign(e),
     }
 }
@@ -194,7 +194,7 @@ pub fn failed(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
                 roll_back(op, Cause::Discard, e);
             }
         }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } | Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_failed_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } | Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_failed_other"),
         _ => foreign(e),
     }
 }
@@ -219,7 +219,7 @@ pub fn waiting_declaration(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Ef
         }
         Input::Discard { reply_to, .. } => { row(e, "out_waiting_declaration_refuses"); in_flight(op, *reply_to, e); }
         Input::Retry { reply_to, .. } => { row(e, "out_waiting_declaration_refuses"); refuse(op, *reply_to, "Err(InFlight)", "Err(InFlight)", e); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } | Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_waiting_declaration_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } | Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_waiting_declaration_other"),
         _ => foreign(e),
     }
 }

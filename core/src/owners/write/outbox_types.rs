@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap};
 
 use super::transfer::{Transfers};
-use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::{SessionCalls};
 use crate::owners::store::{IntentEffects, RowValue, StoreWriter};
 
@@ -103,6 +103,7 @@ pub struct StoredOp {
     pub restore_failed: Option<String>,
     /// The `(table, key)` of the element of `restore_failed` this operation stands for.
     pub restore_element: Option<(String, String)>,
+    pub removed_rows: Vec<(String, String, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,7 +178,6 @@ pub enum LocalWriteKind {
     SetLocalPending,
     SetEphemeral { expire_after: Option<u64> },
     /// `source` is a file outside the directory of the files: it is copied first.
-    Attach { source: Option<String> },
     Detach,
     /// A source file of the platform the library already copied (`row` is the row, `values` the field).
     AttachCopy { copy: crate::store::files::CopiedFile, name: String, mime: String },
@@ -211,6 +211,7 @@ pub enum OutboxInput {
     Rejected(Rejected),
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
     Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String>, errors: Option<bool> },
+    MissingDestroy { op_id: OpId, stale: Vec<(String, String)> },
     TransportError { op_id: OpId, temporary: bool },
     /// The answer of Session to the `Mutate` with `req_id`: Outbox finds its operation and has the answer read.
     Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },
@@ -237,14 +238,11 @@ pub enum OutboxInput {
     Online(Online),
     /// The generation of every model at the start of the epoch.
     EpochStarted(EpochStarted),
-    ModelsReset(ModelsReset),
     EpochEnded(EpochEnded),
     Closing,
     /// `Tick(op_id, cycle_id)`: the retry timer of an operation (Backoff, repeat of a batch).
     RetryDue { op_id: OpId, cycle_id: u64 },
     LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time },
-    CopyDone { id: u64 },
-    CopyFailed { id: u64 },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
     Expire { model: String, row: String, due: Time },
     ArmExpiry { model: String, row: String, revision: u64, deadline: u64 },
@@ -281,8 +279,6 @@ pub enum OutboxEffect {
     Started { epoch: Epoch },
     SnapshotRequest { epoch: Epoch },
     RestoreClassified { epoch: Epoch },
-    /// Copy `source` into the directory of the files in chunks, outside the writer of SQLite; the result is `CopyDone{id}` or `CopyFailed{id}`.
-    Copy { id: u64, source: String },
     /// Read the answer of an operation outside the actor: the result is `Response` or `Refused`.
     Decode(super::answer::DecodeJob),
     /// The windows of these (model, relation) pairs are stale in memory: the answer of an action that refetches them landed.
@@ -337,6 +333,7 @@ pub struct QueuedOperation {
     pub waiting_retry: bool,
     /// The rows of the server answer, kept for every attempt to land them.
     pub landing: Vec<(String, Vec<RowValue>)>,
+    pub missing_destroy: bool,
     pub swaps: Vec<(String, String)>,
     /// The temporary rows of the elements of a batch the answer has no row for.
     pub missing: Vec<String>,

@@ -76,14 +76,14 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
     for extensions in cases {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("operations.sqlite");
-        let store = Store::open(&path).unwrap();
+        let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         store.boot(&[messages_spec(), items_spec()], None).unwrap();
         store.mark_ready();
         let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
         let failure = failure(extensions.clone(), "purchase refused");
         send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         store.boot(&[messages_spec(), items_spec()], None).unwrap();
         store.mark_ready();
         store.read(&[], |reader| {

@@ -119,7 +119,6 @@ pub struct LFlags {
     pub same_value: bool,
     pub memory_model: bool,
     pub memory_same_values: bool,
-    pub source_outside_files_dir: bool,
     pub expiry: bool,
 }
 
@@ -145,13 +144,10 @@ pub enum Input {
     SelectedTransfer { reply: u64, transfer_id: u64, version: u64 },
     Online(bool),
     EpochEnded(Epoch, EndCause),
-    ModelsReset { models: Vec<String>, generations: BTreeMap<String, u64> },
     Closing,
     Tick { op_id: OpId, cycle_id: u64 },
     Now(u64),
     LocalWrite { epoch: Epoch, id: u64, kind: LKind, flags: LFlags },
-    CopyDone { id: u64 },
-    CopyFailed { id: u64 },
     ExpireRow { model: String, row_id: String, write_revision: u64 },
     ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
 }
@@ -210,7 +206,7 @@ pub struct Op {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LStage { Copying, Writing }
+pub enum LStage { Writing }
 
 #[derive(Clone, Debug)]
 pub struct State {

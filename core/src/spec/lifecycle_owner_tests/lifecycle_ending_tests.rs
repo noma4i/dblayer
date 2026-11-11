@@ -31,17 +31,7 @@ fn life_ending_reset_after_failure() {
 #[test]
 fn life_ending_server_ended() { ending().feed(Event::ServerEnded(2)); }
 
-#[test]
-fn life_ending_reset_models() { ending().feed(reset_models(&["Moment"], 2)); }
 
-#[test]
-fn life_ending_failed_reset_models() {
-    let mut twin = ending();
-    let failed = clear_failed(&twin);
-    twin.feed(failed);
-    twin.feed(reset_models(&["Moment"], 2));
-    assert!(twin.replies().contains(&(2, Err(LifecycleError::Storage))));
-}
 
 #[test]
 fn life_ending_cleared_then_credential() {
@@ -81,23 +71,7 @@ fn life_ending_clear_failed() {
     assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
 }
 
-#[test]
-fn life_ending_models_cleared() {
-    let mut twin = resetting();
-    twin.feed(reset(2));
-    let models = twin.erases().into_iter().find(|erase| erase.kind == RefEraseKind::Models).expect("the models erase is open").id;
-    twin.feed(Event::ModelsCleared(1, models));
-    assert!(twin.replies().contains(&(1, Ok(()))));
-}
 
-#[test]
-fn life_ending_models_clear_failed() {
-    let mut twin = resetting();
-    twin.feed(reset(2));
-    let models = twin.erases().into_iter().find(|erase| erase.kind == RefEraseKind::Models).expect("the models erase is open").id;
-    twin.feed(Event::ClearFailed(models));
-    assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
-}
 
 #[test]
 fn life_ending_stray_erase() { ending().feed_all(stray_erase_events()); }
@@ -108,103 +82,19 @@ fn life_ending_close() { ending().feed(close(2)); }
 #[test]
 fn life_ending_drained() { ending().feed(Event::Drained(RefOwner::Feed)); }
 
-#[test]
-fn life_resetting_credential() { resetting().feed(credential(2)); }
 
-#[test]
-fn life_resetting_credential_signed_out() { resetting_signed_out().feed(credential(2)); }
 
-#[test]
-fn life_resetting_same_credential() { resetting().feed(credential(1)); }
 
-#[test]
-fn life_resetting_session_reset() { resetting().feed(reset(2)); }
 
-#[test]
-fn life_resetting_server_ended() { resetting().feed(Event::ServerEnded(2)); }
 
-#[test]
-fn life_resetting_stale_server_ended() {
-    resetting().feed(Event::ServerEnded(1));
-    resetting_signed_out().feed(Event::ServerEnded(1));
-}
 
-#[test]
-fn life_resetting_reset_models() { resetting().feed(reset_models(&["Other"], 2)); }
 
-#[test]
-fn life_resetting_cleared_queued() {
-    let mut twin = resetting();
-    twin.feed(reset_models(&["Other"], 2));
-    let first = models_cleared(&twin, 1);
-    let effects = twin.feed(first);
-    assert!(effects.iter().any(|e| matches!(e, RefEffect::ClearModels { generation_new: 2, .. })), "the queued models are erased next");
-    twin.settle();
-    let second = models_cleared(&twin, 2);
-    twin.feed(second);
-    twin.settle();
-    assert_eq!(twin.replies(), vec![(1, Ok(())), (2, Ok(()))]);
-}
 
-#[test]
-fn life_resetting_cleared() {
-    let mut twin = resetting();
-    let done = models_cleared(&twin, 1);
-    twin.feed(done);
-    twin.settle();
-    assert_eq!(twin.published().generation, 1);
-    assert_eq!(*twin.state(), RefState::Session { epoch: 2, identity: 1 });
-}
 
-#[test]
-fn life_resetting_cleared_then_start() {
-    let mut twin = resetting_signed_out();
-    twin.feed(credential(2));
-    let done = models_cleared(&twin, 1);
-    twin.feed(done);
-    assert_eq!(*twin.state(), RefState::Session { epoch: 2, identity: 2 });
-}
 
-#[test]
-fn life_resetting_clear_failed() {
-    let mut twin = resetting();
-    let failed = clear_failed(&twin);
-    twin.feed(failed);
-    assert_eq!(twin.published().generation, 0, "the generation stays");
-    assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
-}
 
-#[test]
-fn life_resetting_clear_failed_then_start() {
-    let mut twin = resetting_signed_out();
-    twin.feed(credential(2));
-    let failed = clear_failed(&twin);
-    twin.feed(failed);
-    assert_eq!(twin.published().identity, Some(2), "the committed credential is not lost");
-}
 
-#[test]
-fn life_resetting_stray_erase() { resetting().feed_all(stray_erase_events()); }
 
-#[test]
-fn life_resetting_close() {
-    let mut twin = resetting();
-    twin.feed(reset_models(&["Other"], 2));
-    twin.feed(close(3));
-    assert!(twin.replies().contains(&(2, Err(LifecycleError::Interrupted))));
-}
-
-/// life_resetting_credential_open_saved: the epoch of an `open` that passed `Saved` ends with a new identity, `open` answers `Ok`.
-#[test]
-fn life_resetting_credential_open_saved() {
-    let mut twin = Twin::open(0, 0, Some(1), Some(7));
-    twin.feed(Event::Saved(1));
-    twin.feed(reset_models(&["Moment"], 8));
-    twin.feed(credential(2));
-    assert!(twin.replies().contains(&(7, Ok(()))), "{:?}", twin.replies());
-}
-
-/// life_session_credential_open_unsaved: the first publication of `open` is not saved when the identity changes, `open` is interrupted.
 #[test]
 fn life_session_credential_open_unsaved() {
     let mut twin = Twin::open(0, 0, Some(1), Some(7));
@@ -212,8 +102,6 @@ fn life_session_credential_open_unsaved() {
     assert!(twin.replies().contains(&(7, Err(LifecycleError::Interrupted))), "{:?}", twin.replies());
 }
 
-#[test]
-fn life_resetting_drained() { resetting().feed(Event::Drained(RefOwner::Feed)); }
 
 #[test]
 fn life_closing_last_drained() {
@@ -303,10 +191,8 @@ fn life_closing_saved() {
 fn life_closing_refuses() {
     let mut twin = closing_session();
     twin.feed(reset(5));
-    twin.feed(reset_models(&["Moment"], 6));
     twin.feed_all([credential(2), Event::ServerEnded(2)]);
     assert!(twin.replies().contains(&(5, Err(LifecycleError::Closed))));
-    assert!(twin.replies().contains(&(6, Err(LifecycleError::Closed))));
 }
 
 #[test]

@@ -10,7 +10,7 @@ fn dlv_read_overflow() {
     let overflowed = twin.read_id();
 
     assert_eq!(twin.step(Input::ReadOverflow { revision: 2 }), [Effect::Read(2)]);
-    assert_eq!(last_mode(), d::ReadMode::Snapshot);
+    assert!(matches!(last_mode(), d::ReadMode::Snapshot { .. }));
     assert_eq!(twin.read_id(), overflowed + 1, "the read of the whole view has a new read_id");
     assert!(twin.read_all().is_empty(), "nothing is delivered before the Snapshot");
 

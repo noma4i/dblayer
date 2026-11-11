@@ -8,7 +8,7 @@ use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, Receipt, ReserveTarget, StoredOp};
 
 fn stored(op_id: u64, row: &str) -> StoredOp {
-    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None }
+    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
 }
 
 fn optimistic_row() -> crate::store::Row {

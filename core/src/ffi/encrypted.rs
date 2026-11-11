@@ -67,7 +67,6 @@ pub(super) fn wire(
     let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
     let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
     let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
-    crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(DbError::from)?;
     let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport::beside_session(transport));
     let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), rest));
     let cable = encrypted_transport.cable_lines();
@@ -161,6 +160,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Unauthorized => DbError::Unauthorized { detail: "the server refused the credential".into() },
         Failed::Security { code, detail } => DbError::Security { code, detail },
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
+        Failed::Network => DbError::Network { detail: "the request did not reach the server".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
         Failed::ResponseTooLarge { limit } => DbError::ResponseTooLarge { limit },
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => DbError::Storage { detail },

@@ -194,6 +194,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         failed_at: None,
         blob_created_at: None,
         restore_failed: None,
+        restore_element: None,
         pending_step: None,
         saved_answer: None,
     }

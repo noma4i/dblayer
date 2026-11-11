@@ -35,6 +35,9 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
     val subscribed = Channel<String>(Channel.UNLIMITED)
     val ping = Channel<String>(Channel.UNLIMITED)
     val openedCount: Int get() = connections.size
+    val subscribedCount = AtomicInteger()
+    @Volatile var lastEvent: String = "none"
+        private set
     val closed = Channel<String>(Channel.UNLIMITED)
     private val connections = ConcurrentHashMap<String, Connection>()
     @Volatile var lastOpened: String? = null
@@ -53,10 +56,11 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         }
 
         override fun close(code: UShort, reason: String) {
+            peer.lastEvent = "close $token code=$code reason=$reason"
             peer.closed.trySend(token)
         }
 
-        override fun cancel() = Unit
+        override fun cancel() { peer.lastEvent = "cancel $token" }
     }
 
     override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = openCable(url, events)
@@ -66,6 +70,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         val connection = Connection(events)
         connections[token] = connection
         lastOpened = token
+        lastEvent = "open $token"
         val challenge = buildJsonObject {
             put("type", "challenge")
             put("v", 1)
@@ -109,10 +114,13 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         val frame = data.getValue("frame").jsonPrimitive.content
         val body = openFrame(frame, connection.receiveKey!!)
         if (body["t"]?.jsonPrimitive?.content == "ping") {
+            lastEvent = "ping $token"
             emit(token, buildJsonObject { put("t", "pong"); put("ts", body.getValue("ts")) })
             ping.trySend(token)
         }
         if (body["t"]?.jsonPrimitive?.content == "subscribe") {
+            lastEvent = "subscribe $token"
+            subscribedCount.incrementAndGet()
             val id = body.getValue("id").jsonPrimitive.content
             val operation = body["operationName"]?.jsonPrimitive?.content ?: ""
             connection.subscriptions[operation] = id

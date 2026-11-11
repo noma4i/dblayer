@@ -117,7 +117,6 @@ pub(in super::super) enum Input {
     SourceChanged { revision: i64 },
     Online(bool),
     EpochEnded,
-    ModelsReset { own_model: bool },
     Closing,
     /// The answer of the read pool for the saved window of the key.
     Read(Read),

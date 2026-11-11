@@ -104,6 +104,23 @@ fn out_submit_undeclared() {
 }
 
 #[test]
+fn out_sending_response_batch_items_batch() {
+    use crate::owners::store::RowValue;
+    use crate::owners::write::outbox::{OpSource, TransferMember};
+    let mut twin = Twin::new();
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
+    let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
+    raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
+    let rows = vec![("Moment".into(), vec![RowValue { row_id: "A".into(), values: "{}".into() }, RowValue { row_id: "B".into(), values: "{}".into() }])];
+    let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows, swaps: vec![("a".into(), "A".into()), ("b".into(), "B".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let batches: Vec<_> = sends.iter().filter(|(to, _)| *to == STORE_AT).collect();
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0].1;
+    assert!(batch.contains("Swap { model: \"Moment\", temp: \"a\", real: \"A\" }") && batch.contains("Swap { model: \"Moment\", temp: \"b\", real: \"B\" }"), "{batch}");
+    assert!(batch.contains("Rows { model: \"Moment\"") && batch.contains("RemoveIntent { op_id: 4 }") && batch.contains("RemoveAnswer { request_id:"), "{batch}");
+}
+
+#[test]
 fn out_transfer_group_outcomes_commit_with_the_intent() {
     use crate::owners::contract::Committed;
     use crate::owners::write::outbox::{OpSource, TransferMember};
@@ -461,4 +478,24 @@ fn out_retry_transfer_not_failed() {
     let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 5, uploads: vec![upload(1, 2)] });
     assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome") && text.contains("(1, 2)") && text.contains("Err(InFlight)")), "RetryTransfer outside Failed answers Err(InFlight) to the target: {sends:?}");
     assert_eq!((twin.state().stage_of(4), sends.iter().any(|(to, _)| *to == STORE_AT)), (Some(Stage::Sending), false), "the operation is unchanged and nothing is written");
+}
+
+#[test]
+fn out_landing_swaps_all() {
+    for group in [false, true] {
+        let mut twin = Twin::new();
+        let id = if group {
+            let id = group_on_rows(&mut twin, "b", Policy::Rollback);
+            group_sending(&mut twin, id);
+            id
+        } else {
+            let id = twin.submit("a", Policy::Rollback, false);
+            twin.committed(id);
+            id
+        };
+        twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        assert_eq!(twin.stores.len(), 1, "all swaps must land in one batch");
+        let batch = &twin.stores[0].1;
+        assert!(batch.contains("temp: \"a\", real: \"real_a\"") && batch.contains("temp: \"b\", real: \"real_b\""), "group={group}: {batch}");
+    }
 }

@@ -7,7 +7,7 @@ use super::outbox::{Fault, NewOp, Outbox, OutboxOutcome, Receipt};
 use super::outbox_types::{OpId, Phase};
 use super::rounds::Rounds;
 use crate::store::files::Location;
-use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, ModelsReset, Online, Rejected, ReplyId};
+use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, Online, Rejected, ReplyId};
 use crate::owners::store::{StoreWriter, UploadRow};
 use crate::runtime::{Address, Effect, Effects, Epoch, Time};
 use crate::transport::NetworkPurpose;
@@ -122,6 +122,7 @@ pub struct StoredTransfer {
     pub failed_at: Option<Time>,
     pub blob_created_at: Option<Time>,
     pub restore_failed: Option<String>,
+    pub restore_element: Option<(String, Option<TransferId>)>,
     pub pending_step: Option<u64>,
     /// The answer of the step Session saved before the process died: `(request id, body)`.
     pub saved_answer: Option<(u64, crate::store::session_state::StoredAnswer)>,
@@ -272,7 +273,6 @@ pub enum TransferInput {
     Online(Online),
     PowerSaving(bool),
     EpochStarted(EpochStarted),
-    ModelsReset(ModelsReset),
     Tick { now: Time, kind: TransferTick },
     EpochEnded(EpochEnded),
     Closing,
@@ -448,6 +448,7 @@ pub struct Transfer {
     pub fields: serde_json::Map<String, serde_json::Value>,
     pub steps: Option<Steps>,
     pub restored: bool,
+    pub restore_element: Option<(String, Option<TransferId>)>,
     pub pending_step: Option<u64>,
     pub urgent: bool,
     /// The operation of the optimistic effects written with the acceptance (`ReserveOp`).

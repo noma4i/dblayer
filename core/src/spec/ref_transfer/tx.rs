@@ -4,7 +4,7 @@ pub fn tx(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
     match i {
         Input::Online(_) | Input::PowerSaving(_) | Input::SlotFreed => tx_signal(g, t, i, e),
         Input::RegisterOperations { .. } => tx_register(g, t, e),
-        Input::RestoreReady { .. } | Input::ModelsReset { .. } => tx_awaiting_only(g, t, i, e),
+        Input::RestoreReady { .. } => tx_awaiting_only(g, t, i, e),
         Input::Tick { now, kind } => tx_tick(g, t, *now, kind, e),
         Input::Cancel { reply, .. } => tx_cancel(g, t, *reply, true, e),
         Input::Discard { reply, .. } => tx_cancel(g, t, *reply, false, e),

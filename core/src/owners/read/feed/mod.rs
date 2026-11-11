@@ -2,13 +2,13 @@
 //! Timers are `Effect::Schedule` of the owner (`after` = the debounce or the backoff). Inputs for other owners
 //! (`Commit`, `Stale`, `Joined`, `ModelReady`, `ModelEvent`, `ModelLost`, `ModelGap`) are `Effect::Send` to the addresses of the state.
 //! The executor opens connections, encrypts and decrypts: it answers with `HandshakeDone`, `FrameOpened` and `ProtocolError`. The inputs
-//! `Event` and `ChannelLost` of the data table also come from the transport; `FrameOpened` of an `Established` connection forwards its events as `Event`.
+//! `FrameOpened` of an `Established` connection forwards its events as `Event`.
 //! A model reads one or more channels (subscriptions of the server) on the one connection: it is ready once every channel of it is confirmed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::windows::{StaleCause, StaleKeys, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
@@ -203,6 +203,8 @@ enum Fx {
     CancelKeepalive { connection: ConnectionId },
     CancelPong { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
+    Gap(Vec<String>),
+    CommitGap { batch: BatchId, models: Vec<String>, basis: BTreeMap<String, u64> },
     Stale { model: String, keys: StaleKeys, cause: StaleCause },
     Joined { id: SubscriptionId, position: u64 },
     /// `id` = `None`: every stream that wants the model.
@@ -229,8 +231,6 @@ pub enum FeedInput {
     /// The server closed the subscription of one channel: `failed` = with an error of the request.
     ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError>, now: Time },
     ChannelResubscribe { connection_id: ConnectionId, channel: Channel, now: Time },
-    /// `dropped` = the number of lost events per model, `None` = the number is unknown.
-    ChannelLost { connection_id: ConnectionId, dropped: Option<BTreeMap<String, u64>> },
     Dropped { connection_id: ConnectionId },
     SubscriptionEnded { connection_id: ConnectionId },
     Resubscribe { connection_id: ConnectionId },
@@ -246,7 +246,6 @@ pub enum FeedInput {
     Rejected(Rejected),
     Tick(Time),
     Online { online: Online, online_seq: u64, now: Time },
-    ModelsReset(ModelsReset),
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
@@ -334,6 +333,8 @@ pub struct FeedState {
     held: Vec<FeedEvent>,
     pending: Vec<FeedEvent>,
     landing: Vec<(BatchId, Vec<FeedEvent>)>,
+    gap_landing: BTreeMap<BatchId, Vec<String>>,
+    gap_retry: Vec<Vec<String>>,
     active: Option<Connection>,
     opening: Option<Connection>,
     next_connection: ConnectionId,
@@ -381,7 +382,15 @@ impl Feed {
         StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows, intents: 0, credential: None, ops: Vec::new() }
     }
 
-    fn lower(state: &FeedState, fx: Vec<Fx>) -> Effects<Self> {
+    fn lower(state: &mut FeedState, mut fx: Vec<Fx>) -> Effects<Self> {
+        let first = fx.iter().position(|item| matches!(item, Fx::Gap(_)));
+        let models: BTreeSet<_> = fx.iter().filter_map(|item| match item { Fx::Gap(models) => Some(models), _ => None }).flatten().cloned().collect();
+        fx.retain(|item| !matches!(item, Fx::Gap(_)));
+        if let Some(first) = first {
+            let mut batch = Vec::new();
+            state.commit_gap(models.into_iter().collect(), &mut batch);
+            fx.splice(first..first, batch);
+        }
         let peers = state.peers;
         let mut out: Effects<Self> = Vec::new();
         for item in fx {
@@ -405,6 +414,8 @@ impl Feed {
                 Fx::CancelKeepalive { connection } => out.push(Effect::Cancel(ScheduleId(KEEPALIVE_SCHEDULE | connection))),
                 Fx::CancelPong { connection } => out.push(Effect::Cancel(ScheduleId(PONG_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
+                Fx::Gap(_) => {}
+                Fx::CommitGap { batch, models, basis } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![crate::owners::store::StoreOp::MarkStale { models, keys: Vec::new() }] })))),
                 Fx::Stale { model, keys, cause } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys, cause }))),
                 Fx::Joined { id, position } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::Joined { stream: id, position }))),
                 Fx::ModelReady { id: Some(id), .. } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelReady { stream: id }))),
@@ -429,12 +440,16 @@ impl StateOwner for Feed {
     fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
         let mut fx = Vec::new();
         if let FeedInput::CableClosed(event) = input {
-            return vec![Effect::Send(Outbound::new(state.peers.deliveries, DeliveryInput::CableClosed(event)))];
+            for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
+            let mut effects = Self::lower(state, fx);
+            effects.push(Effect::Send(Outbound::new(state.peers.deliveries, DeliveryInput::CableClosed(event))));
+            return effects;
         }
         if let FeedInput::ActivateEpoch(epoch) = &input {
             *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels));
             return Vec::new();
         }
+        for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
         if let FeedInput::Census { reply } = input {
             fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census(), refused: state.refused }));
             return Self::lower(state, fx);
@@ -486,7 +501,6 @@ impl StateOwner for Feed {
             FeedInput::ChannelConfirmed { connection_id, channel } => state.channel_confirmed(connection_id, channel, &mut fx),
             FeedInput::ChannelEnded { connection_id, channel, error, .. } => state.channel_ended(connection_id, channel, error, &mut fx),
             FeedInput::ChannelResubscribe { connection_id, channel, .. } => state.channel_resubscribe(connection_id, channel, &mut fx),
-            FeedInput::ChannelLost { connection_id, dropped } => state.channel_lost(connection_id, dropped, &mut fx),
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
@@ -506,7 +520,6 @@ impl StateOwner for Feed {
                 }
             }
             FeedInput::Online { online: Online(online), online_seq, .. } => state.online_changed(online, online_seq, &mut fx),
-            FeedInput::ModelsReset(reset) => state.models_reset(reset, &mut fx),
         }
         if let Some(connection) = draining.filter(|_| state.mode == Mode::Ended) {
             state.drain_cut(connection, &mut fx);

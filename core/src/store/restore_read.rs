@@ -118,8 +118,9 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads) = self.read_models(&[], |reader| {
             let connection = reader.connection();
+            let failed_uploads = super::restore::read_failed(connection)?;
             let transfer_id_floor: Option<i64> = connection.query_row(include_str!("sql/restore_read/transfer_id_floor.sql"), [crate::store::ddl::TRANSFER_ID_KEY], |row| row.get(0))?;
             let orphan_transfer_ops = connection.prepare(include_str!("sql/restore_read/orphan_transfer_ops.sql"))?.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let aliases = connection.prepare(include_str!("sql/restore_read/read_aliases.sql"))?.query_map([], |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?), row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
@@ -131,29 +132,52 @@ impl Store {
             let causes = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_cause.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?.into_iter().filter_map(|(seq, kind, limit)| Some((seq, crate::value::sync::FailureKind::from_cause_columns(&kind, limit)?))).collect::<std::collections::BTreeMap<_, _>>();
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             let origins = read_origins(connection)?;
-            let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let removed_rows = connection.prepare(include_str!("sql/restore_read/read_removed_intent_rows.sql"))?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, i64>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops))
+            Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
         let operation_ids: std::collections::BTreeSet<i64> = entries.iter().map(|entry| entry.operation.id.0).chain(effects_only.iter().copied()).collect();
         let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
-        let mut ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes));
+        let mut ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes), &failed_uploads);
+        if let Ok(ops) = &mut ops {
+            let mut removed = std::collections::BTreeMap::<u64, Vec<(String, String, u64)>>::new();
+            for (seq, model, row_id, revision) in removed_rows {
+                let seq = u64::try_from(seq).map_err(|_| CoreError::Internal("invalid operation id".into()))?;
+                let revision = u64::try_from(revision).map_err(|_| CoreError::Internal("invalid tombstone revision".into()))?;
+                removed.entry(seq).or_default().push((model, row_id, revision));
+            }
+            for op in ops { op.removed_rows = removed.remove(&op.op_id).unwrap_or_default(); }
+        }
         let intent_ids: std::collections::BTreeSet<u64> = origins.valid.values().flat_map(|origin| match origin {
             OpSource::Transfer { transfer_id, .. } => vec![*transfer_id],
             OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.transfer_id).collect(),
             OpSource::Api => Vec::new(),
         }).collect();
-        let transfers = self.stored_transfers(uploads).map(|mut rows| {
+        let mut transfer_id_floor = u64::try_from(transfer_id_floor.unwrap_or(0)).map_err(|_| CoreError::Internal("invalid transfer id floor".into()))?;
+        transfer_id_floor = failed_uploads.iter().filter_map(|row| row.transfer_id()).max().unwrap_or(0).max(transfer_id_floor);
+        let mut transfers = self.stored_transfers(uploads).and_then(|mut rows| {
             for row in &mut rows {
                 row.has_intent = intent_ids.contains(&row.transfer_id);
                 row.has_operation = row.op_id.is_some_and(|id| i64::try_from(id).ok().is_some_and(|id| operation_ids.contains(&id)));
                 if origins.invalid_transfers.contains(&row.transfer_id) || row.batch.is_some_and(|group| origins.invalid_groups.contains(&group)) { row.restore_failed = Some("invalid intent origin".into()); }
             }
-            rows
+            for row in failed_uploads.iter().filter(|row| row.table == "sync_upload") {
+                let id = match row.transfer_id() {
+                    Some(id) => id,
+                    None => { transfer_id_floor = transfer_id_floor.checked_add(1).ok_or_else(|| CoreError::Internal("transfer id overflow".into()))?; transfer_id_floor }
+                };
+                if let Some(mut transfer) = self.failed_transfer(row, id)? {
+                    transfer.has_operation = transfer.op_id.is_some_and(|op| i64::try_from(op).ok().is_some_and(|op| operation_ids.contains(&op)));
+                    transfer.has_intent = intent_ids.contains(&id);
+                    rows.push(transfer);
+                }
+            }
+            Ok(rows)
         });
         if let (Ok(ops), Ok(transfers)) = (&mut ops, &transfers) {
             for stored in ops {
@@ -166,10 +190,15 @@ impl Store {
             }
         }
         let mut transfer_outcomes = std::collections::BTreeMap::<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>::new();
-        for (id, cycle, kind, revision, value) in outcomes {
+        let mut failure_times = std::collections::BTreeMap::new();
+        for (id, cycle, kind, revision, value, terminal_at) in outcomes {
             use crate::owners::write::outbox::OutboxOutcome;
             let id = u64::try_from(id).map_err(|_| CoreError::Internal("invalid transfer outcome id".into()))?;
             let cycle = u64::try_from(cycle).map_err(|_| CoreError::Internal("invalid transfer outcome cycle".into()))?;
+            if matches!(kind.as_str(), "failed" | "rejected") {
+                let terminal_at = u64::try_from(terminal_at).map_err(|_| CoreError::Internal("invalid transfer outcome time".into()))?;
+                failure_times.insert((id, cycle), crate::runtime::Time(terminal_at));
+            }
             let outcome = match (kind.as_str(), revision, value) {
                 ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result, row_id: None },
                 ("rejected", None, Some(error)) => OutboxOutcome::Rejected { error },
@@ -178,6 +207,11 @@ impl Store {
                 _ => return Err(CoreError::Internal("invalid transfer outcome".into())),
             };
             transfer_outcomes.entry(id).or_default().insert(cycle, outcome);
+        }
+        if let Ok(rows) = &mut transfers {
+            for row in rows {
+                if row.failed_at.is_none() { row.failed_at = failure_times.get(&(row.transfer_id, row.cycle_id.max(1))).copied(); }
+            }
         }
         let batches = batches.into_iter().filter_map(|(id, text, op_id)| {
             let id = u64::try_from(id).ok()?;
@@ -205,12 +239,11 @@ impl Store {
         });
         orphan_answers.retain(|id| !claimed.contains(id));
         let held_orphan = pending.as_ref().and_then(|held| match &held.owner { Some(crate::transport::RequestOwner::Orphan { upload_id }) => Some(upload_id.clone()), _ => None });
-        let transfer_id_floor = u64::try_from(transfer_id_floor.unwrap_or(0)).map_err(|_| CoreError::Internal("invalid transfer id floor".into()))?;
         let orphan_transfer_ops = orphan_transfer_ops.into_iter().map(|id| u64::try_from(id).map_err(|_| CoreError::Internal("invalid orphan operation id".into()))).collect::<Result<Vec<_>, _>>()?;
         Ok(Restore { transfer_id_floor, orphan_transfer_ops, aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan, held_orphan })
     }
 
-    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, (cycles, causes): (&std::collections::BTreeMap<i64, i64>, &std::collections::BTreeMap<i64, crate::value::sync::FailureKind>)) -> Result<Vec<StoredOp>, CoreError> {
+    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, (cycles, causes): (&std::collections::BTreeMap<i64, i64>, &std::collections::BTreeMap<i64, crate::value::sync::FailureKind>), failed: &[super::restore::RestoreFailedRow]) -> Result<Vec<StoredOp>, CoreError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;
@@ -243,23 +276,23 @@ impl Store {
             let restore_failed = invalid.contains(&seq).then(|| "invalid intent origin".to_string());
             let restore_element = restore_failed.as_ref().map(|_| ("op".to_string(), seq.to_string()));
             let cycle_id = cycles.get(&seq).copied().and_then(|cycle| u64::try_from(cycle).ok()).ok_or_else(|| CoreError::Internal("invalid operation cycle".into()))?;
-            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, cause: causes.get(&seq).copied(), restore_failed, restore_element });
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, cause: causes.get(&seq).copied(), restore_failed, restore_element, removed_rows: Vec::new() });
         }
-        stored.extend(self.dropped_intents()?);
+        stored.extend(Self::dropped_intents(failed));
         Ok(stored)
     }
 
     /// The operations the layout move could not carry: each stays in the queue as `Failed{RestoreFailed}` until its element is discarded.
-    fn dropped_intents(&self) -> Result<Vec<StoredOp>, CoreError> {
+    fn dropped_intents(failed: &[super::restore::RestoreFailedRow]) -> Vec<StoredOp> {
         let mut dropped = Vec::new();
-        for row in self.restore_failed()?.into_iter().filter(|row| row.table == "op") {
+        for row in failed.iter().filter(|row| row.table == "op") {
             let Ok(columns) = serde_json::from_str::<serde_json::Value>(&row.columns) else { continue };
             let Some(op_id) = columns.get("seq").and_then(serde_json::Value::as_u64) else { continue };
             let Some((model, action)) = columns.get("action_key").and_then(serde_json::Value::as_str).and_then(|key| key.split_once(':')) else { continue };
             let row_id = columns.get("temp_id").and_then(serde_json::Value::as_str).unwrap_or(&row.key).to_string();
             let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None };
-            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())) });
+            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())), removed_rows: Vec::new() });
         }
-        Ok(dropped)
+        dropped
     }
 }

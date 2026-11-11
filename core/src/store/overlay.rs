@@ -19,6 +19,14 @@ pub(super) struct OverlaySnapshot {
     pub position: u64,
     pub next_token: u64,
     pub values: HashMap<RowKey, HashMap<String, OverlayValue>>,
+    pub virtual_transfers: HashMap<String, VirtualTransfer>,
+}
+
+#[derive(Clone)]
+pub(super) struct VirtualTransfer {
+    pub transfer_id: u64,
+    pub op_id: Option<u64>,
+    pub error: String,
 }
 
 #[derive(Clone)]
@@ -55,8 +63,9 @@ impl OverlaySnapshot {
         for row in missing { self.values.remove(&row); }
     }
 
-    pub fn clear_models(&mut self, models: Option<&[String]>) {
-        self.values.retain(|row, _| models.is_some_and(|models| !models.contains(&row.model)));
+    pub fn clear_models(&mut self) {
+        self.values.clear();
+        self.virtual_transfers.clear();
     }
 }
 

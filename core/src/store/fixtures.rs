@@ -11,6 +11,10 @@ use crate::value::ScalarKind;
 
 use super::Store;
 
+pub fn failed_restore(store: &Store) -> Vec<super::restore::RestoreFailedRow> {
+    super::restore::read_failed(&store.lock().connection).unwrap()
+}
+
 pub fn messages_spec() -> ModelSpec {
     ModelSpec::new(
         "messages",
@@ -31,9 +35,8 @@ pub fn items_spec() -> ModelSpec {
 }
 
 pub fn booted_store() -> (Store, Arc<ManualClock>) {
-    let store = Store::open_in_memory().unwrap();
     let clock = Arc::new(ManualClock::new(Duration::from_millis(1_000_000)));
-    store.lock().clock = clock.clone();
+    let store = Store::open_in_memory(clock.clone()).unwrap();
     store.boot(&[messages_spec(), items_spec()], None).unwrap();
     store.mark_ready();
     (store, clock)
@@ -174,8 +177,7 @@ pub fn all_specs() -> Vec<ModelSpec> {
 }
 
 pub fn booted() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
-    db.set_clock(Arc::new(ManualClock::new(Duration::from_millis(1_000_000))));
+    let db = Arc::new(Store::open_models(None, all_specs(), None, Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap());
     db
 }
 
@@ -192,6 +194,19 @@ pub fn poison<T: Send>(mutex: &Mutex<T>) {
 pub fn put(db: &Store, model: &str, value: Value) {
     let event = serde_json::json!({"op": "upsert", "id": value["id"], "row": value}).to_string();
     db.land_events_with_pin(&[(model.to_string(), event)], None).unwrap();
+}
+
+pub(crate) fn list_view(query: &crate::store::query::Query) -> crate::owners::read::deliveries::View {
+    use crate::owners::read::deliveries::{Kind, View};
+    use crate::owners::read::windows::WindowKey;
+    let model = query.model.to_string();
+    View { kind: Kind::List, tables: vec![crate::store::ddl::table_name(&model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: "list".into() }, subject: String::new(), deferred_rows: Vec::new(), query: Some(Arc::new(query.clone())), model }
+}
+
+pub(crate) fn operations_view() -> crate::owners::read::deliveries::View {
+    use crate::owners::read::deliveries::{Kind, View};
+    use crate::owners::read::windows::WindowKey;
+    View { kind: Kind::Operations, tables: vec![crate::store::operation::QUEUE_TABLE.into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None, model: String::new() }
 }
 
 impl Store {

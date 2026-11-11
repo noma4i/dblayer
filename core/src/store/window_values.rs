@@ -18,6 +18,7 @@ pub(crate) struct WindowPage<'a> {
     pub related: &'a [(String, RowValue)],
     pub total: Option<i64>,
     pub base_revision: i64,
+    pub landed_at: i64,
 }
 
 pub(crate) fn row_values(row: &RowValue) -> Result<Map<String, Value>, CoreError> {

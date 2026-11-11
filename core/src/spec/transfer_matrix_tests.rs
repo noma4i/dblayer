@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::transfer_harness::*;
-use crate::owners::contract::{EpochStarted, ModelsReset, Online, RejectReason};
+use crate::owners::contract::{EpochStarted, Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
@@ -27,19 +27,7 @@ fn xfer_epoch_started_generation() {
     assert_eq!(out.batches[0].basis.get("Moment"), Some(&5));
 }
 
-#[test]
-fn xfer_models_reset_generation() {
-    let mut twin = generation_twin();
-    let (id, _, out) = twin.accepting(KEY, 2);
-    assert_eq!(out.batches[0].basis.get("Moment"), Some(&5));
-    twin.commit();
-    twin.post(TransferInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 6, models: vec!["Moment".into()] }));
-    assert_eq!(twin.stage(id), TransferStage::Copying);
-    let out = twin.copy_done(id);
-    assert_eq!(out.batches[0].basis.get("Moment"), Some(&6));
-}
-
-fn stale() -> RejectReason { RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 5 } }
+fn stale() -> RejectReason { RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 5)].into() } }
 
 fn stage_in(name: &str, twin: &mut Twin) -> TransferId {
     match name {
@@ -98,11 +86,12 @@ fn xfer_persisting_invalid() {
 fn xfer_persisting_failure_invalid() {
     let mut twin = Twin::new();
     let id = twin.persisting_failure(KEY);
+    let error = twin.t(id).error.clone().expect("the failure has a cause");
     let (waiter, _) = twin.outcome(id, 1);
     let out = twin.reject(RejectReason::Invalid);
     assert_eq!(twin.stage(id), TransferStage::Failed);
-    assert!(matches!(out.shows().as_slice(), [Shown::Failed { .. }]), "{:?}", out.shows());
-    assert!(matches!(out.replies(waiter).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, None)]));
+    assert!(matches!(out.shows().as_slice(), [Shown::Failed { error: found }] if *found == error), "{:?}", out.shows());
+    assert!(matches!(out.replies(waiter).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { error: found }, None)] if *found == error));
     assert_eq!((out.writes(), out.round_idle()), (0, vec![id]), "the mark stays in memory");
 }
 

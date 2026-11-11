@@ -9,7 +9,7 @@ use crate::ffi::selftest::rig_tests::bound;
 use crate::ffi::tests::session_guards_tests::WatchedHeld;
 
 fn stored(path: &Path) -> (bool, bool) {
-    let db = crate::store::Store::open_models(Some(path), vec![], None).map(Arc::new).unwrap();
+    let db = crate::store::Store::open_models(Some(path), vec![], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     let inner = db.lock();
     let session = crate::store::session_state::session(&inner.connection).unwrap();
     let pending = crate::store::session_state::pending(&inner.connection).unwrap();

@@ -179,19 +179,6 @@ fn win_loading_stale() {
 }
 
 #[test]
-fn win_loading_models_reset() {
-    let mut twin = loading();
-    assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Cancel { request: 1, attempt: 1 }, Effect::Request { request: 2, attempt: 2, page: 1 }]);
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-#[test]
-fn win_loading_models_other() {
-    let mut twin = loading();
-    assert!(twin.step(Input::ModelsReset { own_model: false }).is_empty());
-}
-
-#[test]
 fn win_loading_stray_store() {
     let mut twin = loading();
     assert!(twin.step(Input::Committed { request: 1, revision: 50 }).is_empty());

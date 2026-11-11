@@ -20,9 +20,18 @@ fn reactions(stand: &Stand, row: &WireRow) -> Vec<(String, String)> {
     items.iter().map(|item| { let Cell::Seq { items } = item else { panic!("{item:?}") }; (text(&items[at("userId")]), text(&items[at("body")])) }).collect()
 }
 
-async fn shown_at(stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64) {
+async fn shown_at(stand: &Stand, stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64, trace: &mut Vec<String>) {
     loop {
-        let value = bound(stream.pull_next()).await.expect("the stream is open");
+        let value = match tokio::time::timeout(std::time::Duration::from_secs(8), stream.pull_next()).await {
+            Ok(value) => value.expect("the stream is open"),
+            Err(_) => {
+                let epoch = stand.database.session_epoch();
+                let row = stand.database.peek_row(epoch, "Message".into(), "m1".into());
+                let store_revision = stand.database.db.revision_seq();
+                panic!("waiting for revision {revision}, store={store_revision:?}, row={row:?}, values={trace:?}");
+            }
+        };
+        trace.push(format!("{value:?}"));
         let at = match value {
             ReadValue::Snapshot { revision, rows, .. } => { *shown = rows; revision }
             ReadValue::Delta { revision, edits, .. } => { RowEdit::replay(shown, &edits); revision }
@@ -41,13 +50,15 @@ async fn consumer_message_reaction_keyed_by_user() {
     let epoch = stand.database.session_epoch();
     let stream = stand.database.subscribe_values(epoch, ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: crate::ffi::ReadFetch::Never });
     let mut shown = Vec::new();
+    let mut trace = Vec::new();
     stand.hold(&["MessageReact"]);
     let patch = json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": {"$arg": "userId"}, "body": {"$arg": "reactionBody"}}}}}).to_string();
     let mut seen = Vec::new();
     for (user, body) in [("u1", "a"), ("u1", "b"), ("u3", "c")] {
         let args = json!({"userId": user, "reactionBody": body}).to_string();
         let receipt = bound(stand.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch.clone(), args)).await.unwrap();
-        shown_at(&stream, &mut shown, receipt.revision).await;
+        trace.push(format!("receipt {} {user} {body}", receipt.revision));
+        shown_at(&stand, &stream, &mut shown, receipt.revision, &mut trace).await;
         seen.push(reactions(&stand, &shown[0]));
     }
     let pair = |user: &str, body: &str| (user.to_string(), body.to_string());

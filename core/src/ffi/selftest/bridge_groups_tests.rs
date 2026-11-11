@@ -248,28 +248,6 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     rig.database.close_now();
 }
 
-/// Fable review 3 (old lines sync/send/flush.rs land_response): a create the server confirmed keeps its row when the cache of another model clears between the answer and its landing. The epoch stays, only the generation moves.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let gate = rig.world.hold_next("SendMessage");
-    let receipt = bound(rig.database.send(message(epoch, "kept", 9))).await.unwrap();
-    gate.entered().await;
-    let generation = rig.database.db.generation();
-    bound(rig.database.reset_models_of(&["User"])).await;
-    assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
-    assert_eq!(rig.database.session_epoch(), epoch, "the reset of another model ended the epoch");
-    gate.release();
-    let row = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("the confirmed create has no row");
-    settle(&rig).await;
-    let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
-    assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
-    assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).is_empty(), "the confirmed create is still queued");
-    rig.database.close_now();
-}
-
 /// K25 (D04, old lines db/roll_back.rs restore and db/prior.rs reappearing): two operations change the same member of the same lists and both are refused. The lists end the way they were, in both orders of the two changes, the first refusal arriving while the second still holds its answer.
 #[tokio::test(flavor = "multi_thread")]
 async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_orders() {

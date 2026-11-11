@@ -3,7 +3,6 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
-use super::read::deliveries::StreamId;
 pub use crate::store::session_state::StoredAnswer;
 use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner, Time};
 
@@ -42,6 +41,7 @@ pub enum SessionError {
     Unauthorized,
     Security { code: crate::transport::SecurityCode, detail: String },
     Http { status: u16 },
+    Network,
     TooLarge { size: u64, limit: u64 },
     /// The answer was above the limit of the transport: a sent request has an unknown outcome and repeats with its pair.
     ResponseTooLarge { limit: u64 },
@@ -51,6 +51,9 @@ pub enum SessionError {
 }
 
 pub type SessionAnswer = Result<String, SessionError>;
+
+#[derive(Clone, Debug)]
+enum RestoredAnswer { Saved(SessionAnswer), Local(SessionError) }
 
 /// The row of `encrypted_answer` for a terminal outcome of a `Mutate`; the other errors of a call never land.
 pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
@@ -207,15 +210,6 @@ pub enum AuthorOutcome {
     Dropped,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RetryPhase {
-    Idle,
-    InFlight,
-    WaitingRetry,
-    WaitingNetwork,
-    WaitingSecret,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEffect {
     SealProbe { seal_id: u64, pending: PendingCall, credential: Option<Digest> },
@@ -223,8 +217,9 @@ pub enum SessionEffect {
     CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
     /// `erase_session`: the sign-in failed, `encrypted_session` of its new credential goes with the pending.
-    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, erase_session: bool },
+    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, resume_answer: Option<SessionAnswer>, erase_session: bool, end_journal: bool },
     CommitRevoked { batch: BatchId, epoch: Epoch },
+    CommitResumeAnswer { batch: BatchId, epoch: Epoch, answer: Option<SessionAnswer> },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Backoff` (R5b).
@@ -245,7 +240,6 @@ pub enum SessionEffect {
     ResumeReply { id: ReplyId, answer: Result<Option<String>, SessionError> },
     ExecutorFailed,
     Answer { author: AuthorId, req_id: RequestId, outcome: AuthorOutcome },
-    RetryState { stream_id: StreamId, attempts: u64, phase: RetryPhase },
     Drained(Drained),
 }
 
@@ -269,17 +263,15 @@ pub enum SessionInput {
     /// The gate of the epoch refused the request before the transport call.
     GateClosed { request_id: RequestId, attempt_id: AttemptId },
     Foreground { seq: u64 },
-    InterestPlus { stream_id: StreamId },
-    InterestMinus { stream_id: StreamId },
     RestoreReady { epoch: Epoch },
     RestoreFailed { epoch: Epoch, error: String },
     /// The snapshot of `ReadIntents`: Session classifies `pending`; `answers` go to the authors, `pending_lost` is the dropped `encrypted_pending` (also `Open.dropped_pending`).
-    Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
+    Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool, resume_answer: Option<SessionAnswer> },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode>, kind: crate::transport::AnswerKind },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<ReplyId>, epoch: Epoch },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, status: u16, too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
-    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64, sequenced: bool },
+    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64 },
     /// The executor of the HTTP exchange of `attempt_id` died.
     HttpFailed { attempt_id: AttemptId },
     Committed(Committed),
@@ -317,19 +309,22 @@ pub struct SessionState {
     published: PublishedState,
     after_publish: Option<AnswerAfterPublish>,
     external_revoked: std::collections::BTreeMap<BatchId, Epoch>,
-    subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
     restored_detached: Option<PendingCall>,
     restored_transfer: Option<PendingCall>,
     released: BTreeSet<RequestId>,
     restored: bool,
     restored_active: Option<RequestId>,
-    restored_answer: Option<SessionAnswer>,
+    restored_answer: Option<RestoredAnswer>,
+    resume_taking: Option<(BatchId, Vec<ReplyId>)>,
+    resume_saving: Option<(BatchId, SessionAnswer)>,
+    resume_landing_saved: bool,
     restore_error: Option<String>,
     resume_waiters: Vec<ReplyId>,
     resume_published: Option<String>,
     resume_clearing: Option<SessionAnswer>,
     failed_batch: Option<BatchId>,
+    detach_error: Option<SessionError>,
     operations: Vec<SessionOperation>,
     next_request: RequestId,
     next_batch: BatchId,
@@ -340,7 +335,6 @@ pub struct SessionState {
     restore_floor: Epoch,
     adopt: bool,
     held: Option<SessionPhase>,
-    reported: (u64, RetryPhase),
 }
 
 fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause::ServerEnded) }
@@ -410,18 +404,14 @@ impl StateOwner for SessionCalls {
     type Input = SessionInput;
     type Effect = SessionEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &Self::State) -> Option<String> {
+        Some(format!("phase={:?}, online={:?}, restored_answer={:?}, taking={:?}, saving={:?}, drained_held={}, resume_waiters={:?}", state.phase, state.online, state.restored_answer, state.resume_taking, state.resume_saving, matches!(state.phase, SessionPhase::Closed) && state.resume_taking.is_some(), state.resume_waiters))
+    }
+
     fn step(state: &mut SessionState, input: SessionInput) -> Effects<Self> {
         let mut fx = Vec::new();
-        let interest = if let SessionInput::InterestPlus { stream_id } = &input { (!matches!(state.phase, SessionPhase::Sealing { .. })).then_some(*stream_id) } else { None };
         state.run(input, &mut fx);
-        let view = state.view();
-        if view != state.reported {
-            state.reported = view;
-            for stream_id in &state.subscribers { fx.push(SessionEffect::RetryState { stream_id: *stream_id, attempts: view.0, phase: view.1 }); }
-        }
-        if let Some(stream_id) = interest {
-            if !matches!(state.phase, SessionPhase::Closed) { fx.push(SessionEffect::RetryState { stream_id, attempts: view.0, phase: view.1 }); }
-        }
         fx.into_iter().map(|effect| match effect {
             SessionEffect::ScheduleTick { attempts } => Effect::Backoff { id: RETRY_TICK, policy: crate::runtime::RetryPolicy::Http, attempt: u32::try_from(attempts.max(1)).unwrap_or(u32::MAX), input: SessionInput::Tick(Time(0)) },
             other => Effect::Run(other),
@@ -458,7 +448,7 @@ impl SessionEffect {
     pub fn io_id(&self) -> Option<EffectId> {
         match self {
             Self::SealProbe { seal_id: id, .. } => Some(seal_id(*id)),
-            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } | Self::CommitRevoked { batch, .. } => Some(*batch),
+            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } | Self::CommitRevoked { batch, .. } | Self::CommitResumeAnswer { batch, .. } => Some(*batch),
             Self::HttpRequest { attempt_id, .. } => Some(http_id(*attempt_id)),
             Self::GenerateCredential { secret_op_id } => Some(secret_id(0, *secret_op_id)),
             Self::StoreSecret { secret_op_id, .. } => Some(secret_id(1, *secret_op_id)),

@@ -87,18 +87,9 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let mut unique = listed.clone();
         unique.dedup();
         assert_eq!(listed, unique, "{case}: a row is listed twice: {listed:?}");
-        database.reset_models_of(&["Moment"]).await;
-        bound(crate::ffi::settled(&database)).await.unwrap();
-        let before = pages.queries.load(Ordering::SeqCst);
-        let fresh_rows = Arc::new(Rows::default());
-        let fresh = database.watch_query(FEED, fresh_rows.clone());
-        bound(fresh.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("{case}: the window after the reset inherited {error:?}"));
-        assert!(fresh_rows.1.lock().unwrap().iter().all(|change| change.error.is_none()), "{case}: the window after the reset delivered an error");
-        assert!(pages.queries.load(Ordering::SeqCst) - before <= 1, "{case}: the window after the reset read more than once");
         let result = bound(database.load_more(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into())).await.unwrap();
         assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore), "{case}: {result:?}");
         live.cancel();
-        fresh.cancel();
         database.close_now();
     }
 }

@@ -208,7 +208,7 @@ async fn matrix_window_landing_base_revision() {
         stand.answer("chatMembers", members_page(&["u1", "u2", "u3", "u4"], false)["data"].clone());
         bound(stand.database.refresh(epoch, "User".into(), Some("chat_members".into()), params.into())).await.unwrap();
         stand.settle().await;
-        let received = stand.asked().len();
+        let received = stand.request_mark();
         stand.hold(&["chatMembers", "ChatGroupUpdate"]);
         let answer: Vec<&str> = match (change, answer_has_row) {
             ("u2 leaves", true) => vec!["u1", "u2", "u3", "u4"],
@@ -219,7 +219,7 @@ async fn matrix_window_landing_base_revision() {
         stand.answer("chatMembers", members_page(&answer, false)["data"].clone());
         let database = stand.database.clone();
         let refresh = tokio::spawn(async move { bound(database.refresh(epoch, "User".into(), Some("chat_members".into()), params.into())).await });
-        crate::test_wait::within_named(6, "the held refresh reaches the server", stand.received(received + 1)).await;
+        crate::test_wait::within_named(6, "the held refresh reaches the server", stand.receive_after(received, "chatMembers", None, 1)).await;
         let (action, user) = if change == "u2 leaves" { ("remove_members", "u2") } else { ("add_members", "u9") };
         let args = json!({"userIds": [user], "order": "OWNER_FIRST"}).to_string();
         let done = crate::test_wait::within_named(5, "the act of the membership operation", bound(stand.database.act(epoch, "Chat".into(), "chat1".into(), action.into(), "{}".into(), args))).await;

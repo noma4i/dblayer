@@ -10,10 +10,11 @@ impl Delivery {
             stage,
             read_revision: revision,
             read_id: 0,
+            read_inflight: false,
             read_seen: 0,
             read_position: 0,
-            reading_position: 0,
             revision: 0,
+            value_position: 0,
             acknowledged: None,
             resync_pending: false,
             resync_failed: false,
@@ -33,7 +34,6 @@ impl Delivery {
             blob: None,
             transfer: None,
             upload_row: None,
-            retry: None,
             status_revision: 0,
             upload_inflight: false,
             journal: VecDeque::new(),
@@ -65,8 +65,8 @@ impl Delivery {
                 machine.stage = DeliveryStage::Live;
                 machine.push(Value::Ready, fx);
             }
-            Kind::Blob | Kind::RetryStatus => {
-                fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true, key: (machine.view.kind == Kind::Blob).then(|| machine.view.subject.clone()) }));
+            Kind::Blob => {
+                fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true, key: machine.view.subject.clone() }));
                 machine.interested = true;
             }
             Kind::List | Kind::Count | Kind::Operations | Kind::Entity { .. } => {

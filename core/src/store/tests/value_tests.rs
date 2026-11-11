@@ -19,7 +19,7 @@ fn blobs_spec() -> ModelSpec {
 }
 
 fn store_with_blobs() -> Store {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&[blobs_spec()], None).unwrap();
     store.mark_ready();
     store

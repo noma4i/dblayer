@@ -13,6 +13,7 @@ fn call_deadline_expired() {
     for (operation, kind) in [("Op", CallKind::Query), ("Change", CallKind::Mutate)] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let request_id = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
         twin.det.tick(crate::runtime::Time(29_999));
         twin.det.run_until_quiet(100).unwrap();
         assert!(take(&twin.log).is_empty());
@@ -22,6 +23,8 @@ fn call_deadline_expired() {
         assert!(effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })));
         assert_eq!(effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Query, .. })), kind == CallKind::Query);
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Mutate, .. })));
+        assert_eq!(effects.iter().filter(|effect| matches!(effect, CallsEffect::Release { request_id: released } if *released == request_id)).count(), usize::from(kind == CallKind::Mutate));
+        assert!(effects.iter().all(|effect| !matches!(effect, CallsEffect::Release { request_id: released } if *released != request_id)));
     }
 }
 
@@ -30,12 +33,15 @@ fn call_caller_cancel() {
     for (operation, kind) in [("Op", CallKind::Query), ("Change", CallKind::Mutate)] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let request_id = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::CallerCancel { reply: 1 });
         twin.det.run_until_quiet(100).unwrap();
         let effects = take(&twin.log);
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { .. })));
         assert_eq!(effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Query, .. })), kind == CallKind::Query);
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { kind: CallKind::Mutate, .. })));
+        assert_eq!(effects.iter().filter(|effect| matches!(effect, CallsEffect::Release { request_id: released } if *released == request_id)).count(), usize::from(kind == CallKind::Mutate));
+        assert!(effects.iter().all(|effect| !matches!(effect, CallsEffect::Release { request_id: released } if *released != request_id)));
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } });
         twin.det.tick(crate::runtime::Time(30_000));
         twin.det.run_until_quiet(100).unwrap();
@@ -108,12 +114,20 @@ fn call_awaiting_snapshot_end() {
 fn call_awaiting_snapshot_declare() {
     let mut twin = Twin::with(None);
     twin.feed(run(1));
-    twin.det.post(twin.addr, EpochStamp::Control, CallsInput::Declare(vec![("Op".into(), CallKind::Query)]));
+    twin.det.post(twin.addr, EpochStamp::Control, CallsInput::Declare(vec![("Op".into(), crate::owners::calls::CallDefinition { kind: CallKind::Query, document: String::new(), root: String::new() })]));
     twin.det.run_until_quiet(100).unwrap();
     assert!(take(&twin.log).is_empty());
     twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
     twin.det.run_until_quiet(100).unwrap();
     assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
+    let mut removed = Twin::with(None);
+    removed.feed(run(1));
+    removed.det.post(removed.addr, EpochStamp::Control, CallsInput::Declare(vec![]));
+    removed.det.post(removed.addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(true)));
+    removed.det.run_until_quiet(100).unwrap();
+    let effects = take(&removed.log);
+    assert!(effects.iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, operation, definition, .. } if operation == "Op" && definition.kind == CallKind::Query)), "accepted declaration must survive replacement: {effects:?}");
+    assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Reply { .. })));
 }
 
 #[test]
@@ -272,7 +286,7 @@ impl Twin {
     fn feed(&mut self, input: Input) -> Out {
         match input.clone() {
             Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
-            Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, kind_of(kind))).collect())),
+            Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, crate::owners::calls::CallDefinition { kind: kind_of(kind), document: String::new(), root: String::new() })).collect())),
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, data: None, errors: errors.into_iter().map(|message| crate::transport::GraphQLError { message, path: None, extensions: None }).collect(), kind: crate::transport::AnswerKind::Answered { sequence: None } }),
             Input::Transient { call_id, reason } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body: None, data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Transient { reason } }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
@@ -291,7 +305,7 @@ impl Twin {
         self.history.extend(raw.iter().cloned());
         let want = self.reference.step(input);
         let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
-            CallsEffect::Request { call_id, request_id, operation, kind, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone(), kind: ref_kind(*kind) }),
+            CallsEffect::Request { call_id, request_id, operation, definition, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone(), kind: ref_kind(definition.kind) }),
             CallsEffect::Cancel { request_id, kind } => Some(RefEffect::Cancel { request_id: *request_id, kind: ref_kind(*kind) }),
             CallsEffect::Release { request_id } => Some(RefEffect::Release { request_id: *request_id }),
             CallsEffect::SnapshotRequest { epoch } => Some(RefEffect::SnapshotRequest { epoch: *epoch }),
@@ -413,6 +427,16 @@ fn call_dropped() {
     let out = mutation.feed(Input::Dropped { call_id: 1 });
     assert!(out.effects.is_empty() && out.replies.is_empty());
     assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { request_id: 1, kind: Kind::Mutate, .. }]));
+    use crate::runtime::{Effect, StateOwner};
+    let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
+    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 });
+    for attempt in 1..40 {
+        Calls::step(&mut state, CallsInput::Dropped { call_id: 1 });
+        Calls::step(&mut state, CallsInput::RetryDue { call_id: 1, attempt });
+    }
+    let exhausted = Calls::step(&mut state, CallsInput::Dropped { call_id: 1 });
+    assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id: 1 }))));
+    assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Reply { id: 1, answer: Err(CallError::Dropped) }))));
 }
 
 #[test]
@@ -481,6 +505,22 @@ fn call_deadline_before_snapshot() {
 
 #[test]
 fn call_deadline_timer_lifecycle() {
+    use crate::runtime::{Effect, ScheduleId, StateOwner};
+    for online in [None, Some(true)] {
+        for terminal in 0..4 {
+            let mut state = CallsState::new(EPOCH, online, &[("Op", CallKind::Query)]);
+            let scheduled = Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Op".into(), variables: "{}".into(), reply: 1 });
+            assert!(scheduled.iter().any(|effect| matches!(effect, Effect::Schedule { id: ScheduleId(2), input: CallsInput::Deadline { call_id: 1 }, .. })));
+            let input = match terminal {
+                0 => CallsInput::Deadline { call_id: 1 },
+                1 => CallsInput::CallerCancel { reply: 1 },
+                2 => CallsInput::EpochEnded(Cause::SessionReset),
+                _ => CallsInput::Closing,
+            };
+            let finished = Calls::step(&mut state, input);
+            assert!(finished.iter().any(|effect| matches!(effect, Effect::Cancel(ScheduleId(2)))), "deadline must be unscheduled after terminal input {terminal}, online {online:?}");
+        }
+    }
     let mut awaiting = Twin::with(None);
     awaiting.feed(run(1));
     awaiting.det.tick(crate::runtime::Time(30_000));
@@ -643,10 +683,29 @@ fn call_prop_second_epoch_orders() {
 }
 
 #[test]
-fn call_epoch_ended() { sending().feed(Input::EpochEnded(End::Session)); }
+fn call_epoch_ended() {
+    for operation in ["Op", "Change"] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let out = twin.feed(Input::EpochEnded(End::Session));
+        let kind = if operation == "Op" { Kind::Query } else { Kind::Mutate };
+        assert!(out.effects.contains(&RefEffect::Cancel { request_id: 1, kind }));
+        assert_eq!(out.replies, vec![(1, Err(Fail::SessionEnded))]);
+    }
+}
 
 #[test]
-fn call_closing() { sending().feed(Input::Closing); }
+fn call_closing() {
+    for operation in ["Op", "Change"] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let out = twin.feed(Input::Closing);
+        let kind = if operation == "Op" { Kind::Query } else { Kind::Mutate };
+        assert!(out.effects.contains(&RefEffect::Cancel { request_id: 1, kind }));
+        assert!(out.effects.contains(&RefEffect::Drained));
+        assert_eq!(out.replies, vec![(1, Err(Fail::Closed))]);
+    }
+}
 
 #[test]
 fn call_epoch_ended_close() {
@@ -783,12 +842,25 @@ fn call_prop_single_request() {
         let twin = random_trace(seed);
         let mut requests = std::collections::BTreeMap::<u64, Vec<(u64, CallKind)>>::new();
         for effect in &twin.history {
-            if let CallsEffect::Request { call_id, request_id, kind, .. } = effect { requests.entry(*call_id).or_default().push((*request_id, *kind)); }
+            if let CallsEffect::Request { call_id, request_id, definition, .. } = effect { requests.entry(*call_id).or_default().push((*request_id, definition.kind)); }
         }
         for sent in requests.values() {
-            if sent[0].1 == CallKind::Mutate { assert!(sent.iter().all(|entry| entry.0 == sent[0].0)); }
-            else { assert_eq!(sent.iter().map(|entry| entry.0).collect::<std::collections::BTreeSet<_>>().len(), sent.len()); }
+            if sent[0].1 == CallKind::Mutate {
+                assert!(sent.len() <= 40, "mutation retry budget: {sent:?}");
+                assert!(sent.iter().all(|entry| entry.0 == sent[0].0));
+            } else {
+                assert!(sent.len() <= 3, "query retry budget: {sent:?}");
+                assert_eq!(sent.iter().map(|entry| entry.0).collect::<std::collections::BTreeSet<_>>().len(), sent.len());
+            }
         }
+    }
+    for operation in ["Op", "Change"] {
+        let mut twin = Twin::new();
+        twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 91 });
+        twin.det.tick(crate::runtime::Time(30_000));
+        twin.det.run_until_quiet(100).unwrap();
+        let effects = take(&twin.log);
+        assert_eq!(effects.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 91, .. })).count(), 1, "deadline for {operation}: {effects:?}");
     }
     let _: CallAnswer = Ok(String::new());
 }

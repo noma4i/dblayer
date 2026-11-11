@@ -1,6 +1,6 @@
 //! Owner `Windows`: a dictionary of `Window` machines by key.
 //! A table row applies to the machine of the key an input names. Inputs that name a request (`Response`, `Failure`, `Dropped`, `RetryDue`,
-//! `Committed`, `Rejected`) go to the machine that owns the request. `Online`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to
+//! `Committed`, `Rejected`) go to the machine that owns the request. `Online`, `EpochStarted`, `EpochEnded`, `Closing` apply to
 //! every machine, `Stale` to the machines of its model named in `keys`. Request ids are unique in the owner. The retry timer is `Effect::Schedule`
 //! of the owner (`after` = the backoff). Inputs for other owners (`Commit`, `WindowState`) are `Effect::Send` to the addresses of the state.
 
@@ -13,7 +13,7 @@ use statig::prelude::*;
 use crate::owners::read::deliveries::{DeliveryInput, Deliveries, EndCause};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::runtime::RetryPolicy;
-use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, WindowPhase as Phase, WindowState};
+use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError, RequestId, WindowPhase as Phase, WindowState};
 use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 mod windows_types;
@@ -35,12 +35,12 @@ impl Facts {
         self.env(event);
         match event {
             Ev::InterestPassive { id } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
             Ev::InterestPlus { id, now } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 if self.is_fresh(*now) {
                     self.set_phase(Phase::Loaded);
                     self.announce();
@@ -73,10 +73,6 @@ impl Facts {
             }
             Ev::Online { online: true, now, .. } if !self.is_fresh(*now) && self.watched() => self.begin(context, 1, false, true),
             Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
-            Ev::ModelsReset { models, .. } if self.depends_on(models) => {
-                self.fresh = false;
-                if self.watched() { self.begin(context, 1, false, self.is_online()) } else { Handled }
-            }
             Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
         }
@@ -95,12 +91,12 @@ impl Facts {
                 Handled
             }
             Ev::InterestPassive { id } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
             Ev::InterestPlus { id, .. } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
@@ -138,7 +134,7 @@ impl Facts {
                 self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
-                self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });
+                self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });
                 Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone() }))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
@@ -181,20 +177,6 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::ModelsReset { models, .. } if self.depends_on(models) => {
-                let (new_request, new_attempt) = context.request();
-                self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
-                self.emit(Emit::CancelRetry { request: load.request });
-                self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
-                load.request = new_request;
-                load.step = new_request;
-                load.attempt = new_attempt;
-                load.retry = false;
-                load.pinning = true;
-                load.attempts = 0;
-                load.basis = self.basis();
-                Handled
-            }
             Ev::EpochEnded { .. } | Ev::Closing => {
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.finish((!load.retry).then_some((load.step, load.attempt)))
@@ -209,8 +191,8 @@ impl Facts {
         match event {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
             Ev::Rejected { request: got, reason } if *got == landing.request => match reason {
-                RejectReason::StaleGeneration { models: stale, generation } => {
-                    for model in stale {
+                RejectReason::StaleGeneration { generations, .. } => {
+                    for (model, generation) in generations {
                         self.generations.insert(model.clone(), *generation);
                     }
                     if self.watched() {
@@ -229,12 +211,12 @@ impl Facts {
                 RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
             },
             Ev::InterestPassive { id } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
             Ev::InterestPlus { id, .. } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
@@ -274,12 +256,12 @@ impl Facts {
                 Handled
             }
             Ev::InterestPassive { id } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 self.announce();
                 Handled
             }
             Ev::InterestPlus { id, .. } => {
-                self.interest.insert(*id);
+                self.add_interest(*id);
                 if self.is_online() && !self.deferred() {
                     return self.leave_waiting(context, *force, *page);
                 }

@@ -28,7 +28,6 @@ enum Step {
     ResponseSwap(u64),
     RetryAny,
     DiscardAny,
-    ModelsReset,
     SubmitAct { keep: bool, transfer: bool, act: Act },
     ResponseNotFound(u64),
 }
@@ -176,7 +175,6 @@ impl Reference {
             Step::ResponseError { op, temporary } => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: if temporary { Resp::Temporary { has_sequence: false } } else { Resp::Permanent }, swap: None, pending_retained: None }) }
             Step::RetryAny => self.select(RIn::Retry { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
             Step::DiscardAny => self.select(RIn::Discard { epoch: 1, sel: Sel::Row { model: "Moment".into(), row_id: "r".into(), action: None }, reply_to: Addr::Call }),
-            Step::ModelsReset => self.feed(RIn::ModelsReset { models: vec!["Moment".into()], generations: [("Moment".to_string(), 1)].into_iter().collect() }),
             Step::SubmitAct { keep, transfer, act } => self.feed(RIn::Submit { epoch: 1, op: spec_act(1, keep, transfer, act), flags: SubmitFlags { valid: true, send: SendKind::Declared, removes_receiver: false, leaves_scope: false, join_missing_row: false, intent_written: false } }),
             Step::ResponseNotFound(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::NotFound, swap: None, pending_retained: None }) }
             Step::ResponseSwap(op) => { let cycle = op_cycle(self, op); self.feed(RIn::Response { op_id: op, cycle_id: cycle, resp: Resp::Data(LandFacts { root_present: true, ..LandFacts::default() }), swap: Some(("temp-1".into(), "real-1".into())), pending_retained: None }) }
@@ -201,7 +199,7 @@ impl Owner {
             Base::Restored { attempts, pending } => {
                 let mut twin = Twin::bare();
                 twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
-                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None };
+                let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), error_mark: false, pending: pending.then_some((41, 1)), attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
                 twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
                 twin.post(OutboxInput::RestoreReady { epoch: super::outbox_harness::EPOCH });
                 Self { twin, pairs: Default::default() }
@@ -237,7 +235,6 @@ impl Owner {
             Step::ResponseError { op, temporary } => self.twin.post(I::Response { op_id: op, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(temporary) }),
             Step::RetryAny => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 903 }),
             Step::DiscardAny => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 904 }),
-            Step::ModelsReset => self.twin.post(I::ModelsReset(crate::owners::contract::ModelsReset { epoch: super::outbox_harness::EPOCH, generation: 1, models: vec!["Moment".into()] })),
             Step::SubmitAct { keep, transfer, act } => { self.twin.submit_as("r", if keep { Policy::Keep } else { Policy::Rollback }, transfer, act.name()); self.twin.last.clone() }
             Step::ResponseNotFound(op) => { let destroy = self.twin.state().ops.get(&op).is_some_and(|found| found.op.action == "destroy"); self.twin.post(I::Response { op_id: op, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: if destroy { None } else { Some(false) } }) }
             Step::ResponseSwap(op) => self.twin.post(I::Response { op_id: op, rows: super::outbox_harness::server_rows(), swaps: vec![("temp-1".to_string(), "real-1".to_string())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None }),
@@ -342,7 +339,7 @@ fn seconds(target: u64) -> Vec<(&'static str, Option<Step>)> {
         ("-", None), ("Commit", Some(Commit(target))), ("Response", Some(Response(target))),
         ("TransportError temporary", Some(Error { op: target, temporary: true })), ("TransportError permanent", Some(Error { op: target, temporary: false })),
         ("Dropped", Some(Dropped(target))), ("Tick", Some(Tick(target))), ("Offline", Some(Online(false))), ("Online", Some(Online(true))),
-        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Response NotFound", Some(ResponseNotFound(target))), ("Response with temporary errors", Some(ResponseError { op: target, temporary: true })), ("Response with permanent errors", Some(ResponseError { op: target, temporary: false })), ("Response with a swap", Some(ResponseSwap(target))), ("Retry without an action", Some(RetryAny)), ("Discard without an action", Some(DiscardAny)), ("ModelsReset", Some(ModelsReset)), ("Submit with another epoch", Some(SubmitStale)),
+        ("Retry", Some(Retry)), ("Discard", Some(Discard)), ("Outcome", Some(Outcome(target))), ("EpochEnded", Some(EpochEnd)), ("Closing", Some(Close)), ("Stray", Some(Stray)), ("Response NotFound", Some(ResponseNotFound(target))), ("Response with temporary errors", Some(ResponseError { op: target, temporary: true })), ("Response with permanent errors", Some(ResponseError { op: target, temporary: false })), ("Response with a swap", Some(ResponseSwap(target))), ("Retry without an action", Some(RetryAny)), ("Discard without an action", Some(DiscardAny)), ("Submit with another epoch", Some(SubmitStale)),
     ]
 }
 

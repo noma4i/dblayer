@@ -117,7 +117,7 @@ fn feed_close_reaches_the_delivery_stream() {
         let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
         let deliveries = det.add::<Deliveries>("deliveries", DeliveriesState::new(1, DeliveryPeers { windows: Address::new(windows.index()), feed: feed_at }), Discard);
         det.start_epoch(EPOCH);
-        let view = View { kind: Kind::CableCloses, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: super::windows::WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None };
+        let view = View { kind: Kind::CableCloses, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: super::windows::WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None };
         det.post(deliveries, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: 7, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
         det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1, now: crate::runtime::Time(0) });
         det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new(), now: crate::runtime::Time(0) });
@@ -231,7 +231,10 @@ fn feed_io_counter_mismatch_closes() {
     let cancels = peer.cancels.clone();
     pump(&mut det, |_| cancels.load(Ordering::SeqCst) == 1);
     assert_eq!((peer.closed.load(Ordering::SeqCst), peer.cancels.load(Ordering::SeqCst)), (1, 1), "the drain ended with one close and one cancel");
-    assert!(batches.all().is_empty(), "the frame with a skipped counter does not reach the Store");
+    let saved = batches.all();
+    assert_eq!(saved.len(), 1);
+    assert!(saved[0].rows.is_empty(), "the skipped frame must not write rows");
+    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys }] if models == &["Chat"] && keys.is_empty()));
 }
 
 #[test]
@@ -244,7 +247,10 @@ fn feed_io_broken_next_drops() {
     pump(&mut det, |det| saw_input(det, "ProtocolError") == 1);
     det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
     pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
-    assert!(batches.all().is_empty());
+    let saved = batches.all();
+    assert_eq!(saved.len(), 1);
+    assert!(saved[0].rows.is_empty(), "the broken frame must not write rows");
+    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys }] if models == &["Chat"] && keys.is_empty()));
     assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
 }
 

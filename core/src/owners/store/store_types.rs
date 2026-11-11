@@ -137,8 +137,11 @@ pub enum StoreOp {
     Pending { pending: PendingCall, credential_digest: String, wire_id: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
+    ResumeAnswer { answer: crate::owners::session::SessionAnswer },
+    RemoveResumeAnswer,
     /// Remove the row `encrypted_session` (a sign-in that the server refused).
     EraseSession,
+    JournalSessionEnd,
     /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
     Answer { request_id: u64, operation: Option<i64>, result: crate::store::session_state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
@@ -191,6 +194,7 @@ pub enum StoreOp {
     /// Rows of a local model (`set_local`, `set_ephemeral`, `attach`, `detach`).
     LocalRows { model: String, rows: Vec<RowValue> },
     RemoveRows { model: String, ids: Vec<String> },
+    RemoveServerRows { model: String, ids: Vec<String> },
     ExpireRow { model: String, row_id: String, write_revision: u64 },
     /// The field of an ephemeral row goes back to its default when the overlay still holds the value written at `position`.
     ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
@@ -199,7 +203,7 @@ pub enum StoreOp {
     RemoveUploadByTransferId { transfer_id: u64 },
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
-    UploadShown { key: String, shown: crate::owners::write::transfer::Shown, sent: u32, total: u32, attempts: u32, error: Option<String> },
+    UploadShown { key: String, shown: crate::owners::write::transfer::Shown, sent: u32, total: u32, attempts: u32, error: Option<String>, virtual_transfer: Option<(u64, Option<u64>)> },
     /// The swap of the copy of a transfer is done: `staged` of its row is cleared.
     UploadStaged { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
@@ -213,9 +217,9 @@ pub enum StoreOp {
     BlobCachePut { content_sha256: String, blob_id: String, created_at: u64 },
     BlobCacheRemove { content_sha256: String },
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
-    Window { key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64 },
+    Window { landed_at: i64, key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64 },
     /// The marker of a media window: it replaces the stored one and moves `landed_at` of the window, the rows stay.
-    WindowMarker { key: String, model: String, marker: crate::store::WindowMarker },
+    WindowMarker { landed_at: Option<i64>, key: String, model: String, marker: crate::store::WindowMarker },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,14 +316,12 @@ pub enum StoreEffect {
     Pinned { epoch: Epoch, request_id: u64, base_revision: u64 },
     /// One transaction: erase the account (`erase_encrypted` for `SessionReset` and `ServerEnded`).
     EraseAccount { io_id: u64, generation_new: u64, erase_encrypted: bool },
-    EraseModels { io_id: u64, generation_new: u64, models: BTreeSet<String> },
     /// The secret of `CredentialStore` after the commit of SQLite.
     ClearSecret { io_id: u64 },
     /// One transaction: `saved_epoch`, `saved_generation`, `saved_identity`.
     SavePublished { io_id: u64, publication_id: u64, published: Published },
     Reply { author: BatchAuthor, batch: BatchId, stamp: crate::runtime::EpochStamp, reply: StoreReply },
     Cleared { epoch_old: Epoch, erase_id: u64 },
-    ModelsCleared { generation_new: u64, erase_id: u64 },
     ClearFailed { erase_id: u64, error: String },
     Saved { publication_id: u64 },
     SaveFailed { publication_id: u64, error: String },
@@ -346,7 +348,6 @@ pub enum StoreInput {
     Unpin { request_id: u64 },
     Written { author: BatchAuthor, batch: BatchId, result: Result<WriteDone, RejectReason> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
-    ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
     Erased { io_id: u64, result: Result<Done, String> },
     Published { publication_id: u64, published: Published },
     EpochEnded(EpochEnded),

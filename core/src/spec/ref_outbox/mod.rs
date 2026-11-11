@@ -241,11 +241,6 @@ fn route(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
             if s.phase == Phase::Restoring { row(e, "out_restoring_online"); } else { broadcast(s, i, e); }
             local::broadcast(s, i, e);
         }
-        Input::ModelsReset { generations, .. } => {
-            for (m, g) in generations { s.generations.insert(m.clone(), *g); }
-            if s.phase == Phase::Restoring { row(e, "out_restoring_models_reset"); } else { broadcast(s, i, e); }
-            local::broadcast(s, i, e);
-        }
         Input::RowRemoved { model, row_id, .. } => {
             let ids: Vec<OpId> = s.ops.values().filter(|o| &o.model == model && &o.row_id == row_id).map(|o| o.id).collect();
             if ids.is_empty() { row(e, "rule_no_addressee"); }
@@ -261,8 +256,6 @@ fn route(s: &mut State, i: &Input, e: &mut Vec<Effect>) {
             local::broadcast(s, i, e);
         }
         Input::LocalWrite { epoch, id, kind, flags } => local::write(s, *epoch, *id, kind, flags, e),
-        Input::CopyDone { id } => local::copy_result(s, *id, true, e),
-        Input::CopyFailed { id } => local::copy_result(s, *id, false, e),
         Input::ExpireRow { .. } | Input::ResetEphemeral { .. } => local::ephemeral(i, e),
     }
 }

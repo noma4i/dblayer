@@ -24,7 +24,7 @@ pub(super) fn chat(db: &Store) -> Value {
 }
 
 pub(super) fn open() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": null, "lastMessageAt": null}));
     db
 }
@@ -38,7 +38,7 @@ fn data_sets_every_write() {
     write(&db, BatchAuthor::Feed, vec![("messages".into(), event)], Vec::new());
     assert_eq!(chat(&db), json!(["m2", 2]), "an event");
     let key = WindowKey::nodes("messages", &["m3"]);
-    write(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m3", 3)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m3", 3)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
     assert_eq!(chat(&db), json!(["m3", 3]), "a page");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m4", 4)] }]);
     assert_eq!(chat(&db), json!(["m4", 4]), "the answer of a mutation");
@@ -97,7 +97,7 @@ fn data_sets_rollback() {
 
 #[test]
 fn data_sets_missing_parent_store() {
-    let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("messages".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();

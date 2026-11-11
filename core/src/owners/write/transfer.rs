@@ -13,6 +13,12 @@ use crate::runtime::RetryPolicy;
 use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 impl TransferState {
+    fn remove_upload(transfer: &Transfer) -> StoreOp {
+        match &transfer.restore_element {
+            Some((key, _)) => StoreOp::DiscardRestoreFailed { table: "sync_upload".into(), key: key.clone() },
+            None => StoreOp::RemoveUpload { key: transfer.key.clone() },
+        }
+    }
     pub(super) fn shown_now(&self, id: TransferId) -> Shown {
         let Some(transfer) = self.transfers.get(&id) else { return Shown::Gone };
         if matches!(transfer.stage, TransferStage::Copying | TransferStage::PersistingCopy) {
@@ -43,7 +49,7 @@ impl TransferState {
     pub(super) fn shown_op(transfer: &super::transfer_types::Transfer, shown: Shown) -> StoreOp {
         let refused = transfer.round_error.is_some() && matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading);
         let error = if let (Shown::Failed { error }, false) = (&shown, refused) { Some(error.clone()) } else { None };
-        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error }
+        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error, virtual_transfer: transfer.restore_element.as_ref().map(|_| (transfer.transfer_id, transfer.op_id)) }
     }
 
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
@@ -74,10 +80,11 @@ impl TransferState {
     }
 
     /// The Store holds `columns` of the row: a later value of the transfer is written, the value of this batch is published when `publish`.
-    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), (publish, revision): (bool, i64), fx: &mut Fx) {
+    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), (publish, revision): (bool, i64), reconcile: bool, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stored_shown = Some(columns);
         transfer.revision = transfer.revision.max(revision);
+        if !reconcile { return; }
         let key = transfer.key.clone();
         match transfer.last_shown.clone() {
             Some(shown) if shown != Shown::Gone && shown.columns() != columns => self.show(id, shown, fx),
@@ -144,7 +151,8 @@ impl TransferState {
             for (old, operation) in replacements {
                 let Some(transfer) = self.transfers.get(&old) else { continue };
                 if transfer.stage != TransferStage::Removing || transfer.prior != Some(TransferStage::Failed) { continue; }
-                prefix.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                prefix.push(Self::remove_upload(transfer));
+                if transfer.restore_element.is_some() { prefix.push(Self::shown_op(transfer, Shown::Gone)); }
                 if let Some(op_id) = transfer.op_id.filter(|_| transfer.has_operation) { prefix.push(StoreOp::RollBack { op_id }); }
                 if let Some(op_id) = operation.as_ref().map(|op| op.op_id).or_else(|| transfer.op_id.filter(|_| transfer.has_operation)) { prefix.push(StoreOp::RemoveIntent { op_id }); }
                 if let Some(operation) = operation {
@@ -166,10 +174,9 @@ impl TransferState {
                 let own = transfer.op_id.filter(|_| !transfer.submitted || transfer.prior == Some(TransferStage::Failed));
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
-                    ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
-                    if matches!(transfer.removal, Some(Removal::Cancel)) && !transfer.outcomes.contains_key(&transfer.cycle_id) {
-                        ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: OutboxOutcome::Discarded });
-                    }
+                    ops.push(Self::remove_upload(transfer));
+                    if transfer.restore_element.is_some() { ops.push(Self::shown_op(transfer, Shown::Gone)); }
+                    ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))).cloned().unwrap_or(OutboxOutcome::Discarded) });
                     if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: row_id.clone() });
                     }
@@ -189,7 +196,17 @@ impl TransferState {
                 } else {
                     let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
                     let kind = if cached_copy { StoreKind::Completed } else { kind };
+                    if kind == StoreKind::Retrying || (transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed)) {
+                        if let Some(outcome) = transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))) {
+                            ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: outcome.clone() });
+                        }
+                    }
                     if transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed) {
+                        if let Some(previous) = transfer.previous.as_ref() {
+                            if let Some(upload_id) = previous.upload_id.clone() {
+                                ops.push(StoreOp::UploadOrphan { upload_id, key: previous.key.clone() });
+                            }
+                        }
                         ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: UploadKind::Retrying });
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
@@ -198,7 +215,7 @@ impl TransferState {
                         ops.push(StoreOp::RemoveAnswer { request_id });
                     }
                     let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
-                    if shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
+                    if !matches!(kind, StoreKind::Retrying | StoreKind::Failed) && transfer.stage != TransferStage::PersistingCopy && shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
                         ops.push(Self::shown_op(transfer, shown));
                     }
                     if kind == StoreKind::Failed && transfer.failure_abort {
@@ -401,7 +418,11 @@ impl TransferState {
 
     pub(super) fn delete_copy(&self, id: TransferId, fx: &mut Fx) {
         if let Some(transfer) = self.transfers.get(&id) {
-            run(fx, TransferEffect::DeleteFile { path: file_id(transfer.transfer_id) });
+            let holder = match &transfer.restore_element {
+                Some((_, holder)) => *holder,
+                None => Some(transfer.transfer_id),
+            };
+            if let Some(holder) = holder { run(fx, TransferEffect::DeleteFile { path: file_id(holder) }); }
         }
     }
 
@@ -497,7 +518,12 @@ impl TransferState {
             transfer.revision = revision;
             if matches!(pending.kind, StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed) { transfer.answer_saved = None; }
         }
-        for (id, columns) in &pending.written { self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), fx); }
+        for (id, columns) in &pending.written {
+            let transition = pending.kind == StoreKind::Retrying
+                || (matches!(pending.kind, StoreKind::Failed | StoreKind::MixedOutcomes) && self.stage_of(*id) == Some(TransferStage::PersistingFailure))
+                || (matches!(pending.kind, StoreKind::SyncUpload | StoreKind::Completed) && self.stage_of(*id) == Some(TransferStage::PersistingCopy));
+            self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), !transition, fx);
+        }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::OrphanRemoved {
@@ -603,10 +629,9 @@ impl TransferState {
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
         let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
-        if let (RejectReason::StaleGeneration { models, generation }, true) = (&rejected.reason, persisting) {
-            for model in models { self.generations.insert(model.clone(), *generation); }
-            let basis = models.iter().map(|model| (model.clone(), *generation)).collect();
-            return self.store_basis(&pending.ids, pending.kind, basis, fx);
+        if let (RejectReason::StaleGeneration { generations, .. }, true) = (&rejected.reason, persisting) {
+            self.generations.extend(generations.clone());
+            return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
         }
         if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
             if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
@@ -735,10 +760,6 @@ impl TransferState {
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(None, Some(saving), fx),
             TransferInput::EpochStarted(started) => { self.epoch = started.epoch; self.base_generation = started.generation; },
-            TransferInput::ModelsReset(reset) if reset.epoch == self.epoch => {
-                for model in reset.models { self.generations.insert(model, reset.generation); }
-            }
-            TransferInput::ModelsReset(_) => {}
             TransferInput::Tick { now, kind } => self.tick(now, kind, fx),
             TransferInput::EpochEnded(ended) => self.epoch_ended(ended.cause, fx),
             TransferInput::Closing => self.close(fx),

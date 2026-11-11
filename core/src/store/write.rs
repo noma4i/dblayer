@@ -1,6 +1,9 @@
-use super::{Inner, Store, StoreError};
+use super::Store;
+#[cfg(test)]
+use super::{Inner, StoreError};
 
 impl Store {
+    #[cfg(test)]
     pub(crate) fn write<T>(&self, work: impl FnOnce(&Inner) -> Result<T, StoreError>) -> Result<T, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;

@@ -9,7 +9,6 @@ pub type AuthorId = u64;
 pub type Digest = u64;
 pub type AttemptId = u64;
 pub type SecretOpId = u64;
-pub type StreamId = u64;
 pub type Owner = crate::transport::RequestOwner;
 
 pub const OUTBOX_AUTHOR: AuthorId = 1;
@@ -55,6 +54,7 @@ pub enum Fail {
     Unauthorized,
     Security { code: crate::transport::SecurityCode, detail: String },
     Http,
+    Network,
     Interrupted,
     NoSession,
     Closed,
@@ -139,15 +139,13 @@ pub enum Input {
     SecretMissing { request_id: RequestId, attempt_id: AttemptId, lost: bool },
     GateClosed { request_id: RequestId, attempt_id: AttemptId },
     Foreground,
-    InterestPlus(StreamId),
-    InterestMinus(StreamId),
     RestoreReady { epoch: u64 },
     RestoreFailed { epoch: u64, error: String },
     Restored { epoch: u64, pending: Option<Pending> },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String, author_ref: Option<AuthorId> },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, security: Option<(crate::transport::SecurityCode, String)>, body: Option<String> },
-    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64, sequenced: bool },
+    AnswerTooLarge { request_id: RequestId, attempt_id: AttemptId, limit: u64 },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     Unknown { request_id: RequestId, attempt_id: AttemptId },
     Committed(BatchId),
@@ -173,22 +171,13 @@ pub enum Outcome {
     Dropped,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RetryPhase {
-    Idle,
-    InFlight,
-    WaitingRetry,
-    WaitingNetwork,
-    WaitingSecret,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     SealProbe { seal_id: u64, pending: Pending, credential: Option<Digest> },
     /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
     CommitPending { batch: BatchId, epoch: u64, pending: Pending, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`.
-    CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)>, erase_session: bool },
+    CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)>, resume_answer: Option<Answer>, erase_session: bool, end_journal: bool },
     HttpRequest { pending: Pending, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     ScheduleTick { attempts: u64 },
@@ -202,7 +191,6 @@ pub enum Effect {
     RestoreClassified { epoch: u64 },
     SnapshotRequest { epoch: u64 },
     Answer { author: AuthorId, req_id: RequestId, outcome: Outcome },
-    RetryState { stream: StreamId, attempts: u64, phase: RetryPhase },
     Drained,
 }
 
@@ -274,14 +262,15 @@ pub struct Session {
     pub pub_state: PubState,
     /// The reply, its result, and the epoch it waits to pass (`None` waits for the identity of the new credential).
     pub after_publish: Option<(ReplyId, Answer, Option<u64>)>,
-    pub subscribers: BTreeSet<StreamId>,
     pub restored_direct: Option<Pending>,
+    restored_active: Option<RequestId>,
     pub restored_transfer: Option<Pending>,
     pub revoked_waiting: BTreeMap<BatchId, u64>,
     pub restored_detached: Option<Pending>,
     pub released: BTreeSet<RequestId>,
     pub restored: bool,
     restore_error: Option<String>,
+    detach_error: Option<Fail>,
     operations: Vec<Operation>,
     next_request: RequestId,
     next_batch: BatchId,
@@ -291,7 +280,6 @@ pub struct Session {
     restore_floor: u64,
     adopt: bool,
     held: Option<State>,
-    reported: (u64, RetryPhase),
 }
 
 fn author_error(author: AuthorId, req_id: RequestId, kind: Kind, fail: Fail) -> Effect { author_error_retained(author, req_id, kind, fail, false) }
@@ -319,7 +307,7 @@ fn is_ended(cause: EndCause) -> bool { matches!(cause, EndCause::SessionReset | 
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_transfer: None, revoked_waiting: BTreeMap::new(), restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, restored_direct: None, restored_active: None, restored_transfer: None, revoked_waiting: BTreeMap::new(), restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -366,18 +354,6 @@ impl Session {
 
     fn def(&self, operation: &str) -> Option<Operation> { self.operations.iter().find(|def| def.name == operation).cloned() }
 
-    fn view(&self) -> (u64, RetryPhase) {
-        match &self.state {
-            State::Calling { attempts, phase, .. } => (*attempts, match phase {
-                CallPhase::InFlight(_) => RetryPhase::InFlight,
-                CallPhase::WaitingRetry => RetryPhase::WaitingRetry,
-                CallPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
-                CallPhase::WaitingSecret => RetryPhase::WaitingSecret,
-            }),
-            _ => (0, RetryPhase::Idle),
-        }
-    }
-
     fn idle(&mut self, out: &mut Out) {
         self.state = State::Idle;
         if let Some(held) = self.held.take() {
@@ -391,7 +367,12 @@ impl Session {
     }
 
     pub(super) fn start_restored(&mut self, out: &mut Out) -> bool {
-        if let Some(pending) = self.restored_direct.take().or_else(|| self.restored_detached.take()) {
+        if let Some(pending) = self.restored_direct.take() {
+            self.restored_active = Some(pending.request_id);
+            self.start_calling(pending, out);
+            return true;
+        }
+        if let Some(pending) = self.restored_detached.take() {
             self.start_calling(pending, out);
             return true;
         }
@@ -496,7 +477,8 @@ impl Session {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
         let erase_session = server_ended || pending.class == Class::Login && pending.credential.is_some() && answer.is_err();
-        out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
+        let resume_answer = (self.restored_active == Some(pending.request_id) && !server_ended).then(|| answer.clone());
+        out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, resume_answer, erase_session, end_journal: server_ended && pending.class != Class::Login });
         self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
@@ -514,6 +496,7 @@ impl Session {
         self.refuse_queue(out, Fail::Closed);
         self.held = None;
         self.restored_direct = None;
+        self.restored_active = None;
         self.restored_transfer = None;
         self.restored_detached = None;
         self.state = State::Closed;
@@ -542,20 +525,14 @@ impl Session {
 
     pub fn step(&mut self, input: Input) -> Out {
         let mut out = Out::default();
-        let interest = if let Input::InterestPlus(stream) = &input { (!matches!(self.state, State::Sealing { .. })).then_some(*stream) } else { None };
         self.run(input, &mut out);
-        let view = self.view();
-        if view != self.reported {
-            self.reported = view;
-            for stream in &self.subscribers { out.effects.push(Effect::RetryState { stream: *stream, attempts: view.0, phase: view.1 }); }
-        }
-        if let Some(stream) = interest { if !matches!(self.state, State::Closed) { out.effects.push(Effect::RetryState { stream, attempts: view.0, phase: view.1 }); } }
         out
     }
 
 }
 
 mod events;
+pub mod resume;
 
 fn pair_of(body: String) -> (String, Option<String>) {
     let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str::<serde_json::Value>(&body) else { return (body, None) };

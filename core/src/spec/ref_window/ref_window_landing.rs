@@ -128,7 +128,7 @@ impl Window {
                 vec![Effect::WindowState]
             }
             Input::InterestPlus { id } => {
-                self.interest.insert(id);
+                self.join(id);
                 if self.is_online() && !self.deferred() {
                     return self.leave_waiting(force, page);
                 }

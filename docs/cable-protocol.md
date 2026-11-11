@@ -146,10 +146,10 @@ Memory model notices get a UUID when the server sends no id. Their rows live in 
 A local scope with `subscribe` opens the subscription at the first reader. It releases the subscription after the last reader leaves.
 Events are lost while no reader exists. The server does not replay them.
 Undeclared areas increase `refusedEvents` of `subscriptionCensus()`.
-A repeated `Ready` rereads only expired observed selections of models with `changed_by`. Reopening a subscription uses the same freshness check.
-The check uses each read's `freshness`, including its shorter `empty_in` duration. Missing answers and invalidated selections need a reread.
+After missed events from a broken subscription or lost channel, the library marks observed selections of affected models for rereading.
+The mark survives an app restart and is cleared only by a load started after the mark.
+Time-based freshness does not clear the mark, even when the selection is fresh.
 Node reads and remote relations default to `5.minutes`. A zero duration always expires. The first `Ready` starts no extra reread.
-The server does not replay missed events. A fresh selection can keep old values until a read after `freshness` expires.
 Expiration alone starts no request. Received events still trigger their normal immediate reread.
 The REACTION area may point to several node reads. Then 1 HTTP request runs for each declared model.
 

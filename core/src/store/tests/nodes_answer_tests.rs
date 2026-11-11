@@ -12,7 +12,7 @@ use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 fn open() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for id in ["m1", "m2", "m3"] {
         put(&db, "moments", json!({"id": id, "userId": "u1", "text": format!("cached {id}")}));
     }
@@ -21,7 +21,7 @@ fn open() -> Arc<Store> {
 
 fn answer(db: &Store, key: &WindowKey, returned: &[&str]) {
     let roots = returned.iter().map(|id| RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": format!("served {id}")}).to_string() }).collect();
-    let page = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+    let page = StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
     let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }

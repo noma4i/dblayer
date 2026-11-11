@@ -87,6 +87,7 @@ impl TransferState {
             fields,
             steps,
             restored: false,
+            restore_element: None,
             pending_step: None,
             answer_saved: None,
             staged_failed: None,
@@ -269,6 +270,7 @@ impl TransferState {
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         let fault = if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { match reason {
             RejectReason::NoSession => Fault::SessionEnded,
+            RejectReason::StaleGeneration { .. } => Fault::Ended(crate::ffi::EndCause::SessionEnded),
             RejectReason::Closed => Fault::Closed,
             reason => Fault::Rejected(reason),
         } };
@@ -395,8 +397,8 @@ impl TransferState {
         if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
         match reason {
             RejectReason::Storage(_) | RejectReason::Invalid => self.backoff_restore(id, fx),
-            RejectReason::StaleGeneration { models, generation } => {
-                for model in &models { self.generations.insert(model.clone(), generation); }
+            RejectReason::StaleGeneration { generations, .. } => {
+                self.generations.extend(generations);
                 self.write_restored(id, fx);
             }
             RejectReason::Closed | RejectReason::NoSession => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),

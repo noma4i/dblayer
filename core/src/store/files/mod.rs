@@ -161,7 +161,16 @@ pub(crate) fn references_of_row(connection: &Connection, model: &str, row_id: &s
 
 
 pub(crate) fn clear_model(connection: &Connection, model: &str) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../sql/files/clear_model.sql"), [model])
+    clear_unheld(connection, Some(model))
+}
+
+pub(crate) fn clear_unheld(connection: &Connection, model: Option<&str>) -> rusqlite::Result<usize> {
+    let scope = if model.is_some() { "model = ?1" } else { "1 = 1" };
+    let sql = format!(include_str!("../sql/files/clear_model.sql"), scope = scope);
+    match model {
+        Some(model) => connection.execute(&sql, [model]),
+        None => connection.execute(&sql, []),
+    }
 }
 
 pub(crate) fn clear_all(connection: &Connection) -> rusqlite::Result<usize> {

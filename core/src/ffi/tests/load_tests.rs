@@ -33,22 +33,6 @@ impl FakeTransport for Counting {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-#[tokio::test]
-async fn a_models_reset_clears_the_cache_of_the_held_stream_and_a_new_stream_reloads() {
-    let (db, transport) = rig().await;
-    let listener = Arc::new(Tape::default());
-    let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#;
-    let live = db.watch_query(query, listener.clone());
-    within(live.wait_for_initial_load()).await.unwrap();
-    crate::test_wait::settled(&db, "the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
-    db.reset_models_of(&["Moment"]).await;
-    let ended = Arc::new(Rows::default());
-    let _watching = db.watch_query(query, ended.clone());
-    crate::test_wait::settled(&db, "the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
-    assert_eq!(transport.queries.load(Ordering::SeqCst), 2);
-    live.cancel();
-}
-
 pub(in super::super) fn relation(name: &str, stale: &str) -> RelationSpec {
     let mut relation = RelationSpec::global(name);
     relation.remote = Some(RemoteSpec {

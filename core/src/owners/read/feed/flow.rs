@@ -54,6 +54,7 @@ impl FeedState {
         let models = self.models_of(&channel);
         self.confirmed.remove(&channel);
         if error.is_none_or(|error| error.retryable) {
+            fx.push(Fx::Gap(models.clone()));
             for model in models.into_iter().filter(|model| self.announced.contains(model)) {
                 self.gapped.insert(model, self.online_seq);
             }
@@ -93,30 +94,6 @@ impl FeedState {
         }
     }
 
-    pub(super) fn channel_lost(&mut self, connection: ConnectionId, dropped: Option<BTreeMap<String, u64>>, fx: &mut Vec<Fx>) {
-        let current = match self.mode {
-            Mode::Opening { .. } => self.opening_connection() == Some(connection),
-            Mode::Live => self.active_connection() == Some(connection),
-            _ => false,
-        };
-        if !current {
-            return;
-        }
-        if self.mode == Mode::Live {
-            self.flush_pending(fx);
-        }
-        match dropped {
-            Some(counts) => {
-                let models: Vec<String> = counts.keys().filter(|model| self.want.contains_key(*model)).cloned().collect();
-                for model in &models {
-                    self.lose(model, counts[model], fx);
-                }
-                Self::stale_all(&models, fx);
-            }
-            None => self.gap_all(fx),
-        }
-    }
-
     /// `Dropped` and `SubscriptionEnded` of a known connection.
     pub(super) fn dropped(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         if self.connection_mut(connection).is_some() {
@@ -125,13 +102,14 @@ impl FeedState {
         }
         match self.mode {
             Mode::Opening { .. } if self.opening_connection() == Some(connection) => {
-                let lost = self.lose_held(None, fx);
+                let lost = self.lose_held(fx);
                 self.wait_resubscribe(fx);
                 Self::stale_all(&lost, fx);
             }
             Mode::Live if self.active_connection() == Some(connection) => {
                 self.flush_pending(fx);
-                let lost = self.lose_held(None, fx);
+                fx.push(Fx::Gap(self.want.keys().cloned().collect()));
+                let lost = self.lose_held(fx);
                 self.active = None;
                 self.gap_seq = Some(self.online_seq);
                 self.mode = Mode::Opening { gap: true };
@@ -155,7 +133,8 @@ impl FeedState {
             fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: true, intended: false }));
             fx.push(Fx::Drain { connection });
             self.flush_pending(fx);
-            let lost = self.lose_held(None, fx);
+            fx.push(Fx::Gap(self.want.keys().cloned().collect()));
+            let lost = self.lose_held(fx);
             self.active = None;
             self.gap_seq = Some(self.online_seq);
             self.mode = Mode::Draining { connection, then: Resume::Reopen };
@@ -322,7 +301,7 @@ impl FeedState {
     /// `Opening` -> `Off`: `held` is lost, the connection closes.
     pub(super) fn leave(&mut self, fx: &mut Vec<Fx>) {
         self.close_all(false, fx);
-        let lost = self.lose_held(None, fx);
+        let lost = self.lose_held(fx);
         Self::stale_all(&lost, fx);
     }
 
@@ -349,16 +328,6 @@ impl FeedState {
         }
     }
 
-    pub(super) fn models_reset(&mut self, reset: ModelsReset, fx: &mut Vec<Fx>) {
-        for model in &reset.models {
-            self.generation.insert(model.clone(), reset.generation);
-        }
-        if matches!(self.mode, Mode::Opening { .. }) {
-            let lost = self.lose_held(Some(&reset.models), fx);
-            Self::stale_all(&lost, fx);
-        }
-    }
-
     pub(super) fn end(&mut self, drained: bool, fx: &mut Vec<Fx>) {
         let draining = match self.active.as_ref() {
             Some(active) if drained && self.mode == Mode::Live && active.goodbye() => Some(active.id),
@@ -380,7 +349,10 @@ impl FeedState {
 
     /// A live feed leaves `Live` for `Off{gap}`: the established connection drains first.
     pub(super) fn drain_live(&mut self, gap: bool, fx: &mut Vec<Fx>) {
-        if gap { self.gap_seq = Some(self.online_seq); }
+        if gap {
+            fx.push(Fx::Gap(self.want.keys().cloned().collect()));
+            self.gap_seq = Some(self.online_seq);
+        }
         let draining = self.active.as_ref().filter(|active| active.goodbye()).map(|active| active.id);
         self.close_all(draining.is_some(), fx);
         self.mode = draining.map_or(Mode::Off { gap }, |connection| Mode::Draining { connection, then: Resume::Off { gap } });
@@ -390,7 +362,7 @@ impl FeedState {
     pub(super) fn draining(&mut self, connection: ConnectionId, then: Resume, input: FeedInput, fx: &mut Vec<Fx>) {
         match input {
             FeedInput::Drain { connection_id } if connection_id == connection => self.drain_over(connection, then, false, fx),
-            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } | FeedInput::ChannelLost { connection_id, .. } if connection_id == connection => self.drain_over(connection, then, true, fx),
+            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } if connection_id == connection => self.drain_over(connection, then, true, fx),
             FeedInput::EpochEnded(ended) if ended.epoch == self.epoch => self.drain_over(connection, Resume::End, true, fx),
             FeedInput::Closing => {
                 self.closing_asked = true;

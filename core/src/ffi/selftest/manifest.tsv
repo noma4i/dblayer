@@ -278,7 +278,6 @@ T15		core	xfer_round_requested_new_epoch	red-by-reading	-	Android scheduler refu
 T16		core	xfer_round_running_epoch_ended	regression	-	ending Android round after session reset
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
-K37		core	a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands	green	core-only: the proof holds a server request through the fake world gate and resets a model through the core database	final review Fable 3
 T04		core	file_attach_detach	regression	-	arch-audit/astra.md A6
 T20		core	a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id	regression	-	Transfer owner through Database
 T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regression	-	Transfer owner through Database

@@ -1,5 +1,3 @@
-use super::{Store, StoreError};
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RestoreFailedRow {
     pub table: String,
@@ -8,14 +6,14 @@ pub struct RestoreFailedRow {
     pub columns: String,
 }
 
-impl Store {
-    pub(crate) fn restore_failed(&self) -> Result<Vec<RestoreFailedRow>, StoreError> {
-        self.read(&[], |reader| {
-            let mut statement = reader.connection().prepare(include_str!("sql/restore/restore_failed.sql"))?;
-            let rows = statement
-                .query_map([], |row| Ok(RestoreFailedRow { table: row.get(0)?, key: row.get(1)?, reason: row.get(2)?, columns: row.get(3)? }))?
-                .collect::<rusqlite::Result<_>>()?;
-            Ok(rows)
-        })
+impl RestoreFailedRow {
+    pub(crate) fn transfer_id(&self) -> Option<u64> {
+        (self.table == "sync_upload").then(|| serde_json::from_str::<serde_json::Value>(&self.columns).ok()?.get("transfer_id")?.as_u64()).flatten()
     }
+}
+
+pub(super) fn read_failed(connection: &rusqlite::Connection) -> rusqlite::Result<Vec<RestoreFailedRow>> {
+    let mut statement = connection.prepare(include_str!("sql/restore/restore_failed.sql"))?;
+    let rows = statement.query_map([], |row| Ok(RestoreFailedRow { table: row.get(0)?, key: row.get(1)?, reason: row.get(2)?, columns: row.get(3)? }))?.collect();
+    rows
 }

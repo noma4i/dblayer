@@ -424,7 +424,7 @@ fn xfer_orphan_restart_after_close() {
 /// xfer_minted_write_other: a refused write of the minted id with StaleGeneration or Invalid behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
 #[test]
 fn xfer_minted_write_other() {
-    for reason in [RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 0 }, RejectReason::Invalid] {
+    for reason in [RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, RejectReason::Invalid] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         twin.online(false);
@@ -445,7 +445,7 @@ fn xfer_minted_write_other() {
 /// that keeps uploading.
 #[test]
 fn xfer_minted_write_other_no_abort() {
-    for reason in [RejectReason::Invalid, RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 0 }] {
+    for reason in [RejectReason::Invalid, RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = minted(&mut twin, id, "u1");

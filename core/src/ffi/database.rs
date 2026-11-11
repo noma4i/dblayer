@@ -157,8 +157,7 @@ impl Database {
         let returns: Arc<HashMap<String, FieldSpec>> = Arc::new(operations.into_iter().map(|operation| (operation.name, operation.returns)).collect());
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
-        let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref())?);
-        db.set_clock(clock.clone());
+        let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), clock.clone())?);
         let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();

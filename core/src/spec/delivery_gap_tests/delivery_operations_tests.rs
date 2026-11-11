@@ -6,7 +6,7 @@ fn info(seq: i64, status: OperationQueueStatus) -> OperationInfo {
 }
 
 fn queue_view() -> d::View {
-    d::View { kind: d::Kind::Operations, model: String::new(), tables: vec!["op".into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }
+    d::View { kind: d::Kind::Operations, model: String::new(), tables: vec!["op".into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None }
 }
 
 fn commit(twin: &mut Twin, revision: i64, table: &str) {
@@ -15,7 +15,7 @@ fn commit(twin: &mut Twin, revision: i64, table: &str) {
 
 fn read_done(twin: &mut Twin, revision: i64, items: Vec<OperationInfo>) {
     let read_id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Operations(items) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Operations(items) });
 }
 
 fn opened() -> Twin {

@@ -67,7 +67,6 @@ pub enum PubState {
     Session,
     Ending,
     EndingFailed,
-    Resetting,
     StorageFailed,
     Closing,
 }
@@ -77,7 +76,6 @@ pub enum State {
     NoSession { epoch: u64 },
     Session { epoch: u64, identity: Identity },
     Ending { epoch_old: u64, cause: Cause, next: Option<Identity>, failed: bool, erase_credential: bool, erases: Vec<Erase> },
-    Resetting { epoch: u64, identity: Option<Identity>, models: BTreeSet<String>, queued_models: BTreeSet<String>, queued_replies: Vec<Id>, pending_credential: Option<Identity>, erases: Vec<Erase> },
     Closing { waiting: BTreeSet<Owner>, erases: Vec<Erase>, close_replies: Vec<Id>, store_closing: bool, store_closed: bool, observers_stopped: bool },
     Closed,
 }
@@ -87,7 +85,6 @@ pub enum Event {
     Credential(Identity),
     SessionReset(Option<Id>),
     ServerEnded(u64),
-    ResetModels(BTreeSet<String>, Option<Id>),
     Cleared(EraseId),
     ModelsCleared(u64, EraseId),
     ClearFailed(EraseId),
@@ -110,11 +107,9 @@ pub enum Effect {
     PublishCell(Published),
     EpochStarted(u64, Option<Identity>, u64),
     EpochEnded(u64, Cause),
-    ModelsReset(u64, u64, BTreeSet<String>),
     Closing,
     StopObserving,
     ClearAccount { epoch_old: u64, cause: Cause, generation_new: u64, erase_id: EraseId },
-    ClearModels { epoch: u64, generation_new: u64, models: BTreeSet<String>, erase_id: EraseId },
     ReadIntents(u64),
     RestoreReady(u64),
     StoreClose,
@@ -175,10 +170,6 @@ fn all_owners() -> BTreeSet<Owner> { OWNERS.into_iter().collect() }
 
 mod flow;
 
-fn names(input: &Input, key: &str) -> BTreeSet<String> {
-    input.args.get(key).and_then(|value| value.as_array()).map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()).unwrap_or_default()
-}
-
 fn answer_kind(answer: Answer) -> Option<&'static str> {
     match answer {
         Answer::Ok => None,
@@ -199,7 +190,6 @@ fn reply(id: Id, kind: Option<&str>) -> Observation {
 /// What the Store and the platform answer to the lifecycle effects: nothing is held, or the Store holds its answers (`store_hold`).
 enum Pending {
     ClearAccount(EraseId),
-    ClearModels(EraseId, u64),
     Save(PublicationId),
 }
 
@@ -231,7 +221,6 @@ impl LifecycleRef {
             match effect {
                 Effect::Publish(id, _) => self.store.push_back(Pending::Save(id)),
                 Effect::ClearAccount { erase_id, .. } => self.store.push_back(Pending::ClearAccount(erase_id)),
-                Effect::ClearModels { erase_id, generation_new, .. } => self.store.push_back(Pending::ClearModels(erase_id, generation_new)),
                 Effect::StoreClose => self.store_close = true,
                 Effect::EpochStarted(epoch, Some(_), _) => self.owners.extend([Event::Started(Owner::Outbox, epoch), Event::Started(Owner::Transfer, epoch)]),
                 Effect::ReadIntents(epoch) => self.owners.extend([Event::RestoreClassified(Owner::Outbox, epoch), Event::RestoreClassified(Owner::Transfer, epoch), Event::RestoreClassified(Owner::Session, epoch)]),
@@ -246,8 +235,7 @@ impl LifecycleRef {
             (State::Closing { .. } | State::Closed, _) => Err("closed"),
             (_, PubState::StorageFailed) => Err("storage"),
             (State::Ending { .. } | State::NoSession { .. }, _) => Err("no_session"),
-            (State::Resetting { identity: None, .. }, _) => Err("no_session"),
-            (State::Session { .. } | State::Resetting { .. }, _) if !epoch_current => Err("no_session"),
+            (State::Session { .. }, _) if !epoch_current => Err("no_session"),
             _ => Ok(()),
         }
     }
@@ -262,8 +250,6 @@ impl LifecycleRef {
         let event = match request {
             Pending::ClearAccount(id) if ok => { self.rows.clear(); Event::Cleared(id) }
             Pending::ClearAccount(id) => Event::ClearFailed(id),
-            Pending::ClearModels(id, generation) if ok => { self.rows.clear(); Event::ModelsCleared(generation, id) }
-            Pending::ClearModels(id, _) => Event::ClearFailed(id),
             Pending::Save(id) if ok => Event::Saved(id),
             Pending::Save(id) => Event::SaveFailed(id),
         };
@@ -327,7 +313,7 @@ impl RefModel for LifecycleRef {
             }
             "logout" => match &self.machine.state {
                 State::Closing { .. } | State::Closed => observed.push(reply(id, Some("closed"))),
-                State::Session { .. } | State::Resetting { identity: Some(_), .. } => {
+                State::Session { .. } => {
                     self.feed(Event::ServerEnded(published_epoch), &mut replies);
                     observed.push(reply(id, None));
                 }
@@ -341,7 +327,6 @@ impl RefModel for LifecycleRef {
             "stray_drained" => self.feed(Event::Drained(Owner::Feed), &mut replies),
             "server_ended_stale" => self.feed(Event::ServerEnded(published_epoch.saturating_sub(1)), &mut replies),
             "session_reset" => self.feed(Event::SessionReset(Some(id)), &mut replies),
-            "reset_models" => self.feed(Event::ResetModels(names(input, "models"), Some(id)), &mut replies),
             "close" => self.feed(Event::Close(id), &mut replies),
             "store_hold" => self.held = true,
             "store_release" => self.held = false,

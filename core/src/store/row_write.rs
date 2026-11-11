@@ -108,6 +108,10 @@ impl RowWrite<'_> {
         self.remove_with_reason(model, id, DestroyReason::Local)
     }
 
+    pub fn remove_server(&mut self, model: &str, id: &str) -> Result<CommitResult, StoreError> {
+        self.remove_with_reason(model, id, DestroyReason::Server)
+    }
+
     pub fn expire(&mut self, model: &str, id: &str) -> Result<CommitResult, StoreError> {
         self.remove_with_reason(model, id, DestroyReason::Expired)
     }

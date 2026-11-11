@@ -75,7 +75,6 @@ pub(super) enum Input {
     Frame { to: To, counter: Counter, kind: Kind },
     ProtocolError { to: To },
     Event { to: To, model: String, payload: String },
-    ChannelLost { to: To, dropped: Option<Vec<(String, u64)>> },
     Dropped { to: To },
     /// `SubscriptionEnded`: the cells of `Dropped`.
     Ended { to: To },
@@ -94,7 +93,6 @@ pub(super) enum Input {
     StrayRepeat,
     Tick,
     Online(bool),
-    ModelsReset { models: Vec<String>, generation: u64 },
     EpochEnded,
     Closing,
     /// `Tick(drain{connection_id})`: `own` names the draining connection, otherwise a stray one.
@@ -113,6 +111,7 @@ pub(super) enum Effect {
     CancelDrain,
     ScheduleTick,
     ScheduleResubscribe,
+    Gap(Vec<String>),
     Commit,
     Stale { model: String, all: bool },
     StaleSet { model: String, keys: Vec<String> },
@@ -179,6 +178,8 @@ pub(super) struct Feed {
     pub(super) held: Vec<Ev>,
     pub(super) pending: Vec<Ev>,
     pub(super) landing: VecDeque<Vec<Ev>>,
+    stale_landing: VecDeque<Option<Vec<String>>>,
+    stale_retry: Vec<Vec<String>>,
     /// The protocol of the connections: `active` and `opening`.
     active: Option<Proto>,
     opening: Option<Proto>,
@@ -209,6 +210,8 @@ impl Feed {
             held: Vec::new(),
             pending: Vec::new(),
             landing: VecDeque::new(),
+            stale_landing: VecDeque::new(),
+            stale_retry: Vec::new(),
             active: None,
             opening: None,
             debounce: true,
@@ -316,11 +319,11 @@ impl Feed {
         }
     }
 
-    /// `held` -> `Lost` (all, or the models named): the models whose windows turn stale.
-    fn lose_held(&mut self, only: Option<&[String]>) -> Vec<String> {
-        let (lost, kept): (Vec<Ev>, Vec<Ev>) = std::mem::take(&mut self.held).into_iter().partition(|event| only.is_none_or(|only| only.contains(&event.model)));
-        self.held = kept;
-        self.mark(&lost, |_| Slot::Lost)
+    fn lose_held(&mut self, effects: &mut Vec<Effect>) -> Vec<String> {
+        let lost = std::mem::take(&mut self.held);
+        let models = self.mark(&lost, |_| Slot::Lost);
+        effects.push(Effect::Gap(models.clone()));
+        models
     }
 
     fn commit(&mut self, events: Vec<Ev>, effects: &mut Vec<Effect>) {
@@ -335,8 +338,17 @@ impl Feed {
             let observed = batch.iter().any(|event| event.payload.starts_with('{') && !self.streams_of(&event.model).is_empty());
             self.marks.push(observed);
             self.landing.push_back(batch);
+            self.stale_landing.push_back(None);
             effects.push(Effect::Commit);
         }
+    }
+
+    fn commit_gap(&mut self, models: Vec<String>, effects: &mut Vec<Effect>) {
+        if models.is_empty() { return; }
+        self.landing.push_back(Vec::new());
+        self.stale_landing.push_back(Some(models));
+        self.marks.push(false);
+        effects.push(Effect::Commit);
     }
 
     fn commit_pending(&mut self, effects: &mut Vec<Effect>) {
@@ -362,6 +374,18 @@ impl Feed {
 
     fn verdict(&mut self, nth: usize, rejected: Option<Reject>) -> Vec<Effect> {
         let Some(batch) = self.landing.remove(nth) else { return Vec::new() };
+        if let Some(Some(models)) = self.stale_landing.remove(nth) {
+            let mut effects = Vec::new();
+            match rejected {
+                Some(Reject::StaleGeneration(stale)) => {
+                    self.generation.extend(stale.into_iter().map(|model| (model, 4)));
+                    self.commit_gap(models, &mut effects);
+                }
+                Some(Reject::Storage) => self.stale_retry.push(models),
+                _ => {},
+            }
+            return effects;
+        }
         let mut effects = Vec::new();
         match rejected {
             None => {
@@ -466,7 +490,7 @@ impl Feed {
         let then = self.then;
         match input {
             Input::Drain { own: true } => self.drain_over(false, then),
-            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } | Input::ProtocolError { to: To::Draining } => self.drain_over(true, then),
+            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ProtocolError { to: To::Draining } => self.drain_over(true, then),
             Input::EpochEnded => self.drain_over(true, Then::End),
             Input::Closing => {
                 self.closing_asked = true;
@@ -481,6 +505,21 @@ impl Feed {
     }
 
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for models in std::mem::take(&mut self.stale_retry) { self.commit_gap(models, &mut effects); }
+        effects.extend(self.step_inner(input));
+        let first = effects.iter().position(|effect| matches!(effect, Effect::Gap(_)));
+        let models: BTreeSet<_> = effects.iter().filter_map(|effect| match effect { Effect::Gap(models) => Some(models), _ => None }).flatten().cloned().collect();
+        effects.retain(|effect| !matches!(effect, Effect::Gap(_)));
+        if let Some(first) = first {
+            let mut batch = Vec::new();
+            self.commit_gap(models.into_iter().collect(), &mut batch);
+            effects.splice(first..first, batch);
+        }
+        effects
+    }
+
+    fn step_inner(&mut self, input: Input) -> Vec<Effect> {
         let verdict = matches!(input, Input::Committed | Input::CommittedStale(_) | Input::Rejected(_));
         if self.mode == Mode::Draining && !verdict {
             return self.draining(input);
@@ -576,27 +615,6 @@ impl Feed {
                 }
             }
             Input::Event { to, model, payload } => self.event(to, &model, &payload, &mut effects),
-            Input::ChannelLost { to, dropped } => {
-                let current = matches!((self.mode, to), (Mode::Opening { .. }, To::Opening) | (Mode::Live, To::Active));
-                if !current {
-                    return effects;
-                }
-                if self.mode == Mode::Live && !self.pending.is_empty() {
-                    self.commit_pending(&mut effects);
-                }
-                match dropped {
-                    Some(counts) => {
-                        let models: Vec<String> = counts.iter().filter(|(model, _)| self.want.contains_key(model)).map(|(model, _)| model.clone()).collect();
-                        for (model, count) in &counts {
-                            if self.want.contains_key(model) {
-                                self.lose(model, *count);
-                            }
-                        }
-                        Self::stale(&models, &mut effects);
-                    }
-                    None => self.gap_all(&mut effects),
-                }
-            }
             Input::Dropped { to } | Input::Ended { to } => return self.dropped(to),
             Input::Resubscribe { to } => {
                 if matches!(self.mode, Mode::Opening { .. }) && self.online() && to == To::Opening && self.opening.is_some() {
@@ -633,15 +651,6 @@ impl Feed {
                 }
             }
             Input::Online(on) => return self.online_changed(on),
-            Input::ModelsReset { models, generation } => {
-                for model in &models {
-                    self.generation.insert(model.clone(), generation);
-                }
-                if matches!(self.mode, Mode::Opening { .. }) {
-                    let lost = self.lose_held(Some(&models));
-                    Self::stale(&lost, &mut effects);
-                }
-            }
         }
         effects
     }

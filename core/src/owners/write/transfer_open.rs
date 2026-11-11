@@ -9,6 +9,10 @@ use super::transfer_types::*;
 
 impl TransferState {
     fn insert_restored(&mut self, row: &StoredTransfer, stage: TransferStage) -> TransferId {
+        if let Some(transfer) = self.transfers.get_mut(&row.transfer_id) {
+            transfer.stage = stage;
+            return row.transfer_id;
+        }
         let item = BatchItem { key: row.key.clone(), fields: row.fields.clone(), urgent: false, source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
@@ -17,6 +21,7 @@ impl TransferState {
             transfer.transfer_id = id;
             transfer.seq = row.seq;
             transfer.restored = true;
+            transfer.restore_element = row.restore_element.clone();
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
             transfer.stored_shown = Some((u8::MAX, false));
@@ -164,8 +169,12 @@ impl TransferState {
                 self.store(&[id], StoreKind::Removed, fx);
             }
             Some(OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error }) => {
-                self.set(id, TransferStage::PersistingFailure);
-                self.begin_failure(id, error.clone(), false, fx);
+                if let (Some(saved_error), Some(_)) = (&row.failed, row.failed_at) {
+                    self.failed_restored(id, saved_error.clone(), fx);
+                } else {
+                    self.set(id, TransferStage::PersistingFailure);
+                    self.begin_failure_at(id, error.clone(), false, row.failed_at, fx);
+                }
             }
             Some(OutboxOutcome::Ended(cause)) => {
                 self.completed.entry(id).or_default().insert(row.cycle_id.max(1), OutboxOutcome::Ended(cause.clone()));
@@ -222,10 +231,6 @@ impl TransferState {
         let classified = !ready.is_empty();
         for id in ready {
             if let Some((row, outcomes)) = self.waiting.remove(&id) {
-                self.transfers.remove(&id);
-                for entry in self.groups.values_mut() {
-                    entry.ids.retain(|found| *found != id);
-                }
                 self.classify_declared(row, &outcomes, fx);
             }
         }

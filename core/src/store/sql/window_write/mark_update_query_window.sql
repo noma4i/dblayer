@@ -1,1 +1,1 @@
-UPDATE query_window SET stale_since = NULL, landed_at = ?1 WHERE key = ?2
+UPDATE query_window SET stale_since = NULL, landed_at = COALESCE(?1, landed_at) WHERE key = ?2

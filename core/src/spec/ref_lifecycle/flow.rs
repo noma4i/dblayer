@@ -117,14 +117,6 @@ impl Lifecycle {
         self.publish(out, Some((epoch, identity, generation)), replies);
     }
 
-    /// The state a reset returns to.
-    fn settled(epoch: u64, identity: Option<Identity>) -> State {
-        match identity {
-            Some(identity) => State::Session { epoch, identity },
-            None => State::NoSession { epoch },
-        }
-    }
-
     fn take_erase(erases: &mut Vec<Erase>, id: EraseId) -> Option<Erase> {
         let at = erases.iter().position(|erase| erase.id == id)?;
         Some(erases.remove(at))
@@ -157,7 +149,6 @@ impl Lifecycle {
                 self.ending(epoch, Cause::SessionReset, None, Vec::new(), reply.into_iter().collect(), &mut out);
                 return out;
             }
-            (State::NoSession { epoch }, Event::ResetModels(models, reply)) => self.resetting(epoch, None, models, Vec::new(), reply, &mut out),
             (State::NoSession { epoch }, Event::Close(reply)) => self.closing(&mut out, Vec::new(), vec![reply], Some(epoch)),
             (state @ State::NoSession { .. }, _) => state,
 
@@ -174,7 +165,6 @@ impl Lifecycle {
                 self.ending(epoch, Cause::ServerEnded, None, Vec::new(), Vec::new(), &mut out);
                 return out;
             }
-            (State::Session { epoch, identity }, Event::ResetModels(models, reply)) => self.resetting(epoch, Some(identity), models, Vec::new(), reply, &mut out),
             (State::Session { epoch, .. }, Event::Close(reply)) => self.closing(&mut out, Vec::new(), vec![reply], Some(epoch)),
             (state @ State::Session { .. }, _) => state,
 
@@ -202,14 +192,6 @@ impl Lifecycle {
                     if let Some(account) = erases.iter_mut().rev().find(|erase| erase.kind == EraseKind::Account) { account.replies.extend(reply); }
                     State::Ending { epoch_old, cause, next: None, failed: false, erase_credential: credential, erases }
                 }
-            }
-            (State::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, Event::ResetModels(_, reply)) => {
-                if failed {
-                    answer_all(&mut out, reply.into_iter().collect(), Answer::Storage);
-                } else if let Some(account) = erases.iter_mut().rev().find(|erase| erase.kind == EraseKind::Account) {
-                    account.replies.extend(reply);
-                }
-                State::Ending { epoch_old, cause, next, failed, erase_credential, erases }
             }
             (State::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, Event::Cleared(id)) => match Self::take_erase(&mut erases, id) {
                 None => State::Ending { epoch_old, cause, next, failed, erase_credential, erases },
@@ -254,91 +236,6 @@ impl Lifecycle {
             (State::Ending { erases, .. }, Event::Close(reply)) => self.closing(&mut out, erases, vec![reply], None),
             (state @ State::Ending { .. }, _) => state,
 
-            (State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }, Event::Credential(other)) => match identity {
-                None => State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential: Some(other), erases },
-                Some(current) if current == other => State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
-                Some(_) => {
-                    self.ending(epoch, Cause::IdentityChanged, Some(other), erases, queued_replies, &mut out);
-                    return out;
-                }
-            },
-            (State::Resetting { epoch, mut queued_replies, erases, .. }, Event::SessionReset(reply)) => {
-                queued_replies.extend(reply);
-                self.ending(epoch, Cause::SessionReset, None, erases, queued_replies, &mut out);
-                return out;
-            }
-            (State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }, Event::ServerEnded(request_epoch)) => {
-                if request_epoch == epoch && identity.is_some() {
-                    self.ending(epoch, Cause::ServerEnded, None, erases, queued_replies, &mut out);
-                    return out;
-                }
-                State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }
-            }
-            (State::Resetting { epoch, identity, models, mut queued_models, mut queued_replies, pending_credential, erases }, Event::ResetModels(more, reply)) => {
-                queued_models.extend(more);
-                queued_replies.extend(reply);
-                State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }
-            }
-            (State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, mut erases }, Event::ModelsCleared(generation_new, id)) => match Self::take_erase(&mut erases, id) {
-                None => State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
-                Some(erase) => {
-                    let _ = generation_new;
-                    let generation_new = self.published.generation.max(erase.target);
-                    self.published.generation = generation_new;
-                    if !queued_models.is_empty() {
-                        self.published.state = PubState::Resetting;
-                        self.publish(&mut out, None, erase.replies);
-                        out.effects.push(Effect::ModelsReset(epoch, generation_new, models));
-                        let next = self.erase(EraseKind::Models, queued_replies);
-                        out.effects.push(Effect::ClearModels { epoch, generation_new: next.target, models: queued_models.clone(), erase_id: next.id });
-                        erases.push(next);
-                        self.state = State::Resetting { epoch, identity, models: queued_models, queued_models: BTreeSet::new(), queued_replies: Vec::new(), pending_credential, erases };
-                        return out;
-                    }
-                    match pending_credential {
-                        Some(next) => {
-                            out.effects.push(Effect::ModelsReset(epoch, generation_new, models));
-                            self.ended(epoch);
-                            out.effects.push(Effect::EpochEnded(epoch, Cause::SessionStarted));
-                            self.start(epoch + 1, Some(next), generation_new, erase.replies, &mut out);
-                            State::Session { epoch: epoch + 1, identity: next }
-                        }
-                        None => {
-                            self.set_published(epoch, identity, generation_new, if identity.is_some() { PubState::Session } else { PubState::NoSession });
-                            self.publish(&mut out, None, erase.replies);
-                            out.effects.push(Effect::ModelsReset(epoch, generation_new, models));
-                            Self::settled(epoch, identity)
-                        }
-                    }
-                }
-            },
-            (State::Resetting { epoch, identity, queued_replies, pending_credential, mut erases, models, queued_models }, Event::ClearFailed(id)) => match Self::take_erase(&mut erases, id) {
-                None => State::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
-                Some(erase) => {
-                    answer_all(&mut out, erase.replies, Answer::Storage);
-                    answer_all(&mut out, queued_replies, Answer::Storage);
-                    match pending_credential {
-                        Some(next) => {
-                            self.ended(epoch);
-                            out.effects.push(Effect::EpochEnded(epoch, Cause::SessionStarted));
-                            let generation = self.published.generation;
-                            self.start(epoch + 1, Some(next), generation, Vec::new(), &mut out);
-                            State::Session { epoch: epoch + 1, identity: next }
-                        }
-                        None => {
-                            self.set_published(epoch, identity, self.published.generation, if identity.is_some() { PubState::Session } else { PubState::NoSession });
-                            self.publish(&mut out, None, Vec::new());
-                            Self::settled(epoch, identity)
-                        }
-                    }
-                }
-            },
-            (State::Resetting { epoch, queued_replies, erases, .. }, Event::Close(reply)) => {
-                answer_all(&mut out, queued_replies, Answer::Interrupted);
-                self.closing(&mut out, erases, vec![reply], Some(epoch))
-            }
-            (state @ State::Resetting { .. }, _) => state,
-
             (State::Closing { mut waiting, mut erases, mut close_replies, mut store_closing, mut store_closed, mut observers_stopped }, ev @ (Event::Drained(_) | Event::Cleared(_) | Event::ModelsCleared(..) | Event::ClearFailed(_) | Event::StoreClosed | Event::ObserversStopped | Event::Close(_))) => {
                 match ev.clone() {
                     Event::Drained(owner) => { waiting.remove(&owner); }
@@ -367,17 +264,9 @@ impl Lifecycle {
                 answer_all(&mut out, reply.into_iter().collect(), Answer::Closed);
                 state
             }
-            (state @ State::Closing { .. }, Event::ResetModels(_, reply)) => {
-                answer_all(&mut out, reply.into_iter().collect(), Answer::Closed);
-                state
-            }
             (state @ State::Closing { .. }, _) => state,
 
             (State::Closed, Event::SessionReset(reply)) => {
-                answer_all(&mut out, reply.into_iter().collect(), Answer::Closed);
-                State::Closed
-            }
-            (State::Closed, Event::ResetModels(_, reply)) => {
                 answer_all(&mut out, reply.into_iter().collect(), Answer::Closed);
                 State::Closed
             }
@@ -388,15 +277,6 @@ impl Lifecycle {
             (State::Closed, _) => State::Closed,
         };
         out
-    }
-
-    fn resetting(&mut self, epoch: u64, identity: Option<Identity>, models: BTreeSet<String>, mut erases: Vec<Erase>, reply: Option<Id>, out: &mut Out) -> State {
-        self.published.state = PubState::Resetting;
-        self.publish(out, None, Vec::new());
-        let erase = self.erase(EraseKind::Models, reply.into_iter().collect());
-        out.effects.push(Effect::ClearModels { epoch, generation_new: erase.target, models: models.clone(), erase_id: erase.id });
-        erases.push(erase);
-        State::Resetting { epoch, identity, models, queued_models: BTreeSet::new(), queued_replies: Vec::new(), pending_credential: None, erases }
     }
 
     /// `life_owner_started`, `life_restore_classified` and their stray row.
@@ -475,7 +355,6 @@ impl Lifecycle {
             state => {
                 let (end, erases, open) = match state {
                     State::NoSession { epoch } | State::Session { epoch, .. } => (Some(epoch), Vec::new(), Vec::new()),
-                    State::Resetting { epoch, erases, queued_replies, .. } => (Some(epoch), erases, queued_replies),
                     State::Ending { erases, .. } => (None, erases, Vec::new()),
                     _ => (None, Vec::new(), Vec::new()),
                 };

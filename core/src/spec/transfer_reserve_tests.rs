@@ -132,15 +132,55 @@ fn xfer_reserving_signals() {
 
 #[test]
 fn xfer_accept_key_open() {
-    let mut twin = Twin::new();
-    let id = twin.accepted(KEY, 2);
-    let out = twin.post(accept_input(KEY, 90));
-    assert_eq!(Twin::fault(&out, 90), Some(Fault::InFlight));
-    assert_eq!((out.writes(), out.outbox.len()), (0, 0), "no new transfer, no reservation");
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
-    assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "one open key refuses the whole batch");
-    assert_eq!((out.writes(), twin.state().open_id("Message:m2:send")), (0, None));
-    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    for stage in [TransferStage::Reserving, TransferStage::Accepting, TransferStage::Copying, TransferStage::CopyReady, TransferStage::PersistingCopy, TransferStage::Ready, TransferStage::PersistingAttempt, TransferStage::Uploading, TransferStage::Completing, TransferStage::Mutating, TransferStage::Removing, TransferStage::AwaitingSource] {
+        let mut twin = if matches!(stage, TransferStage::Ready | TransferStage::AwaitingSource) { Twin::offline() } else { Twin::new() };
+        let id = match stage {
+            TransferStage::Reserving => reserving(&mut twin).0,
+            TransferStage::Accepting => reserved(&mut twin).0,
+            TransferStage::Copying => twin.copying(KEY, 2),
+            TransferStage::CopyReady => {
+                twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 80, now: Time(0) });
+                let ids = [twin.state().open_id(KEY).unwrap(), twin.state().open_id("Message:m2:send").unwrap()];
+                twin.reserve_batch(&ids);
+                twin.commit();
+                twin.copy_done(ids[0]);
+                ids[0]
+            }
+            TransferStage::PersistingCopy => twin.persisting_copy(KEY, 2),
+            TransferStage::Ready | TransferStage::PersistingAttempt => twin.accepted(KEY, 2),
+            TransferStage::Uploading => twin.uploading(KEY, 2),
+            TransferStage::Completing => twin.completing(KEY),
+            TransferStage::Mutating => twin.mutating(KEY),
+            TransferStage::Removing => {
+                let id = twin.mutating(KEY);
+                twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None });
+                id
+            }
+            TransferStage::AwaitingSource => {
+                let mut pending = item(KEY, 1);
+                pending.source = None;
+                pending.steps = None;
+                twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 80, now: Time(0) });
+                let id = twin.state().open_id(KEY).unwrap();
+                twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
+                twin.commit();
+                id
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(twin.stage(id), stage);
+        let count = twin.state().transfers.len();
+        let before = format!("{:?}", twin.t(id));
+        let out = twin.post(accept_input(KEY, 90));
+        assert_eq!(Twin::fault(&out, 90), Some(Fault::InFlight), "{stage:?}");
+        assert_eq!((out.writes(), out.outbox.len(), twin.state().transfers.len()), (0, 0, count), "{stage:?}");
+        assert_eq!(format!("{:?}", twin.t(id)), before, "{stage:?}");
+        if stage != TransferStage::CopyReady {
+            let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
+            assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "{stage:?}");
+            assert_eq!((out.writes(), twin.state().open_id("Message:m2:send")), (0, None));
+        }
+    }
 }
 
 #[test]
@@ -168,6 +208,53 @@ fn xfer_accept_replaces_failed() {
     assert_eq!(committed.deletes(), 1);
     let (reply, outcome) = twin.outcome(old, 1);
     assert_eq!(outcome.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
+}
+
+#[test]
+fn xfer_replace_keeps_abort_debt() {
+    for (complete, online) in [(true, true), (true, false), (false, true), (false, false)] {
+        let mut twin = Twin::new();
+        let old = ready(&mut twin);
+        twin.step_ok(old, 1, Some("u1"));
+        twin.commit();
+        twin.commit();
+        if complete {
+            twin.step_ok(old, 2, None);
+            twin.commit();
+            twin.commit();
+            assert_eq!(twin.stage(old), TransferStage::Completing);
+        }
+        let failed = if complete { twin.complete_error(old, false) } else { twin.step_error(old, false) };
+        assert_eq!(failed.orphans_written(), if complete { vec![] } else { vec![("u1".to_string(), KEY.to_string())] });
+        if !online { twin.online(false); }
+        let failure_committed = twin.commit();
+        assert_eq!(twin.stage(old), TransferStage::Failed);
+        if complete {
+            assert_eq!(twin.t(old).upload_id.as_deref(), Some("u1"));
+            assert!(failure_committed.orphan_aborts().is_empty());
+        } else {
+            assert_eq!(failure_committed.orphan_aborts().len(), usize::from(online));
+        }
+
+        let accepted = twin.post(accept_input(KEY, 90));
+        let new = accepted.outbox.iter().find_map(|input| match input {
+            OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } if *id != old => Some(*id),
+            _ => None,
+        }).expect("the replacement reserves its operation");
+        let written = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
+        assert_eq!(written.writes(), 1);
+        assert_eq!(written.removed(), vec![KEY.to_string()]);
+        assert_eq!(written.orphans_written(), if complete { vec![("u1".to_string(), KEY.to_string())] } else { vec![] });
+        assert!(written.orphan_aborts().is_empty());
+        let committed = twin.commit();
+        assert!(written.orphans_removed().is_empty() && committed.orphans_removed().is_empty());
+        if complete && online {
+            assert_eq!(committed.orphan_aborts(), vec!["u1".to_string()]);
+        } else {
+            assert!(committed.orphan_aborts().is_empty());
+            if !online { assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()]); }
+        }
+    }
 }
 
 #[test]
@@ -249,12 +336,13 @@ fn xfer_replace_interval_refuses() {
 #[test]
 fn xfer_replace_rejected_keeps_failed() {
     let (mut twin, old, new) = replacing_failed();
+    let error = twin.t(old).error.clone().expect("the failure has a cause");
     twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     let out = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!(Twin::fault(&out, 90), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
     assert_eq!(twin.stage(old), TransferStage::Failed);
     let (reply, outcome) = twin.outcome(old, 1);
-    assert!(matches!(outcome.replies(reply).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, _)]));
+    assert!(matches!(outcome.replies(reply).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { error: found }, _)] if *found == error));
     let (reply, out) = twin.discard(KEY);
     assert_ne!(Twin::fault(&out, reply), Some(Fault::InFlight));
 }

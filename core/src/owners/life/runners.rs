@@ -75,16 +75,6 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
                 wiring.handle.end_epoch(epoch, cause);
             }
-            LifecycleEffect::ModelsReset { epoch, generation, models } => {
-                let models: Vec<String> = models.into_iter().collect();
-                let reset = crate::owners::contract::ModelsReset { epoch, generation, models };
-                wiring.to_windows(WindowsInput::ModelsReset(reset.clone()));
-                wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));
-                wiring.to_feed(FeedInput::ModelsReset(reset.clone()));
-                wiring.to_outbox(OutboxInput::ModelsReset(reset.clone()));
-                wiring.to_local_writes(OutboxInput::ModelsReset(reset.clone()));
-                wiring.to_transfer(TransferInput::ModelsReset(reset));
-            }
             LifecycleEffect::Closing => {
                 wiring.gate.shutdown();
                 wiring.handle.close();
@@ -100,7 +90,6 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 }
             }
             LifecycleEffect::ClearAccount { epoch_old, cause, generation_new, erase_id } => wiring.to_store(StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id }),
-            LifecycleEffect::ClearModels { epoch, generation_new, models, erase_id } => wiring.to_store(StoreInput::ClearModels { epoch, generation_new, models, erase_id }),
             LifecycleEffect::StoreClose => wiring.to_store(StoreInput::Close),
             LifecycleEffect::Reply { id, result } => self.held_replies.push((id, result)),
         }
@@ -173,10 +162,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => {
                 self.erased(back, io_id, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }
-            StoreEffect::EraseModels { io_id, generation_new, models } => {
-                let models: Vec<String> = models.into_iter().collect();
-                self.erased(back, io_id, store.erase_models(Generation::from_value(generation_new), &models));
-            }
             StoreEffect::ClearSecret { io_id } => {
                 let (secret, wiring, back) = (self.secret.clone(), wiring.clone(), back.clone());
                 let launch = wiring.handle.launch();
@@ -206,7 +191,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::OperationsGone { epoch, ops } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::RowsGone { ops }),
             StoreEffect::BroadcastCommitted(notice) => wiring.tell_committed(notice),
             StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),
-            StoreEffect::ModelsCleared { generation_new, erase_id } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new, erase_id }),
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
@@ -262,7 +246,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 }
                 let Some(exchange) = &self.exchange else { return };
                 match super::session_runner::SessionRunner::rows(exchange, &self.db) {
-                    Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending }),
+                    Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending, resume_answer: stored.resume_answer }),
                     Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
                 }
             }
@@ -310,7 +294,12 @@ impl EffectRunner<Network> for NetworkRunner {
                         wiring.to_outbox_at(stamp, OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                         wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online)));
                     }
-                    Peer::Transfer => wiring.to_transfer_at(stamp, TransferInput::Online(Online(online))),
+                    Peer::Transfer => {
+                        if let Some(saving) = saving {
+                            wiring.to_transfer_at(stamp, TransferInput::PowerSaving(saving));
+                        }
+                        wiring.to_transfer_at(stamp, TransferInput::Online(Online(online)));
+                    }
                     Peer::Session => wiring.to_session_at(stamp, SessionInput::Snapshot { epoch, online }),
                     _ => {}
                 }
@@ -326,6 +315,7 @@ impl EffectRunner<Network> for NetworkRunner {
             }
             NetworkEffect::PowerSaving(saving) => {
                 wiring.to_windows(WindowsInput::PowerSaving { saving });
+                wiring.to_transfer(TransferInput::PowerSaving(saving));
                 wiring.tell_network(&[Peer::Transfer, Peer::Windows], NetworkEvent::PowerSaving { saving, epoch: None });
             }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),

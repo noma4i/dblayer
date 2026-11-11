@@ -19,7 +19,6 @@ pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
     session: Option<Arc<crate::transport::Exchange>>,
     executor: tokio::runtime::Handle,
-    operations: super::OperationLookup,
     running: HashMap<u64, AbortHandle>,
 }
 
@@ -82,7 +81,7 @@ struct CallRequest {
 
 impl CallsRunner {
     pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
-        Self { wiring, session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new() }
+        Self { wiring, session: ports.exchange.clone(), executor: ports.executor.clone(), running: HashMap::new() }
     }
 
     fn query(&mut self, call: CallRequest, back: &Back<Calls>) {
@@ -136,11 +135,8 @@ pub(super) fn mutate_input(req_id: RequestId, epoch: crate::runtime::Epoch, path
 impl EffectRunner<Calls> for CallsRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: CallsEffect, back: &Back<Calls>) {
         match effect {
-            CallsEffect::Request { call_id, request_id, operation, variables, kind, epoch } => {
-                let Some((document, root)) = (self.operations)(&operation) else {
-                    back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid });
-                    return;
-                };
+            CallsEffect::Request { call_id, request_id, operation, variables, definition, epoch } => {
+                let crate::owners::calls::CallDefinition { kind, document, root } = definition;
                 let call = CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind };
                 match kind {
                     CallKind::Query => self.query(call, back),

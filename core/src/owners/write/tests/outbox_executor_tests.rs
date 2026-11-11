@@ -19,7 +19,7 @@ fn exec_out_reply_settles_call() {
     let (store, _) = peer(&mut det, "store");
     let (session, _) = peer(&mut det, "session");
     let (transfer, _) = peer(&mut det, "transfer");
-    let outbox = det.add::<Outbox>("outbox", OutboxState::new(EPOCH, OutboxPeers { store, session: Some(session), transfer: Some(transfer) }), OutboxExecutor { settle: Arc::new(move |reply, answer| sink.lock().unwrap_or_else(PoisonError::into_inner).push((reply, answer))), drained: Arc::new(|_| {}), signal: Arc::new(|_| {}), copy: None, stale: None, decode: None, counted: None });
+    let outbox = det.add::<Outbox>("outbox", OutboxState::new(EPOCH, OutboxPeers { store, session: Some(session), transfer: Some(transfer) }), OutboxExecutor { settle: Arc::new(move |reply, answer| sink.lock().unwrap_or_else(PoisonError::into_inner).push((reply, answer))), drained: Arc::new(|_| {}), signal: Arc::new(|_| {}), stale: None, decode: None, counted: None });
     det.start_epoch(EPOCH);
     let op = NewOp { model: "Moment".into(), row_id: "r1".into(), action: "update".into(), on_failure: OnFailure::Rollback, origin: OpSource::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None };
     det.post(outbox, EpochStamp::Epoch(EPOCH), OutboxInput::Submit { epoch: EPOCH + 1, op, reply: 1 });

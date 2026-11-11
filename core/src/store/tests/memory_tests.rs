@@ -13,7 +13,7 @@ fn models() -> [ModelSpec; 2] {
 }
 
 fn reopen(path: &std::path::Path) -> Store {
-    let store = Store::open(path).unwrap();
+    let store = Store::open(path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&models(), None).unwrap();
     store
 }
@@ -31,7 +31,7 @@ fn seed(store: &Store) {
 
 #[test]
 fn store_prop_memory_model_tables() {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'row_presence'"), 1);
@@ -79,7 +79,7 @@ fn the_disk_file_holds_no_memory_rows_or_fingerprints() {
 
 #[test]
 fn clearing_the_account_empties_memory_tables_too() {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);
     store.erase_account(store.generation().next(), false).unwrap();

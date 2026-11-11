@@ -59,6 +59,8 @@ fn win_media_marker_same() {
     let effects = answer_marker(&mut twin, SAVED);
     assert_eq!(commits(&effects), 1);
     assert!(twin.commit.contains("WindowMarker") && !twin.commit.contains("Window {"), "the batch has the marker and no rows: {}", twin.commit);
+    assert!(twin.commit.contains(&format!("landed_at: Some({NOW})")), "{}", twin.commit);
+    twin.now = NOW + 500;
     twin.land();
     assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Loaded));
 }

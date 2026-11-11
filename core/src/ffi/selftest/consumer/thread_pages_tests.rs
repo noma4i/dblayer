@@ -20,7 +20,7 @@ impl Reader for History {
     }
 }
 
-fn page(first: i32, last: i32, more: bool, total: i32) -> Value {
+pub(super) fn page(first: i32, last: i32, more: bool, total: i32) -> Value {
     let nodes: Vec<Value> = (first..=last).map(|n| json!({"id":format!("m{n}"),"chatId":"c1","body":format!("message {n}"),"kind":"TEXT","status":"SENT","oneTime":false,"expired":false,"isSystem":false,"isForwarded":false,"isReply":false,"unread":false,"sequenceNumber":n,"createdAt":"2026-10-27T00:00:00Z","updatedAt":"2026-10-27T00:00:00Z"})).collect();
     let edges: Vec<_> = nodes.into_iter().map(|node| json!({"node":node})).collect();
     json!({"node":{"messages":{"totalCount":total,"edges":edges,"pageInfo":{"hasNextPage":more,"endCursor":first.to_string()}}}})
@@ -216,14 +216,14 @@ async fn consumer_tail_invalid_cursor_restarts_history() {
 async fn consumer_ordered_page_old_answer_after_delete() {
     let (stand, history, _stream) = three_pages().await;
     let (events, token) = stand.events("Message").await;
-    let received = stand.asked().len();
+    let received = stand.request_mark();
     stand.hold(&["chatThread"]);
     stand.answer("chatThread", page(41, 65, true, 65));
     let database = stand.database.clone();
     let refresh = tokio::spawn(async move {
         bound(database.refresh(database.session_epoch(), "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await
     });
-    stand.received(received + 1).await;
+    stand.receive_after(received, "chatThread", Some(("chatId", "c1")), 1).await;
     stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50", "parentId":"c1"}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
@@ -241,10 +241,10 @@ async fn consumer_queued_operation_server_delete() {
     let (stand, history, _stream) = three_pages().await;
     let (events, token) = stand.events("Message").await;
     stand.hold(&["MessageUpdate"]);
-    let received = stand.asked().len();
+    let received = stand.request_mark();
     let epoch = stand.database.session_epoch();
     let receipt = bound(stand.database.update(epoch, "Message".into(), "m50".into(), r#"{"body":"edited"}"#.into(), "{}".into())).await.unwrap();
-    stand.received(received + 1).await;
+    stand.receive_after(received, "MessageUpdate", None, 1).await;
     stand.push(&token, json!({"area":"MESSAGE", "kind":"DELETED", "entityId":"m50", "parentId":"c1"}));
     let event = bound(events.pull_next()).await;
     assert!(matches!(event, Some(ReadValue::Event { ref id, .. }) if id == "m50"), "{event:?}");
@@ -257,6 +257,126 @@ async fn consumer_queued_operation_server_delete() {
     let value = bound(operations.pull_next()).await;
     assert!(matches!(value, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "{value:?}");
     assert_eq!(stand.requests("MessageUpdate"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_attempt_number_survives_restart() {
+    use crate::ffi::tests::session_guards_tests::WatchedHeld;
+    use crate::ffi::wire::Cell;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("attempt.sqlite").to_string_lossy().into_owned();
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("chatThread", page(1, 1, false, 1));
+    let epoch = first.database.session_epoch();
+    bound(first.database.refresh(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    first.database.set_online(false).unwrap();
+    let receipt = bound(first.database.update(epoch, "Message".into(), "m1".into(), r#"{"body":"edited"}"#.into(), "{}".into())).await.unwrap();
+    let operation = receipt.operation.unwrap();
+    let saved = || {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let attempts: i64 = db.query_row("SELECT attempts FROM op WHERE seq = ?1", [operation], |row| row.get(0)).unwrap();
+        let pending: i64 = db.query_row("SELECT count(*) FROM encrypted_pending", [], |row| row.get(0)).unwrap();
+        (attempts, pending)
+    };
+    let (attempts, pending) = saved();
+    assert!(attempts >= 1, "the first attempt must already be recorded: {attempts}");
+    assert_eq!(pending, 0, "the operation has no retained pair before the restart");
+    assert_eq!(first.requests("MessageUpdate"), 0);
+    drop(receipt);
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    assert_eq!(saved(), (attempts, 0));
+
+    let reopened = Stand::prepare_online(Some(path.clone()), credentials, None, false).await;
+    let epoch = reopened.database.session_epoch();
+    assert_eq!(saved(), (attempts, 0), "opening does not consume another attempt");
+    let history = Arc::new(History::default());
+    let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
+    let _stream = reopened.database.watch(ReadRequest::List { query }, history.clone());
+    settled(&reopened, "the restored message reaches the reader", || ids(&history) == ["m1"]).await;
+    reopened.answer("MessageUpdate", json!({"messageUpdate":{"message":super::stand::message("m1", "c1", "server confirmed")}}));
+    reopened.hold(&["MessageUpdate"]);
+    let mark = reopened.request_mark();
+    reopened.database.set_online(true).unwrap();
+    reopened.receive_after(mark, "MessageUpdate", None, 1).await;
+    assert_eq!(saved().0, attempts, "the restored send uses the recorded attempt");
+    reopened.release(&["MessageUpdate"]);
+    settled(&reopened, "the confirmed server value reaches the reader", || reopened.text_of(&history.rows, "Message", "m1", "body").as_deref() == Some("server confirmed")).await;
+    let row = bound(reopened.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
+    assert_eq!(reopened.cell("Message", &row, "body"), Cell::Text { value: "server confirmed".into() });
+    let operations = reopened.database.subscribe_values(epoch, ReadRequest::Operations);
+    let value = bound(operations.pull_next()).await;
+    assert!(matches!(value, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "{value:?}");
+    assert_eq!(reopened.requests("MessageUpdate"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_destroy_not_found_removes_row() {
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    stand.answer("chatThread", page(1, 1, false, 1));
+    let history = Arc::new(History::default());
+    let query = QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#);
+    let _stream = stand.database.watch(ReadRequest::List { query }, history.clone());
+    settled(&stand, "the server message reaches the reader", || ids(&history) == ["m1"]).await;
+    assert!(stand.database.peek_row(epoch, "Message".into(), "m1".into()).unwrap().is_some());
+
+    stand.database.set_online(false).unwrap();
+    let receipt = bound(stand.database.destroy(epoch, "Message".into(), "m1".into())).await.unwrap();
+    settled(&stand, "the optimistic deletion reaches the reader", || history.rows.emptied()).await;
+    assert!(stand.database.peek_row(epoch, "Message".into(), "m1".into()).unwrap().is_none());
+    let after_delete = history.rows.1.lock().unwrap().len();
+    stand.answer("chatThread", page(1, 0, false, 0));
+    stand.answer_next("MessageDelete", json!({"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND"}}]}));
+    stand.database.set_online(true).unwrap();
+    let confirmed = bound(stand.database.confirmed(receipt, false)).await;
+    assert!(confirmed.is_ok(), "NOT_FOUND confirms the deletion: {confirmed:?}");
+    stand.settle().await;
+
+    assert!(stand.database.peek_row(epoch, "Message".into(), "m1".into()).unwrap().is_none());
+    assert!(ids(&history).is_empty());
+    assert!(history.rows.1.lock().unwrap()[after_delete..].iter().all(|frame| frame.rows.iter().all(|row| row.id != "m1")), "the reader must not receive the row again");
+    let operations = stand.database.subscribe_values(epoch, ReadRequest::Operations);
+    let value = bound(operations.pull_next()).await;
+    assert!(matches!(value, Some(ReadValue::Operations { ref items, .. }) if items.is_empty()), "{value:?}");
+    assert_eq!(stand.requests("MessageDelete"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_restore_removed_row() {
+    use crate::ffi::tests::session_guards_tests::WatchedHeld;
+    use crate::owners::store::StoreOp;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("removed.sqlite").to_string_lossy().into_owned();
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer("chatThread", page(1, 1, false, 1));
+    let epoch = first.database.session_epoch();
+    bound(first.database.refresh(epoch, "Message".into(), Some("thread".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
+    first.database.set_online(false).unwrap();
+    let receipt = bound(first.database.update(epoch, "Message".into(), "m1".into(), r#"{"body":"edited"}"#.into(), "{}".into())).await.unwrap();
+    assert!(receipt.optimistic_value.is_some());
+    first.database.db.write_queue_ops(&[StoreOp::RemoveRows { model: "Message".into(), ids: vec!["m1".into()] }]).unwrap();
+    first.database.db.mark_tombstone("Message", "m1", 100, i64::MAX).unwrap();
+    assert!(first.database.db.is_tombstoned("Message", "m1").unwrap());
+    let operations = first.database.subscribe_values(epoch, ReadRequest::Operations);
+    assert!(matches!(bound(operations.pull_next()).await, Some(ReadValue::Operations { ref items, .. }) if items.iter().any(|item| item.row_id == "m1")));
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    let reopened = Stand::prepare_online(Some(path), credentials, None, false).await;
+    reopened.settle().await;
+    let stream = reopened.database.subscribe_values(reopened.database.session_epoch(), ReadRequest::Operations);
+    let snapshot = bound(stream.pull_next()).await;
+    assert!(matches!(snapshot, Some(ReadValue::Operations { ref items, .. }) if items.iter().all(|item| item.row_id != "m1")), "restoration must discard the deleted row's operation: {snapshot:?}");
+    assert!(reopened.database.peek_row(reopened.database.session_epoch(), "Message".into(), "m1".into()).unwrap().is_none());
+    reopened.database.set_online(true).unwrap();
+    reopened.settle().await;
+    assert_eq!(reopened.requests("MessageUpdate"), 0);
+    reopened.database.close_now();
 }
 
 #[tokio::test(flavor = "multi_thread")]

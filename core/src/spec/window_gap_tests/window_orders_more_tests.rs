@@ -13,13 +13,15 @@ fn requests_of(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<(WindowKey, u64, u32
     runs(emitted).into_iter().filter_map(|effect| if let WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, .. } } = effect { Some((key, request, attempt, page, cursor)) } else { None }).collect()
 }
 
-/// P-WIN-09: the conditions read the fields `online` and `generation[m]` of the dictionary, whether the machine of the key is created before or after the field changes.
 #[test]
 fn win_orders_dictionary_fields() {
-    let all = orders(&[Ev::Offline, Ev::Reset, Ev::Call1], &[]);
-    assert_eq!(all.len(), 6);
+    let all = orders(&[Ev::Offline, Ev::Call1], &[]);
+    assert_eq!(all.len(), 2);
     for order in all {
         let mut twin = Twin::new();
+        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
+        twin.reference.online = None;
+        twin.generation = 5;
         let mut seen = Seen::default();
         for event in order.iter().copied() {
             run(&mut twin, &mut seen, event);
@@ -230,7 +232,7 @@ fn media_full_chain() -> Twin {
 
 /// P-WIN-23: the first load of a key in a new epoch lands on the generation of that epoch with its own `Loaded`, whatever the order of the start, the network, the call and the late answer of the old epoch.
 #[test]
-fn win_orders_epoch_reset() {
+fn win_prop_generation() {
     let all: Vec<_> = orders(&[Ev::Reset, Ev::Online, Ev::Call1, Ev::Respond], &[(Ev::Reset, Ev::Online), (Ev::Reset, Ev::Call1)]);
     assert_eq!(all.len(), 8);
     for order in all {
@@ -239,7 +241,12 @@ fn win_orders_epoch_reset() {
         let (mut batches, mut fresh_request) = (Vec::new(), None);
         for event in order.iter().copied() {
             match event {
-                Ev::Reset => twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 })),
+                Ev::Reset => {
+                    twin.det.end_epoch(EPOCH, Ended::SessionReset);
+                    twin.run();
+                    twin.det.start_epoch(EPOCH + 1);
+                    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 }));
+                }
                 Ev::Online => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }),
                 Ev::Call1 => twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0, now: NOW }),
                 _ => twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["old".into()], None), now: NOW }),
@@ -251,13 +258,15 @@ fn win_orders_epoch_reset() {
             }
         }
         let (request, attempt) = fresh_request.expect("the new epoch asked for its first page");
-        twin.post(w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None), now: NOW });
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None), now: NOW });
+        twin.run();
         batches.extend(sent_batches(&take(&twin.log)).into_iter().filter(|batch| batch.contains("\"Moment\": 3")));
-        twin.post(w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        twin.run();
         let done = runs(take(&twin.log));
         let loaded = done.iter().filter(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome: WindowOutcome::Loaded { revision: 30, .. } }, .. })).count();
         assert_eq!((batches.len(), loaded), (1, 1), "{order:?}: one batch on the new generation and the own Loaded of the call");
-        assert!(batches[0].contains("new") || !batches[0].contains("old"), "{order:?}: the old answer landed: {}", batches[0]);
+        assert!(!batches[0].contains("old"), "{order:?}: the old answer landed: {}", batches[0]);
     }
 }
 
@@ -341,13 +350,13 @@ fn win_orders_nodes_answers() {
     let all = orders(&[0usize, 1, 2], &[]);
     assert_eq!(all.len(), 6);
     for order in all {
-        let db = Store::open_models(None, all_specs(), None).unwrap();
+        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         for id in asked {
             put(&db, "moments", serde_json::json!({"id": id, "userId": "u1", "text": format!("cached {id}")}));
         }
         for index in order.iter().copied() {
             let roots = answers[index].iter().map(|id| RowValue { row_id: (*id).into(), values: serde_json::json!({"id": id, "userId": "u1", "text": format!("served {id}")}).to_string() }).collect();
-            let page = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+            let page = StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
             let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
             db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
         }

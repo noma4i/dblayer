@@ -106,7 +106,7 @@ fn data_orders_ephemeral_write_row_and_clock() {
     let orders: Vec<_> = permutations(&[Row, Write, Clock]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Clock)).collect();
     assert_eq!(orders.len(), 3);
     for order in orders {
-        let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+        let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         let (mut row, mut written, mut clocked) = (false, None, false);
         let mut positions = Vec::new();
         for event in &order {
@@ -144,12 +144,12 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
     assert_eq!(orders.len(), 3);
     for erase in [false, true] {
         for order in &orders {
-            let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+            let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
             put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
             for event in order {
                 match event {
                     Write => { set_typing(&db, "m1", true); }
-                    Remove if erase => { db.erase_models(db.generation().next(), &["moments".to_string()]).unwrap(); }
+                    Remove if erase => { db.erase_account(db.generation().next(), false).unwrap(); }
                     Remove => {
                         let delete = json!({"op": "delete", "id": "m1"}).to_string();
                         let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
@@ -270,7 +270,7 @@ fn data_orders_children_of_a_pointer_in_every_path() {
                     "event" => write_chat(&db, BatchAuthor::Feed, vec![("messages".into(), json!({"op": "upsert", "id": id, "row": {"id": id, "chatId": "c1", "body": id, "createdAt": at}}).to_string())], Vec::new()),
                     "page" => {
                         let key = WindowKey::nodes("messages", &[id]);
-                        write_chat(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message(id, *at)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+                        write_chat(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message(id, *at)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
                     }
                     _ => write_chat(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message(id, *at)] }]),
                 }

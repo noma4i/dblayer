@@ -13,10 +13,10 @@ pub(crate) fn is_unreadable(error: &StoreError) -> bool {
     matches!(error, rusqlite::Error::SqliteFailure(failure, _) if matches!(failure.code, ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt))
 }
 
-fn probe(path: &Path) -> Result<Store, StoreError> {
+fn probe(path: &Path, clock: std::sync::Arc<dyn crate::runtime::Clock>) -> Result<Store, StoreError> {
     let connection = Connection::open(path)?;
     prepare_connection(&connection)?;
-    let mut store = Store::from_connection(connection);
+    let mut store = Store::from_connection(connection, clock);
     store.readers = Some(super::readers::Readers::open(path)?);
     Ok(store)
 }
@@ -30,7 +30,6 @@ pub struct DroppedRow {
 }
 
 pub(super) struct Recreated {
-    pub files_kept: bool,
     pub dropped: Vec<DroppedRow>,
 }
 
@@ -42,14 +41,7 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     let carried: Vec<&str> = CARRIED_TABLES.iter().copied().filter(|table| tables.iter().any(|found| found == table)).collect();
     let manifest = carried_manifest(connection, &tables)?;
     for table in &carried {
-        let columns = columns_of(connection, table)?;
-        let has = |wanted: &str| columns.iter().any(|(name, _)| name == wanted);
-        let filter = match *table {
-            "sync_upload" if has("seq") && has("transfer_id") => " WHERE seq IS NOT NULL AND transfer_id IS NOT NULL",
-            "sync_upload" => " WHERE 0",
-            _ => "",
-        };
-        connection.execute_batch(&format!(include_str!("sql/open/recreate_create_table.sql"), sql_ident(&carry_name(table)), sql_ident(table), filter = filter))?;
+        connection.execute_batch(&format!(include_str!("sql/open/recreate_create_table.sql"), sql_ident(&carry_name(table)), sql_ident(table), filter = ""))?;
     }
     for table in &tables {
         connection.execute_batch(&format!(include_str!("sql/open/recreate_drop_table.sql"), sql_ident(table)))?;
@@ -72,7 +64,7 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
             rusqlite::params![row.table, row.key, row.reason, row.columns],
         )?;
     }
-    Ok(Recreated { files_kept: carried.contains(&"file"), dropped })
+    Ok(Recreated { dropped })
 }
 
 fn carried_manifest(connection: &Connection, tables: &[String]) -> Result<Vec<(String, String)>, StoreError> {
@@ -169,17 +161,17 @@ pub(crate) fn remove_database(path: &Path) -> Result<(), StoreError> {
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Store, StoreError> {
+    pub fn open(path: &Path, clock: std::sync::Arc<dyn crate::runtime::Clock>) -> Result<Store, StoreError> {
         if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
-        probe(path)
+        probe(path, clock)
     }
 
-    pub fn open_in_memory() -> Result<Store, StoreError> {
+    pub fn open_in_memory(clock: std::sync::Arc<dyn crate::runtime::Clock>) -> Result<Store, StoreError> {
         let connection = Connection::open_in_memory()?;
         prepare_connection(&connection)?;
-        Ok(Store::from_connection(connection))
+        Ok(Store::from_connection(connection, clock))
     }
 
     #[cfg(test)]

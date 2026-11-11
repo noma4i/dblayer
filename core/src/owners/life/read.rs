@@ -111,7 +111,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { effect: StreamEffect::ReaderClaimed { reply, claimed }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Reader { claimed });
             }
-            DeliveryEffect::Stream { stream, effect: StreamEffect::StatusInterest { plus, key: Some(key) } } => {
+            DeliveryEffect::Stream { stream, effect: StreamEffect::StatusInterest { plus, key } } => {
                 let owned = deliveries_wiring.addresses().is_some_and(|addresses| addresses.transfer.is_some());
                 match (plus, owned) {
                     (true, true) => deliveries_wiring.to_transfer(TransferInput::StatusInterestPlus { key, stream_id: stream }),

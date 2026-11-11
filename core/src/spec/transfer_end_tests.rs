@@ -33,7 +33,8 @@ fn failed_with_upload() -> (Twin, TransferId) {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
-    twin.reject(RejectReason::Storage("disk".into()));
+    let failure = twin.reject(RejectReason::Storage("disk".into()));
+    assert!(!failure.batches.iter().flat_map(|batch| &batch.ops).any(|op| matches!(op, crate::owners::store::StoreOp::UploadShown { shown, .. } if !matches!(shown, Shown::Failed { .. }))), "the failure batch must not restore the previous status");
     twin.commit();
     assert_eq!((twin.stage(id), twin.t(id).aborted), (TransferStage::Failed, false));
     (twin, id)
@@ -91,11 +92,17 @@ fn xfer_retry_after_abort() {
 #[test]
 fn xfer_retry() {
     let (mut twin, id) = failed_with_upload();
+    let previous = twin.t(id).outcomes.get(&1).cloned().expect("failed cycle has an outcome");
     let (_, out) = twin.retry(KEY, None);
     assert_eq!((twin.stage(id), twin.next_step(id), out.rows()[0].0.confirmed_parts), (TransferStage::PersistingRetry, NextStep::Part(2), 1), "the first part that is not confirmed");
     assert_eq!(out.rows()[0].0.attempts, 0);
+    assert_eq!(out.outcomes_written(), vec![(id, 1, previous)]);
+    assert_eq!(out.kinds(), vec![UploadKind::Retrying]);
+    assert!(!out.batches.iter().flat_map(|batch| &batch.ops).any(|op| matches!(op, crate::owners::store::StoreOp::UploadShown { shown: Shown::Failed { .. }, .. })), "the retry batch must not restore the previous failed status");
     let out = twin.commit();
     assert!(out.steps().is_empty());
+    assert_eq!(out.shows(), vec![Shown::Queued]);
+    assert!(!out.stored_shows().iter().any(|shown| matches!(shown, Shown::Failed { .. })), "the committed retry must not schedule the old failed status");
     assert_eq!(twin.commit().steps()[0].0, Some(2));
 }
 
@@ -178,8 +185,10 @@ fn xfer_discard() {
 fn xfer_discard_no_upload() {
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
+    let error = twin.t(id).error.clone().unwrap();
     let (reply, out) = twin.discard(KEY);
     assert_eq!((twin.stage(id), out.aborts(), out.removed()), (TransferStage::Removing, 0, vec![KEY.to_string()]));
+    assert_eq!(out.outcomes_written(), vec![(id, 1, OutboxOutcome::Failed { error })]);
     assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Ok]);
 }
 
@@ -274,6 +283,13 @@ fn xfer_failed_online() {
 
 #[test]
 fn xfer_expired() {
+    let mut row = stored(2, KEY, 2);
+    row.restore_failed = Some("prior".into());
+    row.created_at = Time(0);
+    row.failed_at = Some(Time(2 * DAY));
+    let (mut restored, _) = Twin::opened(vec![row], Default::default());
+    let expired = restored.post(TransferInput::Tick { now: Time(9 * DAY + 1), kind: TransferTick::Expire });
+    assert_eq!((restored.stage(2), expired.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
     let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
@@ -294,6 +310,14 @@ fn xfer_not_expired() {
 
 #[test]
 fn xfer_expiry_exact_week_keeps() {
+    let mut row = stored(2, KEY, 2);
+    row.restore_failed = Some("prior".into());
+    row.created_at = Time(0);
+    row.failed_at = Some(Time(2 * DAY));
+    let (mut restored, _) = Twin::opened(vec![row], Default::default());
+    let kept = restored.post(TransferInput::Tick { now: Time(9 * DAY), kind: TransferTick::Expire });
+    assert!(Twin::quiet(&kept));
+    assert_eq!(restored.stage(2), TransferStage::Failed);
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
     let out = twin.post(TransferInput::Tick { now: Time(7 * DAY), kind: TransferTick::Expire });

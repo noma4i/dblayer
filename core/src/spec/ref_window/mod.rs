@@ -71,6 +71,11 @@ impl Window {
     /// Loaded, not marked stale and `landed_at <= now < fresh_until` by the `now` of the input.
     fn fresh_at(&self) -> bool { self.fresh && self.landed_at <= self.now && self.now < self.fresh_until }
 
+    pub(super) fn join(&mut self, id: u32) {
+        if id != PRELOAD && self.interest.iter().all(|held| *held == PRELOAD) { self.settled = false; }
+        self.interest.insert(id);
+    }
+
     fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
 
     fn deferred(&self) -> bool { self.saving && self.preload_only() }
@@ -178,7 +183,7 @@ impl Window {
     /// A held input changes the interest and the waiters at once, the machine runs it after the read.
     fn hold(&mut self, input: Input, effects: Vec<Effect>) -> Vec<Effect> {
         match &input {
-            Input::InterestPlus { id } | Input::InterestPassive { id } => { self.interest.insert(*id); }
+            Input::InterestPlus { id } | Input::InterestPassive { id } => { self.join(*id); }
             Input::Load { id, .. } => { self.waiters.insert(*id, Want::First); }
             Input::InterestMinus { id } => {
                 self.interest.remove(id);
@@ -196,19 +201,15 @@ impl Window {
             Input::Read(Read::Stray) => Vec::new(),
             Input::Read(read) => {
                 if let Read::Media { marker, members } | Read::MediaMarked { marker, members } = read {
-                    if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
-                        self.marker = Some(marker);
-                        self.members = members;
-                        self.has_rows = true;
-                        self.stale_marked = matches!(read, Read::MediaMarked { .. });
-                    }
+                    self.marker = Some(marker);
+                    self.members = members;
+                    self.has_rows = true;
+                    self.stale_marked = matches!(read, Read::MediaMarked { .. });
                 }
                 if let Read::Saved { landed_at, fresh_until, stale, generation_ok: true } = read {
-                    if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
-                        self.fresh = !stale;
-                        self.landed_at = landed_at;
-                        self.fresh_until = fresh_until;
-                    }
+                    self.fresh = !stale;
+                    self.landed_at = landed_at;
+                    self.fresh_until = fresh_until;
                 }
                 self.state = State::Idle;
                 let held = std::mem::take(&mut self.held);
@@ -254,11 +255,11 @@ impl Window {
     fn idle(&mut self, input: Input) -> Vec<Effect> {
         match input {
             Input::InterestPassive { id } => {
-                self.interest.insert(id);
+                self.join(id);
                 vec![Effect::WindowState]
             }
             Input::InterestPlus { id } => {
-                self.interest.insert(id);
+                self.join(id);
                 if self.fresh_at() {
                     self.set_phase(Phase::Loaded);
                     vec![Effect::WindowState]
@@ -290,10 +291,6 @@ impl Window {
                 self.last_error = Some(true);
                 self.set_phase(self.failed_phase());
                 vec![Effect::WindowState]
-            }
-            Input::ModelsReset { own_model: true } => {
-                self.fresh = false;
-                if self.watched() { self.begin(1, false, self.is_online()) } else { Vec::new() }
             }
             _ => Vec::new(),
         }
@@ -339,7 +336,7 @@ impl Window {
         let mine = |got_request: u64, got_attempt: u32| got_request == step && got_attempt == attempt && !retry;
         match input {
             Input::InterestPlus { id } => {
-                self.interest.insert(id);
+                self.join(id);
                 vec![Effect::WindowState]
             }
             Input::Load { id, goal: Goal::First, force: true } if page > 1 => {
@@ -394,11 +391,6 @@ impl Window {
                 self.reread_due = true;
                 Vec::new()
             }
-            Input::ModelsReset { own_model: true } => {
-                let (new_request, new_attempt) = self.request_ids();
-                self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page, force, attempts: 0 };
-                vec![Effect::Cancel { request: step, attempt }, Effect::Request { request: new_request, attempt: new_attempt, page }]
-            }
             _ => Vec::new(),
         }
     }
@@ -436,7 +428,7 @@ impl Window {
             Input::Committed { request: got, revision } if got == request => self.landed(page, cursor, rows, revision),
             Input::Rejected { request: got, reason } if got == request => self.rejected(reason),
             Input::InterestPlus { id } => {
-                self.interest.insert(id);
+                self.join(id);
                 vec![Effect::WindowState]
             }
             Input::Load { id, goal, .. } => {

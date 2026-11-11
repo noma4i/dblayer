@@ -11,6 +11,21 @@ const TEST_DEADLINE: u64 = 20;
 
 static WAITING: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
 static WAIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTLED: Mutex<Vec<(u64, std::sync::Weak<crate::owners::life::Life>, &'static str)>> = Mutex::new(Vec::new());
+
+pub(crate) struct SettledPhase(u64);
+
+impl SettledPhase {
+    pub(crate) fn enter(life: &std::sync::Arc<crate::owners::life::Life>, phase: &'static str) -> Self {
+        let id = WAIT_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SETTLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((id, std::sync::Arc::downgrade(life), phase));
+        Self(id)
+    }
+}
+
+impl Drop for SettledPhase {
+    fn drop(&mut self) { SETTLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(id, _, _)| *id != self.0); }
+}
 
 struct Waiting(u64);
 
@@ -28,7 +43,8 @@ impl Drop for Waiting {
 
 pub(crate) fn hang_report() -> String {
     let waits: Vec<String> = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|(_, what)| what.clone()).collect();
-    format!("waiting for [{}]; {}", waits.join(" | "), crate::runtime::barrier_report())
+    let settled: Vec<String> = SETTLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(|(_, life, phase)| life.upgrade().map(|life| format!("{phase}, flights={}", life.requests_in_flight()))).collect();
+    format!("waiting for [{}]; settled [{}]; {}", waits.join(" | "), settled.join(" | "), crate::runtime::barrier_report())
 }
 
 #[used]
@@ -126,8 +142,9 @@ pub(crate) async fn within_named<T>(seconds: u64, what: &str, work: impl std::fu
         }
     });
     let _finished = finished;
+    tokio::pin!(work);
     tokio::select! {
-        output = work => output,
+        output = &mut work => output,
         _ = expiry => panic!("{what}: the event did not come in {seconds} s; {}", hang_report()),
     }
 }
@@ -172,6 +189,7 @@ pub(crate) fn settled<'a>(handle: &'a impl Quiet, what: &'a str, ready: impl FnO
 pub(crate) fn settled_showing<'a>(handle: &'a impl Quiet, what: &'a str, state: impl FnOnce() -> String + 'a, ready: impl FnOnce() -> bool + 'a) -> impl std::future::Future<Output = ()> + 'a {
     let place = std::panic::Location::caller();
     async move {
+        let _waiting = Waiting::enter(what);
         handle.quiet().await;
         assert!(ready(), "{what}{} (at {place}: the owners are quiet, the state is final)", state());
     }

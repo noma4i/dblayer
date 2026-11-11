@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId};
 use crate::schema_fixtures::{messages_spec, CHAT};
 
 fn steps_to_read_30_members(size: usize) -> i32 {
-    let db = Store::open_models(None, vec![messages_spec(true)], None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![messages_spec(true)], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let query = db.remote_relation_query("messages", "thread", json!({"chatId": CHAT}).as_object().unwrap()).unwrap().unwrap();
     let scope = ScopeRef::new(ModelKey::new("messages"), query.scope.clone().unwrap());
     let mut envelope = BatchPlan::from_server(db.generation());

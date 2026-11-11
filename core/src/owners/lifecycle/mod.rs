@@ -76,7 +76,6 @@ pub enum LifecyclePhase {
     NoSession { epoch: Epoch },
     Session { epoch: Epoch, identity: Identity },
     Ending { epoch_old: Epoch, cause: Cause, next: Option<Identity>, failed: bool, erase_credential: bool, erases: Vec<Erase> },
-    Resetting { epoch: Epoch, identity: Option<Identity>, models: BTreeSet<String>, queued_models: BTreeSet<String>, queued_replies: Vec<ReplyId>, pending_credential: Option<Identity>, erases: Vec<Erase> },
     Closing { waiting: BTreeSet<Peer>, erases: Vec<Erase>, close_replies: Vec<ReplyId>, store_closing: bool, store_closed: bool, observers_stopped: bool },
     Closed,
 }
@@ -113,11 +112,9 @@ pub enum LifecycleEffect {
     PublishCell(Published),
     EpochStarted { epoch: Epoch, identity: Option<Identity>, generation: u64 },
     EpochEnded { epoch: Epoch, cause: Cause },
-    ModelsReset { epoch: Epoch, generation: u64, models: BTreeSet<String> },
     Closing,
     StopObserving,
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: EraseId },
-    ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: EraseId },
     ReadIntents { epoch: Epoch },
     RestoreReady { epoch: Epoch },
     StoreClose,
@@ -130,7 +127,6 @@ pub enum LifecycleInput {
     CredentialCommitted(CredentialCommitted),
     SessionReset { reply: Option<ReplyId> },
     ServerEnded(ServerEnded),
-    ResetModels { models: BTreeSet<String>, reply: Option<ReplyId> },
     Cleared { erase_id: EraseId },
     ModelsCleared { generation_new: u64, erase_id: EraseId },
     ClearFailed { erase_id: EraseId, error: String },
@@ -301,16 +297,12 @@ impl LifecycleState {
         self.phase = LifecyclePhase::Ending { epoch_old: epoch, cause, next, failed: false, erase_credential: false, erases };
     }
 
-    fn resetting(&mut self, epoch: Epoch, identity: Option<Identity>, models: BTreeSet<String>, reply: Option<ReplyId>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
-        self.published.state = PublishedState::Resetting;
-        self.publish(None, Vec::new(), fx);
-        let erase = self.new_erase(EraseKind::Models, reply.into_iter().collect());
-        fx.push(LifecycleEffect::ClearModels { epoch, generation_new: erase.target, models: models.clone(), erase_id: erase.id });
-        LifecyclePhase::Resetting { epoch, identity, models, queued_models: BTreeSet::new(), queued_replies: Vec::new(), pending_credential: None, erases: vec![erase] }
-    }
 }
 
 pub struct Lifecycle;
+
+#[cfg(test)]
+pub(crate) static LOGIN_ENDING_INPUTS: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
 
 impl StateOwner for Lifecycle {
     const EPOCHED: bool = false;
@@ -320,6 +312,15 @@ impl StateOwner for Lifecycle {
     type Effect = LifecycleEffect;
 
     fn step(state: &mut LifecycleState, input: LifecycleInput) -> Effects<Self> {
+        #[cfg(test)]
+        if let LifecycleInput::CredentialCommitted(ref credential) = input {
+            let index = match &state.phase {
+                LifecyclePhase::Session { identity, .. } if *identity != credential.identity => Some(0),
+                LifecyclePhase::Ending { .. } if state.published.identity != Some(credential.identity) => Some(1),
+                _ => None,
+            };
+            if let Some(index) = index { LOGIN_ENDING_INPUTS[index].fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+        }
         let mut fx = Vec::new();
         state.run(input, &mut fx);
         fx.into_iter().map(Effect::Run).collect()

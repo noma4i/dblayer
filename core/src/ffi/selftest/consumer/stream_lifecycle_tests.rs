@@ -126,13 +126,13 @@ async fn stream_lifecycle_blob() { lifecycle("Blob").await }
 async fn consumer_stream_release_reopen() {
     let stand = Stand::open().await;
     let epoch = stand.database.session_epoch();
-    let received = stand.asked().len();
+    let received = stand.request_mark();
     stand.hold(&["MomentNode"]);
     stand.answer("MomentNode", serde_json::json!({"node":super::stand::moment("m1", 7)}));
     let first = stand.database.subscribe_values(epoch, ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: ReadFetch::Stale });
     let value = bound(first.pull(0)).await;
     assert!(matches!(value, Some(ReadValue::Snapshot { .. })), "{value:?}");
-    stand.received(received + 1).await;
+    stand.receive_after(received, "MomentNode", None, 1).await;
     first.release_reader(0);
     let rows = stand.entity("Moment", "m1", ReadFetch::Stale);
     stand.release(&["MomentNode"]);

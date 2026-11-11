@@ -18,7 +18,6 @@ fn life_session_status_published_table() {
     for (state, closed, present, absent) in [
         (State::NoSession, false, Some((Standing::None, None)), Some((Standing::None, None))),
         (State::Session, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
-        (State::Resetting, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
         (State::StorageFailed, false, Some((Standing::Active, Some(19))), Some((Standing::None, None))),
         (State::Ending, false, Some((Standing::Ending, Some(19))), Some((Standing::Ending, None))),
         (State::EndingFailed, false, Some((Standing::Ending, Some(19))), Some((Standing::Ending, None))),
@@ -182,11 +181,11 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
     }
 }
 
-/// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `IdentityChanged`, `Close` and `ResetModels` clear nothing.
+/// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `IdentityChanged` and `Close` clear nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end() {
     use crate::test_wait::{within, settled};
-    for end in ["identity_changed", "close", "reset_models", "session_reset", "server_ended"] {
+    for end in ["identity_changed", "close", "session_reset", "server_ended"] {
         let rig = Rig::new();
         let database = rig.open_models(None, pin(), crate::ffi::specs(super::lifecycle_tests::models())).await.unwrap();
         within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -200,10 +199,6 @@ async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end()
                 settled(&database, "the next epoch was published", || life.published().epoch > epoch).await;
             }
             "close" => within(database.close_database()).await.unwrap(),
-            "reset_models" => {
-                let outcome = within(life.reset_models(["User".to_string()].into()).wait()).await;
-                assert!(matches!(outcome, crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Life(Ok(())))), "{outcome:?}");
-            }
             "session_reset" => within(database.session_reset()).await.unwrap(),
             _ => { within(database.session_call("logout".into(), "{}".into())).await.unwrap(); }
         }
@@ -217,3 +212,255 @@ async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end()
     }
 }
 
+
+struct ReleaseSql(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+impl Drop for ReleaseSql {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.0;
+        *lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        ready.notify_one();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_login_during_session_end_all_orders() {
+    use crate::test_wait::within;
+    use crate::transport::{EncryptedOperationClass, EncryptedSessionOperation};
+    for order in ["before", "concurrent", "held", "after", "failed", "closed", "revoked"] {
+        let rig = Rig::new();
+        let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("first_login".into(), EncryptedSessionOperation { path: "/api/auth/social".into(), class: EncryptedOperationClass::Login });
+        let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+        database.set_online(true).unwrap();
+        within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
+        let original = rig.credentials.inner.value().unwrap();
+        let identity = database.session_status().unwrap().identity;
+        match order {
+            "before" => {
+                let result = within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await;
+                assert!(matches!(result, Err(DbError::Session { code: SessionCode::AlreadyAuthenticated, .. })), "{result:?}");
+                assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
+                within(database.session_reset()).await.unwrap();
+            }
+            "concurrent" => {
+                let (login, reset) = within(async { tokio::join!(database.session_call("first_login".into(), SOCIAL_BODY.into()), database.session_reset()) }).await;
+                reset.unwrap();
+                let secret = rig.credentials.inner.value();
+                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap();
+                match login {
+                    Ok(_) => {
+                        let secret = secret.expect("successful login retained credential");
+                        let row = row.expect("successful login retained digest");
+                        assert_ne!(secret, original);
+                        assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
+                    }
+                    Err(_) => assert!(secret.is_none() && row.is_none(), "refused login retained a credential"),
+                }
+            }
+            "held" => {
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let latch = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+                let _release = ReleaseSql(latch.clone());
+                let once = Arc::new(AtomicBool::new(false));
+                let (seen, wait, first) = (entered.clone(), latch.clone(), once.clone());
+                let life = database.life.clone();
+                database.db.lock().connection.progress_handler(1, Some(move || {
+                    if life.published().state == crate::owners::contract::PublishedState::Ending && !first.swap(true, Ordering::SeqCst) {
+                        seen.notify_one();
+                        let (lock, ready) = &*wait;
+                        let mut released = lock.lock().unwrap();
+                        while !*released { released = ready.wait(released).unwrap(); }
+                    }
+                    false
+                })).unwrap();
+                let reset_db = database.clone();
+                let reset = tokio::spawn(async move { reset_db.session_reset().await });
+                within(entered.notified()).await;
+                assert_eq!(database.session_status().unwrap().phase, crate::ffi::SessionStanding::Ending);
+                let login_db = database.clone();
+                let (started, accepted) = tokio::sync::oneshot::channel();
+                let login = tokio::spawn(async move {
+                    let _ = started.send(());
+                    login_db.session_call("first_login".into(), SOCIAL_BODY.into()).await
+                });
+                within(accepted).await.unwrap();
+                let (lock, ready) = &*latch;
+                *lock.lock().unwrap() = true;
+                ready.notify_one();
+                within(reset).await.unwrap().unwrap();
+                let result = within(login).await.unwrap();
+                database.db.lock().connection.progress_handler(0, None::<fn() -> bool>).unwrap();
+                let secret = rig.credentials.inner.value();
+                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap();
+                if result.is_ok() {
+                    let secret = secret.expect("successful login retained credential");
+                    assert_ne!(secret, original);
+                    assert_eq!(row.expect("successful login retained digest").credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
+                } else {
+                    assert!(secret.is_none() && row.is_none(), "refused login retained a credential");
+                }
+            }
+            "after" => {
+                within(database.session_reset()).await.unwrap();
+                within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
+                let secret = rig.credentials.inner.value().unwrap();
+                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap().unwrap();
+                assert_ne!(secret, original);
+                assert_ne!(database.session_status().unwrap().identity, identity);
+                assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
+            }
+            "failed" => {
+                database.db.lock().connection.execute_batch("CREATE TRIGGER refuse_session_erase BEFORE DELETE ON encrypted_session BEGIN SELECT RAISE(ABORT, 'refuse erase'); END;").unwrap();
+                assert!(within(database.session_reset()).await.is_err());
+                assert!(within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.is_err());
+                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap().unwrap();
+                assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&original));
+                assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
+                database.db.lock().connection.execute_batch("DROP TRIGGER refuse_session_erase").unwrap();
+            }
+            "closed" => {
+                within(database.close_database()).await.unwrap();
+                assert!(matches!(within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await, Err(DbError::Closed { .. })));
+                continue;
+            }
+            "revoked" => {
+                within(database.session_call("logout".into(), "{}".into())).await.unwrap();
+                within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
+                let secret = rig.credentials.inner.value().unwrap();
+                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap().unwrap();
+                assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
+            }
+            _ => unreachable!(),
+        }
+        within(database.close_database()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_login_during_session_end_orders() {
+    use crate::ffi::SessionStanding;
+    use crate::test_wait::within;
+    for order in ["active", "ending", "failed"] {
+        let rig = Rig::new();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.sqlite");
+        let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("first_login".into(), crate::transport::EncryptedSessionOperation { path: "/api/auth/social".into(), class: crate::transport::EncryptedOperationClass::Login });
+        let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::specs(super::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        database.set_online(true).unwrap();
+        within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
+        crate::store::fixtures::put(&database.db, "User", serde_json::json!({"id":"a", "name":"A"}));
+        assert_eq!(database.db.row_count("User").unwrap(), 1);
+        let original = rig.credentials.inner.value().unwrap();
+        let identity = database.session_status().unwrap().identity;
+        let before = rig.server.seen().len();
+        for counter in &crate::owners::lifecycle::LOGIN_ENDING_INPUTS { counter.store(0, Ordering::SeqCst); }
+        if order == "active" {
+            let answer = within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await;
+            assert!(matches!(answer, Err(DbError::Session { code: SessionCode::AlreadyAuthenticated, .. })), "{answer:?}");
+            assert_eq!(rig.server.seen().len(), before);
+            assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
+            assert_eq!(database.session_status().unwrap().identity, identity);
+            assert_eq!(database.db.row_count("User").unwrap(), 1);
+        } else {
+            if order == "failed" {
+                database.db.lock().connection.execute_batch("CREATE TRIGGER refuse_session_erase BEFORE DELETE ON encrypted_session BEGIN SELECT RAISE(ABORT, 'refuse erase'); END;").unwrap();
+            }
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let latch = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+            let _release = ReleaseSql(latch.clone());
+            let once = Arc::new(AtomicBool::new(false));
+            let (seen, wait, first, life) = (entered.clone(), latch.clone(), once, database.life.clone());
+            database.db.lock().connection.progress_handler(1, Some(move || {
+                if life.published().state == crate::owners::contract::PublishedState::Ending && !first.swap(true, Ordering::SeqCst) {
+                    seen.notify_one();
+                    let (lock, ready) = &*wait;
+                    let mut released = lock.lock().unwrap();
+                    while !*released { released = ready.wait(released).unwrap(); }
+                }
+                false
+            })).unwrap();
+            let reset_db = database.clone();
+            let reset = tokio::spawn(async move { reset_db.session_reset().await });
+            within(entered.notified()).await;
+            assert_eq!(database.session_status().unwrap().phase, SessionStanding::Ending);
+            let login_db = database.clone();
+            let (started, accepted) = tokio::sync::oneshot::channel();
+            let login = tokio::spawn(async move { let _ = started.send(()); login_db.session_call("first_login".into(), SOCIAL_BODY.into()).await });
+            within(accepted).await.unwrap();
+            assert!(!login.is_finished());
+            assert_eq!(rig.server.seen().len(), before);
+            let (lock, ready) = &*latch;
+            *lock.lock().unwrap() = true;
+            ready.notify_one();
+            let reset = within(reset).await.unwrap();
+            let answer = within(login).await.unwrap();
+            database.db.lock().connection.progress_handler(0, None::<fn() -> bool>).unwrap();
+            if order == "failed" {
+                assert!(matches!(reset, Err(DbError::Storage { .. })));
+                assert!(matches!(answer, Err(DbError::Storage { .. })), "{answer:?}");
+                assert_eq!(rig.server.seen().len(), before);
+                assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
+                assert_eq!(database.db.row_count("User").unwrap(), 1);
+                assert_eq!(database.signed_in_digest(), Some(crate::transport::encrypted::exchange::digest_of(&original)));
+                assert_eq!(database.session_status().unwrap().phase, SessionStanding::Ending);
+                database.db.lock().connection.execute_batch("DROP TRIGGER refuse_session_erase").unwrap();
+            } else {
+                reset.unwrap();
+                let secret = rig.credentials.inner.value();
+                let digest = database.signed_in_digest();
+                let status = database.session_status().unwrap();
+                match answer {
+                    Ok(_) => {
+                        let secret = secret.unwrap();
+                        assert_ne!(secret, original);
+                        assert_eq!(digest, Some(crate::transport::encrypted::exchange::digest_of(&secret)));
+                        assert_eq!(status.phase, SessionStanding::Active);
+                        assert!(crate::store::session_state::session(&database.db.lock().connection).unwrap().unwrap().sequence >= 1);
+                        assert_eq!(database.db.row_count("User").unwrap(), 0);
+                    }
+                    Err(_) => {
+                        assert_eq!(status.phase, SessionStanding::None);
+                        assert_eq!(digest, None);
+                        assert_eq!(database.db.row_count("User").unwrap(), 0);
+                    }
+                }
+            }
+        }
+        let counts: Vec<_> = crate::owners::lifecycle::LOGIN_ENDING_INPUTS.iter().map(|counter| counter.load(Ordering::SeqCst)).collect();
+        assert_eq!(counts, [0, 0], "{order}: Lifecycle received a different identity");
+        within(database.close_database()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_login_after_orphan_secret() {
+    use crate::test_wait::within;
+    for next in ["login", "reopen"] {
+        let rig = Rig::new();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.sqlite");
+        let database = rig.open(Some(&path), pin()).await.unwrap();
+        within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        let orphan = rig.credentials.inner.value().unwrap();
+        rig.credentials.fail_next_clear.store(true, Ordering::SeqCst);
+        within(database.session_reset()).await.unwrap();
+        assert_eq!(database.signed_in_digest(), None);
+        assert_eq!(rig.credentials.inner.value().as_deref(), Some(orphan.as_str()));
+        if next == "login" {
+            within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+            let secret = rig.credentials.inner.value().unwrap();
+            assert_ne!(secret, orphan);
+            assert_eq!(database.signed_in_digest(), Some(crate::transport::encrypted::exchange::digest_of(&secret)));
+            within(database.close_database()).await.unwrap();
+        } else {
+            within(database.close_database()).await.unwrap();
+            drop(database);
+            let reopened = rig.open(Some(&path), pin()).await.unwrap();
+            assert_eq!(rig.credentials.inner.value(), None);
+            assert_eq!(reopened.signed_in_digest(), None);
+            within(reopened.close_database()).await.unwrap();
+        }
+    }
+}

@@ -112,6 +112,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Unauthorized => TransportError::Http { status: 401, body: String::new() },
         Failed::Security { code, detail } => TransportError::Security { code, detail },
         Failed::Http { status } => TransportError::Http { status, body: "the request was refused".into() },
+        Failed::Network => TransportError::Network("the request did not reach the server".into()),
         Failed::TooLarge { size, limit } => TransportError::RequestTooLarge { size, limit },
         Failed::ResponseTooLarge { limit } => TransportError::ResponseTooLarge { limit },
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => TransportError::Storage(detail),

@@ -27,7 +27,7 @@ fn readings() -> Store {
         FieldSpec::enumeration("mood", &["calm", "loud"]).nullable(),
     ];
     let spec = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("box"), "Box", members).nullable()]);
-    Store::open_models(None, vec![spec], None).unwrap()
+    Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()
 }
 
 fn land(db: &Store, row: Value) -> Result<(), StoreError> {
@@ -90,7 +90,7 @@ fn data_nested_decode_table() {
 fn data_required_nested_object_absent_or_null_refuses_row() {
     let inner = typed(FieldSpec::object("inner"), "Inner", vec![FieldSpec::scalar("v", ScalarKind::Str)]);
     let spec = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("box"), "Box", vec![inner])]);
-    let db = Store::open_models(None, vec![spec], None).unwrap();
+    let db = Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for (case, row) in [
         ("member absent", json!({"id": "r1", "box": {}})),
         ("member null", json!({"id": "r1", "box": {"inner": null}})),
@@ -123,10 +123,10 @@ fn data_nested_layout_mismatch() {
     let first = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("size", ScalarKind::Int).nullable()]);
     let second = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("size", ScalarKind::Str).nullable()]);
     {
-        let db = Store::open_models(Some(&path), vec![first], None).unwrap();
+        let db = Store::open_models(Some(&path), vec![first], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         crate::store::fixtures::put(&db, "readings", json!({"id": "r1", "size": 7}));
         assert!(stored(&db).is_some());
     }
-    let db = Store::open_models(Some(&path), vec![second], None).unwrap();
+    let db = Store::open_models(Some(&path), vec![second], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(stored(&db).is_none(), "the cache of the changed model is empty, no row is read in part");
 }

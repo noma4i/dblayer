@@ -25,7 +25,9 @@ async fn consumer_chat_album_pending_source_cancel_fail_retry_and_confirm() {
     let snapshot_stream = database.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#) });
     let snapshot = bound(snapshot_stream.pull_next()).await.unwrap();
     assert!(matches!(snapshot, ReadValue::Snapshot { ref rows, revision, .. } if rows.len() == 3 && revision == receipt.items[0].receipt.revision));
-    assert_eq!((stand.asked().len(), stand.puts()), (before, 0));
+    let requests = stand.asked();
+    assert!(requests[before..].is_empty(), "unexpected requests before source: {:?}", &requests[before..]);
+    assert_eq!(stand.puts(), 0);
     let ids: Vec<_> = receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     bound(database.cancel_upload(epoch, "Message".into(), ids[1].clone(), "send_files".into())).await.unwrap();
     for (id, position) in [(&ids[0], 0), (&ids[2], 1)] {
@@ -163,6 +165,68 @@ async fn consumer_restored_transfer_origins_mixed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn consumer_abort_debt_survives_restart() {
+    use std::sync::Arc;
+    use crate::ffi::command::{CommandRequest, CommandUpload};
+    use crate::ffi::tests::session_guards_tests::WatchedHeld;
+    use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("abort.sqlite").to_string_lossy().into_owned();
+    let source = directory.path().join("multipart.jpg");
+    std::fs::File::create(&source).unwrap().set_len(11 * crate::owners::write::upload::MEBIBYTE).unwrap();
+    let credentials = Arc::new(WatchedHeld::default());
+    let first = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+    first.sign_in().await;
+    first.answer_multipart();
+    first.hold(&["MultipartUploadPresignParts"]);
+    let mark = first.request_mark();
+    let epoch = first.database.session_epoch();
+    let receipt = bound(first.database.send(CommandRequest {
+        epoch, model: "Moment".into(), values_json: json!({"createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(), args_json: "{}".into(),
+        upload: Some(CommandUpload { action: "create_file".into(), request: WireUploadRequest { source: WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() } }),
+    })).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    first.receive_after(mark, "MultipartUploadPresignParts", None, 1).await;
+    let presign = first.asked().into_iter().find(|(name, _)| name == "MultipartUploadPresignParts").unwrap().1;
+    assert_eq!(presign["uploadId"], json!("upload-1"));
+    first.database.set_online(false).unwrap();
+    first.settle().await;
+    bound(first.database.discard(epoch, "Moment".into(), id, Some("create_file".into()))).await.unwrap();
+    first.settle().await;
+    let orphans = || {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let mut statement = db.prepare("SELECT upload_id, key FROM upload_orphan").unwrap();
+        statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+    };
+    let debt = orphans();
+    assert_eq!(debt.len(), 1, "the discarded upload retains its abort debt");
+    assert_eq!(first.requests("MultipartUploadAbort"), 0);
+    first.release(&["MultipartUploadPresignParts"]);
+    drop(receipt);
+    bound(first.database.close_database()).await.unwrap();
+    drop(first);
+    assert_eq!(orphans(), debt);
+
+    let reopened = Stand::prepare_online(Some(path.clone()), credentials, None, false).await;
+    reopened.answer_multipart();
+    reopened.hold(&["MultipartUploadAbort"]);
+    let mark = reopened.request_mark();
+    reopened.database.set_online(true).unwrap();
+    reopened.receive_after(mark, "MultipartUploadAbort", None, 1).await;
+    let abort = reopened.asked().into_iter().find(|(name, _)| name == "MultipartUploadAbort").unwrap().1;
+    assert_eq!((abort["uploadId"].as_str(), abort["key"].as_str()), (Some("upload-1"), Some("key-1")));
+    reopened.release(&["MultipartUploadAbort"]);
+    reopened.settle().await;
+    assert!(orphans().is_empty(), "a confirmed abort removes its debt");
+    reopened.database.set_online(false).unwrap();
+    reopened.settle().await;
+    reopened.database.set_online(true).unwrap();
+    reopened.settle().await;
+    assert_eq!(reopened.requests("MultipartUploadAbort"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn consumer_transfer_abort_debt_reset() {
     use crate::ffi::command::{CommandRequest, CommandUpload};
     use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
@@ -194,4 +258,55 @@ async fn consumer_transfer_abort_debt_reset() {
     stand.settle().await;
     assert_eq!(stand.requests("MultipartUploadAbort"), 1);
     stand.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_restore_removed_group_member() {
+    use std::sync::Arc;
+    use crate::ffi::tests::session_guards_tests::WatchedHeld;
+    use crate::ffi::upload_wire::WireSource;
+
+    for removed in [&[0usize][..], &[1usize][..], &[0usize, 1][..]] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("group.sqlite").to_string_lossy().into_owned();
+        let credentials = Arc::new(WatchedHeld::default());
+        let stand = Stand::prepare_on(Some(path.clone()), credentials.clone()).await;
+        stand.sign_in().await;
+        stand.answer("CreateBlob", json!({"directUploadCreate":{"directUpload":{"url":"https://storage/file","headers":[],"signedId":"signed","blobId":"b"}}}));
+        stand.script_put(200, Some("etag"));
+        stand.script_put(200, Some("etag"));
+        stand.hold(&["MessageAlbumSend"]);
+        let file = directory.path().join("source");
+        std::fs::write(&file, b"image").unwrap();
+        let items = (0..2).map(|index| WireUploadItem {
+            values_json: json!({"chatId":"c1", "kind":"TEXT", "clientKey":format!("key-{index}"), "createdAt":"2026-11-08T00:00:00Z", "updatedAt":"2026-11-08T00:00:00Z"}).to_string(),
+            source: WireSource::File { path: file.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into(),
+        }).collect();
+        let epoch = stand.database.session_epoch();
+        let mark = stand.request_mark();
+        let receipt = bound(stand.database.upload_create_batch(epoch, "Message".into(), items, WireUploadBatch { operation: "send_files".into(), variables_json: r#"{"chatId":"c1"}"#.into() })).await.unwrap();
+        let ids: Vec<_> = receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
+        stand.receive_after(mark, "MessageAlbumSend", None, 1).await;
+        let sql = rusqlite::Connection::open(&path).unwrap();
+        let members: Vec<(i64, i64)> = sql.prepare("SELECT position, transfer_id FROM op_transfer ORDER BY position").unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(members.len(), 2);
+        drop(sql);
+        for index in removed {
+            stand.database.db.mark_tombstone("Message", &ids[*index], 100, i64::MAX).unwrap();
+        }
+        bound(stand.database.close_database()).await.unwrap();
+        drop(stand);
+        let reopened = Stand::prepare_online(Some(path.clone()), credentials, None, false).await;
+        reopened.settle().await;
+        let sql = rusqlite::Connection::open(&path).unwrap();
+        let left: Vec<i64> = sql.prepare("SELECT transfer_id FROM op_transfer ORDER BY position").unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        let expected: Vec<i64> = members.iter().enumerate().filter(|(index, _)| !removed.contains(index)).map(|(_, (_, id))| *id).collect();
+        assert_eq!(left, expected, "only removed members leave the restored intent: {removed:?}");
+        for index in removed {
+            let outcome: String = sql.query_row("SELECT kind FROM transfer_outcome WHERE transfer_id = ?1 AND cycle_id = 1", [members[*index].1], |row| row.get(0)).unwrap();
+            assert_eq!(outcome, "discarded");
+        }
+        drop(sql);
+        reopened.database.close_now();
+    }
 }

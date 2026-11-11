@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use super::outbox_harness::{In, Out, Policy, RReason, St};
-use crate::owners::contract::{Committed, ModelsReset, Online, RejectReason, ReplyId};
+use crate::owners::contract::{Committed, Online, RejectReason, ReplyId};
 
 
 use crate::spec::support::{Emitted, Log};
@@ -105,7 +105,7 @@ fn out_wait_local_write() {
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     let mut twin = Twin::new();
-    twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach { source: None }, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
+    twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
@@ -238,7 +238,7 @@ fn out_prop_idle() {
 
 #[test]
 fn out_prop_confirmed_lands() {
-    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] })]], |_| {
+    walk(|| vec![api_script(&["r"]), net_script(), store_script(), vec![OutboxInput::Online(Online(true))]], |_| {
         let effects = effects_now();
         let lands = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Store { kind: CommitKind::Land, .. })).count();
         let confirmed = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Reply { answer: OutboxAnswer::Outcome(o::OutboxOutcome::Confirmed { .. }), .. })).count();
@@ -260,8 +260,8 @@ fn out_prop_rollback_clean() {
 fn out_prop_membership_revision() {
     let (mut twin, id) = reach(St::Landing, &ready());
     let before = twin.state().ops[&id].op.clone();
-    let effects = twin.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Other".into()] }));
-    assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Store { .. })), "a reset of another model touches no batch");
+    let effects = twin.post(OutboxInput::Online(Online(true)));
+    assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Store { .. })), "an unchanged network state touches no batch");
     assert_eq!(twin.state().ops[&id].op, before);
 }
 
@@ -286,7 +286,7 @@ fn out_prop_dropped_resent() {
 
 #[test]
 fn out_prop_local_write_kept() {
-    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 300, now: Time(0) }], store_script(), vec![OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] })]], |_| {
+    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 300, now: Time(0) }], store_script(), vec![OutboxInput::Online(Online(true))]], |_| {
         let answers = effects_now().iter().filter(|effect| matches!(effect, OutboxEffect::Reply { reply: 300, .. })).count();
         if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
     });

@@ -159,6 +159,12 @@ impl<'a> Reader<'a> {
         read_revision(self.connection)
     }
 
+    pub(crate) fn position(&self) -> u64 { self.overlay.map_or(0, |overlay| overlay.position) }
+
+    pub(super) fn virtual_transfers(&self) -> Option<&im::HashMap<String, super::overlay::VirtualTransfer>> {
+        self.overlay.map(|overlay| &overlay.virtual_transfers)
+    }
+
     pub fn stored_row(&self, model: &str, id: &str) -> Result<Option<StoredRow>, StoreError> {
         Ok(fetch_stored(self.connection, self.model(model)?, &[id.to_string()], true)?.remove(id))
     }

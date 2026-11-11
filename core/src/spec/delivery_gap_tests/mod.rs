@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::ref_delivery::{self as r, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
-use crate::owners::contract::{Committed, EpochEnded, Models, ModelsReset, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, EpochEnded, Models, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows};
@@ -45,11 +45,10 @@ fn view(kind: Kind) -> d::View {
         Kind::Count => (d::Kind::Count, "Moment"),
         Kind::Entity(fetch) => (d::Kind::Entity { fetch: match fetch { Fetch::Never => d::Fetch::Never, Fetch::Stale => d::Fetch::Stale, Fetch::Force => d::Fetch::Force, Fetch::IfMissing => d::Fetch::IfMissing } }, "Moment"),
         Kind::Events => (d::Kind::Events, "Chat"),
-        Kind::Changes => return d::View { kind: d::Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None },
+        Kind::Changes => return d::View { kind: d::Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), deferred_rows: Vec::new(), query: None },
         Kind::Blob => (d::Kind::Blob, "Moment"),
-        Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
-    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: window(), subject: "t1".into(), query: None }
+    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: window(), subject: "t1".into(), deferred_rows: Vec::new(), query: None }
 }
 
 fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)| d::StreamRow::new(id, *stamp)).collect() }
@@ -100,7 +99,6 @@ fn val_of(value: &d::Value) -> Val {
         d::Value::Lost { first, last } => Val::Lost { first: *first, last: *last },
         d::Value::Gap => Val::Gap,
         d::Value::Status { revision, blob } => Val::Status { revision: *revision, state: blob.state.clone() },
-        d::Value::Retry(retry) => Val::Retry { attempts: retry.attempts },
         d::Value::Ended(cause) => Val::Ended(match cause {
             d::EndCause::SessionEnded => Cause::SessionEnded,
             d::EndCause::Closed => Cause::Closed,
@@ -215,10 +213,12 @@ impl Twin {
                 let changed = rows.iter().cloned().collect::<std::collections::BTreeSet<_>>();
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
             }
-            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
-            Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Overflow }),
-            Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
-            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
+            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
+            Input::ReadRelevant { revision, position, relevant, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
+            Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Overflow }),
+            Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Count(*count) }),
+            Input::CountRelevant { revision, position, relevant, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, data: d::ReadData::Count(*count) }),
+            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id(), revision: *revision, error: "e".into() }),
             Input::ReadFailedStale => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id() + 100, revision: 2, error: "e".into() }),
             Input::WindowState(state) => self.post(d::DeliveryInput::WindowState { stream, state: window_state(state) }),
@@ -229,7 +229,6 @@ impl Twin {
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
             Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
-            Input::Retry { attempts } => self.post(d::DeliveryInput::RetryState { stream, retry: d::RetryStatus { attempts: *attempts, phase: "idle".into() } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
                 if !self.reference.waiting() { self.pull = Some(outcome); }
@@ -250,10 +249,6 @@ impl Twin {
                 self.det.end_epoch(EPOCH, Ended::Close);
                 self.run();
             }
-            Input::ModelsReset { own_model } => {
-                let model = if *own_model { if self.reference_events() { "Chat" } else { "Moment" } } else { "Other" };
-                self.post(d::DeliveryInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec![model.into()] }));
-            }
             Input::Closing => {
                 self.det.close();
                 self.run();
@@ -268,7 +263,7 @@ impl Twin {
             });
             if asked.is_empty() { break; }
             for read_id in asked {
-                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
             }
             entries.extend(take(&self.log));
         }
@@ -282,7 +277,6 @@ impl Twin {
         want
     }
 
-    fn reference_events(&self) -> bool { self.reference.is_events() }
 
     fn read_all(&mut self) -> Vec<Val> {
         let mut values = Vec::new();
@@ -399,7 +393,7 @@ fn dlv_open_events() {
 
 #[test]
 fn dlv_open_status() {
-    for kind in [Kind::Blob, Kind::Retry] {
+    for kind in [Kind::Blob] {
         let mut twin = Twin::new();
         assert_eq!(twin.step(Input::Open { kind, epoch_current: true }), [Effect::StatusInterest(true)]);
         assert!(twin.read_all().is_empty(), "no value before the first status");
@@ -408,12 +402,17 @@ fn dlv_open_status() {
 
 #[test]
 fn dlv_opening_status() {
+    let mut full = open_as(Kind::Blob);
+    let blob = d::BlobStatus { state: "uploading".into(), wait_reason: None, progress: 42, error: None, local_url: None, processing: None };
+    full.post(d::DeliveryInput::TransferStatus { stream: STREAM, revision: 11, blob });
+    let read_id = full.read_id();
+    let local_url = Some("file:///copy".to_string());
+    let processing = Some(crate::ffi::WireProcessing { progress: Some(0.5) });
+    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone(), processing: processing.clone() } });
+    assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.processing == processing && blob.progress == 42));
     let mut blob = open_as(Kind::Blob);
     assert_eq!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }), [Effect::Available]);
     assert_eq!(blob.read_all(), [Val::Status { revision: 11, state: "uploading".into() }]);
-    let mut retry = open_as(Kind::Retry);
-    assert_eq!(retry.step(Input::Retry { attempts: 2 }), [Effect::Available]);
-    assert_eq!(retry.read_all(), [Val::Retry { attempts: 2 }]);
 }
 
 #[test]
@@ -434,10 +433,6 @@ fn dlv_live_status_same() {
     twin.step(Input::Transfer { state: "uploading".into(), revision: 16 });
     twin.read_all();
     assert!(twin.step(Input::Transfer { state: "uploading".into(), revision: 17 }).is_empty());
-    let mut other = open_as(Kind::Retry);
-    other.step(Input::Retry { attempts: 1 });
-    assert!(other.step(Input::Transfer { state: "x".into(), revision: 18 }).is_empty(), "a status of another kind changes nothing");
-    assert_eq!(other.read_all(), [Val::Retry { attempts: 1 }]);
 }
 
 #[test]
@@ -570,7 +565,7 @@ fn dlv_open_live() {
     assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 
-/// D-254: a reset commit of `All` models reads no row stream; `ModelsReset` re-reads them.
+/// D-254: a reset commit of `All` models reads no row stream.
 #[test]
 fn dlv_committed_reset_reads_no_row_stream() {
     let mut twin = open_rows();
@@ -609,9 +604,9 @@ fn matrix_owner_state_input_delivery() {
         ("ReadStale", Input::ReadStale { revision: 1, rows: rows(&["r1"]) }), ("ReadFailed", Input::ReadFailed { revision: 2 }), ("ReadFailedStale", Input::ReadFailedStale),
         ("WindowState idle", Input::WindowState(Ws::idle())), ("WindowState loaded", Input::WindowState(Ws::loaded_at(2))),
         ("Joined", Input::Joined { position: 0 }), ("ModelReady", Input::ModelReady), ("ModelEvent", Input::ModelEvent { position: 1, payload: "p".into() }), ("ModelLost", Input::ModelLost { first: 2, last: 3 }), ("ModelGap", Input::ModelGap),
-        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into(), revision: 19 }), ("Retry", Input::Retry { attempts: 1 }),
+        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into(), revision: 19 }),
         ("Pull", Input::Pull), ("PullCancelled matched", Input::PullCancelled { matched: true }), ("Cancel", Input::Cancel { reply: 5 }), ("Release", Input::Release), ("SinkClosed", Input::SinkClosed),
-        ("EpochEnded own", Input::EpochEnded { own: true }), ("EpochEnded other", Input::EpochEnded { own: false }), ("EpochClosed", Input::EpochClosed), ("ModelsReset own", Input::ModelsReset { own_model: true }), ("Closing", Input::Closing),
+        ("EpochEnded own", Input::EpochEnded { own: true }), ("EpochEnded other", Input::EpochEnded { own: false }), ("EpochClosed", Input::EpochClosed), ("Closing", Input::Closing),
     ];
     state_input_pairs(&mut matrix, "reference ref_delivery", vec![("new", Twin::new), ("open rows", open_rows), ("live rows", live_rows), ("open events", open_events), ("open count", open_count), ("open entity", open_entity), ("ended by epoch", ended_by_epoch)], alphabet, |twin: &mut Twin, input| { twin.step(input); });
     matrix.finish();

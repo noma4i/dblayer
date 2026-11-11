@@ -31,5 +31,8 @@ impl<C> Mailbox<C> {
         std::mem::take(&mut *queue).into()
     }
 
+    #[cfg(test)]
+    pub fn inspect<R>(&self, f: impl FnOnce(&VecDeque<C>) -> R) -> R { f(&lock(&self.commands)) }
+
     pub fn wakeups(&self) -> u64 { self.wakeups.load(Ordering::SeqCst) }
 }

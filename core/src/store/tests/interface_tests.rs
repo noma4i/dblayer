@@ -4,7 +4,7 @@ use crate::schema::screens_fixture::screens_spec;
 use serde_json::{json, Value};
 
 fn store_with_screens() -> Store {
-    let store = Store::open_in_memory().unwrap();
+    let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     store.boot(&[screens_spec()], None).unwrap();
     store.mark_ready();
     store

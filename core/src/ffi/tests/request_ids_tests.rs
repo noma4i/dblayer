@@ -156,6 +156,18 @@ async fn wire_prop_retry_progress_one_source() {
     assert!(drained.waiting.is_empty(), "the tick removed the session entry: {drained:?}");
     assert!(crate::test_wait::within(ticket).await.unwrap().is_err(), "the permanent refusal ends the call");
 
+    http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
+    let call = tokio::spawn({ let db = database.clone(); async move { db.run(epoch, "Feed".into(), "{}".into()).await } });
+    let calls = loop {
+        let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
+        if snapshot.waiting.iter().any(|entry| entry.owner == RetryOwner::Calls) { break snapshot; }
+    };
+    let calls_retry = calls.waiting.iter().find(|entry| entry.owner == RetryOwner::Calls).unwrap();
+    assert_eq!(calls_retry.attempt, 1);
+    http.fatal.store(true, std::sync::atomic::Ordering::SeqCst);
+    clock.advance(calls_retry.delay_ms);
+    assert!(crate::test_wait::within(call).await.unwrap().is_err());
+
     window.abort();
     database.close_database().await.unwrap();
 }

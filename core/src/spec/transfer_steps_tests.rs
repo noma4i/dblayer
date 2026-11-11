@@ -111,7 +111,7 @@ fn xfer_attempt_stale() {
     let (mut twin, id) = ready(2);
     twin.online(true);
     let attempt = twin.attempt(id);
-    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 7 });
+    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 7)].into() });
     assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
     assert_eq!(out.rows()[0].0.attempts, 1);
     assert_eq!(out.batches[0].basis.get("Moment"), Some(&7));
@@ -532,6 +532,8 @@ fn xfer_completed() {
     let out = twin.completed(id);
     let rows = out.rows();
     assert_eq!((twin.stage(id), rows.len(), rows[0].1, rows[0].0.completed, rows[0].0.signed_id.as_deref()), (TransferStage::PersistingComplete, 1, UploadKind::Completed, true, Some("signed")));
+    assert_eq!(out.batches.len(), 1);
+    assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id }, .. } if *op_id == id && *transfer_id == id)), "completed upload and intent must share a transaction: {:?}", out.batches);
     assert_eq!(out.submits(), 0, "the mutation goes to Outbox after the write");
 }
 

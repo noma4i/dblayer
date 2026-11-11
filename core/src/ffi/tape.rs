@@ -265,7 +265,6 @@ impl Database {
     pub(crate) async fn reset_data(&self) { let _ = self.await_life(self.life.session_reset()).await; }
 
     /// The cache of these models goes; the epoch stays.
-    pub(crate) async fn reset_models_of(&self, models: &[&str]) { let _ = self.await_life(self.life.reset_models(models.iter().map(|model| model.to_string()).collect())).await; }
 
     /// What `load()` of a platform does: begin the load, wait for its result, give up the interest when the wait is dropped.
     pub(crate) async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {

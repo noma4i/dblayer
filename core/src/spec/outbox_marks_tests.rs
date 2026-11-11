@@ -3,7 +3,7 @@
 use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RReason, St};
-use crate::owners::contract::{ModelsReset, Online, RejectReason};
+use crate::owners::contract::{Online, RejectReason};
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 
 #[test]
@@ -37,8 +37,10 @@ fn out_marking_failed_no_session() {
 fn out_marking_failed_stale_generation() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, false);
+    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
     let effects = twin.rejected(id, RReason::StaleGeneration);
     assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::ErrorMark, generation, .. }] if *generation == NEW_GENERATION), "{effects:?}");
+    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
 }
 
 #[test]
@@ -54,8 +56,10 @@ fn out_marking_failed_invalid() {
 fn out_marking_failed_tick() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, false);
+    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
     let effects = tick(&mut twin, id);
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
+    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
 }
 
 #[test]
@@ -72,10 +76,8 @@ fn out_marking_failed_refuses() {
 fn out_marking_failed_other() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, false);
-    let reset = OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Chat".into()] });
     unchanged_by(&mut twin, id, St::MarkingFailed, vec![
         OutboxInput::Online(Online(true)),
-        reset,
         OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
@@ -86,7 +88,7 @@ fn out_marking_failed_other() {
 fn out_failed_retry_restore_failed() {
     let mut twin = Twin::bare();
     twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
-    let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: None };
+    let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: None, removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     let effects = retry(&mut twin);
@@ -112,6 +114,7 @@ fn out_marking_retry_committed_queued() {
     twin.post(OutboxInput::Online(Online(false)));
     let effects = twin.committed(id);
     assert_eq!((twin.stage(id), sends(&effects), answers(&effects, RETRY_REPLY).len()), (Some(St::Queued), 0, 1));
+    assert!(twin.store_text.contains(&format!("Requeue {{ op_id: {id} }}")), "{}", twin.store_text);
 }
 
 #[test]
@@ -136,9 +139,11 @@ fn out_marking_retry_no_session() {
 fn out_marking_retry_stale_generation() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
+    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
     let effects = twin.rejected(id, RReason::StaleGeneration);
     assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::ClearMark, generation, .. }] if *generation == NEW_GENERATION), "{effects:?}");
     assert_eq!(twin.stage(id), Some(St::MarkingRetry));
+    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
 }
 
 #[test]
@@ -163,10 +168,8 @@ fn out_marking_retry_refuses() {
 fn out_marking_retry_other() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
-    let reset = OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Chat".into()] });
     unchanged_by(&mut twin, id, St::MarkingRetry, vec![
         OutboxInput::Online(Online(true)),
-        reset,
         OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
@@ -213,6 +216,8 @@ fn out_sending_response_ignore() {
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(twin.stage(id), Some(St::Landing));
     assert!(twin.store_text.contains("RemoveIntent") && !twin.store_text.contains("Rows"), "the intent goes, the optimistic fields stay, no row of the answer: {}", twin.store_text);
+    let request_id = twin.state().ops[&id].request_id;
+    assert!(twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
 }
@@ -225,6 +230,9 @@ fn out_sending_refused_without_effects() {
     twin.committed(id);
     twin.waiter(id);
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(false) });
+    let request_id = twin.state().ops[&id].request_id;
+    assert_eq!(twin.stores.len(), 1);
+    assert!(twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Rejected { .. }))), "the rollback of nothing still gives the outcome: {effects:?}");
     let effects = retry(&mut twin);

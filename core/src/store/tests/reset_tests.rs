@@ -4,23 +4,6 @@ use serde_json::json;
 
 use crate::identity::ListKey;
 
-#[test]
-fn inv_reset_01_intent_never_persists_a_partial_model_list() {
-    for rejected in 0..3 {
-        let (store, _) = booted_store();
-        let inner = store.lock();
-        inner.connection.execute_batch(&format!(
-            "CREATE TEMP TRIGGER reject_intent BEFORE INSERT ON reset_intent_model WHEN NEW.pos = {rejected} BEGIN SELECT RAISE(ABORT, 'injected intent failure'); END"
-        )).unwrap();
-        let models = vec!["messages".into(), "items".into(), "third".into()];
-        let written = super::reset::write_intent(&inner.connection, "cache_only", &models, 1);
-        assert!(matches!(&written, Err(StoreError::Constraint(message)) if message == "injected intent failure"), "{written:?}");
-        assert_eq!(super::reset::pending_intent(&inner.connection).unwrap(), None, "failure at model {rejected}");
-        let count: i64 = inner.connection.query_row("SELECT COUNT(*) FROM reset_intent_model", [], |row| row.get(0)).unwrap();
-        assert_eq!(count, 0, "failure at model {rejected}");
-    }
-}
-
 fn seed_two_models(store: &Store) {
     store
         .commit(envelope(
@@ -71,14 +54,16 @@ fn cache_counts(store: &Store) -> Vec<i64> {
 }
 
 #[test]
-fn cache_only_clears_one_model_and_keeps_operations() {
+fn store_reset_error_keeps_journal() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    user_tables(&store);
-    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
-    assert_eq!(cache_counts(&store), vec![0, 1, 0, 1, 0, 1, 1]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
+    exec(&store, "CREATE TRIGGER refuse_reset BEFORE DELETE ON row_messages BEGIN SELECT RAISE(ABORT, 'reset refused'); END");
+    let result = store.erase_account(store.generation().next(), false);
+    assert!(result.is_err(), "the failed erase must report an error");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1, "the erase transaction rolled back");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_items"), 1);
+    assert_eq!(store.reset_intent().unwrap().as_deref(), Some("account"), "the committed reset journal survives the failed erase");
 }
 
 #[test]
@@ -111,16 +96,6 @@ fn reset_advances_generation_and_the_revision_sequence() {
     store.erase_account(store.generation().next(), false).unwrap();
     assert!(store.generation() > before);
     assert_eq!(store.revision_seq().unwrap(), revision + 1);
-    store.erase_models(store.generation().next(), &["items"].map(String::from)).unwrap();
-    assert!(store.generation() > before.next());
-}
-
-#[test]
-fn reset_unknown_model_fails_without_touching_data() {
-    let (store, _) = booted_store();
-    seed_two_models(&store);
-    assert!(matches!(store.erase_models(store.generation().next(), &["nope"].map(String::from)), Err(StoreError::UnknownModel(_))));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
 }
 
 #[test]
@@ -145,11 +120,9 @@ fn resets_advance_the_revision_and_tell_the_hook() {
             sink.lock().unwrap().push((revision, models));
         }
     })).unwrap();
-    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
-    assert_eq!(store.revision_seq().unwrap(), 2);
     store.erase_account(store.generation().next(), false).unwrap();
-    assert_eq!(store.revision_seq().unwrap(), 3);
-    assert_eq!(*seen.lock().unwrap(), vec![(2, Some(vec!["messages".to_string()])), (3, None)]);
+    assert_eq!(store.revision_seq().unwrap(), 2);
+    assert_eq!(*seen.lock().unwrap(), vec![(2, None)]);
 }
 
 #[test]

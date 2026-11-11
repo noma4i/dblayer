@@ -21,10 +21,14 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
   public let subscribed = AsyncStream<String>.makeStream()
   public let ping = AsyncStream<String>.makeStream()
   public var openedCount: Int { lock.withLock { connections.count } }
+  public var subscribedCount: Int { lock.withLock { subscriptions } }
+  public var lastEvent: String { lock.withLock { event } }
   public let closed = AsyncStream<String>.makeStream()
   private let lock = NSLock()
   private var connections: [String: Connection] = [:]
   private var latest: String?
+  private var subscriptions = 0
+  private var event = "none"
   public var lastOpened: String? { lock.withLock { latest } }
 
   public init(server: SealedServer) { self.server = server }
@@ -58,9 +62,11 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
       do { try peer.receive(token: token, text: text) } catch { preconditionFailure("the cable double cannot read a frame of the library: \(error)") }
       return true
     }
-    func close(code: UInt16, reason: String) { peer.closed.continuation.yield(token) }
-    func cancel() {}
+    func close(code: UInt16, reason: String) { peer.record("close \(token) code=\(code) reason=\(reason)"); peer.closed.continuation.yield(token) }
+    func cancel() { peer.record("cancel \(token)") }
   }
+
+  private func record(_ value: String) { lock.withLock { event = value } }
 
   public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await openCable(url: url, events: events) }
 
@@ -71,7 +77,7 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
   private func open(events: CableEvents) throws -> CableOutcome {
     let token = UUID().uuidString
     let connection = Connection(events: events)
-    lock.withLock { connections[token] = connection; latest = token }
+    lock.withLock { connections[token] = connection; latest = token; event = "open \(token)" }
     let challenge: [String: Any] = ["type": "challenge", "v": 1, "kid": SealedServer.pin, "challenge": encode(connection.salt), "x25519": encode(connection.secret.publicKey.rawRepresentation)]
     events.frame(text: try text(challenge))
     opened.continuation.yield(token)
@@ -104,10 +110,12 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
     let frame = data["frame"] as! String
     let body = try openFrame(frame, key: connection.receiveKey!)
     if body["t"] as? String == "ping" {
+      record("ping \(token)")
       try emit(token: token, body: ["t": "pong", "ts": body["ts"]!])
       ping.continuation.yield(token)
     }
     if body["t"] as? String == "subscribe" {
+      lock.withLock { event = "subscribe \(token)"; subscriptions += 1 }
       let id = body["id"] as! String
       connection.subscriptions[body["operationName"] as? String ?? ""] = id
       try emit(token: token, body: ["t": "subscribed", "id": id])

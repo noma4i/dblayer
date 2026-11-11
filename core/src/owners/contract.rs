@@ -44,14 +44,6 @@ pub struct EpochEnded {
     pub cause: Cause,
 }
 
-/// `ModelsReset(e, generation, models)`: the model cache was erased, the generation grew.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModelsReset {
-    pub epoch: Epoch,
-    pub generation: u64,
-    pub models: Vec<String>,
-}
-
 /// `Online(bool)`: the network changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Online(pub bool);
@@ -109,8 +101,7 @@ pub struct CommittedBroadcast {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RejectReason {
     NoSession,
-    /// `generation` is the current one of the stale models: the author sends the batch again with it.
-    StaleGeneration { models: Vec<String>, generation: u64 },
+    StaleGeneration { models: Vec<String>, generations: std::collections::BTreeMap<String, u64> },
     Storage(String),
     Closed,
     Invalid,
@@ -239,7 +230,6 @@ pub enum PublishedState {
     Session,
     Ending,
     EndingFailed,
-    Resetting,
     StorageFailed,
     Closing,
 }

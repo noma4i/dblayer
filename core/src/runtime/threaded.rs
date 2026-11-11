@@ -19,6 +19,28 @@ enum Command {
     Stop,
 }
 
+struct Queued {
+    command: Command,
+    #[cfg(test)]
+    label: String,
+    #[cfg(test)]
+    since: std::time::Instant,
+}
+
+impl Queued {
+    fn new(command: Command) -> Self {
+        #[cfg(test)]
+        let label = match &command {
+            Command::Deliver(_, message) => format!("{message:?}").split([' ', '{', '(']).next().unwrap_or("input").to_string(),
+            Command::Control(control) => format!("{control:?}").split([' ', '{', '(']).next().unwrap_or("control").to_string(),
+            Command::Failed(_) => "Failed".into(),
+            Command::Wake => "Wake".into(),
+            Command::Stop => "Stop".into(),
+        };
+        Self { command, #[cfg(test)] label, #[cfg(test)] since: std::time::Instant::now() }
+    }
+}
+
 type FailureRoute = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)> + Send + Sync>;
 
 #[derive(Default)]
@@ -55,21 +77,32 @@ pub fn barrier_report() -> String {
     let routers: Vec<_> = ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
     let busy: Vec<String> = routers.iter().filter_map(|router| {
         let count = *lock(&router.inflight.count);
-        if count == 0 { return None; }
-        let held: Vec<String> = lock(&router.gates).iter().filter_map(std::sync::Weak::upgrade).filter(|gate| gate.state.load(Ordering::SeqCst) == HELD).map(|gate| gate.place.to_string()).collect();
-        Some(format!("in flight {count}, counted tasks held at [{}], the rest are queued commands and launches", held.join(", ")))
+        let held: Vec<String> = lock(&router.gates).iter().filter_map(std::sync::Weak::upgrade).filter(|gate| gate.state.load(Ordering::SeqCst) == HELD).map(|gate| format!("{} {}ms", gate.place, gate.since.elapsed().as_millis())).collect();
+        let owners: Vec<String> = router.owners.iter().enumerate().map(|(index, name)| {
+            let active = lock(&router.active[index]).iter().map(|(input, since)| format!("{input} {}ms", since.elapsed().as_millis())).collect::<Vec<_>>().join(", ");
+            let queued = router.boxes[index].inspect(|items| items.iter().map(|item| format!("{} {}ms", item.label, item.since.elapsed().as_millis())).collect::<Vec<_>>());
+            let state = lock(&router.diagnostics[index]).clone();
+            format!("{name}: queued {} [{}], active [{active}], state [{state}]", queued.len(), queued.join(", "))
+        }).collect();
+        Some(format!("in flight {count}, counted tasks held at [{}], owners [{}]", held.join(", "), owners.join("; ")))
     }).collect();
     if busy.is_empty() { "the barrier of every runtime is idle".into() } else { busy.join("; ") }
 }
 
 struct Router {
-    boxes: Vec<Arc<Mailbox<Command>>>,
+    boxes: Vec<Arc<Mailbox<Queued>>>,
     inflight: Inflight,
     failure: Option<FailureRoute>,
     history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
     record: bool,
     #[cfg(test)]
     gates: Mutex<Vec<std::sync::Weak<Gate>>>,
+    #[cfg(test)]
+    owners: Vec<&'static str>,
+    #[cfg(test)]
+    active: Vec<Mutex<Vec<(String, std::time::Instant)>>>,
+    #[cfg(test)]
+    diagnostics: Vec<Mutex<String>>,
 }
 
 struct Alive(Arc<AtomicUsize>);
@@ -81,7 +114,7 @@ impl Drop for Alive {
 impl Router {
     fn push(&self, to: usize, command: Command) {
         self.inflight.add();
-        self.boxes[to].push(command);
+        self.boxes[to].push(Queued::new(command));
     }
 
     fn report_failure(&self, executor: &str) {
@@ -104,7 +137,7 @@ impl Timeline {
 type Body = Box<dyn FnOnce(Arc<Router>, Arc<Timeline>) + Send>;
 
 pub struct RuntimeBuilder {
-    boxes: Vec<Arc<Mailbox<Command>>>,
+    boxes: Vec<Arc<Mailbox<Queued>>>,
     bodies: Vec<Option<(&'static str, Body)>>,
     types: Vec<std::any::TypeId>,
     history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
@@ -209,6 +242,8 @@ struct Gate {
     woken: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     place: &'static std::panic::Location<'static>,
+    #[cfg(test)]
+    since: std::time::Instant,
 }
 
 impl Gate {
@@ -290,6 +325,8 @@ pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Count
             woken: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             place,
+            #[cfg(test)]
+            since: std::time::Instant::now(),
         });
         #[cfg(test)]
         lock(&gate.router.gates).push(Arc::downgrade(&gate));
@@ -359,7 +396,9 @@ impl RuntimeBuilder {
         if self.bodies.iter().any(Option::is_none) {
             return Err(std::io::Error::other("owner reservation is not installed"));
         }
-        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()) });
+        #[cfg(test)]
+        let owners: Vec<_> = self.bodies.iter().filter_map(|body| body.as_ref().map(|(name, _)| *name)).collect();
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] owners });
         #[cfg(test)]
         ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(Arc::downgrade(&router));
         self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
@@ -389,7 +428,7 @@ impl RuntimeBuilder {
 }
 
 fn stop(router: &Router, joins: &mut Vec<JoinHandle<()>>) {
-    router.boxes.iter().for_each(|mailbox| mailbox.push(Command::Stop));
+    router.boxes.iter().for_each(|mailbox| mailbox.push(Queued::new(Command::Stop)));
     for join in joins.drain(..) {
         if join.thread().id() == std::thread::current().id() { continue; }
         let _ = join.join();
@@ -428,12 +467,14 @@ struct OwnerThread<O: StateOwner> {
     name: &'static str,
     cell: Cell<O>,
     runner: Box<dyn EffectRunner<O>>,
-    mailbox: Arc<Mailbox<Command>>,
+    mailbox: Arc<Mailbox<Queued>>,
     history: Arc<Mutex<Vec<TraceEntry>>>,
 }
 
 fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, timeline: Arc<Timeline>) {
     owner.cell.set_jitter(super::process_seed);
+    #[cfg(test)]
+    if let Some(state) = O::diagnostic(&owner.cell.state) { *lock(&router.diagnostics[owner.slot]) = state; }
     let back = {
         let own = owner.slot;
         let router = router.clone();
@@ -445,9 +486,11 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         let cell = &owner.cell;
         let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(timeline.now().0))));
         let handled = commands.len();
+        #[cfg(test)]
+        { *lock(&router.active[owner.slot]) = commands.iter().map(|command| (command.label.clone(), command.since)).collect(); }
         let mut failure_owed = false;
-        for command in commands {
-            match command {
+        for queued in commands {
+            match queued.command {
                 Command::Deliver(stamp, payload) => owner.cell.push_message(stamp, payload),
                 Command::Control(control) => owner.cell.push_control(control),
                 Command::Failed(pending) => {
@@ -462,6 +505,8 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         owner.cell.set_now(timeline.now());
         while owner.cell.fire_next_due() {}
         while let Some(ran) = owner.cell.run_one(owner.name, owner.runner.as_mut(), &back, router.record) {
+            #[cfg(test)]
+            if let Some(state) = O::diagnostic(&owner.cell.state) { *lock(&router.diagnostics[owner.slot]) = state; }
             if router.record {
                 lock(&owner.history).push(TraceEntry { slot: owner.slot, owner: owner.name, stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
             }
@@ -485,6 +530,8 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
             timeline.clock.armed(scheduled - armed);
             armed = scheduled;
         }
+        #[cfg(test)]
+        lock(&router.active[owner.slot]).clear();
         router.inflight.done(handled);
     }
 }

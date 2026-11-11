@@ -32,7 +32,6 @@ impl Client {
     pub(crate) fn new(config: &EncryptedConfig, http: Arc<dyn HttpExchange>, credentials: Arc<dyn CredentialSlot>, db: Arc<Store>, clock: Arc<dyn Clock>, rest: Arc<dyn Upstream>) -> Result<Arc<Self>, TransportError> {
         let exchange = Arc::new(Exchange::new(config, http, clock.clone())?);
         let secret = Arc::new(Secret::new(credentials.clone()));
-        super::credential::finish_session_end(&db, &secret)?;
         Ok(Arc::new(Self { exchange, secret, db, clock, rest, life: OnceLock::new() }))
     }
 
@@ -66,7 +65,7 @@ impl Client {
 }
 
 pub(crate) fn memory_db() -> Arc<Store> {
-    Arc::new(Store::open_models(None, Vec::new(), None).unwrap())
+    Arc::new(Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 pub(crate) fn clock() -> Arc<ManualClock> { Arc::new(ManualClock::new(Duration::from_secs(START))) }

@@ -72,6 +72,7 @@ impl Chan {
 
     pub(in crate::spec) fn step(&mut self, input: In) -> Option<Vec<Out>> {
         let mut out = Vec::new();
+        let mut gap_marked = false;
         match (self.mode, input) {
             (_, In::Online(seq)) => {
                 self.online = true;
@@ -173,6 +174,7 @@ impl Chan {
                 if self.wanted.contains(&channel) {
                     self.confirmed.remove(&channel);
                     let models = self.models_of(&channel);
+                    gap_marked = !models.is_empty();
                     for model in models { self.gap.insert(model, self.online_seq); }
                     out.push(Out::ScheduleResubscribe);
                 }
@@ -200,6 +202,7 @@ impl Chan {
             }
             _ => return None,
         }
+        if gap_marked { out.insert(0, Out::Commit); }
         Some(out)
     }
 }

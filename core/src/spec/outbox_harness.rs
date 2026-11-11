@@ -67,7 +67,6 @@ pub(super) enum OutboxEffect {
     Started { epoch: u64 },
     SnapshotRequest,
     RestoreClassified { epoch: u64 },
-    Copy { id: u64, source: String },
 }
 
 
@@ -101,7 +100,6 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Run(Run::Started { epoch }) => OutboxEffect::Started { epoch },
         Emitted::Run(Run::SnapshotRequest { .. }) => OutboxEffect::SnapshotRequest,
         Emitted::Run(Run::RestoreClassified { epoch }) => OutboxEffect::RestoreClassified { epoch },
-        Emitted::Run(Run::Copy { id, source }) => OutboxEffect::Copy { id, source },
         Emitted::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
@@ -157,7 +155,7 @@ pub(super) const NEW_GENERATION: u64 = 5;
 
 pub(super) fn reject(reason: RReason) -> RejectReason {
     match reason {
-        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION },
+        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), NEW_GENERATION)].into() },
         RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
     }
@@ -341,7 +339,7 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
     }
     if state == St::WaitingDeclaration {
         let mut twin = Twin::bare();
-        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None };
+        let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", ctx.policy, ctx.transfer), error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
         twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
         twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.stage(7), Some(St::WaitingDeclaration), "the owner reached WaitingDeclaration");

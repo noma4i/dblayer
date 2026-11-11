@@ -96,11 +96,10 @@ impl Window {
         self.run(event, ids)
     }
 
-    /// The saved window arrived: the machine takes it (a window of another generation or one that a reset touched is none), then the held inputs run in the order they came.
+    /// The saved window arrived: the machine takes it if its generation matches, then runs the held inputs in order.
     pub(super) fn opened(&mut self, saved: Option<SavedWindow>, ids: (&mut RequestIds, &mut u32)) -> Vec<Emit> {
         let Some(opening) = self.opening.take() else { return Vec::new() };
-        let reset = opening.held.iter().any(|held| matches!(held, Ev::ModelsReset { models, .. } if self.machine.depends_on(models)));
-        let saved = saved.filter(|saved| saved.generation == opening.basis && !reset);
+        let saved = saved.filter(|saved| saved.generation == opening.basis);
         let (request_ids, next_attempt) = ids;
         let mut effects = self.run(Ev::Saved(saved), (&mut *request_ids, &mut *next_attempt));
         for held in opening.held {
@@ -350,13 +349,13 @@ impl Windows {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
                 Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
-                Emit::Commit { request, basis, page, number, replace_all, base_revision, marker, keep_rows } => {
+                Emit::Commit { landed_at, request, basis, page, number, replace_all, base_revision, marker, keep_rows } => {
                     let mut ops = Vec::new();
                     if !keep_rows {
-                        ops.push(StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision });
+                        ops.push(StoreOp::Window { landed_at, key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision });
                     }
                     if let Some(marker) = marker {
-                        ops.push(StoreOp::WindowMarker { key: key.name.clone(), model: key.model.clone(), marker });
+                        ops.push(StoreOp::WindowMarker { landed_at: (number == 1).then_some(landed_at), key: key.name.clone(), model: key.model.clone(), marker });
                     }
                     let batch = StoreBatch { author: BatchAuthor::Window, id: request, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
@@ -631,12 +630,6 @@ impl StateOwner for Windows {
                 for key in keys {
                     Self::on(state, &key, Ev::EpochEnded { cause: cause.clone() }, &mut out);
                 }
-            }
-            WindowsInput::ModelsReset(reset) => {
-                for model in &reset.models {
-                    state.generations.insert(model.clone(), reset.generation);
-                }
-                Self::every(state, &Ev::ModelsReset { generation: reset.generation, models: reset.models }, &mut out);
             }
             WindowsInput::Closing => {
                 Self::interrupt_held(state, EndCause::Closed, &mut out);

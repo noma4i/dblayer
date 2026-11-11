@@ -1,6 +1,19 @@
 use super::*;
 
 impl Session {
+    fn retry_direct(&mut self, pending: Pending, attempts: u64, fail: Fail, out: &mut Out) {
+        if pending.reply.is_some() && attempts + 1 >= 40 {
+            if pending.class == Class::Sessionless {
+                self.land(pending, Err(fail), None, None, false, out);
+            } else {
+                self.detach_error = Some(fail);
+                self.persist(Pending { owner: Some(Owner::Detached), ..pending }, None, out);
+            }
+        } else if self.is_online() {
+            out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
+            self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
+        } else { self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork }; }
+    }
     pub(super) fn run(&mut self, input: Input, out: &mut Out) {
         let state = std::mem::replace(&mut self.state, State::Closed);
         if matches!(state, State::Closed) {
@@ -28,14 +41,6 @@ impl Session {
         }
         match input {
             Input::Closing => self.closing(state, out),
-            Input::InterestPlus(stream) => {
-                self.subscribers.insert(stream);
-                self.state = state;
-            }
-            Input::InterestMinus(stream) => {
-                self.subscribers.remove(&stream);
-                self.state = state;
-            }
             Input::Online(online) if self.online.is_some() => self.online_changed(state, online, out),
             Input::Online(_) => self.state = state,
             Input::Snapshot { epoch, online } if epoch == self.epoch && self.current(epoch) => self.online_changed(state, online, out),
@@ -116,7 +121,7 @@ impl Session {
             }
             Input::Revoked { author_ref: Some(_), .. } => {
                 let batch = self.batch();
-                out.effects.push(Effect::CommitLanding { batch, epoch: self.epoch, digest: None, sequence: None, answer: None, erase_session: true });
+                out.effects.push(Effect::CommitLanding { batch, epoch: self.epoch, digest: None, sequence: None, answer: None, resume_answer: None, erase_session: true, end_journal: true });
                 self.revoked_waiting.insert(batch, self.epoch);
                 self.state = state;
             }
@@ -414,8 +419,15 @@ impl Session {
                 }
             }
             (State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, Input::Tick) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, out),
-            (State::Persisting { pending, batch }, Input::Committed(committed)) if committed == batch => self.start_calling(pending, out),
+            (State::Persisting { pending, batch }, Input::Committed(committed)) if committed == batch => {
+                if let Some(error) = self.detach_error.take() {
+                    Self::finish_retained(out, &pending, Err(error), true);
+                    out.effects.push(Effect::ScheduleTick { attempts: 0 });
+                    self.state = State::Calling { pending: Pending { reply: None, ..pending }, attempts: 0, phase: CallPhase::WaitingRetry };
+                } else { self.start_calling(pending, out); }
+            }
             (State::Persisting { pending, batch }, Input::Rejected(rejected, reason)) if rejected == batch => {
+                self.detach_error = None;
                 Self::finish(out, &pending, Err(Fail::Reason(reason)));
                 self.idle(out);
             }
@@ -481,6 +493,13 @@ impl Session {
                 self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
             }
             Input::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
+                let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let code = parsed["errors"][0]["extensions"]["code"].as_str();
+                if sequence.is_none() && code.is_some_and(|code| ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"].contains(&code)) {
+                    let fail = super::fail_of_answer(&body);
+                    self.retry_direct(pending, attempts, fail, out);
+                    return;
+                }
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != Class::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
                     let failure = if code == crate::transport::SessionCode::Unauthenticated { Fail::Unauthorized } else { Fail::Session(code) };
@@ -508,18 +527,12 @@ impl Session {
                 let answer = if pending.class == Class::Logout { Ok(body) } else { Err(Fail::Revoked) };
                 self.land(pending, answer, None, None, true, out);
             }
-            Input::AnswerTooLarge { request_id, attempt_id, limit, sequenced } if mine(request_id, attempt_id) => {
-                if !sequenced {
-                    self.land(pending, Err(Fail::ResponseTooLarge { limit }), None, None, false, out);
-                } else if let Some(author) = pending.author {
+            Input::AnswerTooLarge { request_id, attempt_id, limit } if mine(request_id, attempt_id) => {
+                if let Some(author) = pending.author {
                     out.effects.push(author_error_retained(author, pending.request_id, Kind::Temporary, Fail::ResponseTooLarge { limit }, true));
                     self.state = State::PendingHeld { pending };
-                } else if self.is_online() {
-                    out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
-                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
-                } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
-                }
+                } else if pending.class == Class::Sessionless { self.land(pending, Err(Fail::ResponseTooLarge { limit }), None, None, false, out); }
+                else { self.retry_direct(pending, attempts, Fail::ResponseTooLarge { limit }, out); }
             }
             Input::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(Fail::Security { code, detail }), None, None, false, out),
             Input::HttpError { request_id, attempt_id, temporary: true, body, .. } if mine(request_id, attempt_id) => {
@@ -529,12 +542,7 @@ impl Session {
                         None => author_error_retained(author, pending.request_id, Kind::Temporary, Fail::Http, true),
                     });
                     self.state = State::PendingHeld { pending };
-                } else if self.is_online() {
-                    out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
-                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
-                } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
-                }
+                } else { self.retry_direct(pending, attempts, body.as_deref().map_or(Fail::Network, super::fail_of_answer), out); }
             }
             Input::HttpError { request_id, attempt_id, auth, .. } if mine(request_id, attempt_id) => {
                 let fail = if auth { Fail::Unauthorized } else { Fail::Http };
@@ -544,12 +552,7 @@ impl Session {
                 if let Some(author) = pending.author {
                     out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Dropped });
                     self.state = State::PendingHeld { pending };
-                } else if self.is_online() {
-                    out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
-                    self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
-                } else {
-                    self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
-                }
+                } else { self.retry_direct(pending, attempts, Fail::Network, out); }
             }
             Input::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {
                 if lost {

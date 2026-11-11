@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn sess_prop_login_during_end_admission() {
+    for login_first in [false, true] {
+        let mut twin = Twin::new();
+        if login_first { twin.feed(call_of("login", 1)); }
+        twin.feed(published(PubState::Ending));
+        if !login_first { twin.feed(call_of("login", 1)); }
+        twin.feed(published(PubState::EndingFailed));
+        let error = if login_first { Fail::SessionExists } else { Fail::Storage };
+        assert_eq!(twin.replies, vec![(1, Err(error))]);
+        assert!(!twin.history.iter().any(|effect| matches!(effect, RefEffect::CredentialCommitted(_))));
+    }
+}
+
+#[test]
 fn sess_sealing_failed() {
     let mut twin = Twin::new();
     let effects = twin.feed(call(1));
@@ -383,7 +397,7 @@ fn sess_calling_revoked() {
     let mut twin = calling();
     let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), author_ref: None };
     let effects = twin.feed(input);
-    assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, .. }]));
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, erase_session: true, end_journal: true, answer: None, resume_answer: None, .. }]));
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
     assert!(twin.replies.is_empty(), "the answer waits for the epoch after the one that ended");
@@ -397,7 +411,8 @@ fn sess_calling_revoked_logout() {
     let mut twin = Twin::new();
     twin.feed_all([call_of("logout", 1), committed()]);
     let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: r#"{"revoked":true}"#.into(), author_ref: None };
-    twin.feed(input);
+    let effects = twin.feed(input);
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, erase_session: true, end_journal: true, answer: None, resume_answer: None, .. }]));
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
     assert!(twin.replies.is_empty(), "the logout answer waits for the new epoch");

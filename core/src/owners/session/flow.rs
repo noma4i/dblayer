@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, resume_taking: None, resume_saving: None, resume_landing_saved: false, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -16,7 +16,6 @@ impl SessionState {
 
     pub fn queued(&self) -> usize { self.queue.len() }
 
-    pub fn subscribers(&self) -> usize { self.subscribers.len() }
 
     #[cfg(test)]
     pub fn awaiting_publication(&self) -> Option<(ReplyId, PublishWait)> { self.after_publish.as_ref().map(|held| (held.reply, held.wait)) }
@@ -59,18 +58,6 @@ impl SessionState {
 
     pub(super) fn refuse_queue(&mut self, fx: &mut Vec<SessionEffect>, error: SessionError) {
         for queued in self.queue.drain(..) { refuse(fx, queued, error.clone()); }
-    }
-
-    pub(super) fn view(&self) -> (u64, RetryPhase) {
-        match &self.phase {
-            SessionPhase::Calling { attempts, phase, .. } => (*attempts, match phase {
-                AttemptPhase::InFlight(_) => RetryPhase::InFlight,
-                AttemptPhase::WaitingRetry => RetryPhase::WaitingRetry,
-                AttemptPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
-                AttemptPhase::WaitingSecret => RetryPhase::WaitingSecret,
-            }),
-            _ => (0, RetryPhase::Idle),
-        }
     }
 
     pub(super) fn idle(&mut self, fx: &mut Vec<SessionEffect>) {
@@ -214,7 +201,20 @@ impl SessionState {
 
     pub(super) fn deliver_resume(&mut self, result: SessionAnswer, fx: &mut Vec<SessionEffect>) {
         self.restored_active = None;
-        if self.resume_waiters.is_empty() { self.restored_answer = Some(result); }
+        let saved = std::mem::take(&mut self.resume_landing_saved);
+        if self.resume_waiters.is_empty() {
+            if saved { self.restored_answer = Some(RestoredAnswer::Saved(result)); }
+            else {
+                let batch = self.batch();
+                fx.push(SessionEffect::CommitResumeAnswer { batch, epoch: self.epoch, answer: Some(result.clone()) });
+                self.resume_saving = Some((batch, result));
+            }
+        }
+        else if saved {
+            self.restored_answer = Some(RestoredAnswer::Saved(result));
+            let waiters = std::mem::take(&mut self.resume_waiters);
+            self.take_resume(waiters, fx);
+        }
         else {
             for (index, id) in self.resume_waiters.drain(..).enumerate() {
                 fx.push(SessionEffect::ResumeReply { id, answer: if index == 0 { result.clone().map(Some) } else { Ok(None) } });
@@ -222,7 +222,29 @@ impl SessionState {
         }
     }
 
+    fn deliver_local_resume(&mut self, error: SessionError, fx: &mut Vec<SessionEffect>) {
+        self.restored_active = None;
+        self.resume_landing_saved = false;
+        if self.resume_waiters.is_empty() { self.restored_answer = Some(RestoredAnswer::Local(error)); }
+        else {
+            for (index, id) in self.resume_waiters.drain(..).enumerate() {
+                fx.push(SessionEffect::ResumeReply { id, answer: if index == 0 { Err(error.clone()) } else { Ok(None) } });
+            }
+        }
+    }
+
+    pub(super) fn take_resume(&mut self, waiters: Vec<ReplyId>, fx: &mut Vec<SessionEffect>) {
+        let batch = self.batch();
+        self.resume_taking = Some((batch, waiters));
+        fx.push(SessionEffect::CommitResumeAnswer { batch, epoch: self.epoch, answer: None });
+    }
+
     pub(super) fn end_resume(&mut self, error: SessionError, fx: &mut Vec<SessionEffect>) {
+        if let Some((_, waiters)) = self.resume_taking.take() {
+            for id in waiters { fx.push(SessionEffect::ResumeReply { id, answer: Err(error.clone()) }); }
+        }
+        self.resume_saving = None;
+        self.resume_landing_saved = false;
         self.restored_answer = None;
         self.restored_active = None;
         self.resume_published = None;
@@ -238,7 +260,9 @@ impl SessionState {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
         let erase_session = server_ended || login_failed(&pending, &answer, server_ended);
-        fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
+        self.resume_landing_saved = self.restored_active == Some(pending.request_id) && (self.resume_waiters.is_empty() || pending.class == OperationClass::Login) && !server_ended;
+        let resume_answer = self.resume_landing_saved.then(|| answer.clone());
+        fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, resume_answer, erase_session, end_journal: server_ended && pending.class != OperationClass::Login });
         self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
@@ -259,15 +283,15 @@ impl SessionState {
         self.restored_detached = None;
         self.restored_transfer = None;
         self.phase = SessionPhase::Closed;
-        fx.push(SessionEffect::Drained(Drained { owner: "session" }));
+        if self.resume_taking.is_none() { fx.push(SessionEffect::Drained(Drained { owner: "session" })); }
     }
 
     pub(super) fn answer_publication(&mut self, fx: &mut Vec<SessionEffect>, epoch: Epoch, state: PublishedState, identity: Option<Digest>) {
         if let Some(body) = self.resume_published.take() {
             let digest = self.credential.as_ref().map(|credential| credential.digest);
             if state == PublishedState::Session && identity.is_some() && identity == digest { self.deliver_resume(Ok(body), fx); }
-            else if matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed) { self.deliver_resume(Err(SessionError::Storage("the session could not be saved".into())), fx); }
-            else if state == PublishedState::Ending { self.deliver_resume(Err(SessionError::NoSession), fx); }
+            else if matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed) { self.deliver_local_resume(SessionError::Storage("the session could not be saved".into()), fx); }
+            else if state == PublishedState::Ending { self.deliver_local_resume(SessionError::NoSession, fx); }
             else { self.resume_published = Some(body); }
         }
         let Some(held) = self.after_publish.take() else { return };

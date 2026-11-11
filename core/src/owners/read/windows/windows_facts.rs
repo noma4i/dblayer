@@ -78,15 +78,6 @@ impl Facts {
             Ev::InterestMinus { id } => {
                 self.reload.remove(id);
             }
-            Ev::ModelsReset { generation, models } => {
-                for model in models {
-                    self.generations.insert(model.clone(), *generation);
-                }
-                if self.depends_on(models) {
-                    self.marker = None;
-                    self.members = 0;
-                }
-            }
             Ev::Saved(Some(saved)) => {
                 self.fresh = !saved.stale;
                 if saved.stale { self.stale_marked.set(true); }
@@ -130,13 +121,18 @@ impl Facts {
     /// The generation of every model when the request leaves: the answer may name models the window did not know before.
     pub(super) fn basis(&self) -> GenerationsAtIssue { GenerationsAtIssue { base: self.base_generation, generations: self.generations.clone() } }
 
-    pub(super) fn depends_on(&self, models: &[String]) -> bool { models.iter().any(|model| self.dependency_models.contains(model)) }
-
     pub(super) fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision), has_more: self.cursor.is_some(), settled: self.settled, total: None } }
 
     pub(super) fn set_phase(&mut self, phase: Phase) {
         self.phase = phase;
         self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
+    }
+
+    pub(super) fn add_interest(&mut self, id: InterestId) {
+        if id != PRELOAD && self.interest.iter().all(|existing| *existing == PRELOAD) {
+            self.settled = false;
+        }
+        self.interest.insert(id);
     }
 
     pub(super) fn drop_interest(&mut self, id: &InterestId) {
@@ -234,7 +230,7 @@ impl Facts {
         let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
         self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
-        self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
+        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
         Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))

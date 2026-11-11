@@ -92,9 +92,6 @@ fn replacing_a_row_hands_its_files_to_the_new_id() {
 fn resets_clear_the_file_table() {
     let (store, _) = booted_store();
     store.commit(with_files(&store, vec![], vec![FileOp::Put(file("f1", "m1", "media", b"x"))])).unwrap();
-    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM file"), 0);
-    store.commit(with_files(&store, vec![], vec![FileOp::Put(file("f2", "m1", "media", b"x"))])).unwrap();
     store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM file"), 0);
 }

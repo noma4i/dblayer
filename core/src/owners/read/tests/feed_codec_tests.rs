@@ -60,12 +60,12 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
     vec![chats, messages]
 }
 
-fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Store::open_models(None, specs(with_feed), None).map(std::sync::Arc::new).unwrap(), operations()) }
+fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Store::open_models(None, specs(with_feed), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), operations()) }
 
 fn codec_for_apply(apply: Value) -> SchemaFeedCodec {
     let mut messages = chat_messages_spec();
     messages.listens.push(updates(json!({"subscription":"MessageChanged", "apply":apply})));
-    SchemaFeedCodec::new(Store::open_models(None, vec![chats_spec(), messages], None).map(std::sync::Arc::new).unwrap(), operations())
+    SchemaFeedCodec::new(Store::open_models(None, vec![chats_spec(), messages], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), operations())
 }
 
 fn frame(data: Value) -> Response { Response::data(data) }
@@ -166,7 +166,7 @@ fn feed_codec_relation_updates_channel() {
     by_chat.updates.push(updates(json!({"subscription":"RelationChanged", "deleted_by":"deleted"})));
     messages.relations.push(by_chat);
     messages.listens.push(updates(json!({"subscription":"MessageChanged"})));
-    let codec = SchemaFeedCodec::new(Store::open_models(None, vec![chats_spec(), messages], None).map(std::sync::Arc::new).unwrap(), operations());
+    let codec = SchemaFeedCodec::new(Store::open_models(None, vec![chats_spec(), messages], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), operations());
     let live = payloads(&codec.events("RelationChanged", frame(json!({"relationChanged":{"id":"m3", "chatId":"c1", "body":"y", "deleted":false}}))));
     assert_eq!((live[0]["op"].as_str(), live[0]["model"].as_str(), live[0]["id"].as_str()), (Some("upsert"), Some("messages"), Some("m3")));
     assert!(codec.events("MessageChanged", frame(json!({"relationChanged":{"id":"m3", "chatId":"c1"}}))).is_empty(), "an event is read by the channel it came on");
@@ -174,7 +174,7 @@ fn feed_codec_relation_updates_channel() {
 
 #[test]
 fn feed_codec_channels_of_model() {
-    let channels = super::channels_of(&Store::open_models(None, specs(true), None).map(std::sync::Arc::new).unwrap());
+    let channels = super::channels_of(&Store::open_models(None, specs(true), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap());
     assert_eq!(channels.get("chats"), Some(&vec!["Changes".to_string()]));
     assert_eq!(channels.get("messages"), Some(&vec!["Changes".to_string()]));
 }
@@ -184,7 +184,7 @@ fn feed_codec_memory_event_without_id_gets_a_uuid() {
     let mut notices = ModelSpec::new("notices", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("body", crate::value::ScalarKind::Str)]);
     notices.storage = crate::schema::Storage::Memory;
     notices.listens.push(updates(json!({"subscription":"MessageChanged"})));
-    let codec = SchemaFeedCodec::new(Store::open_models(None, vec![notices], None).map(std::sync::Arc::new).unwrap(), operations());
+    let codec = SchemaFeedCodec::new(Store::open_models(None, vec![notices], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), operations());
     let first = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"body":"a"}}))));
     let second = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"body":"a"}}))));
     assert_eq!(first[0]["op"], "upsert");
@@ -202,7 +202,7 @@ fn feed_codec_scoped_channel() {
     by_slug.updates.push(updates(json!({"subscription":"ScreenUpdated", "id":["slug"]})));
     screens.indexes.push(vec!["slug".into()]);
     screens.relations.push(by_slug);
-    let db = std::sync::Arc::new(Store::open_models(None, vec![screens.clone()], None).unwrap());
+    let db = std::sync::Arc::new(Store::open_models(None, vec![screens.clone()], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(super::channels_of(&db).is_empty(), "a subscription that takes the variables of a window is no channel of the model");
     let scoped = super::scoped_channels(&screens, "by_slug", json!({"slug":"home"}).as_object().unwrap());
     assert_eq!((scoped.len(), scoped[0].subscription.as_str(), Value::Object(scoped[0].variables.clone())), (1, "ScreenUpdated", json!({"slug":"home"})));

@@ -124,7 +124,7 @@ fn sess_calling_too_large() {
     calling_error(Some((262145, 262144)), None, SessionError::TooLarge { size: 262145, limit: 262144 });
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
-    let open = || Store::open_models(Some(&path), vec![], None).map(std::sync::Arc::new).unwrap();
+    let open = || Store::open_models(Some(&path), vec![], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let db = open();
     db.lock().connection.execute_batch("DROP TABLE encrypted_answer; CREATE TABLE encrypted_answer (request_id INTEGER PRIMARY KEY, outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'http', 'unauthorized', 'revoked', 'session')), detail TEXT, operation_id INTEGER) STRICT; INSERT INTO encrypted_answer VALUES (10, 'http', '422', 6); UPDATE manifest SET value = 'old' WHERE key = 'format_version';").unwrap();
     drop(db);
@@ -154,4 +154,123 @@ fn http_failure_reports_after_its_answer_is_committed() {
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
     let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(matches!(&effects[..], [SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { error: SessionError::Http { status: 0 }, .. } }, SessionEffect::ExecutorFailed]));
+}
+
+#[test]
+fn sess_prop_login_and_lifecycle_ending_orders() {
+    use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, LifecyclePhase, LifecycleState};
+    let orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    for failed in [false, true] {
+        for order in orders {
+            let mut det = DetScheduler::new(2);
+            let session_log = new_log();
+            let life_log = new_log();
+            let ops = vec![SessionOperation { name: "login".into(), path: "/login".into(), class: OperationClass::Login }];
+            let session = det.add::<SessionCalls>("session", SessionState::with_operations(ops, Some(true)), Recorder::<SessionCalls>::new(&session_log));
+            let life = det.add::<Lifecycle>("lifecycle", LifecycleState::new(), Recorder::<Lifecycle>::new(&life_log));
+            det.post(life, EpochStamp::Control, LifecycleInput::Open { saved_epoch: 2, saved_generation: 0, saved_identity: Some(4), saved_unowned_pending: false, reply: None });
+            det.run_until_quiet(100).unwrap();
+            take(&life_log);
+            send(&mut det, session, &session_log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+            send(&mut det, session, &session_log, SessionInput::Snapshot { epoch: 3, online: true });
+            send(&mut det, session, &session_log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
+            det.post(life, EpochStamp::Control, LifecycleInput::SessionReset { reply: Some(9) });
+            det.run_until_quiet(100).unwrap();
+            let effects = take(&life_log);
+            let erase_id = effects.iter().find_map(|effect| match effect { LifecycleEffect::ClearAccount { erase_id, .. } => Some(*erase_id), _ => None }).unwrap();
+            assert!(matches!(det.state(life).unwrap().phase(), LifecyclePhase::Ending { .. }));
+            let mut outputs = Vec::new();
+            for action in order {
+                let input = match action {
+                    0 => SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }),
+                    1 => SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Ending, closed: false }),
+                    _ => SessionInput::SessionCall { operation: "login".into(), body: "{}".into(), reply: 1 },
+                };
+                outputs.extend(send(&mut det, session, &session_log, input));
+            }
+            if let SessionPhase::Generating { op, .. } = det.state(session).unwrap().phase().clone() {
+                outputs.extend(send(&mut det, session, &session_log, SessionInput::CredentialGenerated { secret_op_id: op, credential: 42 }));
+                let next = send(&mut det, session, &session_log, SessionInput::SecretStored { secret_op_id: op, ok: true });
+                let batch = next.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None });
+                outputs.extend(next);
+                if let Some(batch) = batch {
+                    outputs.extend(send(&mut det, session, &session_log, SessionInput::Rejected(Rejected { batch, reason: RejectReason::NoSession })));
+                }
+            }
+            let completion = if failed { LifecycleInput::ClearFailed { erase_id, error: "storage".into() } } else { LifecycleInput::Cleared { erase_id } };
+            det.post(life, EpochStamp::Control, completion);
+            det.run_until_quiet(100).unwrap();
+            take(&life_log);
+            if failed {
+                outputs.extend(send(&mut det, session, &session_log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::EndingFailed, closed: false })));
+            }
+            assert!(!outputs.iter().any(|effect| matches!(effect, SessionEffect::CredentialCommitted(_))), "{order:?}, failed={failed}: {outputs:?}");
+        }
+    }
+}
+
+#[test]
+fn sess_prop_login_between_epoch_end_and_ending() {
+    for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+        let mut det = DetScheduler::new(2);
+        let log = new_log();
+        let ops = vec![SessionOperation { name: "login".into(), path: "/login".into(), class: OperationClass::Login }];
+        let session = det.add::<SessionCalls>("session", SessionState::with_operations(ops, Some(true)), Recorder::<SessionCalls>::new(&log));
+        let published = Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false };
+        send(&mut det, session, &log, SessionInput::Published(published.clone()));
+        send(&mut det, session, &log, SessionInput::Snapshot { epoch: 3, online: true });
+        send(&mut det, session, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
+        let mut observed = Vec::new();
+        for action in order {
+            let input = match action {
+                0 => SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }),
+                1 => SessionInput::SessionCall { operation: "login".into(), body: "{}".into(), reply: 1 },
+                _ => SessionInput::Published(Published { state: PublishedState::Ending, ..published.clone() }),
+            };
+            let effects = send(&mut det, session, &log, input);
+            if action == 1 {
+                let kind = if effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { answer: Err(_), .. })) { "refused" }
+                    else if effects.iter().any(|effect| matches!(effect, SessionEffect::GenerateCredential { .. })) { "started" }
+                    else { "queued" };
+                let expected = if order[0] == 1 { "refused" } else if order == [0, 1, 2] { "started" } else { "queued" };
+                assert_eq!(kind, expected, "{order:?}: {effects:?}");
+            }
+            observed.extend(effects);
+            if action == 1 {
+                if let Some(op) = observed.iter().find_map(|effect| match effect { SessionEffect::GenerateCredential { secret_op_id } => Some(*secret_op_id), _ => None }) {
+                    let effects = send(&mut det, session, &log, SessionInput::CredentialGenerated { secret_op_id: op, credential: 42 });
+                    let secret_op_id = effects.iter().find_map(|effect| match effect { SessionEffect::StoreSecret { secret_op_id, .. } => Some(*secret_op_id), _ => None }).unwrap();
+                    observed.extend(effects);
+                    let effects = send(&mut det, session, &log, SessionInput::SecretStored { secret_op_id, ok: true });
+                    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None });
+                    observed.extend(effects);
+                    if let Some(batch) = batch {
+                        observed.extend(send(&mut det, session, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })));
+                    }
+                }
+            }
+        }
+        assert_eq!(observed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. })), order == [0, 1, 2], "{order:?}: {observed:?}");
+    }
+}
+
+#[test]
+fn sess_login_after_epoch_end_rejected_pending() {
+    let mut det = DetScheduler::new(2);
+    let log = new_log();
+    let ops = vec![SessionOperation { name: "login".into(), path: "/login".into(), class: OperationClass::Login }];
+    let session = det.add::<SessionCalls>("session", SessionState::with_operations(ops, Some(true)), Recorder::<SessionCalls>::new(&log));
+    send(&mut det, session, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+    send(&mut det, session, &log, SessionInput::Snapshot { epoch: 3, online: true });
+    send(&mut det, session, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
+    send(&mut det, session, &log, SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
+    let effects = send(&mut det, session, &log, SessionInput::SessionCall { operation: "login".into(), body: "{}".into(), reply: 1 });
+    let op = effects.iter().find_map(|effect| match effect { SessionEffect::GenerateCredential { secret_op_id } => Some(*secret_op_id), _ => None }).unwrap();
+    let effects = send(&mut det, session, &log, SessionInput::CredentialGenerated { secret_op_id: op, credential: 42 });
+    let op = effects.iter().find_map(|effect| match effect { SessionEffect::StoreSecret { secret_op_id, .. } => Some(*secret_op_id), _ => None }).unwrap();
+    let effects = send(&mut det, session, &log, SessionInput::SecretStored { secret_op_id: op, ok: true });
+    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
+    let effects = send(&mut det, session, &log, SessionInput::Rejected(Rejected { batch, reason: RejectReason::NoSession }));
+    assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { id: 1, answer: Err(_) })));
+    assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::ClearSecret { .. })), "{effects:?}");
 }

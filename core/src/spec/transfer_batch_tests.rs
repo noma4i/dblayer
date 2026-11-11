@@ -152,7 +152,14 @@ fn xfer_batch_item_ready() {
 fn xfer_batch_mutation() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
-    let out = file_done(&mut twin, ids[1]);
+    twin.step_ok(ids[1], 1, None);
+    twin.commit();
+    twin.commit();
+    twin.completed(ids[1]);
+    let intent = twin.commit();
+    assert_eq!(intent.batches.len(), 1);
+    assert!(intent.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id: 1_000_001, origin: crate::owners::store::IntentOrigin::TransferGroup { batch_id: 1, transfer_ids }, .. } if *transfer_ids == ids)), "the group intent and member ids share a batch: {:?}", intent.batches);
+    let out = twin.commit();
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
     let ops = out.submit_ops();
     assert_eq!(ops.len(), 1, "one request for the batch");
@@ -166,7 +173,14 @@ fn xfer_batch_singles() {
     twin.cancel(OTHER);
     twin.commit();
     assert_eq!(twin.stage(ids[1]), TransferStage::Done);
-    let out = file_done(&mut twin, ids[0]);
+    twin.step_ok(ids[0], 1, None);
+    twin.commit();
+    twin.commit();
+    twin.completed(ids[0]);
+    let intent = twin.commit();
+    assert_eq!(intent.batches.len(), 1);
+    assert!(intent.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id }, .. } if *op_id == ids[0] && *transfer_id == ids[0])), "the first single intent must name its member: {:?}", intent.batches);
+    let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "fewer than the minimum remain: the element goes alone");
     assert_eq!(ops[0].origin, single(ids[0]));
@@ -183,6 +197,7 @@ fn xfer_batch_singles_next() {
     assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[0])], "the first element goes alone");
     let pending = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None });
     assert_eq!((twin.stage(ids[1]), pending.writes()), (TransferStage::PersistingBatchIntent, 2));
+    assert!(pending.batches.iter().any(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id }, .. } if *op_id == ids[1] && *transfer_id == ids[1]))), "the next single intent names its member: {:?}", pending.batches);
     assert!(pending.submit_ops().is_empty());
     assert!(twin.commit().submit_ops().is_empty());
     let out = twin.commit();
@@ -246,6 +261,7 @@ fn xfer_batch_singles_member_cancel() {
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
     let (reply, out) = twin.cancel(OTHER);
     assert_eq!((out.removed(), out.writes()), (vec![OTHER.to_string()], 1));
+    assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::RollBack { op_id } if *op_id == ids[1])), "removal and rollback share the same batch: {:?}", out.batches);
     let out = twin.commit();
     assert_eq!((out.replies(reply), twin.stage(ids[1]), twin.stage(ids[0])), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done, TransferStage::Mutating), "the single of the first element is not touched");
 }
@@ -348,7 +364,9 @@ fn xfer_batch_removal_releases_mutation() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     twin.cancel(OTHER);
-    twin.commit();
+    let intent = twin.commit();
+    assert_eq!(intent.batches.len(), 1);
+    assert!(intent.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id }, .. } if *op_id == ids[0] && *transfer_id == ids[0])), "the remaining member intent is recorded: {:?}", intent.batches);
     let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "the element that waited goes alone when the other leaves");

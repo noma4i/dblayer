@@ -1,8 +1,55 @@
 use super::*;
 
 impl SessionState {
+    fn retry_direct(&mut self, pending: PendingCall, attempts: u64, error: SessionError, fx: &mut Vec<SessionEffect>) {
+        let exhausted = crate::runtime::RetryPolicy::Http.limit().is_some_and(|limit| attempts + 1 >= u64::from(limit));
+        if pending.reply.is_some() && exhausted {
+            if pending.class == OperationClass::Sessionless {
+                self.land(pending, Err(error), None, None, false, fx);
+            } else {
+                self.detach_error = Some(error);
+                self.persist(PendingCall { owner: Some(MutateOwner::Detached), ..pending }, None, fx);
+            }
+        } else if self.is_online() {
+            fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
+            self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
+        } else {
+            self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
+        }
+    }
     pub(super) fn run(&mut self, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         let phase = std::mem::replace(&mut self.phase, SessionPhase::Closed);
+        let taking_result = match &input {
+            SessionInput::Committed(committed) => Some((committed.batch, true)),
+            SessionInput::Rejected(rejected) => Some((rejected.batch, false)),
+            _ => None,
+        };
+        if let Some((batch, committed)) = taking_result {
+            if let Some((_, waiters)) = self.resume_taking.take_if(|(expected, _)| *expected == batch) {
+                let closing = matches!(phase, SessionPhase::Closed);
+                let answer = if committed { self.restored_answer.take() } else { self.restored_answer.clone() }.and_then(|answer| match answer { RestoredAnswer::Saved(answer) => Some(answer), RestoredAnswer::Local(_) => None });
+                for (index, id) in waiters.into_iter().enumerate() {
+                    let result = if committed { if index == 0 { answer.clone().ok_or_else(|| SessionError::Storage("the restored answer is missing".into())).and_then(|answer| answer.map(Some)) } else { Ok(None) } } else if closing { Err(SessionError::Closed) } else { Err(SessionError::Storage("the answer could not be removed".into())) };
+                    fx.push(SessionEffect::ResumeReply { id, answer: result });
+                }
+                self.phase = phase;
+                if closing { fx.push(SessionEffect::Drained(Drained { owner: "session" })); }
+                return;
+            }
+            if let Some((_, answer)) = self.resume_saving.take_if(|(expected, _)| *expected == batch) {
+                self.phase = phase;
+                if committed {
+                    self.restored_answer = Some(RestoredAnswer::Saved(answer));
+                    if !self.resume_waiters.is_empty() {
+                        let waiters = std::mem::take(&mut self.resume_waiters);
+                        self.take_resume(waiters, fx);
+                    }
+                } else {
+                    for id in self.resume_waiters.drain(..) { fx.push(SessionEffect::ResumeReply { id, answer: Err(SessionError::Storage("the answer could not be saved".into())) }); }
+                }
+                return;
+            }
+        }
         if matches!(phase, SessionPhase::Closed) {
             match input {
                 SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(SessionError::Closed)),
@@ -61,17 +108,15 @@ impl SessionState {
             SessionInput::Closing => self.closing(phase, fx),
             SessionInput::SessionResume { reply: id } => {
                 self.phase = phase;
-                if let Some(answer) = self.restored_answer.take() { fx.push(SessionEffect::ResumeReply { id, answer: answer.map(Some) }); }
-                else if self.restored_direct.is_some() || self.restored_active.is_some() || self.resume_published.is_some() { self.resume_waiters.push(id); }
+                if let Some((_, waiters)) = &mut self.resume_taking { waiters.push(id); }
+                else if let Some(answer) = self.restored_answer.clone() {
+                    match answer {
+                        RestoredAnswer::Saved(_) => self.take_resume(vec![id], fx),
+                        RestoredAnswer::Local(error) => { self.restored_answer = None; fx.push(SessionEffect::ResumeReply { id, answer: Err(error) }); }
+                    }
+                }
+                else if self.restored_direct.is_some() || self.restored_active.is_some() || self.resume_published.is_some() || self.resume_saving.is_some() { self.resume_waiters.push(id); }
                 else { fx.push(SessionEffect::ResumeReply { id, answer: Ok(None) }); }
-            }
-            SessionInput::InterestPlus { stream_id } => {
-                self.subscribers.insert(stream_id);
-                self.phase = phase;
-            }
-            SessionInput::InterestMinus { stream_id } => {
-                self.subscribers.remove(&stream_id);
-                self.phase = phase;
             }
             SessionInput::Online(Online(online)) if self.online.is_some() => self.online_changed(phase, online, fx),
             SessionInput::Online(_) => self.phase = phase,
@@ -89,10 +134,11 @@ impl SessionState {
                 self.answer_publication(fx, epoch, state, identity);
                 if matches!(self.phase, SessionPhase::Idle) { self.drain(fx); }
             }
-            SessionInput::Restored { epoch, pending, .. } => {
+            SessionInput::Restored { epoch, pending, resume_answer, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
                 self.restored = true;
+                if epoch == self.epoch && self.current(epoch) && self.restored_answer.is_none() { self.restored_answer = resume_answer.map(RestoredAnswer::Saved); }
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner));
                 if let (SessionPhase::PendingHeld { pending: held }, true) = (self.phase.clone(), released) {
@@ -209,7 +255,11 @@ impl SessionState {
     }
 
     pub(super) fn closing(&mut self, phase: SessionPhase, fx: &mut Vec<SessionEffect>) {
+        let taking = self.resume_taking.take();
+        let answer = if taking.is_some() { self.restored_answer.take() } else { None };
         self.end_resume(SessionError::Closed, fx);
+        self.resume_taking = taking;
+        if self.resume_taking.is_some() { self.restored_answer = answer; }
         if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Closed)); }
         match phase {
             SessionPhase::Sealing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
@@ -474,8 +524,15 @@ impl SessionState {
                 }
             }
             (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, fx),
-            (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => self.start_calling(pending, fx),
+            (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
+                if let Some(error) = self.detach_error.take() {
+                    self.resume_finish_retained(&pending, Err(error), true, fx);
+                    fx.push(SessionEffect::ScheduleTick { attempts: 0 });
+                    self.phase = SessionPhase::Calling { pending: PendingCall { reply: None, ..pending }, attempts: 0, phase: AttemptPhase::WaitingRetry };
+                } else { self.start_calling(pending, fx); }
+            }
             (SessionPhase::Persisting { pending, batch }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
+                self.detach_error = None;
                 self.resume_finish(&pending, Err(SessionError::Rejected(reason)), fx);
                 self.idle(fx);
             }
@@ -516,7 +573,7 @@ impl SessionState {
                             }
                             pending.author = None;
                         }
-                        self.resume_finish(&pending, answer, fx);
+                        if !server_ended || self.restored_active != Some(pending.request_id) { self.resume_finish(&pending, answer, fx); }
                     }
                 }
                 if self.failed_batch == Some(batch) { self.report_failed(fx); }
@@ -543,14 +600,11 @@ impl SessionState {
                 self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
             }
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } if mine(request_id, attempt_id) => {
-                if matches!(kind, crate::transport::AnswerKind::Transient { .. }) {
+                if let crate::transport::AnswerKind::Transient { reason } = &kind {
                     if let Some(author) = pending.author {
                         fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind } });
                         self.phase = SessionPhase::PendingHeld { pending };
-                    } else if self.is_online() {
-                        fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                        self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
-                    } else { self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork }; }
+                    } else { self.retry_direct(pending, attempts, SessionError::Graphql { code: reason.clone(), body }, fx); }
                     return;
                 }
                 if matches!(kind, crate::transport::AnswerKind::DocumentMissing) {
@@ -603,24 +657,20 @@ impl SessionState {
                         None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
                     }
                     self.phase = SessionPhase::PendingHeld { pending };
-                } else if self.is_online() {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
+                    let error = if let Some(body) = body {
+                        let code = serde_json::from_str(&body).ok().and_then(|value| crate::transport::refusal_name(&value)).unwrap_or_default();
+                        SessionError::Graphql { code, body }
+                    } else if status == 0 { SessionError::Network } else { SessionError::Http { status } };
+                    self.retry_direct(pending, attempts, error, fx);
                 }
             }
-            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced: false } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx),
-            SessionInput::AnswerTooLarge { request_id, attempt_id, limit, sequenced: true } if mine(request_id, attempt_id) => {
+            SessionInput::AnswerTooLarge { request_id, attempt_id, limit } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::ResponseTooLarge { limit }, true);
                     self.phase = SessionPhase::PendingHeld { pending };
-                } else if self.is_online() {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
-                } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
-                }
+                } else if pending.class == OperationClass::Sessionless { self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx); }
+                else { self.retry_direct(pending, attempts, SessionError::ResponseTooLarge { limit }, fx); }
             }
             SessionInput::HttpError { request_id, attempt_id, auth, status, too_large, .. } if mine(request_id, attempt_id) => {
                 let error = match (auth, too_large) {
@@ -634,12 +684,7 @@ impl SessionState {
                 if let Some(author) = pending.author {
                     fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
                     self.phase = SessionPhase::PendingHeld { pending };
-                } else if self.is_online() {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry };
-                } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
-                }
+                } else { self.retry_direct(pending, attempts, SessionError::Network, fx); }
             }
             SessionInput::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {
                 if lost {

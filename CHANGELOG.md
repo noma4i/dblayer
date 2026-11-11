@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Fixed
+
+- Finish a restored upload batch when a step answer arrives before the operations are declared.
+- Report a stream as not settled until its own load ends after a failed load call.
+- Erase account data at the next open when the server ended the session before the app stopped.
+- Keep files of pending uploads through a database format change.
+- Keep upload outcomes after the database reopens.
+- Label each stream value with the revision of the data it carries.
+- Keep the answer of a session call that finished after a restart until the app reads it.
+- Keep a retried upload in progress after the database reopens.
+- Keep the refresh debt when the app stops before a broken subscription reconnects.
+- Pause uploads while the OS power saving mode is on.
+- End a direct session call with an error after its retry budget is used.
+- Preserve the last relevant value revision when a stream resyncs.
+- Delete the files of cached rows erased when the schema of a model changes.
+- Keep the failure time of an upload across restarts.
+- Keep ended sessions signed out after repeated crashes during database reopening.
+- Remove rows when the server reports them missing during destroy.
+- Discard a saved operation at open when the server deleted its row while the app was closed.
+- Keep the attempt number of an operation that was recorded but not sent before a restart.
+- End an upload start with a session-ended error when its data generation is stale.
+- Keep the failure kind of an upload row after the database reopens.
+- Mark an upload that used all its attempts as failed while every upload slot is busy.
+- Keep the window refresh debt across a restart after a subscription gap.
+- Keep the multipart abort debt of a replaced file copy across a restart.
+- Send an accepted call with the document it was accepted with after the operation is declared again or removed.
+- Start one database read for a value stream while a read that covers it is running.
+- Count window freshness from the time the server response arrived.
+
+### Removed
+
+- Remove the retry status value from value streams.
+
 ## 6.25.4 - 2026-11-11
 
 ### Changed

@@ -55,9 +55,9 @@ extension BridgeProbeTests {
     let peer = try #require(transport.cable as? EncryptedCablePeer)
     let token = try #require(await Cursor(peer.subscribed.stream).next("the profile subscription"))
     let pings = Cursor(peer.ping.stream)
-    for _ in 0..<5 {
+    for step in 1...5 {
       clock.advance(by: 120)
-      let ping = try #require(await pings.next("ping on the original connection, which may have reopened"))
+      let ping = try #require(await pings.next("ping on the original connection, which may have reopened, step=\(step)", detail: { "opens=\(peer.openedCount) subscriptions=\(peer.subscribedCount) last=\(peer.lastEvent)" }))
       #expect(ping == token)
     }
     let delivered = try peer.event(token: token, result: ["data": ["viewerChanges": ["changes": [["area":"COUNTERS", "kind":"UPDATED", "entityId":"u1"]]]]])

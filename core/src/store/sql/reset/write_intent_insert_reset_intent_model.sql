@@ -1,1 +1,0 @@
-INSERT INTO reset_intent_model (pos, model) VALUES (?1, ?2)

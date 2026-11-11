@@ -30,8 +30,6 @@ impl Store {
         inner.data_version = data_version.map(str::to_string);
         inner.models = std::sync::Arc::new(models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect());
         *reading_models = inner.models.clone();
-        let mut removed_files: Option<(String, Vec<String>)> = None;
-        let mut remove_all_files = None;
         let mut migrated_reset = None;
         let mut recreated = None;
         let mut rebuilt = false;
@@ -41,20 +39,12 @@ impl Store {
         if let Some(reason) = crate::store::ddl::recreate_reason(&inner.connection)? {
             let fingerprints = current_fingerprints(&inner)?;
             let transaction = inner.connection.unchecked_transaction()?;
-            let database: String = transaction.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
-            let has_files: bool = transaction.query_row(include_str!("sql/boot/boot_select_sqlite_master.sql"), [], |row| row.get(0))?;
-            let before: Vec<String> = if has_files { transaction.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()? } else { Vec::new() };
             let recreated_layout = super::open::recreate(&transaction)?;
-            let outbox = recreated_layout.files_kept;
             dropped = recreated_layout.dropped;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
             crate::store::plan::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
-            let after: std::collections::HashSet<String> = transaction.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
             manifest_stamp(&transaction, data_version, &fingerprints)?;
             transaction.commit()?;
-            if !database.is_empty() {
-                if outbox { removed_files = Some((database, before.into_iter().filter(|id| !after.contains(id)).collect())); } else { remove_all_files = Some(database); }
-            }
             recreated = Some(reason);
             rebuilt = true;
             migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect());
@@ -62,7 +52,6 @@ impl Store {
             crate::store::ddl::migrate_core(&inner.connection)?;
         }
 
-        self.session_end_replay.store(super::reset::pending_intent(&inner.connection)?.as_deref() == Some("session_end"), std::sync::atomic::Ordering::SeqCst);
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner)?;
         let verdict = if rebuilt { ManifestVerdict::Fresh } else { manifest_verify(&inner.connection, data_version, &fingerprints)? };
@@ -96,7 +85,7 @@ impl Store {
                 reset_models = reset;
             }
             ManifestVerdict::Mismatch => {
-                write_intent(&inner.connection, "mismatched", &[], now)?;
+                write_intent(&inner.connection, "mismatched", now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 wipe_all_cache(&transaction, true, true)?;
                 reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();
@@ -125,16 +114,20 @@ impl Store {
         inner.connection.execute(include_str!("sql/boot/boot_delete_stale_transfer_outcome.sql"), [now.saturating_sub(7 * 86_400_000)])?;
         let database: String = inner.connection.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
         let files: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
-        let transfer_holders: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_sync_upload.sql"))?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
+        let mut transfer_holders: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_sync_upload.sql"))?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
+        let failed = super::restore::read_failed(&inner.connection)?;
+        transfer_holders.extend(failed.iter().filter_map(|row| row.transfer_id().map(|id| id.to_string())));
         self.overlays.reset(super::rows::read_revision(&inner.connection)?);
         drop(inner);
         drop(reading_models);
-        if let Some((database, files)) = removed_files { crate::store::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
-        if let Some(database) = remove_all_files { crate::store::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
         if !database.is_empty() {
             let directories = crate::store::files::FileDirectories::beside(std::path::Path::new(&database));
-            directories.recover_partials(&files)?;
-            remove_unheld_transfer_copies(&directories, &transfer_holders)?;
+            if files.is_empty() && transfer_holders.is_empty() {
+                directories.remove_all()?;
+            } else {
+                directories.recover_partials(&files)?;
+                remove_unheld_transfer_copies(&directories, &transfer_holders)?;
+            }
         }
         Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models, dropped })
     }

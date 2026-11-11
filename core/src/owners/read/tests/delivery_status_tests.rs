@@ -12,13 +12,13 @@ const EPOCH: u64 = 1;
 const STREAM: u64 = 7;
 
 fn blob_view() -> View {
-    View { kind: Kind::Blob, tables: vec![table_name("Chat")], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key("Chat", "r1", "photo"), query: None, model: "Chat".into() }
+    View { kind: Kind::Blob, tables: vec![table_name("Chat")], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key("Chat", "r1", "photo"), deferred_rows: Vec::new(), query: None, model: "Chat".into() }
 }
 
 fn opened() -> DeliveriesState {
     let mut state = DeliveriesState::new(EPOCH, DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) });
     let effects = Deliveries::step(&mut state, DeliveryInput::Open { stream: STREAM, view: blob_view(), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Run(DeliveryEffect::Stream { effect: StreamEffect::StatusInterest { plus: true, key: Some(key) }, .. }) if key == "Chat:r1:photo")));
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Run(DeliveryEffect::Stream { effect: StreamEffect::StatusInterest { plus: true, key }, .. }) if key == "Chat:r1:photo")));
     state
 }
 
@@ -45,12 +45,12 @@ fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_
     let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued) }));
     assert_eq!(asked.len(), 1);
     assert!(statuses(&state).is_empty(), "no value before the row was read");
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
     assert_eq!(statuses(&state), [(4, d::BlobStatus::of(&Shown::Queued))], "the value carries the revision of the row read that completed it");
 
     let asked = reads(Deliveries::step(&mut state, commit(&["r1"])));
     assert_eq!(asked.len(), 1);
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } });
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } });
     let shown = statuses(&state);
     assert_eq!(shown.len(), 1, "the journal keeps the latest status only");
     assert_eq!((shown[0].0, shown[0].1.local_url.as_deref(), shown[0].1.state.as_str()), (5, Some("file:copy"), "queued"), "a re-read row gives the value its commit revision");

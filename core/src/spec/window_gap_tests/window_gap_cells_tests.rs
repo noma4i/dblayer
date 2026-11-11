@@ -370,36 +370,6 @@ fn win_no_machine_offline_refused() {
 }
 
 #[test]
-fn win_idle_models_reset() {
-    let mut twin = fresh_watched();
-    assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-#[test]
-fn win_idle_models_reset_offline() {
-    let mut twin = fresh_watched();
-    twin.step(Input::Online(false));
-    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
-fn win_idle_models_reset_unwatched() {
-    let mut twin = fresh();
-    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
-}
-
-#[test]
-fn win_idle_models_other() {
-    let mut twin = fresh_watched();
-    assert!(twin.step(Input::ModelsReset { own_model: false }).is_empty());
-    assert!(twin.reference.fresh);
-}
-
-#[test]
 fn win_idle_stray() {
     let mut twin = fresh();
     for input in [
@@ -457,4 +427,15 @@ fn win_busy_interest_passive() {
         assert_eq!(twin.stage(), stage, "{name}: the state stays");
         assert!(twin.state().interest(&key()).contains(&u64::from(STREAM)), "{name}: the interest is kept");
     }
+}
+
+#[test]
+fn win_state_settled_new_stream_after_failed_call() {
+    let mut twin = Twin::new();
+    assert!(twin.call(2, Goal::First).iter().any(|effect| matches!(effect, Effect::Request { .. })), "the call starts the first page");
+    twin.fail(Failure::Permanent);
+    assert_eq!(twin.phase(), Phase::Failed);
+    let opened = twin.watch();
+    assert!(opened.iter().any(|effect| matches!(effect, Effect::Request { .. })), "a failed window is not fresh: the stream loads again: {opened:?}");
+    assert!(!twin.load_state().settled, "the load of the new stream has no outcome yet");
 }

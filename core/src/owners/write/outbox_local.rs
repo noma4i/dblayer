@@ -4,7 +4,7 @@ use std::collections::{BTreeMap};
 use super::outbox::{Batch, LocalCall, Outbox, OutboxState};
 use super::outbox_types::*;
 
-use crate::owners::contract::{BatchId, Drained, RejectReason, ReplyId};
+use crate::owners::contract::{BatchId, Drained, ReplyId};
 
 use crate::owners::store::{RowValue, StoreOp};
 use crate::runtime::{Effect, Effects, Epoch, ScheduleId, Time};
@@ -12,7 +12,7 @@ use crate::runtime::{Effect, Effects, Epoch, ScheduleId, Time};
 
 
 impl OutboxState {
-    pub(super) fn writes_active(&self) -> usize { self.copying.len() + self.batches.values().filter(|batch| matches!(batch, Batch::Write { .. })).count() }
+    pub(super) fn writes_active(&self) -> usize { self.batches.values().filter(|batch| matches!(batch, Batch::Write { .. })).count() }
 
     pub(super) fn maybe_drained(&mut self, fx: &mut Effects<Outbox>) {
         if self.closing && self.writes_active() == 0 && !self.drained {
@@ -27,13 +27,6 @@ impl OutboxState {
         }
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
-        }
-        if let LocalWriteKind::Attach { source: Some(source) } = &call.kind {
-            let id = self.next_copy;
-            self.next_copy += 1;
-            fx.push(Effect::Run(OutboxEffect::Copy { id, source: source.clone() }));
-            self.copying.insert(id, (reply, call, now));
-            return;
         }
         self.write_now(call, (reply, now), fx);
     }
@@ -67,20 +60,6 @@ impl OutboxState {
             _ => vec![op],
         };
         self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
-    }
-
-    pub(super) fn copy_done(&mut self, id: u64, fx: &mut Effects<Outbox>) {
-        if let Some((reply, mut call, now)) = self.copying.remove(&id) {
-            if matches!(call.kind, LocalWriteKind::Attach { .. }) { call.kind = LocalWriteKind::Attach { source: None }; }
-            self.write_now(call, (reply, now), fx);
-        }
-    }
-
-    pub(super) fn copy_failed(&mut self, id: u64, fx: &mut Effects<Outbox>) {
-        if let Some((reply, ..)) = self.copying.remove(&id) {
-            Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage("file".into()))));
-        }
-        self.maybe_drained(fx);
     }
 
     pub(super) fn expire(&mut self, model: String, row: String, due: Time, fx: &mut Effects<Outbox>) {

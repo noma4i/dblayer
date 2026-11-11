@@ -105,6 +105,26 @@ fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, CoreError> {
 
 
 impl Store {
+    pub(crate) fn failed_transfer(&self, row: &super::restore::RestoreFailedRow, id: u64) -> Result<Option<StoredTransfer>, CoreError> {
+        let columns: serde_json::Value = serde_json::from_str(&row.columns).map_err(|error| CoreError::Internal(error.to_string()))?;
+        let (Some(model), Some(row_id), Some(action)) = (columns.get("model").and_then(|value| value.as_str()), columns.get("row_id").and_then(|value| value.as_str()), columns.get("action").and_then(|value| value.as_str())) else { return Ok(None) };
+        let number = |name: &str| columns.get(name).and_then(|value| value.as_u64());
+        let text = |name: &str| columns.get(name).and_then(|value| value.as_str()).map(str::to_string);
+        let holder = row.transfer_id();
+        let source = text("source").zip(number("total").and_then(|total| u32::try_from(total).ok())).map(|(path, parts)| Source { path, parts });
+        let file_present = holder.map(|id| self.file_present(id, Location::Directory)).transpose()?.unwrap_or(false);
+        let mutation = NewOp { model: model.into(), row_id: row_id.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: text("mutation_path").unwrap_or_default(), body: text("mutation_body").unwrap_or_default(), effects: IntentEffects::default(), created_at: 0, expires_after: None };
+        Ok(Some(StoredTransfer {
+            transfer_id: id, key: transfer_key(model, row_id, action), seq: number("seq").unwrap_or(id), source, awaiting_source: false,
+            batch: number("batch"), fields: Default::default(), upload_id: text("upload_id"), confirmed_parts: 0, attempts: 0,
+            etags: Vec::new(), completed: false, signed_id: None, failed: None, aborted: false, op_id: number("op_id"), copying: false,
+            file_present, created_at: Time(number("created_at").unwrap_or(0)), place: Location::Directory, size: number("size").unwrap_or(0),
+            sha256: text("sha256").unwrap_or_default(), cycle_id: number("cycle_id").unwrap_or(1).max(1), has_intent: false, has_operation: false,
+            mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, restore_failed: Some(row.reason.clone()),
+            restore_element: Some((row.key.clone(), holder)), pending_step: None, saved_answer: None,
+        }))
+    }
+
     fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, CoreError> {
         let file_id = crate::owners::write::transfer::file_id(transfer_id);
         match place {
@@ -171,6 +191,7 @@ impl Store {
             },
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
             restore_failed: None,
+            restore_element: None,
         })
     }
 

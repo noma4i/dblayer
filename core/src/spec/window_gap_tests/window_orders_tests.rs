@@ -70,7 +70,7 @@ pub(super) fn play(twin: &mut Twin, event: Ev) -> Vec<Effect> {
         Ev::Respond => twin.step(stray_answer()),
         Ev::Land if twin.stage() == Some(WindowStage::Landing) => twin.land(),
         Ev::Land => twin.step(stray_commit()),
-        Ev::Reset => twin.step(Input::ModelsReset { own_model: true }),
+        Ev::Reset => unreachable!(),
         Ev::Error => twin.step(Input::TransportError { request: 1, attempt: 1, failure: Failure::Network }),
     }
 }
@@ -248,37 +248,6 @@ fn win_orders_members_reader() {
     }
 }
 
-/// P-WIN-04: an answer of a request issued before a reset of its model never lands: whatever the order of the reset, the answer and the landing, the batch that stays carries the generation of the window.
-#[test]
-fn win_orders_reset_and_answer() {
-    let all = orders(&[Ev::Reset, Ev::Respond, Ev::Land], &[(Ev::Respond, Ev::Land)]);
-    assert_eq!(all.len(), 3);
-    for order in all {
-        let mut twin = loading_watched();
-        twin.call(1, Goal::First);
-        let mut seen = Seen { requests: 1, ..Seen::default() };
-        let mut issued = 0;
-        for event in order.iter().copied() {
-            let effects = match event {
-                Ev::Respond => {
-                    issued = twin.generation;
-                    play(&mut twin, event)
-                }
-                Ev::Land if issued != twin.generation && twin.stage() == Some(WindowStage::Landing) => {
-                    let request = twin.ref_landing();
-                    twin.step(Input::Rejected { request, reason: Reject::StaleGeneration })
-                }
-                _ => play(&mut twin, event),
-            };
-            seen.add(&effects);
-        }
-        settle(&mut twin, &mut seen);
-        assert_eq!(seen.requests, 2, "{order:?}: the answer of the old generation is asked again once");
-        assert!(twin.commit.contains(&format!("\"Moment\": {}", twin.generation)), "{order:?}: the batch that stays is based on the generation of the window: {}", twin.commit);
-        assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}");
-    }
-}
-
 /// P-WIN-07, P-WIN-27: the last `Interest-` cancels a request that is not accepted by the Store yet and never gives the leaver an outcome; a joined sibling keeps the request and no second request leaves.
 #[test]
 fn win_orders_cancel_before_landing() {
@@ -298,5 +267,37 @@ fn win_orders_cancel_before_landing() {
         settle(&mut twin, &mut seen);
         assert_eq!((outcomes_of(&twin, 2), twin.stage()), (vec![Result3::Loaded], Some(WindowStage::Idle)), "{order:?}");
         assert_eq!(seen.requests, 1 + usize::from(cancelled), "{order:?}: a second request left for the same page");
+    }
+}
+
+#[test]
+fn win_prop_start_triggers_one_request() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Trigger { Online, Preload, Watch, Load, Refresh }
+    use Trigger::*;
+    let orders = permutations(&[Online, Preload, Watch, Load, Refresh]);
+    assert_eq!(orders.len(), 120);
+    for order in orders {
+        let mut twin = Twin::before_online();
+        let mut seen = Seen::default();
+        for trigger in order.iter().copied() {
+            let effects = match trigger {
+                Online => twin.step(Input::Online(true)),
+                Preload => twin.step(Input::InterestPlus { id: PRELOAD }),
+                Watch => twin.watch(),
+                Load => twin.call(1, Goal::First),
+                Refresh => twin.step(Input::Load { id: 2, goal: Goal::First, force: true }),
+            };
+            seen.add(&effects);
+            assert!(seen.requests <= 1, "{order:?}: {trigger:?} started {} requests", seen.requests);
+        }
+        assert_eq!(seen.requests, 1, "{order:?}: initial request");
+        seen.add(&twin.respond(None));
+        seen.add(&twin.land());
+        assert_eq!(seen.requests, 1, "{order:?}: landing fresh data");
+        seen.add(&twin.step(Input::InterestPlus { id: 23 }));
+        seen.add(&twin.call(3, Goal::First));
+        seen.add(&twin.step(Input::Online(true)));
+        assert_eq!(seen.requests, 1, "{order:?}: fresh window started another request");
     }
 }

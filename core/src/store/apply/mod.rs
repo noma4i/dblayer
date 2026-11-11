@@ -88,6 +88,7 @@ impl Store {
 fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
+    let journal = store.context.changed.prepare_commit(&outcome);
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
     } else if let Some(revision) = outcome.revision {
@@ -96,6 +97,7 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     } else {
         transaction.commit()?;
     }
+    if let Some(journal) = journal { journal.finish(); }
     let acks = outcome.unknown_operation_acks;
     Ok((outcome, acks))
 }

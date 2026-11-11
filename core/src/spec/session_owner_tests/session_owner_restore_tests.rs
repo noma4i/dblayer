@@ -276,34 +276,6 @@ fn sess_restored_other() {
 }
 
 #[test]
-fn sess_interest() {
-    let mut twin = Twin::new();
-    let effects = twin.feed(Input::InterestPlus(5));
-    assert_eq!(effects, vec![RefEffect::RetryState { stream: 5, attempts: 0, phase: RetryPhase::Idle }]);
-    twin.feed_all([call(1), committed()]);
-    let input = twin.http_error(true, false);
-    let effects = twin.feed(input);
-    assert!(effects.contains(&RefEffect::RetryState { stream: 5, attempts: 1, phase: RetryPhase::WaitingRetry }), "{effects:?}");
-}
-
-#[test]
-fn sess_interest_minus() {
-    let mut twin = Twin::new();
-    twin.feed_all([Input::InterestPlus(5), Input::InterestPlus(6), Input::InterestMinus(5)]);
-    twin.feed_all([call(1), committed()]);
-    assert!(twin.history.iter().rev().take(1).all(|effect| !matches!(effect, RefEffect::RetryState { stream: 5, .. })));
-    assert_eq!(twin.reference.subscribers.len(), 1);
-}
-
-#[test]
-fn sess_interest_minus_unknown() {
-    let mut twin = Twin::new();
-    twin.feed(Input::InterestPlus(5));
-    assert!(twin.feed(Input::InterestMinus(9)).is_empty());
-    assert_eq!(twin.reference.subscribers.len(), 1);
-}
-
-#[test]
 fn sess_foreground_other() {
     for mut twin in [Twin::new(), persisting(), calling(), landing(1), held(), blocked_storage(), generating()] {
         assert!(twin.feed(Input::Foreground).is_empty());
@@ -567,9 +539,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             24 => Input::Foreground,
             25 => Input::Cancel { req_id: 1_000 + next(&mut s) % 3 },
             26 => Input::SecretRead { op, read: [Secret::Present(CRED), Secret::Missing, Secret::Error("x".into())][(next(&mut s) % 3) as usize].clone() },
-            27 => Input::InterestPlus(next(&mut s) % 3),
-            28 => Input::InterestMinus(next(&mut s) % 3),
-            29 => Input::AnswerTooLarge { request_id: request + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, attempt_id: attempt + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, limit: 64, sequenced: next(&mut s).is_multiple_of(2) },
+            29 => Input::AnswerTooLarge { request_id: request + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, attempt_id: attempt + if next(&mut s).is_multiple_of(4) { 50 } else { 0 }, limit: 64 },
             _ => Input::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, security: None, body: None },
         };
         let effects = twin.feed(input.clone());

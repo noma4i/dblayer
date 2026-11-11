@@ -37,6 +37,8 @@ impl FeedState {
             held: Vec::new(),
             pending: Vec::new(),
             landing: Vec::new(),
+            gap_landing: BTreeMap::new(),
+            gap_retry: Vec::new(),
             active: None,
             opening: None,
             next_connection: 1,
@@ -86,7 +88,6 @@ impl FeedState {
         [&self.active, &self.opening].into_iter().flatten().find(|connection| connection.id == id).map(|connection| connection.protocol)
     }
 
-    pub(super) fn models(&self) -> Vec<String> { self.want.keys().cloned().collect() }
 
     pub(super) fn channel_slot(&mut self, channel: &Channel) -> u64 {
         let next = self.slots.len() as u64;
@@ -194,17 +195,6 @@ impl FeedState {
         FeedEvent { model: event.model, payload: event.payload, reread: event.reread, basis, position, refused: event.refused }
     }
 
-    /// The positions of `count` lost events of `model`.
-    pub(super) fn lose(&mut self, model: &str, count: u64, fx: &mut Vec<Fx>) {
-        let at = self.position(model);
-        self.position.insert(model.to_string(), at + count);
-        let ledger = self.ledger.entry(model.to_string()).or_insert_with(Ledger::new);
-        for position in at + 1..=at + count {
-            ledger.slots.insert(position, Slot::Lost);
-        }
-        ledger.emit(model, fx);
-    }
-
     pub(super) fn mark_lost(&mut self, events: &[FeedEvent], fx: &mut Vec<Fx>) -> Vec<String> {
         let mut models: Vec<String> = Vec::new();
         for event in events {
@@ -229,18 +219,18 @@ impl FeedState {
         }
     }
 
-    pub(super) fn stale_gap(&self, models: &[(String, u64)], fx: &mut Vec<Fx>) {
+    pub(super) fn stale_gap(&mut self, models: &[(String, u64)], fx: &mut Vec<Fx>) {
         for (model, gap_seq) in models {
             let cause = if self.online_seq > *gap_seq { StaleCause::Gap { online_seq: self.online_seq } } else { StaleCause::Lost };
             fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause });
         }
     }
 
-    /// `held` -> `Lost` (all, or only the models in `only`): the models whose windows turn `Stale`.
-    pub(super) fn lose_held(&mut self, only: Option<&[String]>, fx: &mut Vec<Fx>) -> Vec<String> {
-        let (lost, kept): (Vec<FeedEvent>, Vec<FeedEvent>) = std::mem::take(&mut self.held).into_iter().partition(|event| only.is_none_or(|only| only.contains(&event.model)));
-        self.held = kept;
-        self.mark_lost(&lost, fx)
+    pub(super) fn lose_held(&mut self, fx: &mut Vec<Fx>) -> Vec<String> {
+        let lost = std::mem::take(&mut self.held);
+        let models = self.mark_lost(&lost, fx);
+        fx.push(Fx::Gap(models.clone()));
+        models
     }
 
     pub(super) fn commit(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {
@@ -248,6 +238,16 @@ impl FeedState {
         self.next_batch += 1;
         self.landing.push((batch, events.clone()));
         fx.push(Fx::Commit { batch, events });
+    }
+
+    pub(super) fn commit_gap(&mut self, models: Vec<String>, fx: &mut Vec<Fx>) {
+        if models.is_empty() { return; }
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        let basis = models.iter().map(|model| (model.clone(), self.generation_of(model))).collect();
+        self.landing.push((batch, Vec::new()));
+        self.gap_landing.insert(batch, models.clone());
+        fx.push(Fx::CommitGap { batch, models, basis });
     }
 
     /// One batch per equal basis, in the order the bases first appear.
@@ -288,6 +288,18 @@ impl FeedState {
     pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, fx: &mut Vec<Fx>) {
         let Some(at) = self.landing.iter().position(|(id, _)| *id == batch) else { return };
         let events = self.landing.remove(at).1;
+        if let Some(models) = self.gap_landing.remove(&batch) {
+            match rejected {
+                Some(RejectReason::StaleGeneration { generations, .. }) => {
+                    self.generation.extend(generations);
+                    self.commit_gap(models, fx);
+                }
+                Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
+                Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
+                _ => {},
+            }
+            return;
+        }
         match rejected {
             None => self.land(events, fx),
             Some(RejectReason::StaleGeneration { models, .. }) => {
@@ -406,13 +418,6 @@ impl FeedState {
         self.seat(mine, fx);
     }
 
-    /// Every model of `want` has a break of unknown length: `ModelGap`, `Stale` of its windows.
-    pub(super) fn gap_all(&self, fx: &mut Vec<Fx>) {
-        for model in self.models() {
-            fx.push(Fx::ModelGap { model });
-        }
-        Self::stale_all(&self.models(), fx);
-    }
 
     /// `Event` of the current connection in `Live`: the event waits for the debounce of its model or lands at once.
     pub(super) fn seat(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {

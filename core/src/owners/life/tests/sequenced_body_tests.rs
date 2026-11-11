@@ -77,7 +77,7 @@ fn at_number(sent: &[(i64, String, Value)], number: i64) -> Vec<&(i64, String, V
 
 async fn signed_in() -> (World, Arc<Store>, Arc<crate::owners::life::Life>, Arc<Client>) {
     let world = World::new();
-    let db = Store::open_models(None, Vec::new(), None).map(Arc::new).unwrap();
+    let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     (world, db, life, client)
@@ -132,7 +132,7 @@ async fn sess_prop_sequenced_body_one_per_pair_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     {
-        let db = Store::open_models(Some(&path), Vec::new(), None).map(Arc::new).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -150,7 +150,7 @@ async fn sess_prop_sequenced_body_one_per_pair_restart() {
     let before = sequenced(&world);
     assert_eq!(at_number(&before, 2).len(), 1, "only the hash-only pair reached the server: {before:?}");
     world.server.on_request(|| {});
-    let db = Store::open_models(Some(&path), Vec::new(), None).map(Arc::new).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     let (_client, life) = world.open(&db).await;
     crate::test_wait::settled(&life, "the stored full pair was not sent again", || pending_of(&db).is_none()).await;
     let sent = sequenced(&world);

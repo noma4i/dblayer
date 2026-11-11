@@ -20,11 +20,10 @@ fn a_quarantined_payload_is_kept_as_value_rows() {
 #[test]
 fn the_reset_intent_is_columns_and_the_fingerprints_are_hashes() {
     let (store, _) = booted_store();
-    super::reset::write_intent(&store.lock().connection, "cache_only", &["messages".to_string(), "items".to_string()], 5).unwrap();
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM reset_intent WHERE mode = 'cache_only' AND started_at = 5"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM reset_intent_model WHERE (pos = 0 AND model = 'messages') OR (pos = 1 AND model = 'items')"), 2);
+    super::reset::write_intent(&store.lock().connection, "mismatched", 5).unwrap();
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM reset_intent WHERE mode = 'mismatched' AND started_at = 5"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'reset_intent'"), 0);
-    assert_eq!(store.reset_intent().unwrap(), Some("cache_only".to_string()));
+    assert_eq!(store.reset_intent().unwrap(), Some("mismatched".to_string()));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%'"), 2);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%' AND length(value) != 64"), 0);
 }

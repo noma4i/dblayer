@@ -260,14 +260,14 @@ fn created_window_membership_uses_the_committed_window() {
 
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
     models[0].relations.push(relation("created", true, false));
-    let db = Store::open_models(None, models, None).unwrap();
+    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let planned = db.plan_create("Moment", json!({"text":"created"}).as_object().unwrap().clone(), Default::default()).unwrap();
     let key = WindowKey::relation("Moment", "created", &Default::default());
     let commit = |author, ops| {
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     };
-    commit(BatchAuthor::Window, vec![StoreOp::Window {
+    commit(BatchAuthor::Window, vec![StoreOp::Window { landed_at: 0,
         key: key.name, model: key.model, page: 1, replace_all: false, cursor: None,
         roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
     }]);
@@ -299,14 +299,14 @@ fn data_matches_window() {
     selected.scalar_types.insert("minimum".into(), ScalarKind::Int);
     selected.row_rules.push(RowRule { field: "score".into(), test: RowTest::GreaterThan { parameter: "minimum".into() } });
     models[0].relations.push(selected);
-    let db = Store::open_models(None, models, None).unwrap();
+    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let commit = |author, ops| {
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     };
     for minimum in [5, 10] {
         let key = WindowKey::relation("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap());
-        commit(BatchAuthor::Window, vec![StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+        commit(BatchAuthor::Window, vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
     }
     let ids = |minimum| {
         let query = db.remote_relation_query("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap()).unwrap().unwrap();

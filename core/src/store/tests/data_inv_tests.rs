@@ -12,7 +12,7 @@ use crate::store::fixtures::{all_specs, moments_spec, put, row};
 use crate::store::Store;
 use crate::value::SortDirection;
 
-pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None).unwrap()) }
+pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()) }
 
 pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
     let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
@@ -33,10 +33,11 @@ fn dlv_deferred_alias_after_log_evicted() {
         swaps.push(StoreOp::Swap { model: "moments".into(), temp, real });
     }
     write(&db, BatchAuthor::Outbox, initial, vec![]);
-    let baseline = db.read_view(&Query::new("moments"), false, 0, 0, None, None).unwrap().0;
+    let baseline_query = Query::new("moments");
+    let baseline = db.read_view(&baseline_query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&baseline_query), (0, 0)).unwrap().0;
     write(&db, BatchAuthor::Outbox, landed, swaps);
     for query in [Query::new("moments").filtered(Where::equal("id", json!("real-0"))), Query::new("moments")] {
-        let (_, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None).unwrap();
+        let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
         assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "real-0")), "the view must contain the real row");
         assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
     }
@@ -46,9 +47,10 @@ fn dlv_deferred_alias_after_log_evicted() {
 fn dlv_swap_same_id_other_model() {
     let db = open();
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"temp-1", "userId":"u1"}).to_string()), ("users".into(), json!({"id":"temp-1"}).to_string())], vec![]);
-    let baseline = db.read_view(&Query::new("users"), false, 0, 0, None, None).unwrap().0;
+    let query = Query::new("users");
+    let baseline = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap().0;
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }]);
-    let (_, view, replaced) = db.read_view(&Query::new("users"), false, baseline, baseline, None, None).unwrap();
+    let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
     assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "temp-1")), "the other model keeps its row");
     assert!(replaced.is_empty(), "another model's alias must not be returned: {replaced:?}");
 }
@@ -174,6 +176,19 @@ fn store_retry_preserves_transfer_outcome() {
 }
 
 #[test]
+fn store_transfer_outcome_keeps_the_first_result() {
+    use crate::owners::write::outbox::OutboxOutcome;
+    let db = open();
+    let first = OutboxOutcome::Failed { error: "refused".into() };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: first.clone() }]);
+    let before: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: OutboxOutcome::Discarded }]);
+    let after: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(after, before);
+    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first)].into()));
+}
+
+#[test]
 fn inv_sync_02_queries_filter_by_sync_state_and_count_matches_rows() {
     let db = open();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
@@ -215,24 +230,48 @@ pub(super) fn set_typing(db: &Store, id: &str, on: bool) -> crate::store::batch_
 pub(super) fn typing(db: &Store, id: &str) -> Option<Value> { db.read(&["moments"], |reader| Ok(reader.point("moments", id)?.and_then(|row| row.get("typing").cloned()))).unwrap() }
 
 #[test]
+fn store_relevant_view_keeps_overlay_position_and_handles_eviction() {
+    let db = Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    put(&db, "moments", json!({"id":"m1", "userId":"u1"}));
+    let query = Query::new("moments");
+    let view = crate::store::fixtures::list_view(&query);
+    let baseline = db.revision_seq().unwrap();
+    set_typing(&db, "m1", true);
+    let (seen, position, relevant, read, _) = db.read_view(&query, false, baseline, baseline, None, None, &view, (baseline, 0)).unwrap();
+    assert_eq!((seen, position, relevant), (baseline, 1, Some((baseline, 1))));
+    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(_, _, row)| row.get("typing") == Some(&json!(true)))));
+    set_typing(&db, "m1", false);
+    let held = crate::store::HeldVersion { from: (baseline, 1), limit: 256 };
+    let (seen, position, relevant, _, _) = db.read_view(&query, false, baseline, baseline, None, Some(held), &view, (baseline, 1)).unwrap();
+    assert_eq!((seen, position, relevant), (baseline, 2, Some((baseline, 2))));
+
+    let users = Query::new("users");
+    let users_view = crate::store::fixtures::list_view(&users);
+    let batch = (0..8193).map(|index| ("moments".into(), json!({"id":format!("m{index}"), "userId":"u1"}).to_string())).collect();
+    write(&db, BatchAuthor::Outbox, batch, vec![]);
+    let (seen, position, relevant, _, _) = db.read_view(&users, false, 0, baseline, None, None, &users_view, (baseline, 0)).unwrap();
+    assert_eq!(relevant, Some((seen, position)), "an evicted interval without a retained match uses the snapshot version");
+}
+
+#[test]
 fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
     {
-        let db = Store::open_models(Some(&path), ephemeral_specs(), None).map(Arc::new).unwrap();
+        let db = Store::open_models(Some(&path), ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
         put(&db, "presence", json!({"id": "p1"}));
         set_typing(&db, "m1", true);
         assert_eq!(typing(&db, "m1"), Some(json!(true)));
     }
-    let db = Store::open_models(Some(&path), ephemeral_specs(), None).map(Arc::new).unwrap();
+    let db = Store::open_models(Some(&path), ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     assert_eq!(typing(&db, "m1"), Some(json!(false)), "the value is back to the default");
     assert!(db.read(&["presence"], |reader| reader.point("presence", "p1")).unwrap().is_none(), "the memory row is gone");
 }
 
 #[test]
 fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     let before = db.revision_seq().unwrap();
     let written = set_typing(&db, "m1", true);
@@ -242,7 +281,7 @@ fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_databa
 
 #[test]
 fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revision_stays() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     let first = set_typing(&db, "m1", true);
     let second = set_typing(&db, "m1", false);
@@ -255,7 +294,7 @@ fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revi
 
 #[test]
 fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let written = set_typing(&db, "m9", true);
     assert_eq!(typing(&db, "m9"), None, "no row, nothing to show");
     put(&db, "moments", json!({"id": "m9", "userId": "u1"}));
@@ -268,7 +307,7 @@ fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets
 
 #[test]
 fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     set_typing(&db, "m1", true);
     let delete = json!({"op": "delete", "id": "m1"}).to_string();
@@ -280,10 +319,10 @@ fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
 
 #[test]
 fn inv_ephemeral_06_reset_forgets_every_value() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     set_typing(&db, "m1", true);
-    db.erase_models(db.generation().next(), &["moments".to_string()]).unwrap();
+    db.erase_account(db.generation().next(), false).unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     assert_eq!(typing(&db, "m1"), Some(json!(false)));
 }
@@ -300,7 +339,7 @@ fn inv_ephemeral_07_ephemeral_fields_cannot_be_queried() {
 
 #[test]
 fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for index in 0..5000 { set_typing(&db, &format!("ghost{index}"), true); }
     let held = db.overlays.get(db.revision_seq().unwrap()).unwrap().values.len();
     assert!(held <= 1024, "{held} values for rows that never arrived stay in memory");
@@ -324,7 +363,7 @@ pub(super) fn server_row(path: &str, db: &Store, row: Value) {
         "event" => write(db, BatchAuthor::Feed, vec![("moments".into(), json!({"op": "upsert", "id": "m1", "row": row}).to_string())], Vec::new()),
         _ => {
             let key = crate::owners::read::windows::WindowKey::nodes("moments", &["m1"]);
-            let page = StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: row.to_string() }], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+            let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: row.to_string() }], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
             write(db, BatchAuthor::Window, Vec::new(), vec![page]);
         }
     }
@@ -386,7 +425,7 @@ fn store_alias_written_with_swap() {
 #[test]
 fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_threshold() {
     let directory = tempfile::tempdir().unwrap();
-    let db = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None).map(Arc::new).unwrap();
+    let db = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     for size in [1usize, 256 * 1024, 256 * 1024 + 1, 600_000] {
         let bytes: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
@@ -411,7 +450,7 @@ fn paged_moments() -> Arc<Store> {
     });
     moments.relations.push(mine);
     let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
-    Arc::new(Store::open_models(None, specs, None).unwrap())
+    Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &row(json!({"userId": user}))) }
@@ -419,7 +458,7 @@ fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &row(j
 fn mine_page(db: &Store, user: &str, ids: &[&str], cursor: Option<&str>, replace_all: bool) -> StoreOp {
     let key = mine(user);
     let roots = ids.iter().map(|id| crate::owners::store::RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": user, "text": id}).to_string() }).collect();
-    StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+    StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn members(db: &Store, user: &str) -> Vec<String> {
@@ -484,7 +523,7 @@ fn inv_id_08_one_matching_candidate_is_replaced_by_the_row_of_the_event_and_seve
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.correlate = vec!["userId".into(), "text".into()];
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
-    let db = Arc::new(Store::open_models(None, specs, None).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let gone = |temp: &str| db.read(&["moments"], |reader| reader.point("moments", temp)).unwrap().is_none();
     let single = sent_create(&db, 1, "one");
     event_row(&db, "m1", "one");
@@ -533,14 +572,14 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
     let path = directory.path().join("db.sqlite");
     let kept = crate::identity::RowId::generate_temp(None).to_string();
     {
-        let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
+        let db = Arc::new(Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "moments", json!({"id": "temp-orphan", "userId": "u1", "text": "orphan"}));
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
         let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     }
-    let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
+    let db = Arc::new(Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();
     assert!(!present("temp-orphan"), "a temp row without an operation goes");
     assert!(present("m1") && present(&kept), "the server row and the row of a queued create stay");
@@ -554,7 +593,7 @@ fn candidates_of_one_event_row(unrelated: u64) -> usize {
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.correlate = vec!["userId".into(), "text".into()];
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
-    let db = Arc::new(Store::open_models(None, specs, None).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for op_id in 0..unrelated {
         let intent = StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 100 + op_id, model: "users".into(), row_id: format!("u{op_id}"), action: "edit".into(), payload: "{}".into(), effects: IntentEffects::default(), origin: crate::owners::store::IntentOrigin::Api };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent]);

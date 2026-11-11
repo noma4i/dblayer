@@ -1,6 +1,6 @@
 //! Owner `Deliveries`: a dictionary of `Delivery` machines by stream id (one machine per stream).
 //! Only this owner hands values to the platform. A table row applies to the machine of the stream the input names;
-//! `Committed`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to every machine.
+//! `Committed`, `EpochStarted`, `EpochEnded`, `Closing` apply to every machine.
 
 mod deliveries_flow;
 mod deliveries_open;
@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::owners::read::diff::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
 use crate::identity::RowId;
-use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ReplyId, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, ScopedChannel};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
@@ -46,7 +46,6 @@ pub enum Kind {
     CableCloses,
     Changes,
     Blob,
-    RetryStatus,
 }
 
 impl Kind {
@@ -75,8 +74,15 @@ pub(super) enum Whole {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadMode {
-    Snapshot,
+    Snapshot { from_revision: i64, from_position: u64 },
     Changes { from_revision: i64, from_position: u64, limit: usize },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadVersion {
+    pub revision: i64,
+    pub position: u64,
+    pub relevant: Option<(i64, u64)>,
 }
 
 type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>, Option<crate::ffi::WireProcessing>), String>;
@@ -86,6 +92,7 @@ pub struct View {
     pub kind: Kind,
     pub model: String,
     pub tables: Vec<String>,
+    pub deferred_rows: Vec<(String, String)>,
     pub local: bool,
     /// The stream reads a window: its relation is loaded from the server.
     pub remote: bool,
@@ -173,12 +180,6 @@ impl BlobStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RetryStatus {
-    pub attempts: u32,
-    pub phase: String,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Delta {
     pub base: i64,
@@ -218,7 +219,6 @@ pub enum Value {
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, blob: BlobStatus },
-    Retry(RetryStatus),
     Ended(EndCause),
 }
 
@@ -245,8 +245,7 @@ pub enum StreamEffect {
     CloseSink,
     Cancelled { reply: ReplyId },
     ReaderClaimed { reply: ReplyId, claimed: bool },
-    /// `key` is the transfer key of a `Blob` stream, `None` for the retry status.
-    StatusInterest { plus: bool, key: Option<String> },
+    StatusInterest { plus: bool, key: String },
 }
 
 enum Emit {
@@ -283,7 +282,7 @@ pub enum DeliveryInput {
     /// `deferred` is set for a stream of rows on temporary ids that has no server id yet: its window opens at the swap.
     Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64, deferred: Option<Deferred> },
     Committed(Committed),
-    ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
+    ReadDone { stream: StreamId, read_id: u64, revision: i64, position: u64, relevant: Option<(i64, u64)>, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
     TaskFailed { id: EffectId },
     WindowState { stream: StreamId, state: WindowState },
@@ -296,7 +295,6 @@ pub enum DeliveryInput {
     /// The server refused the subscription of the model: the stream of events ends with `Invalid`.
     ModelInvalid { stream: StreamId },
     TransferStatus { stream: StreamId, blob: BlobStatus, revision: i64 },
-    RetryState { stream: StreamId, retry: RetryStatus },
     /// `reader` is the number `claim_reader` gave. The first pull of an unclaimed stream takes it, a pull of another reader answers `Invalid`.
     Pull { stream: StreamId, outcome: OutcomeId, reader: u64 },
     PullCancelled { stream: StreamId, outcome: OutcomeId },
@@ -309,7 +307,6 @@ pub enum DeliveryInput {
     SinkClosed { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
-    ModelsReset(ModelsReset),
     Closing,
     Tick(Time),
 }
@@ -338,11 +335,12 @@ struct Delivery {
     stage: DeliveryStage,
     read_revision: i64,
     read_id: u64,
+    read_inflight: bool,
     /// The revision of the last read that finished: the rows of the stream are current up to it, `revision` is the revision of the last value of rows.
     read_seen: i64,
     read_position: u64,
-    reading_position: u64,
     revision: i64,
+    value_position: u64,
     acknowledged: Option<i64>,
     resync_pending: bool,
     resync_failed: bool,
@@ -365,7 +363,6 @@ struct Delivery {
     transfer: Option<BlobStatus>,
     /// What the row of the transfer showed at the last read of a `Blob` stream.
     upload_row: Option<UploadRowRead>,
-    retry: Option<RetryStatus>,
     status_revision: i64,
     /// A read of the row of a `Blob` stream is in flight: a status that arrives meanwhile waits for it, so a value never mixes revisions.
     upload_inflight: bool,
@@ -382,7 +379,7 @@ struct Delivery {
     /// A read stream of a live model holds a `Want+` of the Feed.
     wants: bool,
     /// The first read of a watched window waits for the first `WindowState`: the first value holds the phase of the window.
-    pending_read: Option<(u64, i64, Whole)>,
+    pending_read: Option<(u64, ReadVersion, Whole)>,
     /// The node read waits for the swap of the subject.
     deferred: Option<Deferred>,
 }
@@ -393,6 +390,16 @@ fn entity_row(view: &View) -> Option<(String, &str)> {
         Kind::Blob => crate::store::split_transfer_key(&view.subject).map(|(model, id, _)| (crate::store::ddl::table_name(model), id)),
         _ => None,
     }
+}
+
+pub(crate) fn touches(view: &View, models: &Models, tables: &[String], rows: &crate::owners::contract::ChangedRows) -> bool {
+    if rows.as_ref().is_some_and(|rows| view.deferred_rows.iter().any(|row| rows.contains(row))) { return true; }
+    if *models == Models::All { return false; }
+    let own = entity_row(view);
+    view.tables.iter().filter(|table| tables.contains(table)).any(|table| match &own {
+        Some((own_table, id)) if table == own_table => rows.as_ref().is_none_or(|rows| rows.contains(&(table.clone(), (*id).to_string()))),
+        _ => true,
+    })
 }
 
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
@@ -572,8 +579,10 @@ impl StateOwner for Deliveries {
                     return out;
                 }
                 state.revision = state.revision.max(revision);
+                let mut view = view;
+                view.deferred_rows = deferred.as_ref().filter(|_| view.kind.reads_rows()).map_or_else(Vec::new, |deferred| deferred.temps.iter().map(|(model, id)| (crate::store::ddl::table_name(model), id.clone())).collect());
                 let mut fx = Vec::new();
-                let machine = if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
+                let machine = if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob)) {
                     Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
                 } else if !valid {
                     Delivery::ended(view, epoch, EndCause::Invalid { detail: "the stream request is invalid".into() }, &mut fx)
@@ -587,7 +596,7 @@ impl StateOwner for Deliveries {
                 state.streams.insert(stream, machine);
                 state.index(stream);
             }
-            DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
+            DeliveryInput::ReadDone { stream, read_id, revision, position, relevant, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, ReadVersion { revision, position, relevant }, data, fx)),
             DeliveryInput::TaskFailed { id } => {
                 let ((stream, read_id), revision) = (task_read(id), state.revision);
                 on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, "the read task failed".into(), fx));
@@ -606,7 +615,6 @@ impl StateOwner for Deliveries {
             DeliveryInput::ModelGap { stream } => on(state, stream, &mut out, |machine, fx| machine.model_gap(fx)),
             DeliveryInput::ModelInvalid { stream } => on(state, stream, &mut out, |machine, fx| machine.model_invalid(fx)),
             DeliveryInput::TransferStatus { stream, blob, revision } => on(state, stream, &mut out, |machine, fx| machine.status(blob, revision, fx)),
-            DeliveryInput::RetryState { stream, retry } => on(state, stream, &mut out, |machine, fx| machine.retry_state(retry, fx)),
             DeliveryInput::Cancel { stream, reply } => {
                 if state.streams.contains_key(&stream) {
                     on(state, stream, &mut out, |machine, fx| machine.cancel(reply, fx));
@@ -637,6 +645,7 @@ impl StateOwner for Deliveries {
                 state.revision = state.revision.max(committed.revision);
                 let woken = state.swap_woken(&committed);
                 for stream in state.affected(&committed).into_iter().chain(woken.iter().copied()).collect::<BTreeSet<_>>() {
+                    if !state.streams.get(&stream).is_some_and(|machine| touches(&machine.view, &committed.models, &committed.tables, &committed.rows)) { continue; }
                     state.examined += 1;
                     on(state, stream, &mut out, |machine, fx| machine.committed(&committed, fx));
                 }
@@ -645,7 +654,6 @@ impl StateOwner for Deliveries {
                     on(state, stream, &mut out, |machine, fx| machine.changed(&committed, fx));
                 }
             }
-            DeliveryInput::ModelsReset(reset) => every(state, &mut out, |machine, fx| machine.models_reset(&reset, fx)),
             DeliveryInput::EpochEnded(ended) => every(state, &mut out, |machine, fx| machine.epoch_ended(&ended, fx)),
             DeliveryInput::EpochStarted(started) => state.epoch = started.epoch,
             DeliveryInput::Closing => {

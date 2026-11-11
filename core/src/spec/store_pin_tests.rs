@@ -51,8 +51,8 @@ fn store_pin_deferred_while_writing() {
     assert_eq!(limit(&step(&mut state, batch(2))), Some(Some(5)));
 
     let mut state = self::state(4);
-    let effects = step(&mut state, StoreInput::ClearModels { epoch: 0, generation_new: 1, models: ["Item".to_string()].into_iter().collect(), erase_id: 1 });
-    let io_id = effects.iter().find_map(|effect| match effect { StoreEffect::EraseModels { io_id, .. } => Some(*io_id), _ => None }).unwrap();
+    let effects = step(&mut state, StoreInput::ClearAccount { epoch_old: 0, cause: Cause::IdentityChanged, generation_new: 1, erase_id: 1 });
+    let io_id = effects.iter().find_map(|effect| match effect { StoreEffect::EraseAccount { io_id, .. } => Some(*io_id), _ => None }).unwrap();
     assert!(pin(&mut state, 0, 2).is_empty());
     let effects = step(&mut state, StoreInput::Erased { io_id, result: Ok(Done { revision: 5 }) });
     assert!(effects.contains(&StoreEffect::Pinned { epoch: 0, request_id: 2, base_revision: 5 }));
@@ -92,9 +92,8 @@ fn store_prop_tombstone_flight() {
     use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{RowValue, StoreOp};
 
-    let db = Store::open_models(None, crate::store::fixtures::all_specs(), None).map(std::sync::Arc::new).unwrap();
     let clock = Arc::new(crate::runtime::ManualClock::new(Duration::from_secs(1)));
-    db.set_clock(clock.clone());
+    let db = Store::open_models(None, crate::store::fixtures::all_specs(), None, clock.clone()).map(std::sync::Arc::new).unwrap();
     let row = |id: &str| RowValue { row_id: id.into(), values: format!(r#"{{"id":"{id}","text":"value"}}"#) };
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m1")] }], None).unwrap();
     let base = u64::try_from(db.revision_seq().unwrap()).unwrap();
@@ -111,7 +110,7 @@ fn store_prop_tombstone_flight() {
     db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "cover".into(), bytes: b"other".to_vec(), name: "other.txt".into(), mime: "text/plain".into() }], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
     let key = WindowKey::nodes("moments", &["m1"]);
-    db.write_queue_ops_with_pin(&[StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
+    db.write_queue_ops_with_pin(&[StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_none());
     step(&mut owner, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(WriteDone { revision: u64::try_from(db.revision_seq().unwrap()).unwrap(), ..WriteDone::default() }) });
     step(&mut owner, StoreInput::Unpin { request_id: 7 });

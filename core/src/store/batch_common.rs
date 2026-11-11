@@ -7,6 +7,7 @@ use super::StoreError;
 
 pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize, files: &[PreparedFile], results: &mut Vec<CommitResult>, response: bool) -> Result<bool, StoreError> {
     match op {
+        StoreOp::JournalSessionEnd => super::reset::write_intent_in_transaction(writer.connection, "session_end", writer.now)?,
         StoreOp::Rows { model, rows } | StoreOp::LocalRows { model, rows } => {
             let local = matches!(op, StoreOp::LocalRows { .. });
             let ids: Vec<String> = rows.iter().map(|row| row.row_id.clone()).collect();
@@ -17,6 +18,9 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
         StoreOp::RemoveRows { model, ids } => {
             for id in ids { results.push(writer.remove(model, id)?); }
+        }
+        StoreOp::RemoveServerRows { model, ids } => {
+            for id in ids { results.push(writer.remove_server(model, id)?); }
         }
         StoreOp::ExpireRow { model, row_id, write_revision } => {
             let expected = i64::try_from(*write_revision).ok();
@@ -94,14 +98,14 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             writer.connection.execute(include_str!("sql/upload_ops/retire_transfer_outcome.sql"), rusqlite::params![id, cycle])?;
         }
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),
-        StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
+        StoreOp::Window { landed_at, key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-            let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision };
+            let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision, landed_at: *landed_at };
             results.push(super::window_write::land(writer, &page)?);
         }
-        StoreOp::WindowMarker { key, model, marker } => {
+        StoreOp::WindowMarker { landed_at, key, model, marker } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-            results.push(super::window_write::mark(writer, &key, marker)?);
+            results.push(super::window_write::mark(writer, &key, marker, *landed_at)?);
         }
         StoreOp::AttachFile { .. } | StoreOp::AttachCopied { .. } => {
             let record = files.iter().find(|file| file.index == index).ok_or_else(|| StoreError::Constraint("prepared file is missing".into()))?;

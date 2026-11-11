@@ -37,7 +37,7 @@ pub fn submitting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
         }
         Input::Discard { reply_to, .. } => { row(e, "out_submitting_discard"); in_flight(op, *reply_to, e); }
         Input::Retry { reply_to, .. } => { row(e, "out_submitting_retry"); let _ = reply_to; op.retry_waiter += 1; }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } => row(e, "out_submitting_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } => row(e, "out_submitting_other"),
         _ => foreign(e),
     }
 }
@@ -58,7 +58,7 @@ pub fn queued_drain(s: &mut State, op: &mut Op, e: &mut Vec<Effect>) {
     let free = row_free(s, op);
     let slot = slot_free(s);
     let exp = expired(s, op);
-    if online && free && slot && !exp && op.attempts == 1 && !op.cycle_sent {
+    if online && free && slot && !exp && op.attempts >= 1 && !op.cycle_sent {
         row(e, "out_queued_send");
         send_mutate(op, e);
     } else if online && free && exp {
@@ -89,9 +89,6 @@ pub fn queued(_s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             roll_back(op, Cause::Discard, e);
         }
         Input::Retry { .. } => { row(e, "out_queued_retry"); reply(e, Addr::Call, op.id, "Receipt"); }
-        Input::ModelsReset { models, .. } => {
-            if models.contains(&op.model) { row(e, "out_queued_models_reset"); } else { row(e, "out_queued_models_other"); }
-        }
         Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } | Input::Tick { .. } | Input::Rejected { .. } | Input::Committed { .. } => row(e, "out_queued_stray"),
         _ => foreign(e),
     }
@@ -138,7 +135,7 @@ pub fn persisting(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
         Input::Tick { .. } => row(e, "out_persisting_attempt_other"),
         Input::Discard { reply_to, .. } => { row(e, "out_persisting_attempt_discard"); in_flight(op, *reply_to, e); }
         Input::Retry { .. } => { row(e, "out_persisting_attempt_retry"); reply(e, Addr::Call, op.id, "Receipt"); }
-        Input::Online(_) | Input::ModelsReset { .. } | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_persisting_attempt_other"),
+        Input::Online(_) | Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => row(e, "out_persisting_attempt_other"),
         _ => foreign(e),
     }
 }
@@ -247,7 +244,7 @@ pub fn sending(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
         Input::Online(true) => row(e, "out_sending_online"),
         Input::Discard { reply_to, .. } => { row(e, "out_sending_discard"); in_flight(op, *reply_to, e); }
         Input::Retry { .. } => { row(e, "out_sending_retry"); reply(e, Addr::Call, op.id, "Receipt"); }
-        Input::ModelsReset { .. } | Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_sending_other"),
+        Input::Committed { .. } | Input::Rejected { .. } => row(e, "out_sending_other"),
         _ => foreign(e),
     }
 }

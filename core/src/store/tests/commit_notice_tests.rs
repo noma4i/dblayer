@@ -58,6 +58,24 @@ fn store_prop_one_commit_notice() {
 }
 
 #[test]
+fn store_failed_commit_removes_prepared_journal_entry() {
+    let journal = crate::store::changed_log::ChangedLog::default();
+    journal.start(0);
+    let mut failed = result_of(vec![changed("messages", "failed", RowChangeKind::Inserted)]);
+    failed.revision = Some(1);
+    failed.position = 0;
+    let pending = journal.prepare_commit(&failed).unwrap();
+    assert!(journal.changed_between((0, 0), (1, 0), 10).unwrap().contains(&("row_messages".into(), "failed".into())));
+    drop(pending);
+    assert!(journal.changed_between((0, 0), (1, 0), 10).is_none());
+    let mut committed = result_of(vec![changed("messages", "kept", RowChangeKind::Inserted)]);
+    committed.revision = Some(1);
+    committed.position = 0;
+    journal.prepare_commit(&committed).unwrap().finish();
+    assert_eq!(journal.changed_between((0, 0), (1, 0), 10).unwrap(), [("row_messages".into(), "kept".into())].into());
+}
+
+#[test]
 fn store_prop_one_commit_notice_reset_names_its_tables_and_no_rows() {
     let all = CommittedBroadcast::of_reset(5, None);
     assert_eq!((all.models, all.rows, all.tables), (Models::All, None, Vec::new()));

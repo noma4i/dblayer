@@ -12,9 +12,9 @@ const NOW: i64 = 1_000_000;
 
 use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, State, Window, PRELOAD};
-use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
+use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
-use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::store::{RowValue, StoreInput, StoreWriter};
 use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
@@ -275,7 +275,7 @@ impl Twin {
             Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })),
             Input::Rejected { request, reason } => {
                 let reason = match reason {
-                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: self.generation },
+                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), self.generation)].into() },
                     Reject::NoSession => RejectReason::NoSession,
                     Reject::Closed => RejectReason::Closed,
                     Reject::Storage => RejectReason::Storage("disk".into()),
@@ -297,11 +297,6 @@ impl Twin {
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
-            }
-            Input::ModelsReset { own_model } => {
-                self.generation += 1;
-                let model = if *own_model { "Moment" } else { "Chat" };
-                self.post(w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: self.generation, models: vec![model.into()] }));
             }
             Input::Closing => {
                 self.det.close();

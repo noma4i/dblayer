@@ -163,7 +163,7 @@ pub(super) enum Emit {
     Run(WindowEffect),
     Pin { epoch: Epoch, request: RequestId },
     Unpin { request: RequestId },
-    Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool },
+    Commit { landed_at: i64, request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
     Announce { state: WindowState, streams: Vec<InterestId> },
@@ -259,7 +259,6 @@ pub enum WindowsInput {
     TaskFailed { id: EffectId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
-    ModelsReset(ModelsReset),
     Closing,
     Tick(Time),
 }
@@ -289,7 +288,6 @@ pub(super) enum Ev {
     PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
     Saved(Option<SavedWindow>),
-    ModelsReset { generation: u64, models: Vec<String> },
     EpochEnded { cause: crate::owners::read::deliveries::EndCause },
     Closing,
 }

@@ -15,7 +15,7 @@ async fn operations(stand: &Stand) -> (i64, Vec<OperationInfo>) {
 }
 
 fn store_rows(stand: &Stand, revision: i64) -> Vec<OperationInfo> {
-    let (_seen, rows, _) = stand.database.db.read_queue(revision).unwrap();
+    let (_seen, rows, _) = stand.database.db.read_queue(revision, (0, 0), &crate::store::fixtures::operations_view()).unwrap();
     crate::owners::write::operation_queue::queue_of(&rows).unwrap().into_iter().map(Into::into).collect()
 }
 

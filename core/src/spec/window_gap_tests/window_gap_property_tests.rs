@@ -71,27 +71,6 @@ fn win_prop_single_flight() {
     assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-/// P-WIN-04: an answer issued at generation g does not land after a reset of its model; the store refuses it and the window asks again.
-#[test]
-fn win_prop_generation() {
-    let report = explore(explore_rig, Limits { depth: 40, max_traces: 3_000 }, |det| {
-        let (log, generation) = seen();
-        let events = snapshot(&log);
-        let current = generation.load(Ordering::SeqCst);
-        if det.ready().is_empty() && events.iter().any(|event| matches!(event, Seen::Rejected(_))) {
-            let landed_new = events.iter().any(|event| matches!(event, Seen::Landed { basis, .. } if *basis >= current));
-            let state = det.state(Address::<Spy<Windows>>::new(WINDOWS)).map(|spy| &spy.inner);
-            let waiting = state.is_some_and(|windows| windows.stage(&key()) == Some(WindowStage::Waiting));
-            let idle = state.is_some_and(|windows| windows.stage(&key()) == Some(WindowStage::Idle) && windows.interest(&key()).is_empty());
-            if !landed_new && !waiting && !idle {
-                return Err("a refused answer was not asked again".into());
-            }
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
-}
-
 /// P-WIN-05: going online reads once every window that is not fresh and has interest or waiters, with no earlier network error needed.
 #[test]
 fn win_prop_online_once() {
@@ -152,8 +131,8 @@ fn win_prop_stale_reload_once() {
 #[test]
 fn win_prop_fields_only() {
     let mut twin = Twin::new();
+    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
     twin.step(Input::Online(false));
-    twin.post(w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 5, models: vec!["Moment".into()] }));
     twin.call(1, Goal::First);
     assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
     take(&twin.log);
@@ -270,7 +249,6 @@ fn win_dictionary_owner() {
     det.run_until_quiet(100).expect("quiet");
     let state = inner(&det, windows);
     assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Loading), Some(WindowStage::Landing)), "the answer of request 2 reaches the key that owns it");
-    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Chat".into()] }));
     det.close();
     det.run_until_quiet(100).expect("quiet");
     let effects = runs(take(&log));
@@ -309,15 +287,16 @@ fn win_landed_revision_per_machine() {
 #[test]
 fn win_basis_names_every_model_of_the_answer_at_issue() {
     let mut twin = Twin::new();
+    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 1 }));
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     twin.call(1, Goal::First);
     take(&twin.log);
-    twin.post(w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Chat".into()] }));
     let mut page = AnswerPage::new(1, vec!["r1".into()], None);
     page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
     page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page, now: NOW });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-    assert!(sent.contains("\"Chat\": 0") && sent.contains("\"Moment\": 0"), "the generations of the issue, not the reset that came after: {sent}");
+    assert!(sent.contains("\"Chat\": 1") && sent.contains("\"Moment\": 1"), "the generations of the issue: {sent}");
 }
 
 /// win_landing_stale_generation: the new request carries the generations of the refusal.
@@ -326,7 +305,7 @@ fn win_stale_generation_reissues_with_the_generations_of_the_refusal() {
     let mut twin = Twin::new();
     twin.call(1, Goal::First);
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
-    twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 3 } }));
+    twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 3)].into() } }));
     take(&twin.log);
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");

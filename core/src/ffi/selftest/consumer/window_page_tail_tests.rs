@@ -40,9 +40,10 @@ async fn win_page_tail_leaves() {
     public_user["shareUrl"] = Value::Null;
     stand.answer("UserUnblock", json!({"userUnblock": {"user": public_user}}));
     stand.answer("blockedUsers", blocked(&["u1", "u2", "u3"]));
+    let mark = stand.request_mark();
     bound(stand.database.act(epoch, "User".into(), "u4".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
     stand.settle().await;
-    assert_eq!(stand.requests("blockedUsers"), 2, "the unblock refetched the scope");
+    assert_eq!(stand.requests_after(mark, "blockedUsers", None), 1, "the unblock refetched the scope once");
     let found = ids(&stand).await;
     assert_eq!(found, ["u1", "u2", "u3"], "the refetch answered 3 users without a next cursor: the scope reads 3 rows and count {}", found.len());
 }

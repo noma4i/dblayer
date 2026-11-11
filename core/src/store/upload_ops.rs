@@ -29,8 +29,12 @@ pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &In
     Ok(())
 }
 
-fn error_columns(error: Option<&str>) -> (Option<&'static str>, Option<&str>) {
-    let kind = error.map(|error| if error == "missing_file" { "missing_file" } else if error.starts_with("source_failed:") { "source_failed" } else { "unrecognized" });
+fn error_columns(error: Option<&str>) -> (Option<String>, Option<&str>) {
+    let kind = error.and_then(|error| {
+        let failure = serde_json::from_str::<crate::value::sync::OperationFailure>(error).ok();
+        if let Some(failure) = failure { return super::operation::enum_text(&failure.kind); }
+        Some(if error == "missing_file" { "missing_file" } else if error.starts_with("source_failed:") { "source_failed" } else { "unrecognized" }.into())
+    });
     (kind, error.map(|error| error.strip_prefix("source_failed:").unwrap_or(error)))
 }
 
@@ -109,7 +113,7 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
         }
-        StoreOp::UploadShown { key, shown, sent, total, attempts, error } => {
+        StoreOp::UploadShown { key, shown, sent, total, attempts, error, .. } => {
             let [model, id, action] = key_parts(key)?;
             let (status, stage, wait) = shown_columns(shown);
             let (error_kind, error_message) = error_columns(error.as_deref());

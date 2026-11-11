@@ -101,7 +101,6 @@ fn store_closed_clear() {
     let mut twin = Twin::live();
     twin.feed(Request::Close);
     twin.feed(Request::ReadsClosed(vec![]));
-    assert_eq!(twin.feed(Request::ClearModels { epoch: 1, generation_new: 1, models: names(&["Moment"]), erase_id: 3 }), vec![Action::ClearFailed { erase_id: 3, closed: true }]);
 }
 
 #[test]
@@ -131,7 +130,11 @@ pub(super) fn random_trace(seed: u64) -> Twin {
                 twin.commit_batch(batch, !next(&mut seed).is_multiple_of(6));
             }
             3 => { twin.clear_account(RefCause::IdentityChanged, twin.reference.generation("Moment") + 1 + next(&mut seed) % 2, !next(&mut seed).is_multiple_of(4)); }
-            4 => { twin.clear_models(twin.reference.generation("Moment") + next(&mut seed) % 3, &["Moment"], !next(&mut seed).is_multiple_of(4)); }
+            4 => {
+                let causes = [RefCause::SessionReset, RefCause::ServerEnded, RefCause::IdentityChanged, RefCause::SessionStarted, RefCause::Close];
+                let cause = causes[(next(&mut seed) % causes.len() as u64) as usize];
+                twin.clear_account(cause, twin.reference.generation("Moment") + 1, !next(&mut seed).is_multiple_of(4));
+            }
             5 => { let epoch = twin.reference.epoch; twin.publish(epoch + 1, twin.reference.saved_generation); }
             6 => { let epoch = twin.reference.epoch; twin.feed(Request::EpochEnded { epoch }); }
             7 => { twin.feed(Request::ReadIntents { epoch: twin.reference.epoch }); }
@@ -161,6 +164,33 @@ fn store_prop_revision() {
 fn store_prop_no_stale_rows() {
     for seed in 1..=40 {
         assert_eq!(random_trace(seed).stale_writes, 0, "a row with a basis below the generation reached SQLite");
+    }
+    for cause in [RefCause::SessionReset, RefCause::ServerEnded, RefCause::IdentityChanged, RefCause::SessionStarted, RefCause::Close] {
+        for (commit_first, model) in [false, true].into_iter().flat_map(|first| ["Moment", "Other"].into_iter().map(move |model| (first, model))) {
+            let mut twin = Twin::live();
+            let batch = |id: &str| {
+                let mut batch = Batch::rows(1, vec![(model.into(), id.into())]);
+                batch.basis.insert(model.into(), 0);
+                batch
+            };
+            if commit_first {
+                assert_eq!(twin.feed(Request::Commit { id: 10, batch: batch("before") }), vec![Action::Write(10)]);
+                assert!(twin.feed(Request::ClearAccount { epoch_old: 1, cause, generation_new: 1, erase_id: 10 }).is_empty());
+                let actions = twin.feed(Request::Written { id: 10, result: Ok(1) });
+                let io_id = actions.iter().find_map(|action| match action { Action::EraseAccount { io_id, .. } => Some(*io_id), _ => None }).expect("the deferred clear starts after the write");
+                let actions = twin.feed(Request::Erased { io_id, result: Ok(2) });
+                if let Some(io_id) = actions.iter().find_map(|action| match action { Action::ClearSecret { io_id } => Some(*io_id), _ => None }) {
+                    twin.feed(Request::Erased { io_id, result: Ok(2) });
+                }
+            } else {
+                twin.clear_account(cause, 1, true);
+            }
+            assert_eq!(twin.state().generation(model), 1, "{cause:?}, commit_first={commit_first}");
+            let actions = twin.commit_batch(batch("after"), true);
+            assert_eq!(Twin::rejected(&actions), Some(Reason::StaleGeneration(vec![model.into()])), "{cause:?}, commit_first={commit_first}");
+            assert!(!actions.iter().any(|action| matches!(action, Action::Write(_))), "stale rows must not reach SQLite: {actions:?}");
+            assert_eq!(twin.stale_writes, 0);
+        }
     }
 }
 
@@ -226,8 +256,7 @@ fn store_prop_intents_survive_format() {
     twin.commit_batch(batch, true);
     let before = twin.reference.intents;
     twin.boot(Boot::FormatChange, (0, 0, None));
-    twin.clear_models(1, &["Moment"], true);
-    assert_eq!(twin.reference.intents, before, "the intents survive a format change and ClearModels");
+    assert_eq!(twin.reference.intents, before, "the intents survive a format change");
     assert!(!twin.history.iter().any(|effect| matches!(effect, StoreEffect::EraseAccount { .. })), "no account erase touched them");
 }
 
@@ -251,8 +280,8 @@ fn store_prop_write_atomic_step() {
         let mut writing = false;
         for (request, actions) in &twin.steps {
             if matches!(request, Request::Written { .. }) { writing = false; }
-            if writing && matches!(request, Request::Commit { .. } | Request::ClearAccount { .. } | Request::ClearModels { .. } | Request::Close) {
-                assert!(!actions.iter().any(|action| matches!(action, Action::Write(_) | Action::EraseAccount { .. } | Action::EraseModels { .. } | Action::CloseReads)), "seed {seed}: a step by {request:?} while writing");
+            if writing && matches!(request, Request::Commit { .. } | Request::ClearAccount { .. } | Request::Close) {
+                assert!(!actions.iter().any(|action| matches!(action, Action::Write(_) | Action::EraseAccount { .. } | Action::CloseReads)), "seed {seed}: a step by {request:?} while writing");
             }
             if actions.iter().any(|action| matches!(action, Action::Write(_))) { writing = true; }
         }

@@ -11,13 +11,12 @@ fn write(database: &std::sync::Arc<crate::store::Store>, ops: Vec<StoreOp>) -> R
 #[test]
 fn store_prop_expiry_any_author() {
     let spec = crate::schema::ModelSpec { storage: crate::schema::Storage::Memory, expire_after: Some("30.seconds".into()), ..crate::schema::ModelSpec::new("presence", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("room", crate::value::ScalarKind::Str).optional()]) };
-    let database = Store::open_models(None, vec![spec], None).map(std::sync::Arc::new).unwrap();
-    database.set_clock(std::sync::Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1000))));
+    let database = Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1000)))).map(std::sync::Arc::new).unwrap();
     let row = RowValue { row_id: "p1".into(), values: r#"{"id":"p1","room":"r1"}"#.into() };
     let mut previous = None;
     for author in [BatchAuthor::Window, BatchAuthor::Feed, BatchAuthor::Outbox, BatchAuthor::LocalWrites] {
         let (rows, ops) = match author {
-            BatchAuthor::Window => (Vec::new(), vec![StoreOp::Window { key: crate::owners::read::windows::WindowKey::nodes("presence", &["p1"]).name, model: "presence".into(), page: 1, replace_all: false, cursor: None, roots: vec![row.clone()], related: Vec::new(), total: None, base_revision: 0 }]),
+            BatchAuthor::Window => (Vec::new(), vec![StoreOp::Window { landed_at: 0, key: crate::owners::read::windows::WindowKey::nodes("presence", &["p1"]).name, model: "presence".into(), page: 1, replace_all: false, cursor: None, roots: vec![row.clone()], related: Vec::new(), total: None, base_revision: 0 }]),
             BatchAuthor::Feed => (vec![("presence".into(), serde_json::json!({"op":"upsert", "id":"p1", "row":{"id":"p1","room":"r1"}}).to_string())], Vec::new()),
             BatchAuthor::Outbox => (Vec::new(), vec![StoreOp::Rows { model: "presence".into(), rows: vec![row.clone()] }]),
             BatchAuthor::LocalWrites => (Vec::new(), vec![StoreOp::LocalRows { model: "presence".into(), rows: vec![row.clone()] }]),
@@ -43,7 +42,7 @@ fn store_prop_overlay_snapshot() {
     let mut specs = all_specs();
     let field = crate::schema::FieldSpec::scalar("typing", crate::value::ScalarKind::Bool).with_default(serde_json::json!(false));
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().ephemeral.push(crate::schema::EphemeralSpec::new(field));
-    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"one"}"#.into() }] }]).unwrap();
     let before = database.revision_seq().unwrap();
     let event = |payload: serde_json::Value| StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), payload.to_string())], intents: 0, credential: None, ops: Vec::new() };
@@ -72,7 +71,7 @@ fn store_overlay_survives_failed_sql_commits() {
     let mut specs = all_specs();
     let field = crate::schema::FieldSpec::scalar("typing", crate::value::ScalarKind::Bool).with_default(serde_json::json!(false));
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().ephemeral.push(crate::schema::EphemeralSpec::new(field));
-    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"before"}"#.into() }] }]).unwrap();
     let event = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };
     database.write_batch(&event, database.files(), database.pointer_guards(), None).unwrap();
@@ -102,7 +101,7 @@ fn store_overlay_survives_failed_sql_commits() {
 #[test]
 fn store_prop_atomic() {
     let directory = tempfile::tempdir().unwrap();
-    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let ops = vec![
         StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: vec![7; 300_000], name: "photo".into(), mime: "image/jpeg".into() },
@@ -118,7 +117,7 @@ fn store_prop_atomic() {
 fn store_commit_file_orphan() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
-    let database = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let attach = |byte| StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: vec![byte; 300_000], name: "photo".into(), mime: "image/jpeg".into() };
     write(&database, vec![attach(1)]).unwrap();
@@ -137,7 +136,7 @@ fn store_commit_file_orphan() {
 #[test]
 fn store_prop_file_orphans() {
     let directory = tempfile::tempdir().unwrap();
-    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let attach = |field: &str| StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: field.into(), bytes: vec![3; 300_000], name: "photo".into(), mime: "image/jpeg".into() };
     write(&database, vec![attach("media"), attach("cover")]).unwrap();
@@ -155,7 +154,7 @@ fn store_prop_file_orphans() {
 fn store_boot_finishes_file_rename() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
-    let database = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let bytes = vec![7; 300_000];
     write(&database, vec![StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: bytes.clone(), name: "photo".into(), mime: "image/jpeg".into() }]).unwrap();
@@ -169,7 +168,7 @@ fn store_boot_finishes_file_rename() {
     std::fs::write(files.join("orphan"), b"orphan").unwrap();
     std::fs::create_dir_all(files.join("cache")).unwrap();
     std::fs::write(files.join("cache/orphan"), b"orphan").unwrap();
-    let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let reopened = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     assert_eq!(reopened.url("moments", &id("m1"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(bytes));
     assert!(!partial.exists());
     assert!(!files.join("orphan.partial").exists());
@@ -181,7 +180,7 @@ fn store_boot_finishes_file_rename() {
 fn store_boot_transfer_file_ownership() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
-    let database = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     for (transfer_id, size) in [(1, 10), (3, 0)] {
         database.lock().connection.execute(
             "INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, source, size, transfer_id) VALUES ('moments', ?1, 'upload', 'queued', 'prepare', 0, 1, 0, ?2, 'source', ?3, ?2)",
@@ -194,7 +193,7 @@ fn store_boot_transfer_file_ownership() {
     for name in ["1", "2", "3.part", "4.part"] {
         std::fs::write(copies.join(name), b"copy").unwrap();
     }
-    let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let reopened = Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let mut left: Vec<String> = std::fs::read_dir(&copies).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect();
     left.sort();
     assert_eq!(left, ["1", "3.part"], "a copy with a sync_upload row stays, also while it is still copying, a copy without a holder goes");
@@ -208,7 +207,7 @@ fn store_batch_same_row_ordered() {
     let mut field = crate::schema::FieldSpec::scalar("pinned", crate::value::ScalarKind::Str).optional();
     field.merge = Some(crate::schema::MergeRule::Local);
     moments.fields.push(field);
-    let database = Store::open_models(None, specs, None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1", "text": "before", "pinned": "before"}));
     let before = database.revision_seq().unwrap();
     let row = |id: &str, text: &str, pinned: &str| RowValue { row_id: id.into(), values: serde_json::json!({"id": id, "userId": "u1", "text": text, "pinned": pinned}).to_string() };
@@ -238,7 +237,7 @@ fn out_ephemeral_reset_by_position() {
     let mut specs = all_specs();
     let field = crate::schema::FieldSpec::scalar("typing", crate::value::ScalarKind::Bool).with_default(serde_json::json!(false));
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().ephemeral.push(crate::schema::EphemeralSpec::new(field).resetting_after("5.seconds"));
-    let database = Store::open_models(None, specs, None).map(std::sync::Arc::new).unwrap();
+    let database = Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let typing = |database: &Store| database.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.unwrap().get("typing").cloned())).unwrap();
     let set = || StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };

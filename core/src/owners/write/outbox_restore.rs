@@ -35,7 +35,7 @@ impl OutboxState {
             operation.cause = cause;
             operation.cause_stored = cause;
             operation.cycle_id = cycle_id.max(1);
-            operation.sent = true;
+            operation.sent = pending.is_some() || attempts == 0;
         }
         if pending_lost {
             return self.restored_failed(op_id, "StateLost".into());
@@ -98,7 +98,25 @@ impl OutboxState {
         let mut stored = stored;
         stored.sort_by_key(|item| item.op_id);
         for item in stored {
-            self.classify(item, pending_lost, fx);
+            if item.removed_rows.is_empty() || item.restore_failed.is_some() {
+                self.classify(item, pending_lost, fx);
+                continue;
+            }
+            let op_id = item.op_id;
+            let rows = item.removed_rows.clone();
+            self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration);
+            if let Some(operation) = self.ops.get_mut(&op_id) {
+                operation.attempts = item.attempts;
+                operation.cycle_id = item.cycle_id.max(1);
+                if let Some((request_id, _)) = &item.answered { operation.request_id = *request_id; }
+                if let Some((request_id, sequence)) = item.pending {
+                    operation.request_id = request_id;
+                    operation.sequence = sequence;
+                    operation.pending_owned = true;
+                }
+            }
+            self.waiting.insert(op_id, (item, pending_lost));
+            for (model, row_id, revision) in rows { self.row_removed(&model, &row_id, revision, fx); }
         }
     }
 
@@ -107,7 +125,7 @@ impl OutboxState {
         if self.phase == Phase::Restoring {
             return;
         }
-        let ready: Vec<OpId> = self.waiting.iter().filter(|(_, (item, _))| self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))).map(|(op_id, _)| *op_id).collect();
+        let ready: Vec<OpId> = self.waiting.iter().filter(|(id, (item, _))| !self.member_removals.contains_key(id) && item.removed_rows.is_empty() && self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))).map(|(op_id, _)| *op_id).collect();
         for op_id in ready {
             if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {
                 self.ops.remove(&op_id);
@@ -134,6 +152,7 @@ impl OutboxState {
                 self.store(op_id, CommitKind::Attempt, fx);
             }
         }
+        self.drain(fx);
     }
 
     /// Every held call gets exactly one answer.
@@ -167,11 +186,6 @@ impl OutboxState {
             held @ (OutboxInput::ReserveOp { .. } | OutboxInput::ReserveReplacement { .. } | OutboxInput::FinishReplacement { .. } | OutboxInput::SubmitReserved { .. } | OutboxInput::RowRemoved { .. }) => self.held.push(held),
             held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardTransfer { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
-            OutboxInput::ModelsReset(reset) => {
-                for model in reset.models {
-                    self.generation.insert(model, reset.generation);
-                }
-            }
             OutboxInput::EpochStarted(started) => {
                 self.base_generation = started.generation;
                 fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));
@@ -201,7 +215,7 @@ impl OutboxState {
                 fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
                 self.replay_held(fx);
             }
-            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
+            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
             _ => {}
         }
     }

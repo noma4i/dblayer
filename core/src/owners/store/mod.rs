@@ -24,7 +24,6 @@ pub enum StoreMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum IoKind {
     Account { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
-    Models { generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
     Secret { epoch_old: Epoch, erase_id: u64, revision: u64 },
     Save { publication_id: u64, published: Published },
 }
@@ -137,7 +136,7 @@ impl StoreState {
         if self.mode == StoreMode::Closed {
             match input {
                 StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) }),
-                StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => fx.push(StoreEffect::ClearFailed { erase_id, error: "closed".into() }),
+                StoreInput::ClearAccount { erase_id, .. } => fx.push(StoreEffect::ClearFailed { erase_id, error: "closed".into() }),
                 _ => {}
             }
             return;
@@ -193,7 +192,7 @@ impl StoreState {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) });
                     return;
                 }
-                StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => {
+                StoreInput::ClearAccount { erase_id, .. } => {
                     fx.push(StoreEffect::ClearFailed { erase_id: *erase_id, error: "closed".into() });
                     return;
                 }
@@ -222,8 +221,8 @@ impl StoreState {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid) });
                 } else if !self.stale_models(&batch).is_empty() {
                     let models = self.stale_models(&batch);
-                    let generation = models.iter().map(|model| self.generation(model)).max().unwrap_or(self.base_generation);
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
+                    let generations = batch.models().into_iter().map(|model| { let generation = self.generation(&model); (model, generation) }).collect();
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generations }) });
                 } else {
                     self.writing = Some(batch.clone());
                     fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
@@ -274,25 +273,13 @@ impl StoreState {
                     fx.push(StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted: matches!(cause, Cause::SessionReset | Cause::ServerEnded) });
                 }
             }
-            StoreInput::ClearModels { epoch, generation_new, models, erase_id } => {
-                if self.busy() {
-                    self.deferred.push_back(StoreInput::ClearModels { epoch, generation_new, models, erase_id });
-                } else if models.iter().any(|model| generation_new <= self.generation(model)) {
-                    fx.push(StoreEffect::ClearFailed { erase_id, error: "stale generation".into() });
-                } else {
-                    let io_id = self.next_io;
-                    self.next_io += 1;
-                    self.io.push_back(Io { id: io_id, kind: IoKind::Models { generation_new, models: models.clone(), erase_id }, started: true });
-                    fx.push(StoreEffect::EraseModels { io_id, generation_new, models });
-                }
-            }
             StoreInput::Erased { io_id, result } => {
                 if self.io.front().map(|head| head.id) != Some(io_id) {
                     return;
                 }
                 let Some(head) = self.io.pop_front() else { return };
                 match (head.kind, result) {
-                    (IoKind::Account { erase_id, .. } | IoKind::Models { erase_id, .. }, Err(error)) => fx.push(StoreEffect::ClearFailed { erase_id, error }),
+                    (IoKind::Account { erase_id, .. }, Err(error)) => fx.push(StoreEffect::ClearFailed { erase_id, error }),
                     (IoKind::Save { publication_id, .. }, Err(error)) => fx.push(StoreEffect::SaveFailed { publication_id, error }),
                     (IoKind::Account { epoch_old, cause, generation_new, erase_id }, Ok(Done { revision })) => {
                         self.wipe_account(generation_new);
@@ -310,16 +297,8 @@ impl StoreState {
                         fx.push(StoreEffect::Cleared { epoch_old, erase_id });
                         fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, None)));
                     }
-                    (IoKind::Models { generation_new, models, erase_id }, Ok(Done { revision })) => {
-                        for model in &models {
-                            self.generations.insert(model.clone(), generation_new);
-                        }
-                        self.revision = revision;
-                        fx.push(StoreEffect::ModelsCleared { generation_new, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, Some(models.iter().cloned().collect::<Vec<_>>().as_slice()))));
-                    }
                     (IoKind::Save { publication_id, published }, Ok(_)) => {
-                        if matches!(published.state, PublishedState::NoSession | PublishedState::Session | PublishedState::Resetting) {
+                        if matches!(published.state, PublishedState::NoSession | PublishedState::Session) {
                             self.epoch = self.epoch.max(published.epoch);
                         }
                         self.saved_epoch = published.epoch;

@@ -210,6 +210,22 @@ fn xfer_ready_attempts_exhausted() {
 }
 
 #[test]
+fn xfer_exhausted_does_not_wait_for_file_slot() {
+    let mut exhausted = partly(2, OTHER);
+    exhausted.attempts = 50;
+    let (mut twin, _) = Twin::opened(vec![partly(1, KEY), exhausted], Default::default());
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    let out = twin.online(true);
+    assert_eq!(twin.stage(1), TransferStage::PersistingAttempt);
+    assert_eq!(twin.stage(2), TransferStage::PersistingFailure);
+    assert!(out.kinds().contains(&UploadKind::Failed));
+    twin.commit();
+    twin.commit();
+    assert_eq!(twin.stage(1), TransferStage::Uploading);
+    assert_eq!(twin.stage(2), TransferStage::Failed);
+}
+
+#[test]
 fn xfer_last_attempt_is_persisted_once() {
     for complete in [false, true] {
         let mut row = partly(1, KEY);
@@ -526,6 +542,7 @@ fn xfer_open_retry_after_crash() {
     assert_eq!((twin.stage(1), out.shows()), (TransferStage::PersistingBatchIntent, vec![Shown::Uploading { progress: 100 }]));
     let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!((ready.writes(), ready.batches.first().map(|batch| batch.intents)), (1, Some(1)), "RestoreReady writes the intent of the final mutation: {ready:?}");
+    assert!(ready.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { op_id: 1, cycle_id: 2, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: 1 }, .. })), "the restored cycle writes its own intent: {:?}", ready.batches);
 }
 
 /// xfer_open_saved_interrupted: a completed row whose saved outcome of the current cycle is Ended restores no live transfer; the Outcome call returns that interrupted outcome with no revision.
@@ -584,6 +601,14 @@ fn xfer_open_failed() {
     found.failed = Some("e".into());
     let (twin, out) = Twin::opened(vec![found], Default::default());
     assert_eq!((twin.stage(1), out.shows(), out.timers), (TransferStage::Failed, vec![Shown::Failed { error: "e".into() }], 1));
+    let mut found = partly(1, KEY);
+    found.failed = Some("e".into());
+    found.completed = false;
+    let expected = OutboxOutcome::Failed { error: "e".into() };
+    let (mut restored, out) = Twin::opened(vec![found], BTreeMap::from([(1, expected.clone())]));
+    assert_eq!((restored.stage(1), out.writes()), (TransferStage::Failed, 0));
+    let (reply, out) = restored.outcome(1, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(expected, None)]);
 }
 
 #[test]
@@ -680,5 +705,48 @@ fn xfer_held_step_reopen_in_every_order() {
         let answered = twin.post(TransferInput::StepAnswer { request_id: 55, outcome: crate::owners::session::AuthorOutcome::Dropped });
         assert!(answered.steps().is_empty(), "{order:?}: the attempt is saved first");
         assert_eq!(twin.commit().steps().len(), 1, "{order:?}: one physical retry");
+    }
+}
+
+#[test]
+fn xfer_prop_restored_failed_keeps_failed_at() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Clock, Restored, Register, Online, Expire }
+    use Event::*;
+    const NOW: u64 = 10 * 86_400_000;
+    const FAILED_AT: u64 = NOW - 3_600_000;
+    let orders = permutations(&[Clock, Restored, Register, Online, Expire]);
+    assert_eq!(orders.len(), 120);
+    for kind in [false, true] {
+        for order in &orders {
+            let mut twin = Twin::bare(1);
+            let mut row = completed(1, KEY);
+            row.failed = Some("refused".into());
+            row.failed_at = Some(Time(FAILED_AT));
+            let outcome = if kind { OutboxOutcome::Rejected { error: "refused".into() } } else { OutboxOutcome::Failed { error: "refused".into() } };
+            for event in order.iter().copied() {
+                let out = match event {
+                    Clock => twin.post(TransferInput::Clock(Time(NOW))),
+                    Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: BTreeMap::from([(1, BTreeMap::from([(1, outcome.clone())]))]), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
+                    Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                    Online => twin.online(true),
+                    Expire => twin.post(TransferInput::Tick { now: Time(NOW), kind: crate::owners::write::transfer::TransferTick::Expire }),
+                };
+                for (written, _) in out.rows() {
+                    assert_eq!(written.failed_at, Some(FAILED_AT), "{order:?} {kind:?} {event:?}: stored failure time changed");
+                }
+                assert!(out.removed().is_empty() && out.outbox_discards() == 0, "{order:?} {kind:?} {event:?}: discarded fresh failure: {out:?}");
+                while twin.has_pending() {
+                    let out = twin.commit();
+                    for (written, _) in out.rows() {
+                        assert_eq!(written.failed_at, Some(FAILED_AT), "{order:?} {kind:?} {event:?}: stored failure time changed after commit");
+                    }
+                    assert!(out.removed().is_empty() && out.outbox_discards() == 0, "{order:?} {kind:?} {event:?}: discarded fresh failure after commit: {out:?}");
+                }
+            }
+            assert_eq!(twin.stage(1), TransferStage::Failed, "{order:?} {kind:?}");
+            assert_eq!(twin.t(1).failed_at, Some(Time(FAILED_AT)), "{order:?} {kind:?}");
+            assert_eq!(twin.t(1).error.as_deref(), Some("refused"), "{order:?} {kind:?}");
+        }
     }
 }

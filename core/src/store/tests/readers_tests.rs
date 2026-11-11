@@ -5,9 +5,32 @@ use super::*;
 use crate::test_wait::{join_within, recv_within};
 
 #[test]
+fn store_read_snapshot_waits_for_commit_journal() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&directory.path().join("journal.sqlite"), Arc::new(crate::runtime::SystemClock)).unwrap());
+    store.boot(&[messages_spec()], None).unwrap();
+    store.mark_ready();
+    let before = store.revision_seq().unwrap();
+    store.context.changed.start(before);
+    let (sent, reached) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let released = Mutex::new(released);
+    store.set_commit_log(Box::new(move |_| { sent.send(()).unwrap(); recv_within(&released.lock().unwrap()); })).unwrap();
+    let writer = store.clone();
+    let thread = std::thread::spawn(move || writer.commit(envelope(&writer, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap());
+    recv_within(&reached);
+    let (seen, present) = store.read(&["messages"], |reader| Ok((reader.revision_seq()?, reader.stored_row("messages", "m1")?.is_some()))).unwrap();
+    let changed = store.context.changed.changed_between((before, 0), (seen, 0), 100);
+    release.send(()).unwrap();
+    join_within(thread);
+    assert!(present && seen > before);
+    assert!(changed.is_some_and(|rows| rows.contains(&("row_messages".into(), "m1".into()))), "a visible row has its commit in the journal");
+}
+
+#[test]
 fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
     let directory = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(&directory.path().join("reads.sqlite")).unwrap());
+    let store = Arc::new(Store::open(&directory.path().join("reads.sqlite"), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let mut presence = items_spec();
     presence.storage = crate::schema::Storage::Memory;
     store.boot(&[messages_spec(), presence], None).unwrap();

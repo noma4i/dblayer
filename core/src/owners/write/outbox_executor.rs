@@ -15,7 +15,6 @@ pub enum OutboxSignal {
     RestoreClassified(Epoch),
 }
 
-pub type CopyFile = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
 pub type DecodeAnswer = Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>;
 
@@ -24,8 +23,6 @@ pub struct OutboxExecutor {
     /// `Drained` goes to Lifecycle.
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
     pub signal: Arc<dyn Fn(OutboxSignal) + Send + Sync>,
-    /// Copies a file into the directory of the files; `None` fails every copy.
-    pub copy: Option<CopyFile>,
     /// Marks the windows of the (model, relation) pairs stale in memory.
     pub stale: Option<MarkStale>,
     /// Reads the answer of an operation; `None` refuses every answer. It runs on a thread of the executor, not on the actor.
@@ -45,10 +42,6 @@ impl EffectRunner<Outbox> for OutboxExecutor {
             OutboxEffect::Stale { families, revision } => {
                 if let Some(stale) = &self.stale { stale(families, revision); }
             }
-            OutboxEffect::Copy { id, source } => {
-                let copied = self.copy.as_ref().is_some_and(|copy| copy(&source));
-                back.reply(stamp, if copied { OutboxInput::CopyDone { id } } else { OutboxInput::CopyFailed { id } });
-            }
             OutboxEffect::Decode(job) => {
                 let Some((handle, decode)) = self.decode.clone() else {
                     return back.reply(stamp, OutboxInput::Refused { op_id: job.op_id, temporary: false, detail: "the answer cannot be read".into() });
@@ -57,6 +50,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
                 drop(crate::task::spawn_blocking_on(&handle, launch, move || {
                     let input = match decode(&job) {
+                        Decoded::MissingDestroy { stale } => OutboxInput::MissingDestroy { op_id: job.op_id, stale },
                         Decoded::Land { rows, swaps, stale, result, missing } => OutboxInput::Response { op_id: job.op_id, rows, swaps, stale, result, missing, errors: None },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },
                     };

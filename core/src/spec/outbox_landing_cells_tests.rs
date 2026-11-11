@@ -3,7 +3,7 @@
 use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
-use crate::owners::contract::{ModelsReset, Online, RejectReason};
+use crate::owners::contract::{Online, RejectReason};
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome};
 
 #[test]
@@ -42,14 +42,51 @@ fn out_sending_tick_offline() {
 #[test]
 fn out_sending_exhausted_keep() {
     for policy in [Policy::Keep, Policy::Rollback] {
-        for dropped in [false, true] {
+        for cause in [None, Some(64)] {
             let mut twin = Twin::new();
             let id = exhausted(&mut twin, policy);
-            let input = if dropped { OutboxInput::Dropped { op_id: id } } else { OutboxInput::TransportError { op_id: id, temporary: true } };
+            let input = if let Some(limit) = cause {
+                OutboxInput::Answered { req_id: twin.state().ops[&id].request_id, outcome: crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network, error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true } }
+            } else { OutboxInput::Dropped { op_id: id } };
             let effects = twin.post(input);
-            assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0), "{policy:?} dropped={dropped}: the 40th attempt fails under any on_failure");
+            assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(")), "{}", twin.store_text);
+            let expected = twin.state().ops[&id].error.as_ref().unwrap();
+            if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
+            else { assert_eq!(expected, "Exhausted"); }
+            assert!(twin.store_text.contains(&format!("{expected:?}")), "{}", twin.store_text);
+            let expected_kinds = if cause.is_some() { vec![CommitKind::Land, CommitKind::ErrorMark] } else { vec![CommitKind::ErrorMark] };
+            assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), expected_kinds, 0), "{policy:?} cause={cause:?}: the 40th attempt fails under any on_failure");
         }
     }
+}
+
+#[test]
+fn out_sending_destroy_not_found_batch() {
+    use crate::owners::write::answer::{decode_answer, DecodeJob, Decoded};
+    let mut twin = Twin::new();
+    let op = NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) };
+    let id = submit_op(&mut twin, op, 30);
+    twin.committed(id);
+    let request_id = twin.state().ops[&id].request_id;
+    let db = crate::store::Store::open_models(None, vec![crate::schema_fixtures::moments_spec(), crate::schema_fixtures::users_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let job = DecodeJob { op_id: id, model: "Moment".into(), action: "destroy".into(), temp: None, batch: None, body: r#"{"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND"}}]}"#.into() };
+    let Decoded::MissingDestroy { stale } = decode_answer(&db, &|_| None, &job) else { panic!("NOT_FOUND destroy must land") };
+    twin.post(OutboxInput::MissingDestroy { op_id: id, stale });
+    assert_eq!(twin.stores.len(), 1);
+    assert!(twin.store_text.contains("RemoveServerRows { model: \"Moment\", ids: [\"r\"] }"), "{}", twin.store_text);
+    assert!(twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
+}
+
+#[test]
+fn out_sending_destroy_not_found_optimistic() {
+    let mut twin = Twin::new();
+    let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "Moment".into(), row_id: "r".into() }], ..Default::default() };
+    let op = NewOp { action: "destroy".into(), effects, ..model_op("r", Policy::Rollback, false) };
+    let id = submit_op(&mut twin, op, 30);
+    twin.committed(id);
+    twin.post(OutboxInput::MissingDestroy { op_id: id, stale: Vec::new() });
+    assert_eq!(twin.stores.len(), 1);
+    assert!(twin.store_text.contains("RemoveServerRows { model: \"Moment\", ids: [\"r\"] }"), "{}", twin.store_text);
 }
 
 #[test]
@@ -71,7 +108,6 @@ fn out_sending_other() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     unchanged_by(&mut twin, id, St::Sending, vec![
-        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
         OutboxInput::Committed(crate::owners::contract::Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
         OutboxInput::Rejected(crate::owners::contract::Rejected { batch: 999, reason: RejectReason::Storage("disk".into()) }),
     ]);

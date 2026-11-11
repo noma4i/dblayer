@@ -100,7 +100,11 @@ impl Store {
         let mut writes_database = !results.is_empty() || (batch.author != BatchAuthor::Feed && !batch.rows.is_empty());
         let mut resets = Vec::new();
         let mut rolled_back = std::collections::BTreeSet::new();
+        let mut virtual_transfers = Vec::new();
         for (index, op) in batch.ops.iter().enumerate() {
+            if let crate::owners::store::StoreOp::UploadShown { key, shown, virtual_transfer: Some((id, op_id)), .. } = op {
+                virtual_transfers.push((key.clone(), shown.clone(), *id, *op_id));
+            }
             if let crate::owners::store::StoreOp::EphemeralRows { model, rows } = op {
                 for row in rows {
                     let values = serde_json::from_str::<serde_json::Value>(&row.values)?.as_object().cloned().ok_or_else(|| StoreError::Constraint("ephemeral values must be an object".into()))?;
@@ -147,6 +151,13 @@ impl Store {
         }
         let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
+        for (key, shown, transfer_id, op_id) in virtual_transfers {
+            match shown {
+                crate::owners::write::transfer::Shown::Failed { error } => { snapshot.virtual_transfers.insert(key, super::overlay::VirtualTransfer { transfer_id, op_id, error }); }
+                crate::owners::write::transfer::Shown::Gone => { snapshot.virtual_transfers.remove(&key); }
+                _ => {}
+            }
+        }
         let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay, u64::try_from(inner.now_ms()).unwrap_or(0))?;
         combined.rows.extend(changes);
         for change in combined.rows.iter().filter(|change| change.kind == crate::store::RowChangeKind::Destroyed) {
@@ -156,6 +167,7 @@ impl Store {
         snapshot.prune_missing(OVERLAY_ROW_LIMIT, |row| Reader::new(&transaction, &inner.models).stored_row(&row.model, &row.row_id).ok().flatten().is_some());
         let position = snapshot.position;
         combined.position = position;
+        let journal = self.context.changed.prepare_commit(&combined);
         if writes_database {
             super::tombstones::prune_tombstones(&transaction, now, &TombstoneRetention::DEFAULT, min_pin_revision)?;
             crate::store::ddl::manifest_write(&transaction, crate::store::ddl::REVISION_SEQ_KEY, &revision.to_string())?;
@@ -164,6 +176,7 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
+        if let Some(journal) = journal { journal.finish(); }
         Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, shown })
     }
 }

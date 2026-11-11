@@ -9,12 +9,12 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, PoisonError};
 
 use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reject, Reread, To};
-use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
+use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
 use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;
@@ -89,7 +89,6 @@ struct Twin {
     batches: VecDeque<BatchId>,
     used: Vec<BatchId>,
     owner_batches: Vec<String>,
-    generation: u64,
     /// `(connection, counter)` of every `Seal` the owner gave out.
     sealed: Vec<(ConnectionId, u64)>,
     /// The `SnapshotRequest` effects the owner gave out.
@@ -115,7 +114,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.debounce = debounce;
-        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new() };
+        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on), now: crate::runtime::Time(0) });
             twin.reference.online = Some(on);
@@ -163,7 +162,7 @@ impl Twin {
 
     fn reject_reason(reason: &Reject) -> RejectReason {
         match reason {
-            Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: 0 },
+            Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generations: models.iter().cloned().map(|model| (model, 4)).collect() },
             Reject::Storage => RejectReason::Storage("disk".into()),
             Reject::Invalid => RejectReason::Invalid,
             Reject::NoSession => RejectReason::NoSession,
@@ -197,7 +196,6 @@ impl Twin {
             }
             Input::ProtocolError { to } => vec![FeedInput::ProtocolError { connection_id: self.connection(*to), reason: ProtocolReason::Decrypt }],
             Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), channel: CHANNEL.into(), event: framed(model, payload, &reread, false) }],
-            Input::ChannelLost { to, dropped } => vec![FeedInput::ChannelLost { connection_id: self.connection(*to), dropped: dropped.as_ref().map(|counts| counts.iter().cloned().collect::<BTreeMap<_, _>>()) }],
             Input::Dropped { to } => vec![FeedInput::Dropped { connection_id: self.connection(*to) }],
             Input::Ended { to } => vec![FeedInput::SubscriptionEnded { connection_id: self.connection(*to) }],
             Input::Resubscribe { to } => vec![FeedInput::Resubscribe { connection_id: self.connection(*to) }],
@@ -233,7 +231,6 @@ impl Twin {
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on), now: crate::runtime::Time(0) }],
-            Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],
             Input::Drain { own } => vec![FeedInput::Drain { connection_id: self.connection(if *own { To::Draining } else { To::Stray }) }],
             Input::EpochEnded | Input::Closing => Vec::new(),
         }

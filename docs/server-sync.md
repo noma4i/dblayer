@@ -354,7 +354,7 @@ Each request has one retry owner. Core `RetryPolicy` defines the common delay ca
 Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
 The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
 Queued mutations retain optimistic edits for these codes on both transports.
-Resetting an unrelated model preserves the attempt budget and its final Failed result.
+Opening after a schema change preserves the attempt budget and the final Failed result of queued operations.
 An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
 An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
 Plain mutations without a confirmed answer are sent again with the same request id after interrupted transfers, unreadable responses and HTTP 5xx.
@@ -449,7 +449,7 @@ Rules of the session:
 - The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or the next open with a session sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes.
 - While a request is pending, a different mutation fails with a network error and sends nothing. The library sends the pending request when the database opens with a session. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
-- Database format changes, model resets and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
+- Database format changes and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
 - Changes to the session tables migrate their stored values within the same transaction that recreates the database tables.
 - Missing sequence state for a stored credential returns the typed session error above before sending. Its detail remains `lost session sequence state for the stored credential`.
 - This error preserves the credential and pending request. The application decides how to recover. The core never guesses sequence numbers.

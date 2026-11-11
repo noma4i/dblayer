@@ -62,6 +62,8 @@ fn out_queued_expired() {
     let (mut twin, id) = queued_for(11);
     let online = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!((kinds(&online), sends(&online)), (vec![o_rollback()], 0), "{online:?}");
+    assert_eq!(twin.stores.len(), 1);
+    assert!(twin.store_text.contains(&format!("RollBack {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")), "{}", twin.store_text);
     let done = twin.committed(id);
     let outcome = answers(&done, WAITER).into_iter().find_map(|answer| match answer { OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }) => Some(error), _ => None }).expect("the outcome is Rejected");
     assert_eq!(failure::parse(&outcome).kind, FailureKind::Expired);
@@ -75,11 +77,12 @@ fn out_queued_expired() {
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         twin.post(OutboxInput::Tick(Time(11_000)));
-        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None }], pending_lost: false });
+        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
         let ready = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         let stage = twin.stage(1);
         assert_eq!(stage == Some(St::RollingBack(RWhy::Rejected)), expect_rollback, "attempts {attempts}: {stage:?} {ready:?}");
-        assert_eq!(stage == Some(St::PersistingAttempt), !expect_rollback, "attempts {attempts}: a sent operation goes out again, never expired");
+        assert_eq!(stage == Some(St::Sending), !expect_rollback, "attempts {attempts}: the recorded attempt leaves without a new write");
+        assert_eq!(sends(&ready), usize::from(!expect_rollback));
     }
 }
 

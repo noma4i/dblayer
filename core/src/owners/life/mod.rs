@@ -344,6 +344,7 @@ type CommittedSink = Arc<dyn Fn(CommittedBroadcast) + Send + Sync>;
 
 pub struct Life {
     wiring: Arc<Wiring>,
+    operations: OperationLookup,
     runtime: Runtime,
     shut: AtomicBool,
     /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
@@ -375,7 +376,7 @@ impl Life {
         #[cfg(test)] let rounds_needed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let session = ports.exchange.clone().zip(ports.secret.clone()).zip(ports.seal.clone()).map(|((exchange, secret), seal)| (exchange, secret, seal));
         let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
-        let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending);
+        let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending || state.resume_answer.is_some());
         let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
         let found = boot_found(&ports.db, saved_unowned_pending)?;
         let clock = ports.db.lock().clock.clone();
@@ -425,7 +426,6 @@ impl Life {
                     OutboxSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Outbox, epoch }),
                     OutboxSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Outbox, epoch }),
                 }),
-                copy: None,
                 counted: Some(builder.handle()),
                 stale: Some({
                     let stale_wiring = wiring.clone();
@@ -488,7 +488,6 @@ impl Life {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                 signal: Arc::new(|_| {}),
-                copy: None,
                 stale: None,
                 decode: None,
                 counted: None,
@@ -526,7 +525,7 @@ impl Life {
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
+        Ok(Self { wiring, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
     }
 
     #[cfg(test)]

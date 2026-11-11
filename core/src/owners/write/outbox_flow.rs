@@ -20,6 +20,7 @@ pub(super) struct Answered {
     pub stale: Vec<(String, String)>,
     pub result: Option<String>,
     pub missing: Vec<String>,
+    pub missing_destroy: bool,
 }
 
 impl OutboxState {
@@ -33,7 +34,7 @@ impl OutboxState {
 
     pub(super) fn on_response(&mut self, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
-        let Answered { rows, swaps, stale, result, missing } = answer;
+        let Answered { rows, swaps, stale, result, missing, missing_destroy } = answer;
         self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -46,6 +47,7 @@ impl OutboxState {
             operation.stage = Stage::Landing;
             operation.landed = swaps.iter().find(|(temp, _)| *temp == operation.op.row_id).or(swaps.first()).map(|(_, real)| real.clone()).or_else(|| rows.iter().find(|(model, _)| *model == operation.op.model).and_then(|(_, rows)| rows.last()).map(|row| row.row_id.clone()));
             operation.landing = rows;
+            operation.missing_destroy = missing_destroy;
             operation.swaps = swaps;
             operation.missing = missing;
             operation.stale = stale;
@@ -242,6 +244,7 @@ impl OutboxState {
                         self.member_removals.entry(op_id).or_insert(MemberRemoval { member, in_flight: false, storage_failures: 0, land_after_storage: false, deferred: Vec::new() });
                         self.store_member(op_id, fx);
                     } else {
+                        self.waiting.remove(&op_id);
                         if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
                         self.store(op_id, CommitKind::Rollback, fx);
                     }
@@ -273,8 +276,18 @@ impl OutboxState {
         if let Some(operation) = self.ops.get_mut(&op_id) {
             if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
         }
+        if let Some((item, _)) = self.waiting.get_mut(&op_id) {
+            if let OpSource::TransferGroup { members, .. } = &mut item.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
+            item.removed_rows.retain(|(_, row_id, _)| row_id != &pending.member.row_id);
+        }
         if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: false }))); }
         for input in pending.deferred { self.handle(input, fx); }
+        if self.waiting.get(&op_id).is_some_and(|(item, _)| item.removed_rows.is_empty() && self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))) {
+            if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {
+                self.ops.remove(&op_id);
+                self.classify(item, pending_lost, fx);
+            }
+        }
     }
 
     pub(super) fn member_rejected(&mut self, op_id: OpId, reason: crate::owners::contract::RejectReason, fx: &mut Effects<Outbox>) {
@@ -483,7 +496,7 @@ impl OutboxState {
     fn is_quiet(&self) -> bool {
         self.writes_active() == 0 && self.ops.values().all(|operation| match operation.stage {
             Stage::Submitting | Stage::PersistingAttempt | Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::MarkingRetry => false,
-            Stage::Sending => operation.waiting_retry,
+            Stage::Sending => operation.waiting_retry || !self.online,
             Stage::WaitingDeclaration | Stage::Queued | Stage::Failed | Stage::Done => true,
         })
     }

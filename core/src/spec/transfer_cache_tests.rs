@@ -24,6 +24,7 @@ fn xfer_copy_cached_skips_steps() {
     let out = copied(&mut twin, id, CachedBlob::Fresh { blob_id: "blob-1".into() });
     assert_eq!(twin.stage(id), TransferStage::PersistingCopy);
     assert_eq!((out.writes(), out.kinds()), (1, vec![UploadKind::Completed]), "the copy and the finished upload are one transaction");
+    assert!(out.batches[0].ops.iter().any(|op| matches!(op, StoreOp::Intent { op_id, origin: crate::owners::store::IntentOrigin::Transfer { transfer_id }, .. } if *op_id == id && *transfer_id == id)), "the completed copy and its intent share a transaction: {:?}", out.batches);
     let row = out.rows()[0].0;
     assert_eq!((row.signed_id.as_deref(), row.size, row.sha256.as_str(), row.completed), (Some("blob-1"), 10, "h", true));
     assert!(no_upload_requests(&out) && out.submits() == 0 && out.all_replies() == 0, "nothing goes out before Committed: {out:?}");

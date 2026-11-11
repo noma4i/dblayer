@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn sess_stray_unknown_idle() {
+    let mut twin = Twin::new();
+    let before = twin.reference.state.clone();
+    let credential = twin.reference.credential;
+    let effects = twin.feed(Input::Unknown { request_id: 73, attempt_id: 19 });
+    assert!(effects.is_empty(), "a foreign answer emits no effects: {effects:?}");
+    assert!(twin.replies.is_empty());
+    assert_eq!(twin.reference.state, before);
+    assert_eq!(twin.reference.credential, credential);
+    assert!(twin.reference.queue.is_empty());
+}
+
+#[test]
+fn sess_direct_call_exhausted() {
+    for operation in ["social", "visit"] {
+        let mut twin = Twin::new();
+        twin.feed(call_of(operation, 1));
+        finish_seal(&mut twin);
+        twin.feed(committed());
+        for attempt in 1..=40 {
+            let input = twin.http_error(true, false);
+            let effects = twin.feed(input);
+            if attempt < 40 {
+                assert!(twin.replies.is_empty(), "attempt {attempt}: {:?}", twin.replies);
+                assert_eq!(effects, vec![RefEffect::ScheduleTick { attempts: attempt }]);
+                assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { .. }]));
+            } else if operation == "visit" {
+                assert!(matches!(&effects[..], [RefEffect::CommitLanding { .. }]));
+                twin.feed(committed());
+                assert!(matches!(twin.reference.state, RefState::Idle));
+            } else {
+                assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached)));
+                assert!(twin.replies.is_empty());
+                assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick { attempts: 0 }]);
+                assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_none()));
+            }
+        }
+        assert_eq!(twin.replies, vec![(1, Err(Fail::Network))]);
+    }
+    for (last, expected) in [("dropped", Fail::Network), ("unknown", Fail::Network), ("transient", Fail::Graphql("TIMEOUT".into())), ("large", Fail::ResponseTooLarge { limit: 64 })] {
+        let mut twin = calling();
+        for attempt in 1..=40 {
+            let input = if attempt < 40 { twin.http_error(true, false) } else {
+                match last {
+                    "dropped" => twin.dropped(),
+                    "unknown" => Input::Unknown { request_id: twin.rid(), attempt_id: twin.aid() },
+                    "transient" => Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: r#"{"errors":[{"message":"timeout","extensions":{"code":"TIMEOUT"}}]}"#.into(), sequence: None, refusal: None },
+                    _ => Input::AnswerTooLarge { request_id: twin.rid(), attempt_id: twin.aid(), limit: 64 },
+                }
+            };
+            let effects = twin.feed(input);
+            if attempt < 40 {
+            assert_eq!(effects, vec![RefEffect::ScheduleTick { attempts: attempt }]);
+            assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { .. }]));
+            } else {
+            assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached)));
+            assert!(twin.replies.is_empty());
+            assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick { attempts: 0 }]);
+            assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_none()));
+            }
+        }
+        assert_eq!(twin.replies, vec![(1, Err(expected))], "{last}");
+    }
+}
+
+#[test]
 fn sess_answer_too_large_other() {
     let mut sealing = Twin::new();
     sealing.feed(call(1));
@@ -16,10 +82,8 @@ fn sess_answer_too_large_other() {
         ("BlockedPending", blocked), ("Closed", closed),
     ] {
         let before = twin.reference.state.clone();
-        for sequenced in [false, true] {
-            assert!(twin.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64, sequenced }).is_empty(), "{name}");
-            assert_eq!(twin.reference.state, before, "{name}");
-        }
+        assert!(twin.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64 }).is_empty(), "{name}");
+        assert_eq!(twin.reference.state, before, "{name}");
     }
 }
 
@@ -29,52 +93,51 @@ fn sess_calling_answer_too_large_after_offline() {
     let (request_id, attempt_id) = (twin.rid(), twin.aid());
     assert_eq!(twin.feed(Input::Online(false)), vec![RefEffect::HttpCancel { attempt_id }]);
     assert!(twin.in_phase(CallPhase::WaitingNetwork));
-    assert!(twin.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }).is_empty());
+    assert!(twin.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }).is_empty());
     assert!(twin.in_phase(CallPhase::WaitingNetwork));
 }
 
 #[test]
 fn sess_answer_too_large_table() {
-    let mut read = calling();
-    let input = Input::AnswerTooLarge { request_id: read.rid(), attempt_id: read.aid(), limit: 64, sequenced: false };
+    let mut read = Twin::new();
+    read.feed(call_of("visit", 1));
+    finish_seal(&mut read);
+    read.feed(committed());
+    let input = Input::AnswerTooLarge { request_id: read.rid(), attempt_id: read.aid(), limit: 64 };
     assert!(matches!(&read.feed(input)[..], [RefEffect::CommitLanding { .. }]));
     assert!(read.replies.is_empty());
     read.feed(committed());
     assert_eq!(read.replies, vec![(1, Err(Fail::ResponseTooLarge { limit: 64 }))]);
 
     let mut author = calling_mutate();
-    let input = Input::AnswerTooLarge { request_id: author.rid(), attempt_id: author.aid(), limit: 64, sequenced: true };
+    let input = Input::AnswerTooLarge { request_id: author.rid(), attempt_id: author.aid(), limit: 64 };
     assert_eq!(author.feed(input), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::ResponseTooLarge { limit: 64 }, true))]);
     assert!(matches!(author.reference.state, RefState::PendingHeld { .. }));
-    assert!(author.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64, sequenced: true }).is_empty());
+    assert!(author.feed(Input::AnswerTooLarge { request_id: 11, attempt_id: 1, limit: 64 }).is_empty());
 
     let mut direct = calling();
     let (request_id, attempt_id) = (direct.rid(), direct.aid());
     for (rid, aid) in [(request_id + 1, attempt_id), (request_id, attempt_id + 1)] {
-        assert!(direct.feed(Input::AnswerTooLarge { request_id: rid, attempt_id: aid, limit: 64, sequenced: true }).is_empty());
+        assert!(direct.feed(Input::AnswerTooLarge { request_id: rid, attempt_id: aid, limit: 64 }).is_empty());
     }
-    assert_eq!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }), vec![RefEffect::ScheduleTick { attempts: 1 }]);
+    assert_eq!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }), vec![RefEffect::ScheduleTick { attempts: 1 }]);
     assert!(direct.in_phase(CallPhase::WaitingRetry));
-    for sequenced in [false, true] {
-        assert!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced }).is_empty());
-    }
+    assert!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }).is_empty());
 
     let mut secret = calling();
     let (request_id, attempt_id) = (secret.rid(), secret.aid());
     secret.feed(Input::SecretMissing { request_id, attempt_id, lost: false });
     assert!(secret.in_phase(CallPhase::WaitingSecret));
-    for sequenced in [false, true] {
-        assert!(secret.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced }).is_empty());
-        assert!(secret.in_phase(CallPhase::WaitingSecret));
-    }
+    assert!(secret.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }).is_empty());
+    assert!(secret.in_phase(CallPhase::WaitingSecret));
 
     let mut offline = calling();
     let (request_id, attempt_id) = (offline.rid(), offline.aid());
     offline.feed(Input::Online(false));
-    assert!(offline.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64, sequenced: true }).is_empty());
+    assert!(offline.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }).is_empty());
     assert!(offline.in_phase(CallPhase::WaitingNetwork));
     let mut idle = Twin::new();
-    assert!(idle.feed(Input::AnswerTooLarge { request_id: 1, attempt_id: 1, limit: 64, sequenced: false }).is_empty());
+    assert!(idle.feed(Input::AnswerTooLarge { request_id: 1, attempt_id: 1, limit: 64 }).is_empty());
 }
 
 #[test]
@@ -406,7 +469,7 @@ fn sess_idle_stray() {
 fn sess_revoked_other_author() {
     for mut twin in [Twin::new(), calling()] {
         let effects = twin.feed(Input::Revoked { request_id: 77, attempt_id: 88, body: "{}".into(), author_ref: Some(31) });
-        let [RefEffect::CommitLanding { batch, erase_session: true, answer: None, digest: None, sequence: None, .. }] = effects[..] else { panic!("the revoked answer of another author commits only the session erase: {effects:?}") };
+        let [RefEffect::CommitLanding { batch, erase_session: true, end_journal: true, answer: None, resume_answer: None, digest: None, sequence: None, .. }] = effects[..] else { panic!("the revoked answer of another author commits the session erase and end journal: {effects:?}") };
         let committed = twin.feed(Input::Committed(batch));
         assert!(matches!(&committed[..], [RefEffect::ServerEnded { .. }]), "after Committed only the server end is published, the author learns the end from its epoch (D-278): {committed:?}");
     }
@@ -513,7 +576,7 @@ fn sess_calling_no_sequence_login() {
     let refusal = r#"{"errors":[{"message":"bad","extensions":{"code":"INVALID_INPUT"}}]}"#;
     let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: refusal.into(), sequence: None, refusal: None };
     let landing = twin.feed(input);
-    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, digest: None, sequence: None, .. }]), "the provisional credential is erased: {landing:?}");
+    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, end_journal: false, digest: None, sequence: None, .. }]), "the provisional credential is erased: {landing:?}");
     let cleared = twin.feed(committed());
     assert!(matches!(&cleared[..], [RefEffect::ClearSecret { .. }]), "{cleared:?}");
     let op = twin.op();
@@ -532,7 +595,7 @@ fn sess_landing_login_failed_clears() {
     twin.feed_all([Input::SecretStored { op, ok: true }, committed()]);
     let input = twin.http_error(false, false);
     let landing = twin.feed(input);
-    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, answer: None, .. }]), "{landing:?}");
+    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, end_journal: false, answer: None, .. }]), "{landing:?}");
     let cleared = twin.feed(committed());
     assert!(matches!(&cleared[..], [RefEffect::ClearSecret { .. }]), "{cleared:?}");
     assert!(twin.replies.is_empty(), "the call hears the error after the secret is gone");

@@ -9,7 +9,7 @@ fn nodes(value: Value) -> Vec<Map<String, Value>> {
 }
 
 fn store() -> std::sync::Arc<Store> {
-    Store::open_models(None, all_specs(), None).map(std::sync::Arc::new).unwrap()
+    Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap()
 }
 
 #[test]

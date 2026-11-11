@@ -4,7 +4,7 @@ use super::outbox_cells_tests::{sending, transfer_outcomes, unchanged_by};
 use super::outbox_harness::*;
 use super::outbox_harness::{In, Policy, RWhy, St};
 use crate::ffi::EndCause;
-use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, Rejected, RejectReason};
+use crate::owners::contract::{Committed, EpochStarted, Online, Rejected, RejectReason};
 use crate::owners::write::outbox::{OutboxInput, OutboxOutcome};
 use crate::runtime::Time;
 
@@ -78,7 +78,6 @@ fn out_done() {
     let (mut twin, id) = reach(St::Done, &ready());
     unchanged_by(&mut twin, id, St::Done, vec![
         OutboxInput::Online(Online(true)),
-        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
         OutboxInput::Response { op_id: id + 100, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id + 100, temporary: true },
         OutboxInput::Dropped { op_id: id + 100 },
@@ -92,7 +91,6 @@ fn out_failed_other() {
     let (mut twin, id) = reach(St::Failed, &keep());
     unchanged_by(&mut twin, id, St::Failed, vec![
         OutboxInput::Online(Online(true)),
-        OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Chat".into()] }),
         OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },

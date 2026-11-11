@@ -45,9 +45,9 @@ class CableClockTest {
             awaitWithin("the profile is shown") { profile.projection.first { profile.value?.name == "Ann" } }
             val peer = transport.cable as EncryptedCablePeer
             val token = awaitWithin("the profile subscription") { peer.subscribed.receive() }
-            repeat(5) {
+            repeat(5) { step ->
                 clock.advance(120_000L)
-                assertEquals("the connection reopened", token, awaitWithin("ping on the original connection, which may have reopened") { peer.ping.receive() })
+                assertEquals("the connection reopened", token, awaitWithin("ping on the original connection, which may have reopened, step=${step + 1}", detail = { "opens=${peer.openedCount} subscriptions=${peer.subscribedCount.get()} last=${peer.lastEvent}" }) { peer.ping.receive() })
             }
             val event = Json.parseToJsonElement("""{"data":{"viewerChanges":{"changes":[{"area":"COUNTERS","kind":"UPDATED","entityId":"u1"}]}}}""").jsonObject
             assertTrue(peer.event(token, event))

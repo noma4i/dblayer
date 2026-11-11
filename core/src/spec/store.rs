@@ -58,15 +58,16 @@ fn revision_by_one(steps: &[Step]) -> Result<(), String> {
     Ok(())
 }
 
-/// P-STORE-02: no row born before an answered `reset_models` is read after it.
 fn no_stale_rows(steps: &[Step]) -> Result<(), String> {
     let born = born_rows(steps);
-    let resets: Vec<usize> = steps.iter().enumerate().filter(|(_, s)| s.input.name == "reset_models").map(|(i, _)| i).collect();
+    let clears: Vec<usize> = steps.iter().enumerate().filter(|(_, step)| step.input.name == "session_reset").map(|(index, _)| index).collect();
     for (index, step) in steps.iter().enumerate() {
-        for o in step.observed.iter().filter(|o| o.kind == "rows") {
-            for name in o.value["present"].as_array().into_iter().flatten().filter_map(|n| n.as_str()) {
-                let at = born.get(name).copied().unwrap_or(0);
-                if resets.iter().any(|reset| at < *reset && *reset < index) { return Err(format!("step {} reads {name} born at step {} before the reset", index + 1, at + 1)); }
+        for value in step.observed.iter().filter(|value| value.kind == "rows") {
+            for row in value.value["present"].as_array().into_iter().flatten().filter_map(|row| row.as_str()) {
+                let at = born.get(row).copied().unwrap_or(0);
+                if clears.iter().any(|clear| at < *clear && *clear < index) {
+                    return Err(format!("step {} reads {row} before account clear", index + 1));
+                }
             }
         }
     }
@@ -137,7 +138,7 @@ impl StoreOwner {
 
     pub fn full(only: Option<&'static str>) -> Self {
         let mut alphabet = Self::public(None).alphabet;
-        alphabet.extend([Input::new("reset_models").with("models", json!(["Moment"])), input("fail_commit"), input("fail_clear"), input("hold_writer"), input("release_writer"), input("rows_held"), Input::new("commit_batch").with("names", json!(["x", "y"]))]);
+        alphabet.extend([input("fail_commit"), input("fail_clear"), input("hold_writer"), input("release_writer"), input("rows_held"), Input::new("commit_batch").with("names", json!(["x", "y"]))]);
         Self { full: true, only, alphabet }
     }
 }

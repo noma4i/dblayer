@@ -80,3 +80,23 @@ fn xfer_prop_held_step_released() {
         assert!(all(&[&answered, &started]).is_empty(), "the answered pair is not released, order {order:?}");
     }
 }
+
+#[test]
+fn xfer_prop_held_step_answer_before_declaration() {
+    use crate::owners::session::AuthorOutcome;
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Answer, Register }
+    for order in crate::test_wait::permutations(&[Event::Answer, Event::Register]) {
+        let mut twin = Twin::bare(1);
+        twin.post(TransferInput::Restored { uploads: vec![saved(0)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+        twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        twin.online(true);
+        for event in &order {
+            match event {
+                Event::Answer => twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: AuthorOutcome::Dropped }),
+                Event::Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+            };
+        }
+        assert_eq!(twin.stage(1), TransferStage::PersistingAttempt, "{order:?}: the answered pair lets the declared transfer write its attempt");
+    }
+}

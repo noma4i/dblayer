@@ -121,6 +121,23 @@ fn mixed_effects_enqueue_before_the_next_run_on_threads() {
 }
 
 #[test]
+fn hang_report_identifies_held_input_and_queued_work() {
+    let (entered, held) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let mut builder = RuntimeBuilder::for_tests();
+    let recipient = builder.add::<OrderedRecipient>("recipient", (), HoldRecipient { entered, release: release_rx });
+    let runtime = builder.start().unwrap();
+    runtime.post(recipient, EpochStamp::Control, OrderedRecipientInput::Hold);
+    crate::test_wait::recv_within(&held);
+    runtime.post(recipient, EpochStamp::Control, OrderedRecipientInput::Notice);
+    let report = crate::test_wait::hang_report();
+    release.send(()).unwrap();
+    runtime.barrier();
+    assert!(report.contains("recipient: queued 1 [Notice "), "{report}");
+    assert!(report.contains("active [Hold "), "{report}");
+}
+
+#[test]
 fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     let (report, fired) = mpsc::channel();
     let mut builder = RuntimeBuilder::for_tests();

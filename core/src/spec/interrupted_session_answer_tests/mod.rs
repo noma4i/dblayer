@@ -1,4 +1,4 @@
-use crate::owners::contract::{Committed, EpochEnded, Published, PublishedState};
+use crate::owners::contract::{Committed, EpochEnded, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -25,12 +25,12 @@ impl Rig {
 
     fn restore(&mut self) {
         let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: "read".into(), path: "/read".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
-        self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
+        self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false, resume_answer: None });
     }
 
     fn restore_detached(&mut self) {
         let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: String::new(), path: "/read".into(), body: "{}".into(), document: None, credential: None, purpose: 0, author: None, owner: Some(crate::transport::RequestOwner::Detached), epoch: 3, reply: None };
-        self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
+        self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false, resume_answer: None });
     }
 
     fn start(&mut self) -> u64 {
@@ -40,6 +40,12 @@ impl Rig {
     fn refuse(&mut self, attempt_id: u64) -> Vec<SessionEffect> {
         let effects = self.send(SessionInput::HttpError { request_id: 11, attempt_id, temporary: false, auth: false, status: 0, too_large: Some((262145, 262144)), security: None, body: None });
         let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
+        self.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
+    }
+
+    fn take_answer(&mut self, id: u64) -> Vec<SessionEffect> {
+        let effects = self.send(ask_answer(id));
+        let [SessionEffect::CommitResumeAnswer { batch, epoch: 3, answer: None }] = effects[..] else { panic!("the answer is removed before replying: {effects:?}") };
         self.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
     }
 }
@@ -89,7 +95,7 @@ fn sess_restored_answer_kept() {
     rig.restore();
     let attempt = rig.start();
     assert!(rig.refuse(attempt).is_empty());
-    assert_eq!(rig.send(ask_answer(1)), [answer(1, Err(too_large()))]);
+    assert_eq!(rig.take_answer(1), [answer(1, Err(too_large()))]);
 }
 
 #[test]
@@ -98,22 +104,90 @@ fn sess_resume_takes_answer() {
     rig.restore();
     let attempt = rig.start();
     rig.refuse(attempt);
-    assert_eq!(rig.send(ask_answer(1)), [answer(1, Err(too_large()))]);
-    assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
+    let effects = rig.send(ask_answer(1));
+    let [SessionEffect::CommitResumeAnswer { batch, epoch: 3, answer: None }] = effects[..] else { panic!("the answer must be removed: {effects:?}") };
+    assert!(rig.send(ask_answer(2)).is_empty());
+    assert_eq!(rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })), [answer(1, Err(too_large())), answer(2, Ok(None))]);
+    assert_eq!(rig.send(ask_answer(3)), [answer(3, Ok(None))]);
+}
+
+#[test]
+fn sess_resume_take_rejected() {
+    use crate::spec::ref_session::resume::{Effect as RefEffect, Input as RefInput, Resume};
+    let mut reference = Resume::restored(Err(crate::spec::ref_session::Fail::TooLarge { size: 262145, limit: 262144 }));
+    assert_eq!(reference.step(RefInput::Resume(1)), [RefEffect::Remove { batch: 1 }]);
+    assert!(reference.step(RefInput::Resume(2)).is_empty());
+    assert_eq!(reference.step(RefInput::Rejected(1)), [RefEffect::Reply { id: 1, answer: Err(crate::spec::ref_session::Fail::Storage) }, RefEffect::Reply { id: 2, answer: Err(crate::spec::ref_session::Fail::Storage) }]);
+    assert_eq!(reference.step(RefInput::Resume(3)), [RefEffect::Remove { batch: 2 }]);
+    assert_eq!(reference.step(RefInput::Committed(2)), [RefEffect::Reply { id: 3, answer: Err(crate::spec::ref_session::Fail::TooLarge { size: 262145, limit: 262144 }) }]);
+    let mut rig = Rig::new();
+    rig.restore();
+    let attempt = rig.start();
+    rig.refuse(attempt);
+    let effects = rig.send(ask_answer(1));
+    let [SessionEffect::CommitResumeAnswer { batch, epoch: 3, answer: None }] = effects[..] else { panic!("the answer must be removed: {effects:?}") };
+    assert!(rig.send(ask_answer(2)).is_empty());
+    let rejected = rig.send(SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) }));
+    assert!(matches!(&rejected[..], [SessionEffect::ResumeReply { id: 1, answer: Err(SessionError::Storage(_)) }, SessionEffect::ResumeReply { id: 2, answer: Err(SessionError::Storage(_)) }]));
+    assert_eq!(rig.take_answer(3), [answer(3, Err(too_large()))]);
+    assert_eq!(rig.send(ask_answer(4)), [answer(4, Ok(None))]);
+}
+
+#[test]
+fn sess_resume_answer_survives_crash() {
+    let mut rig = Rig::new();
+    rig.restore();
+    let attempt_id = rig.start();
+    let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
+    let [SessionEffect::CommitLanding { resume_answer: Some(Ok(body)), .. }] = effects.as_slice() else { panic!("landing stores the answer with pending removal: {effects:?}") };
+    let mut reopened = Rig::new();
+    reopened.send(SessionInput::Restored { epoch: 3, pending: None, answers: Default::default(), pending_lost: false, resume_answer: Some(Ok(body.clone())) });
+    assert_eq!(reopened.take_answer(1), [answer(1, Ok(Some(body.clone())))]);
+    assert_eq!(reopened.send(ask_answer(2)), [answer(2, Ok(None))]);
+}
+
+#[test]
+fn sess_resume_take_closing() {
+    use crate::spec::ref_session::{resume::{Effect as RefEffect, Input as RefInput, Resume}, Fail};
+    for committed in [true, false] {
+        let expected = Err(Fail::TooLarge { size: 262145, limit: 262144 });
+        let mut reference = Resume::restored(expected.clone());
+        assert_eq!(reference.step(RefInput::Resume(1)), [RefEffect::Remove { batch: 1 }]);
+        assert!(reference.step(RefInput::Resume(2)).is_empty());
+        assert!(reference.step(RefInput::Closing).is_empty());
+        let reference_out = reference.step(if committed { RefInput::Committed(1) } else { RefInput::Rejected(1) });
+        let mut rig = Rig::new();
+        rig.restore();
+        let attempt = rig.start();
+        rig.refuse(attempt);
+        let effects = rig.send(ask_answer(1));
+        let [SessionEffect::CommitResumeAnswer { batch, epoch: 3, answer: None }] = effects[..] else { panic!("the answer must be removed: {effects:?}") };
+        assert!(rig.send(ask_answer(2)).is_empty());
+        let closing = rig.send(SessionInput::Closing);
+        assert!(!closing.iter().any(|effect| matches!(effect, SessionEffect::Drained(_) | SessionEffect::ResumeReply { .. })), "the Store result is pending: {closing:?}");
+        let outcome = if committed { SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }) } else { SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) }) };
+        let actual = rig.send(outcome);
+        let replies = if committed { vec![answer(1, Err(too_large())), answer(2, Ok(None))] } else { vec![answer(1, Err(SessionError::Closed)), answer(2, Err(SessionError::Closed))] };
+        assert_eq!(actual.iter().filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).cloned().collect::<Vec<_>>(), replies);
+        assert!(matches!(actual.last(), Some(SessionEffect::Drained(_))), "Drained follows the replies: {actual:?}");
+        assert!(matches!(reference_out.last(), Some(RefEffect::Drained)));
+    }
 }
 
 #[test]
 fn sess_resume_login_epoch_started() {
     let mut rig = Rig::new();
     let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
-    rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
+    rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false, resume_answer: None });
     let attempt = rig.start();
     rig.send(ask_answer(1));
     let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: Some(1) } });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
     rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionStarted })).is_empty());
-    assert_eq!(rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false })), [SessionEffect::SnapshotRequest { epoch: 4 }, answer(1, Ok(Some("{}".into())))]);
+    let effects = rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+    let [SessionEffect::SnapshotRequest { epoch: 4 }, SessionEffect::CommitResumeAnswer { batch, epoch: 4, answer: None }] = effects[..] else { panic!("the saved answer is removed after publication: {effects:?}") };
+    assert_eq!(rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })), [answer(1, Ok(Some("{}".into())))]);
 }
 
 #[test]
@@ -155,7 +229,7 @@ fn sess_prop_resume_once() {
     assert!(!committed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
     let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
     assert!(!published.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
-    assert_eq!(rig.send(ask_answer(1)), [answer(1, Ok(Some("{\"ok\":true}".into())))]);
+    assert_eq!(rig.take_answer(1), [answer(1, Ok(Some("{\"ok\":true}".into())))]);
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
