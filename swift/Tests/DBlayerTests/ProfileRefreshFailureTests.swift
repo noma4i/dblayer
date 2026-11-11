@@ -48,23 +48,24 @@ extension BridgeProbeTests {
     let spec = String(decoding: try JSONSerialization.data(withJSONObject: schema), as: UTF8.self)
     let clock = try await openSignedClocked(modelsJson: spec, transport: transport, operations: definitions)
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Ann"}}}"#)
-    transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Bea"}}}"#)
+    for step in 1...5 { transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Bea\#(step)"}}}"#) }
     let profile = Projected<CurrentUser>(try DB.account().singleton(CurrentUser.self))
     try await profile.refresh()
     guard await observe("the profile is shown", { profile.value?.name == "Ann" }) else { return }
     let peer = try #require(transport.cable as? EncryptedCablePeer)
     let token = try #require(await Cursor(peer.subscribed.stream).next("the profile subscription"))
     let pings = Cursor(peer.ping.stream)
+    let change: [String: Any] = ["data": ["viewerChanges": ["changes": [["area":"COUNTERS", "kind":"UPDATED", "entityId":"u1"]]]]]
     for step in 1...5 {
       clock.advance(by: 120)
       let ping = try #require(await pings.next("ping on the original connection, which may have reopened, step=\(step)", detail: { "opens=\(peer.openedCount) subscriptions=\(peer.subscribedCount) last=\(peer.lastEvent)" }))
       #expect(ping == token)
+      let delivered = try peer.event(token: token, result: change)
+      try #require(delivered)
+      guard await observe("the change rereads the profile, step=\(step)", { profile.value?.name == "Bea\(step)" }) else { return }
     }
-    let delivered = try peer.event(token: token, result: ["data": ["viewerChanges": ["changes": [["area":"COUNTERS", "kind":"UPDATED", "entityId":"u1"]]]]])
-    try #require(delivered)
-    guard await observe("the change rereads the profile", { profile.value?.name == "Bea" }) else { return }
     #expect(peer.openedCount == 1)
-    #expect(transport.calls.filter { $0.operationName == "CurrentUserQuery" }.count == 2)
+    #expect(transport.calls.filter { $0.operationName == "CurrentUserQuery" }.count == 6)
     await profile.stream.cancel()
     await DB.closeForCleanup()
   }

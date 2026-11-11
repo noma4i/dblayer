@@ -39,21 +39,22 @@ class CableClockTest {
             val transport = MockTransport()
             val clock = openSignedClocked(spec, transport, definitions)
             transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"Ann"}}}""")
-            transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"Bea"}}}""")
+            for (step in 1..5) transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"Bea$step"}}}""")
             val profile = Projected(AccountScope.current().stream(CurrentUser.current), CurrentUser, scope)
             CurrentUser.current.refresh()
             awaitWithin("the profile is shown") { profile.projection.first { profile.value?.name == "Ann" } }
             val peer = transport.cable as EncryptedCablePeer
             val token = awaitWithin("the profile subscription") { peer.subscribed.receive() }
-            repeat(5) { step ->
-                clock.advance(120_000L)
-                assertEquals("the connection reopened", token, awaitWithin("ping on the original connection, which may have reopened, step=${step + 1}", detail = { "opens=${peer.openedCount} subscriptions=${peer.subscribedCount.get()} last=${peer.lastEvent}" }) { peer.ping.receive() })
-            }
             val event = Json.parseToJsonElement("""{"data":{"viewerChanges":{"changes":[{"area":"COUNTERS","kind":"UPDATED","entityId":"u1"}]}}}""").jsonObject
-            assertTrue(peer.event(token, event))
-            awaitWithin("the change rereads the profile") { profile.projection.first { profile.value?.name == "Bea" } }
+            repeat(5) { index ->
+                val step = index + 1
+                clock.advance(120_000L)
+                assertEquals("the connection reopened", token, awaitWithin("ping on the original connection, which may have reopened, step=$step", detail = { "opens=${peer.openedCount} subscriptions=${peer.subscribedCount.get()} last=${peer.lastEvent}" }) { peer.ping.receive() })
+                assertTrue(peer.event(token, event))
+                awaitWithin("the change rereads the profile, step=$step") { profile.projection.first { profile.value?.name == "Bea$step" } }
+            }
             assertEquals(1, peer.openedCount)
-            assertEquals(2, transport.calls.count { it.operationName == "CurrentUserQuery" })
+            assertEquals(6, transport.calls.count { it.operationName == "CurrentUserQuery" })
             profile.close()
         } finally {
             scope.cancel()
