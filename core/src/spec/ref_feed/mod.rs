@@ -400,6 +400,7 @@ impl Feed {
                     self.commit_gap(models, &mut effects);
                 }
                 Some(Reject::Storage) => self.stale_retry.push(models),
+                Some(Reject::Invalid) => Self::stale(&models, &mut effects),
                 _ => {},
             }
             return effects;
