@@ -201,7 +201,7 @@ The permanent statuses apply to the first send and every repeat through the same
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
 The [retry owner](#retries) preserves Pending across temporary failures.
 HTTP 401 returns immediately with pending preserved.
-Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
+HTTP 401 and the `UNAUTHENTICATED` code reach the caller as `Unauthorized`: the session, its data and the credential stay. HTTP 403 stays `Http(403)`.
 Opening the database with a session sends the stored request. The application calls nothing.
 
 The library closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
