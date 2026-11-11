@@ -8,11 +8,6 @@ model Message do
   changes "DblayerViewerChanges", from: "viewerChanges.changes", area: "area", kind: "kind", id: "entityId"
   changed_by "MESSAGE", via: :node, payload: "message", removes_on: ["DELETED", "ACCESS_REVOKED"]
   changed_by "REACTION", via: :node, payload: "message"
-  scope :transcode_status, node: :one do
-    parameter :id, :id
-    query "MessageTranscodeStatus"
-    variables id: :id
-  end
   scope :thread, insert_on: [:event, :response, :node], stable_order: true do
     parameter :chatId, :id
     where chatId: :chatId
@@ -31,7 +26,9 @@ model Message do
     variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
     response from: "node.messages"
     paginate size: 30, direction: :forward
-    freshness expires_in: 365.days
+    freshness expires_in: 5.minutes
+    marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount], sequence: :latestSequence
+    tail "chatMedia", after: :afterSequence
   end
   scope :audio_media, insert_on: [:event, :response, :node] do
     parameter :chatId, :id
@@ -42,7 +39,9 @@ model Message do
     variables mediaKinds: ["AUDIO"], includeGifts: false
     response from: "node.messages"
     paginate size: 30, direction: :forward
-    freshness expires_in: 365.days
+    freshness expires_in: 5.minutes
+    marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :audioCount], sequence: :latestSequence
+    tail "chatMedia", after: :afterSequence
   end
   scope :gift_media, insert_on: [:event, :response, :node] do
     parameter :chatId, :id
@@ -53,43 +52,9 @@ model Message do
     variables includeGifts: true
     response from: "node.messages"
     paginate size: 30, direction: :forward
-    freshness expires_in: 365.days
-  end
-  scope :visual_since, insert_on: [:event, :response, :node] do
-    parameter :chatId, :id
-    parameter :afterSequence, :int
-    where chatId: :chatId
-    matches mediaKind: { in: ["IMAGE", "VIDEO"] }, sequenceNumber: { greater_than: :afterSequence }
-    order sequenceNumber: :asc, createdAt: :asc
-    query "chatMedia"
-    variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
-    response from: "node.messages"
-    paginate size: 50, direction: :forward
     freshness expires_in: 5.minutes
-  end
-  scope :audio_since, insert_on: [:event, :response, :node] do
-    parameter :chatId, :id
-    parameter :afterSequence, :int
-    where chatId: :chatId
-    matches mediaKind: { equals: "AUDIO" }, sequenceNumber: { greater_than: :afterSequence }
-    order sequenceNumber: :asc, createdAt: :asc
-    query "chatMedia"
-    variables mediaKinds: ["AUDIO"], includeGifts: false
-    response from: "node.messages"
-    paginate size: 50, direction: :forward
-    freshness expires_in: 5.minutes
-  end
-  scope :gifts_since, insert_on: [:event, :response, :node] do
-    parameter :chatId, :id
-    parameter :afterSequence, :int
-    where chatId: :chatId
-    matches kind: { equals: "GIFT" }, sequenceNumber: { greater_than: :afterSequence }
-    order sequenceNumber: :asc, createdAt: :asc
-    query "chatMedia"
-    variables includeGifts: true
-    response from: "node.messages"
-    paginate size: 50, direction: :forward
-    freshness expires_in: 5.minutes
+    marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :giftCount], sequence: :latestSequence
+    tail "chatMedia", after: :afterSequence
   end
   attribute :chatId, :id
   attribute :userId, :id, null: true, from: "author.id"

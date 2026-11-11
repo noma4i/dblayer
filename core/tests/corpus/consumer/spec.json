@@ -1405,74 +1405,6 @@
           "optional": true
         },
         {
-          "app_type": null,
-          "default": null,
-          "from": null,
-          "id_from_parent": null,
-          "indexed": false,
-          "kind": {
-            "kind": "int",
-            "type": "scalar"
-          },
-          "merge": {
-            "type": "local"
-          },
-          "name": "mediaSequence",
-          "nullable": false,
-          "optional": true
-        },
-        {
-          "app_type": null,
-          "default": null,
-          "from": null,
-          "id_from_parent": null,
-          "indexed": false,
-          "kind": {
-            "kind": "int",
-            "type": "scalar"
-          },
-          "merge": {
-            "type": "local"
-          },
-          "name": "mediaVisualCount",
-          "nullable": false,
-          "optional": true
-        },
-        {
-          "app_type": null,
-          "default": null,
-          "from": null,
-          "id_from_parent": null,
-          "indexed": false,
-          "kind": {
-            "kind": "int",
-            "type": "scalar"
-          },
-          "merge": {
-            "type": "local"
-          },
-          "name": "mediaAudioCount",
-          "nullable": false,
-          "optional": true
-        },
-        {
-          "app_type": null,
-          "default": null,
-          "from": null,
-          "id_from_parent": null,
-          "indexed": false,
-          "kind": {
-            "kind": "int",
-            "type": "scalar"
-          },
-          "merge": {
-            "type": "local"
-          },
-          "name": "mediaGiftCount",
-          "nullable": false,
-          "optional": true
-        },
-        {
           "app_type": "ChatReadMarks",
           "default": null,
           "fields": [
@@ -2350,6 +2282,95 @@
             "longitude": "longitude"
           },
           "wrap": "input"
+        },
+        {
+          "args": {},
+          "client_mutation_id": false,
+          "correlate": [],
+          "has_cascade_dependents": false,
+          "has_optimistic": false,
+          "has_temp_row_retention": false,
+          "ignore_response": false,
+          "lands": [],
+          "local": [],
+          "members": [],
+          "mutation": "UserRegistrationComplete",
+          "name": "registration_complete",
+          "on_failure": "rollback",
+          "optimistic": {},
+          "refetch": [
+            "profile"
+          ],
+          "returns": {
+            "app_type": "CurrentUserRegistrationCompleteResult",
+            "default": null,
+            "fields": [
+              {
+                "app_type": "UserRegistrationCompleteResultViewer",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": "UserRegistrationCompleteResultViewerProfile",
+                    "default": null,
+                    "fields": [
+                      {
+                        "app_type": null,
+                        "default": null,
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": {
+                          "kind": "bool",
+                          "type": "scalar"
+                        },
+                        "merge": null,
+                        "name": "registrationCompleted",
+                        "nullable": true,
+                        "optional": false
+                      }
+                    ],
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": {
+                      "type": "object"
+                    },
+                    "merge": null,
+                    "name": "profile",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": {
+                  "type": "object"
+                },
+                "merge": null,
+                "name": "viewer",
+                "nullable": true,
+                "optional": false
+              }
+            ],
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": {
+              "type": "object"
+            },
+            "merge": null,
+            "name": "registration_complete",
+            "nullable": false,
+            "optional": false
+          },
+          "root": null,
+          "root_shape": "upsert",
+          "upload": false,
+          "variables": {
+            "currentUserId": "id"
+          },
+          "wrap": null
         },
         {
           "args": {
@@ -7405,35 +7426,6 @@
           ]
         },
         {
-          "by_columns": [],
-          "is_global": false,
-          "joins_created": false,
-          "joins_events": false,
-          "name": "transcode_status",
-          "node": "one",
-          "remote": {
-            "empty_stale_time": null,
-            "operation": "MessageTranscodeStatus",
-            "page_size": null,
-            "root": null,
-            "selects_page_info": false,
-            "shape": {
-              "type": "single"
-            },
-            "stale_time": "5.minutes",
-            "variables": {
-              "id": {
-                "from": "param",
-                "name": "nodeId"
-              }
-            }
-          },
-          "sort": "server_order",
-          "text_params": [
-            "nodeId"
-          ]
-        },
-        {
           "by_columns": [
             "chatId"
           ],
@@ -7481,6 +7473,40 @@
           "joins_created": false,
           "joins_events": true,
           "joins_node": true,
+          "media": {
+            "after": "afterSequence",
+            "fields": [
+              "revision",
+              "visualCount"
+            ],
+            "from": "node.mediaLibrary",
+            "marker": "chatMediaState",
+            "marker_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              }
+            },
+            "sequence": "latestSequence",
+            "tail": "chatMedia",
+            "tail_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              },
+              "includeGifts": {
+                "from": "constant",
+                "value": false
+              },
+              "mediaKinds": {
+                "from": "constant",
+                "value": [
+                  "IMAGE",
+                  "VIDEO"
+                ]
+              }
+            }
+          },
           "name": "visual_media",
           "remote": {
             "empty_stale_time": null,
@@ -7495,7 +7521,7 @@
               "max_pages": null,
               "type": "connection"
             },
-            "stale_time": "365.days",
+            "stale_time": "5.minutes",
             "variables": {
               "includeGifts": {
                 "from": "constant",
@@ -7538,6 +7564,39 @@
           "joins_created": false,
           "joins_events": true,
           "joins_node": true,
+          "media": {
+            "after": "afterSequence",
+            "fields": [
+              "revision",
+              "audioCount"
+            ],
+            "from": "node.mediaLibrary",
+            "marker": "chatMediaState",
+            "marker_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              }
+            },
+            "sequence": "latestSequence",
+            "tail": "chatMedia",
+            "tail_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              },
+              "includeGifts": {
+                "from": "constant",
+                "value": false
+              },
+              "mediaKinds": {
+                "from": "constant",
+                "value": [
+                  "AUDIO"
+                ]
+              }
+            }
+          },
           "name": "audio_media",
           "remote": {
             "empty_stale_time": null,
@@ -7552,7 +7611,7 @@
               "max_pages": null,
               "type": "connection"
             },
-            "stale_time": "365.days",
+            "stale_time": "5.minutes",
             "variables": {
               "includeGifts": {
                 "from": "constant",
@@ -7591,6 +7650,33 @@
           "joins_created": false,
           "joins_events": true,
           "joins_node": true,
+          "media": {
+            "after": "afterSequence",
+            "fields": [
+              "revision",
+              "giftCount"
+            ],
+            "from": "node.mediaLibrary",
+            "marker": "chatMediaState",
+            "marker_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              }
+            },
+            "sequence": "latestSequence",
+            "tail": "chatMedia",
+            "tail_variables": {
+              "chatId": {
+                "from": "param",
+                "name": "chatId"
+              },
+              "includeGifts": {
+                "from": "constant",
+                "value": true
+              }
+            }
+          },
           "name": "gift_media",
           "remote": {
             "empty_stale_time": null,
@@ -7605,7 +7691,7 @@
               "max_pages": null,
               "type": "connection"
             },
-            "stale_time": "365.days",
+            "stale_time": "5.minutes",
             "variables": {
               "includeGifts": {
                 "from": "constant",
@@ -7629,205 +7715,6 @@
             ]
           },
           "text_params": []
-        },
-        {
-          "by_columns": [
-            "chatId"
-          ],
-          "is_global": false,
-          "joins_created": false,
-          "joins_events": true,
-          "joins_node": true,
-          "name": "visual_since",
-          "remote": {
-            "empty_stale_time": null,
-            "operation": "chatMedia",
-            "page_size": 50,
-            "root": "node.messages",
-            "selects_page_info": true,
-            "shape": {
-              "coverage": "page",
-              "cursor": null,
-              "direction": "forward",
-              "max_pages": null,
-              "type": "connection"
-            },
-            "stale_time": "5.minutes",
-            "variables": {
-              "includeGifts": {
-                "from": "constant",
-                "value": false
-              },
-              "mediaKinds": {
-                "from": "constant",
-                "value": [
-                  "IMAGE",
-                  "VIDEO"
-                ]
-              }
-            }
-          },
-          "row_rules": [
-            {
-              "field": "mediaKind",
-              "test": "in",
-              "values": [
-                "IMAGE",
-                "VIDEO"
-              ]
-            },
-            {
-              "field": "sequenceNumber",
-              "parameter": "afterSequence",
-              "test": "greater_than"
-            }
-          ],
-          "scalar_types": {
-            "afterSequence": "int"
-          },
-          "sort": {
-            "fields": [
-              {
-                "column": "sequenceNumber",
-                "direction": "asc"
-              },
-              {
-                "column": "createdAt",
-                "direction": "asc"
-              }
-            ]
-          },
-          "text_params": [
-            "afterSequence"
-          ]
-        },
-        {
-          "by_columns": [
-            "chatId"
-          ],
-          "is_global": false,
-          "joins_created": false,
-          "joins_events": true,
-          "joins_node": true,
-          "name": "audio_since",
-          "remote": {
-            "empty_stale_time": null,
-            "operation": "chatMedia",
-            "page_size": 50,
-            "root": "node.messages",
-            "selects_page_info": true,
-            "shape": {
-              "coverage": "page",
-              "cursor": null,
-              "direction": "forward",
-              "max_pages": null,
-              "type": "connection"
-            },
-            "stale_time": "5.minutes",
-            "variables": {
-              "includeGifts": {
-                "from": "constant",
-                "value": false
-              },
-              "mediaKinds": {
-                "from": "constant",
-                "value": [
-                  "AUDIO"
-                ]
-              }
-            }
-          },
-          "row_rules": [
-            {
-              "field": "mediaKind",
-              "test": "equals",
-              "value": "AUDIO"
-            },
-            {
-              "field": "sequenceNumber",
-              "parameter": "afterSequence",
-              "test": "greater_than"
-            }
-          ],
-          "scalar_types": {
-            "afterSequence": "int"
-          },
-          "sort": {
-            "fields": [
-              {
-                "column": "sequenceNumber",
-                "direction": "asc"
-              },
-              {
-                "column": "createdAt",
-                "direction": "asc"
-              }
-            ]
-          },
-          "text_params": [
-            "afterSequence"
-          ]
-        },
-        {
-          "by_columns": [
-            "chatId"
-          ],
-          "is_global": false,
-          "joins_created": false,
-          "joins_events": true,
-          "joins_node": true,
-          "name": "gifts_since",
-          "remote": {
-            "empty_stale_time": null,
-            "operation": "chatMedia",
-            "page_size": 50,
-            "root": "node.messages",
-            "selects_page_info": true,
-            "shape": {
-              "coverage": "page",
-              "cursor": null,
-              "direction": "forward",
-              "max_pages": null,
-              "type": "connection"
-            },
-            "stale_time": "5.minutes",
-            "variables": {
-              "includeGifts": {
-                "from": "constant",
-                "value": true
-              }
-            }
-          },
-          "row_rules": [
-            {
-              "field": "kind",
-              "test": "equals",
-              "value": "GIFT"
-            },
-            {
-              "field": "sequenceNumber",
-              "parameter": "afterSequence",
-              "test": "greater_than"
-            }
-          ],
-          "scalar_types": {
-            "afterSequence": "int"
-          },
-          "sort": {
-            "fields": [
-              {
-                "column": "sequenceNumber",
-                "direction": "asc"
-              },
-              {
-                "column": "createdAt",
-                "direction": "asc"
-              }
-            ]
-          },
-          "text_params": [
-            "afterSequence"
-          ]
         }
       ],
       "storage": "disk",
@@ -9804,35 +9691,6 @@
         },
         {
           "by_columns": [],
-          "is_global": false,
-          "joins_created": false,
-          "joins_events": false,
-          "name": "transcode_status",
-          "node": "one",
-          "remote": {
-            "empty_stale_time": null,
-            "operation": "MomentTranscodeStatus",
-            "page_size": null,
-            "root": null,
-            "selects_page_info": false,
-            "shape": {
-              "type": "single"
-            },
-            "stale_time": "5.minutes",
-            "variables": {
-              "momentId": {
-                "from": "param",
-                "name": "nodeId"
-              }
-            }
-          },
-          "sort": "server_order",
-          "text_params": [
-            "nodeId"
-          ]
-        },
-        {
-          "by_columns": [],
           "edge_fields": [
             {
               "app_type": null,
@@ -10200,6 +10058,18 @@
           "joins_created": false,
           "joins_events": false,
           "name": "for_moment",
+          "preload": {
+            "id": {
+              "from": {
+                "model": "Moment",
+                "relation": "compass"
+              }
+            }
+          },
+          "preload_limit": 400,
+          "preload_order": [
+            "id"
+          ],
           "remote": {
             "empty_stale_time": null,
             "operation": "compassForMoment",
@@ -10791,7 +10661,9 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [
-            "blocked"
+            "blocked",
+            "details",
+            "Moment.by_user"
           ],
           "root": null,
           "root_shape": "upsert",
@@ -10817,7 +10689,9 @@
           "on_failure": "rollback",
           "optimistic": {},
           "refetch": [
-            "blocked"
+            "blocked",
+            "details",
+            "Moment.by_user"
           ],
           "root": null,
           "root_shape": "upsert",
@@ -13515,101 +13389,6 @@
       }
     },
     {
-      "name": "chatMediaState",
-      "returns": {
-        "app_type": "ChatMediaStateResult",
-        "default": null,
-        "fields": [
-          {
-            "app_type": "ChatMediaStateResultMediaLibrary",
-            "default": null,
-            "fields": [
-              {
-                "app_type": null,
-                "default": null,
-                "from": null,
-                "id_from_parent": null,
-                "indexed": false,
-                "kind": {
-                  "kind": "int",
-                  "type": "scalar"
-                },
-                "merge": null,
-                "name": "visualCount",
-                "nullable": true,
-                "optional": false
-              },
-              {
-                "app_type": null,
-                "default": null,
-                "from": null,
-                "id_from_parent": null,
-                "indexed": false,
-                "kind": {
-                  "kind": "int",
-                  "type": "scalar"
-                },
-                "merge": null,
-                "name": "audioCount",
-                "nullable": true,
-                "optional": false
-              },
-              {
-                "app_type": null,
-                "default": null,
-                "from": null,
-                "id_from_parent": null,
-                "indexed": false,
-                "kind": {
-                  "kind": "int",
-                  "type": "scalar"
-                },
-                "merge": null,
-                "name": "giftCount",
-                "nullable": true,
-                "optional": false
-              },
-              {
-                "app_type": null,
-                "default": null,
-                "from": null,
-                "id_from_parent": null,
-                "indexed": false,
-                "kind": {
-                  "kind": "int",
-                  "type": "scalar"
-                },
-                "merge": null,
-                "name": "latestSequence",
-                "nullable": true,
-                "optional": false
-              }
-            ],
-            "from": null,
-            "id_from_parent": null,
-            "indexed": false,
-            "kind": {
-              "type": "object"
-            },
-            "merge": null,
-            "name": "mediaLibrary",
-            "nullable": true,
-            "optional": false
-          }
-        ],
-        "from": null,
-        "id_from_parent": null,
-        "indexed": false,
-        "kind": {
-          "type": "object"
-        },
-        "merge": null,
-        "name": "chat_media_state",
-        "nullable": false,
-        "optional": false
-      }
-    },
-    {
       "name": "chatMemberCandidates",
       "returns": {
         "app_type": "ChatMemberCandidatesResult",
@@ -15905,72 +15684,6 @@
         },
         "merge": null,
         "name": "user_photo_update",
-        "nullable": false,
-        "optional": false
-      }
-    },
-    {
-      "name": "UserRegistrationComplete",
-      "returns": {
-        "app_type": "UserRegistrationCompleteResult",
-        "default": null,
-        "fields": [
-          {
-            "app_type": "UserRegistrationCompleteResultViewer",
-            "default": null,
-            "fields": [
-              {
-                "app_type": "UserRegistrationCompleteResultViewerProfile",
-                "default": null,
-                "fields": [
-                  {
-                    "app_type": null,
-                    "default": null,
-                    "from": null,
-                    "id_from_parent": null,
-                    "indexed": false,
-                    "kind": {
-                      "kind": "bool",
-                      "type": "scalar"
-                    },
-                    "merge": null,
-                    "name": "registrationCompleted",
-                    "nullable": true,
-                    "optional": false
-                  }
-                ],
-                "from": null,
-                "id_from_parent": null,
-                "indexed": false,
-                "kind": {
-                  "type": "object"
-                },
-                "merge": null,
-                "name": "profile",
-                "nullable": true,
-                "optional": false
-              }
-            ],
-            "from": null,
-            "id_from_parent": null,
-            "indexed": false,
-            "kind": {
-              "type": "object"
-            },
-            "merge": null,
-            "name": "viewer",
-            "nullable": true,
-            "optional": false
-          }
-        ],
-        "from": null,
-        "id_from_parent": null,
-        "indexed": false,
-        "kind": {
-          "type": "object"
-        },
-        "merge": null,
-        "name": "user_registration_complete",
         "nullable": false,
         "optional": false
       }

@@ -59,6 +59,7 @@ query chatMediaState($chatId: ID!, $upToSequence: Int) {
   node(id: $chatId) {
     ... on Chat {
       mediaLibrary(upToSequence: $upToSequence) {
+        revision
         visualCount
         audioCount
         giftCount
@@ -100,45 +101,10 @@ query momentVisitors($momentId: ID!, $first: Int, $after: Cursor) {
   }
 }
 
-query MomentTranscodeStatus($momentId: ID!) {
-  node(id: $momentId) {
-    ... on Moment {
-      id
-      media {
-        kind
-        transcoded
-        transcodeStatus
-        transcodeProgress
-        transcodeError
-        coverUrl
-        fileUrl
-      }
-    }
-  }
-}
-
 query MessageNode($id: ID!) {
   node(id: $id) {
     ... on Message {
       ...MessageFragment
-    }
-  }
-}
-
-query MessageTranscodeStatus($id: ID!) {
-  node(id: $id) {
-    ... on Message {
-      id
-      chatId
-      media {
-        kind
-        transcoded
-        transcodeStatus
-        transcodeProgress
-        transcodeError
-        coverUrl
-        fileUrl
-      }
     }
   }
 }

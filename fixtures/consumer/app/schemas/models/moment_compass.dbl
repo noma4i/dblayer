@@ -8,5 +8,6 @@ model MomentCompass do
     query "compassForMoment"
     variables momentId: :id
     freshness expires_in: 5.minutes
+    preload id: { from: "Moment.compass" }, limit: 400
   end
 end

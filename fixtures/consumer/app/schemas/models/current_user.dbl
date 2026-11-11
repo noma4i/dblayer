@@ -111,6 +111,18 @@ model CurrentUser do
     response :ignore
     refetch :profile
   end
+  operation :registration_complete do
+    optimistic false
+    mutation "UserRegistrationComplete"
+    refetch :profile
+    returns do
+      attribute :viewer, UserRegistrationCompleteResultViewer do
+        attribute :profile, UserRegistrationCompleteResultViewerProfile do
+          attribute :registrationCompleted, :bool
+        end
+      end
+    end
+  end
   operation :update_photo, upload: true do
     optimistic false
     mutation "UserPhotoUpdate"

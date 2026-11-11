@@ -185,6 +185,8 @@ model User do
     wrap "input"
     response :ignore
     refetch :blocked
+    refetch :details
+    refetch :by_user, model: Moment
   end
   operation :unblock do
     optimistic false
@@ -193,5 +195,7 @@ model User do
     wrap "input"
     response :ignore
     refetch :blocked
+    refetch :details
+    refetch :by_user, model: Moment
   end
 end

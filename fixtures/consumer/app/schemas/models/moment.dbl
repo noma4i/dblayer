@@ -126,11 +126,6 @@ model Moment do
   end
   changed_by "MOMENT", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
   changed_by "REACTION", via: :node
-  scope :transcode_status, node: :one do
-    parameter :id, :id
-    query "MomentTranscodeStatus"
-    variables momentId: :id
-  end
   references :visitors, class_name: User, foreign_key: :visitorIds, from: "visitors.edges.node"
   references :similar, class_name: Moment, foreign_key: :similarIds, from: "similarMoments.moment"
   operation :destroy do

@@ -24,10 +24,6 @@ model Chat do
   attribute :lastMessageAt, :date, null: true
   attribute :connectedAt, :date, null: true
   attribute :lastSequenceNumber, :int, optional: true, local: true
-  attribute :mediaSequence, :int, optional: true, local: true
-  attribute :mediaVisualCount, :int, optional: true, local: true
-  attribute :mediaAudioCount, :int, optional: true, local: true
-  attribute :mediaGiftCount, :int, optional: true, local: true
   attribute :readMarksSummary, ChatReadMarks, null: true, from: "viewerState.readMarks" do
     attribute :latestReadAt, :string, null: true
     attribute :memberReadStatus, [ChatReadMarksMember], null: true, from: "members" do
