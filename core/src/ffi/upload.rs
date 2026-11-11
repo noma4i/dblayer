@@ -88,7 +88,7 @@ impl Database {
         let variables = crate::owners::write::plan_variables::upload_variables(plan.declaration, Value::Object(plan.variables.clone()), &uuid::Uuid::new_v4().to_string());
         let request = GraphQLRequest::new(operation.document.clone(), mutation.to_string(), variables);
         let body = crate::transport::encrypted::graphql_body(&request, true).to_string();
-        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: crate::schema::OnFailure::Keep, origin: OpSource::Api, path: path.to_string(), body, effects: plan.effects.clone(), created_at: 0, expires_after: None })
+        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: crate::schema::OnFailure::Keep, origin: OpSource::Api, path: path.to_string(), body, effects: plan.effects.clone(), expires_after: None })
     }
 
     fn upload_item(&self, plan: &Plan<'_>, mutation: &str, (fields, item): (Map<String, Value>, &str), source: Option<(Source, bool)>) -> Result<BatchItem, DbError> {

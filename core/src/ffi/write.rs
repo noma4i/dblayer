@@ -142,11 +142,11 @@ impl Database {
         if planned.noop {
             if self.db.spec(&model)?.is_memory() {
                 let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], shown: Some((model.clone(), shown.to_string())), ..Default::default() };
-                let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new(), self.life.now());
+                let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new());
                 let (revision, value) = self.written(epoch, waiter, action, &model).await?;
                 return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
             }
-            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Snapshot, shown.to_string(), String::new(), self.life.now());
+            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Snapshot, shown.to_string(), String::new());
             let (revision, value) = self.written(epoch, waiter, action, &model).await?;
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         }
@@ -155,14 +155,14 @@ impl Database {
         let Some(call) = call else {
             let mut effects = planned.effects;
             if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
-            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(effects), row.to_string(), String::new(), self.life.now());
+            let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(effects), row.to_string(), String::new());
             let (revision, value) = self.written(epoch, waiter, action, &model).await?;
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
         let mut effects = planned.effects;
         if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
-        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects, created_at: self.life.now().0, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
+        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(epoch, waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
@@ -242,7 +242,7 @@ impl Database {
             crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
             crate::store::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
         };
-        let waiter = self.life.local_write(epoch, model, kind, row.to_string(), values, self.life.now());
+        let waiter = self.life.local_write(epoch, model, kind, row.to_string(), values);
         self.outbox_answer(epoch, waiter, "set local").await.map(drop)
     }
 
@@ -251,7 +251,7 @@ impl Database {
         let (db, name, text) = (self.db.clone(), model.clone(), values_json.clone());
         self.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json, self.life.now());
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json);
         self.outbox_answer(epoch, waiter, "set ephemeral").await.map(drop)
     }
 
@@ -264,7 +264,7 @@ impl Database {
         let copied = files.clone();
         let copy = self.offload(move || crate::store::files::copy_attachment(&copied, &source_path).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
         let id = copy.id.clone();
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone(), self.life.now());
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone());
         let answer = self.outbox_answer(epoch, waiter, "attach").await;
         let attached = match &answer {
             Ok(OutboxAnswer::Written { shown: Some(shown), .. }) => shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value),
@@ -280,7 +280,7 @@ impl Database {
 
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.life.now());
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field);
         let OutboxAnswer::Written { files_removed, .. } = self.outbox_answer(epoch, waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
         Ok(files_removed > 0)
     }

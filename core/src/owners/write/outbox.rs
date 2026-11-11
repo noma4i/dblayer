@@ -263,7 +263,7 @@ impl OutboxState {
 
     fn expired(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
-        operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.op.created_at)) > after.as_millis())
+        operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.created_at)) > after.as_millis())
     }
 
     /// The Queued operations in `seq` order: each one goes out while a slot is free or ends `Rejected{Expired}`.
@@ -277,7 +277,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage) {
+    pub(super) fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage, created_at: u64) {
         self.bump_selection(&op);
         let sequence = self.next_sequence;
         self.next_sequence += 1;
@@ -286,6 +286,7 @@ impl OutboxState {
             QueuedOperation {
                 op_id,
                 op,
+                created_at,
                 stage,
                 attempts: 1,
                 cycle_id: 1,
@@ -849,7 +850,7 @@ impl OutboxState {
                 self.maybe_drained(fx);
             }
             OutboxInput::RetryDue { op_id, cycle_id } => self.retry_due(op_id, cycle_id, fx),
-            OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => self.local_write(LocalCall { model, kind: write, row, values }, epoch, (reply, now), fx),
+            OutboxInput::LocalWrite { model, epoch, write, row, values, reply } => self.local_write(LocalCall { model, kind: write, row, values }, epoch, reply, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),
             OutboxInput::ArmExpiry { model, row, revision, deadline } => self.arm_expiry(model, row, revision, deadline, fx),
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),

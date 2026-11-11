@@ -79,8 +79,6 @@ pub struct NewOp {
     pub body: String,
     /// The optimistic changes of the operation. `RollBack` takes them back by `op_id`.
     pub effects: IntentEffects,
-    /// Milliseconds of the clock when the call was made.
-    pub created_at: u64,
     /// The time the operation may wait in the queue before it is rolled back with `Rejected{Expired}`.
     pub expires_after: Option<std::time::Duration>,
 }
@@ -92,6 +90,8 @@ pub struct StoredOp {
     pub answered: Option<(RequestId, crate::owners::session::StoredAnswer)>,
     pub op_id: OpId,
     pub op: NewOp,
+    /// The time the operation entered the queue, as its row keeps it.
+    pub created_at: u64,
     pub error_mark: bool,
     pub pending: Option<(RequestId, u64)>,
     /// The durable attempt counter and the cycle of the intent (`0` = a layout without the columns).
@@ -242,7 +242,7 @@ pub enum OutboxInput {
     Closing,
     /// `Tick(op_id, cycle_id)`: the retry timer of an operation (Backoff, repeat of a batch).
     RetryDue { op_id: OpId, cycle_id: u64 },
-    LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time },
+    LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
     Expire { model: String, row: String, due: Time },
     ArmExpiry { model: String, row: String, revision: u64, deadline: u64 },
@@ -316,6 +316,8 @@ pub enum Phase {
 pub struct QueuedOperation {
     pub op_id: OpId,
     pub op: NewOp,
+    /// The time of the step that queued the operation, or the saved time of a restored one.
+    pub created_at: u64,
     pub stage: Stage,
     /// The durable attempt counter of the cycle.
     pub attempts: u32,

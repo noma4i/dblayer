@@ -113,7 +113,7 @@ impl Store {
         let holder = row.transfer_id();
         let source = text("source").zip(number("total").and_then(|total| u32::try_from(total).ok())).map(|(path, parts)| Source { path, parts });
         let file_present = holder.map(|id| self.file_present(id, Location::Directory)).transpose()?.unwrap_or(false);
-        let mutation = NewOp { model: model.into(), row_id: row_id.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: text("mutation_path").unwrap_or_default(), body: text("mutation_body").unwrap_or_default(), effects: IntentEffects::default(), created_at: 0, expires_after: None };
+        let mutation = NewOp { model: model.into(), row_id: row_id.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: text("mutation_path").unwrap_or_default(), body: text("mutation_body").unwrap_or_default(), effects: IntentEffects::default(), expires_after: None };
         Ok(Some(StoredTransfer {
             transfer_id: id, key: transfer_key(model, row_id, action), seq: number("seq").unwrap_or(id), source, awaiting_source: false,
             batch: number("batch"), fields: Default::default(), upload_id: text("upload_id"), confirmed_parts: 0, attempts: 0,
@@ -187,7 +187,7 @@ impl Store {
                 path: raw.path,
                 body: raw.body,
                 effects: IntentEffects::default(),
-                created_at: 0, expires_after: None,
+                expires_after: None,
             },
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
             restore_failed: None,

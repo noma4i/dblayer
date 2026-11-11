@@ -353,7 +353,7 @@ impl OutboxState {
             .then(|| self.ops.values().find(|other| other.stage == Stage::Queued && !other.sent && other.op.action == "create" && other.op.model == op.model && other.op.row_id == row).map(|other| other.op_id))
             .flatten();
         let op_id = self.next_op;
-        self.add_operation(op_id, op, Stage::Submitting);
+        self.add_operation(op_id, op, Stage::Submitting, self.now);
         self.submit_replies.insert(op_id, reply);
         if let Some(created) = unsent_create {
             if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = Some(created); }
@@ -433,7 +433,7 @@ impl OutboxState {
             return;
         }
         Self::resolve_operation(&self.aliases, &mut op);
-        self.add_operation(op_id, op, Stage::Submitting);
+        self.add_operation(op_id, op, Stage::Submitting, self.now);
         self.operation_committed(op_id, CommitKind::Intent, (0, Vec::new()), fx);
     }
 

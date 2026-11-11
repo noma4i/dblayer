@@ -17,19 +17,19 @@ impl OutboxState {
         let op_id = item.op_id;
         let (model, action) = (item.op.model.clone(), item.op.action.clone());
         if item.restore_failed.is_some() {
-            self.add_operation(op_id, item.op, Stage::Failed);
+            self.add_operation(op_id, item.op, Stage::Failed, item.created_at);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.restore_element = item.restore_element;
             }
             return self.restored_failed(op_id, "RestoreFailed".into());
         }
         if !self.declarations.contains(&(model, action)) {
-            self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration);
+            self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration, item.created_at);
             self.waiting.insert(op_id, (item, pending_lost));
             return;
         }
-        let StoredOp { answered, op, error_mark, pending, attempts, cycle_id, cause, .. } = item;
-        self.add_operation(op_id, op, Stage::Queued);
+        let StoredOp { answered, op, created_at, error_mark, pending, attempts, cycle_id, cause, .. } = item;
+        self.add_operation(op_id, op, Stage::Queued, created_at);
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.attempts = attempts;
             operation.cause = cause;
@@ -104,7 +104,7 @@ impl OutboxState {
             }
             let op_id = item.op_id;
             let rows = item.removed_rows.clone();
-            self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration);
+            self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration, item.created_at);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.attempts = item.attempts;
                 operation.cycle_id = item.cycle_id.max(1);

@@ -267,7 +267,6 @@ impl Store {
                 path: String::new(),
                 body: entry.input.to_string(),
                 effects: Default::default(),
-                created_at: u64::try_from(operation.created_at).unwrap_or(0),
                 expires_after: declared.and_then(|declaration| declaration.expires_after).map(std::time::Duration::from_secs),
             };
             let seq = operation.id.0;
@@ -276,7 +275,7 @@ impl Store {
             let restore_failed = invalid.contains(&seq).then(|| "invalid intent origin".to_string());
             let restore_element = restore_failed.as_ref().map(|_| ("op".to_string(), seq.to_string()));
             let cycle_id = cycles.get(&seq).copied().and_then(|cycle| u64::try_from(cycle).ok()).ok_or_else(|| CoreError::Internal("invalid operation cycle".into()))?;
-            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, cause: causes.get(&seq).copied(), restore_failed, restore_element, removed_rows: Vec::new() });
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| CoreError::UnknownOperation(seq))?, op, created_at: u64::try_from(operation.created_at).unwrap_or(0), error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, cause: causes.get(&seq).copied(), restore_failed, restore_element, removed_rows: Vec::new() });
         }
         stored.extend(Self::dropped_intents(failed));
         Ok(stored)
@@ -290,8 +289,8 @@ impl Store {
             let Some(op_id) = columns.get("seq").and_then(serde_json::Value::as_u64) else { continue };
             let Some((model, action)) = columns.get("action_key").and_then(serde_json::Value::as_str).and_then(|key| key.split_once(':')) else { continue };
             let row_id = columns.get("temp_id").and_then(serde_json::Value::as_str).unwrap_or(&row.key).to_string();
-            let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None };
-            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())), removed_rows: Vec::new() });
+            let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), expires_after: None };
+            dropped.push(StoredOp { answered: None, op_id, op, created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())), removed_rows: Vec::new() });
         }
         dropped
     }

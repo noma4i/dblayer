@@ -574,6 +574,17 @@ if deliveries.exists():
         number = text.count("\n", 0, start + found.start()) + 1
         findings.append(f"Z47 an input of Deliveries carries no time: the owner reads the time of its step: {deliveries.relative_to(root)}:{number}")
 
+write = source / "ffi" / "write.rs"
+if write.exists():
+    for number, line in enumerate(write.read_text().splitlines(), 1):
+        if re.search(r"life\.now\(\)", line):
+            findings.append(f"Z48 a write call reads no clock: Outbox and LocalWrites take the time of their step: {write.relative_to(root)}:{number}")
+outbox_types = source / "owners" / "write" / "outbox_types.rs"
+if outbox_types.exists():
+    for number, line in enumerate(outbox_types.read_text().splitlines(), 1):
+        if re.search(r"\bLocalWrite \{[^}]*\bnow:", line):
+            findings.append(f"Z48 LocalWrite carries no time: the owner reads the time of its step: {outbox_types.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
