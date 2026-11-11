@@ -41,14 +41,13 @@ impl StateOwner for PinStore {
     type Input = StoreInput;
     type Effect = crate::spec::support::NoEffect;
 
-    fn step(revision: &mut Self::State, input: Self::Input) -> Effects<Self> {
+    fn step(revision: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> Effects<Self> {
         match input {
             StoreInput::Pin { request_id, .. } => vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::Pinned { request_id, base_revision: revision.load(Ordering::SeqCst) }))],
             _ => Vec::new(),
         }
     }
 
-    fn tick(_: Time) -> Self::Input { StoreInput::Idle }
     fn epoch_ended(epoch: u64, cause: Ended) -> Self::Input { StoreWriter::epoch_ended(epoch, cause) }
     fn closing() -> Self::Input { StoreInput::Idle }
 }

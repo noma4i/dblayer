@@ -219,7 +219,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                                     for item in &mut stored { item.op.path = exchange.graphql_path().to_string(); }
                                 }
                                 wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
-                                wiring.to_outbox(OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                                 wiring.to_outbox(OutboxInput::OrphanTransfers { op_ids: restore.orphan_transfer_ops });
                                 wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
                                 wiring.to_outbox(OutboxInput::OrphanAnswers { request_ids: restore.orphan_answers.clone() });
@@ -271,7 +270,6 @@ impl EffectRunner<Network> for NetworkRunner {
             NetworkEffect::Broadcast { online, online_seq } => {
                 wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() });
                 wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) });
-                wiring.to_outbox(OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
@@ -291,7 +289,6 @@ impl EffectRunner<Network> for NetworkRunner {
                     Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) }),
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Snapshot(Online(online))),
                     Peer::Outbox => {
-                        wiring.to_outbox_at(stamp, OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                         wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online)));
                     }
                     Peer::Transfer => {

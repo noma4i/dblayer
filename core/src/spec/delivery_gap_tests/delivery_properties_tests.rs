@@ -306,14 +306,14 @@ fn dlv_prop_gap_bounded() {
 fn mem_events_flood_without_reader() {
     use crate::runtime::StateOwner;
     let mut state = d::DeliveriesState::new(EPOCH, peers());
-    drop(Deliveries::step(&mut state, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None }));
-    drop(Deliveries::step(&mut state, d::DeliveryInput::Joined { stream: STREAM, position: 0 }));
-    drop(Deliveries::step(&mut state, d::DeliveryInput::ModelReady { stream: STREAM }));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None }, crate::runtime::Time(0)));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::Joined { stream: STREAM, position: 0 }, crate::runtime::Time(0)));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::ModelReady { stream: STREAM }, crate::runtime::Time(0)));
     let payload = "x".repeat(1024);
     let (_, peak) = crate::tests::peak_tests::measure_peak(|| {
         for position in 1..=100_000u64 {
-            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelEvent { stream: STREAM, position, payload: payload.clone() }));
-            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelGap { stream: STREAM }));
+            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelEvent { stream: STREAM, position, payload: payload.clone() }, crate::runtime::Time(0)));
+            drop(Deliveries::step(&mut state, d::DeliveryInput::ModelGap { stream: STREAM }, crate::runtime::Time(0)));
         }
     });
     let slot = std::mem::size_of::<d::Value>();

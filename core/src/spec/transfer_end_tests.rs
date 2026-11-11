@@ -586,7 +586,7 @@ fn xfer_done() {
 fn xfer_expiry_counts_from_failed_at() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 2);
-    twin.post(TransferInput::Clock(Time(6 * DAY)));
+    twin.det.tick(Time(6 * DAY));
     twin.step_error(id, false);
     twin.commit();
     let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
@@ -599,7 +599,7 @@ fn xfer_expiry_counts_from_failed_at() {
 fn xfer_failed_row_carries_failed_at() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 2);
-    twin.post(TransferInput::Clock(Time(6 * DAY)));
+    twin.det.tick(Time(6 * DAY));
     let out = twin.step_error(id, false);
     assert_eq!(out.rows().iter().map(|(row, _)| row.failed_at).collect::<Vec<_>>(), vec![Some(6 * DAY)], "the batch of the transition writes the time of it");
 }

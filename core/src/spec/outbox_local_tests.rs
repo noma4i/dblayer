@@ -123,7 +123,7 @@ fn out_local_write_closing_waits() {
 fn out_local_write_other() {
     let mut twin = Twin::new();
     twin.post(write(LocalWriteKind::SetLocal));
-    for input in [OutboxInput::Online(Online(false)), OutboxInput::Tick(Time(5))] {
+    for input in [OutboxInput::Online(Online(false))] {
         let effects = twin.post(input.clone());
         assert!(effects.is_empty(), "{input:?}: {effects:?}");
     }

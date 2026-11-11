@@ -384,18 +384,17 @@ impl StateOwner for WindowStore {
     type Input = StoreInput;
     type Effect = crate::spec::support::NoEffect;
 
-    fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self> {
+    fn step(state: &mut Self::State, input: Self::Input, now: crate::runtime::Time) -> Effects<Self> {
         if let StoreInput::Pin { request_id, .. } = input {
             return vec![RuntimeEffect::Send(Outbound::new(state.to, w::WindowsInput::Pinned { request_id, base_revision: u64::try_from(state.revision).unwrap() }))];
         }
-        StoreStub::<Windows>::step(state, input).into_iter().map(|effect| match effect {
+        StoreStub::<Windows>::step(state, input, now).into_iter().map(|effect| match effect {
             RuntimeEffect::Send(outbound) => RuntimeEffect::Send(outbound),
             RuntimeEffect::Run(effect) => match effect {},
             _ => unreachable!(),
         }).collect()
     }
 
-    fn tick(_: Time) -> Self::Input { StoreInput::Idle }
     fn epoch_ended(epoch: u64, cause: Ended) -> Self::Input { StoreWriter::epoch_ended(epoch, cause) }
     fn closing() -> Self::Input { StoreInput::Idle }
 }

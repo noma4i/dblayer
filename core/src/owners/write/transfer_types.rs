@@ -276,8 +276,6 @@ pub enum TransferInput {
     Tick { now: Time, kind: TransferTick },
     EpochEnded(EpochEnded),
     Closing,
-    /// The trait tick: the clock of the owner.
-    Clock(Time),
 }
 
 /// What `uploads[action]` shows.

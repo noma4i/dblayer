@@ -457,7 +457,6 @@ fn out_submitting_other() {
         OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
-        OutboxInput::Tick(crate::runtime::Time(100)),
     ]);
 }
 

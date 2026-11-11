@@ -16,7 +16,7 @@ use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::spec::support::Sink;
-use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
+use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner};
 use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutReply, Reply, Response, Upstream, TransportError};
 
 const EPOCH: u64 = 1;
@@ -47,18 +47,17 @@ impl StateOwner for WindowStore {
     type Input = StoreInput;
     type Effect = crate::spec::support::NoEffect;
 
-    fn step(state: &mut Batches, input: StoreInput) -> Effects<Self> {
+    fn step(state: &mut Batches, input: StoreInput, now: crate::runtime::Time) -> Effects<Self> {
         if let StoreInput::Pin { request_id, .. } = input {
             return vec![Effect::Send(Outbound::new(Address::<Windows>::new(2), WindowsInput::Pinned { request_id, base_revision: 0 }))];
         }
-        BatchPeer::step(state, input).into_iter().map(|effect| match effect {
+        BatchPeer::step(state, input, now).into_iter().map(|effect| match effect {
             Effect::Send(outbound) => Effect::Send(outbound),
             Effect::Run(effect) => match effect {},
             _ => unreachable!(),
         }).collect()
     }
 
-    fn tick(_: Time) -> StoreInput { StoreInput::Idle }
     fn epoch_ended(epoch: u64, cause: Cause) -> StoreInput { StoreWriter::epoch_ended(epoch, cause) }
     fn closing() -> StoreInput { StoreInput::Idle }
 }

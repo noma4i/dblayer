@@ -20,11 +20,11 @@ fn load(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: Go
 fn boundary_load_cancel_orders() {
     for order in permutations(&[1, 2, 3]) {
         let mut state = state();
-        for id in [1, 2, 3] { let _ = Windows::step(&mut state, WindowsInput::Reserve { id }); }
+        for id in [1, 2, 3] { let _ = Windows::step(&mut state, WindowsInput::Reserve { id }, crate::runtime::Time(0)); }
         let mut arrived = Vec::new();
         for id in order.clone() {
             arrived.push(id);
-            let _ = Windows::step(&mut state, load(id));
+            let _ = Windows::step(&mut state, load(id), crate::runtime::Time(0));
             let run = (1..=3).take_while(|next| arrived.contains(next)).count() as u64;
             assert_eq!(state.waiters(&key()), (1..=run).collect::<Vec<_>>(), "loads arrived as {order:?}, after {arrived:?}");
         }
@@ -37,10 +37,10 @@ fn a_call_that_ends_before_its_load_frees_the_loads_behind_it() {
     for ends in [WindowsInput::Unreserve { id: 2 }, WindowsInput::InterestMinus { key: key(), id: 2 }] {
         for order in [[3, 1], [1, 3]] {
             let mut state = state();
-            for id in [1, 2, 3] { let _ = Windows::step(&mut state, WindowsInput::Reserve { id }); }
-            for id in order { let _ = Windows::step(&mut state, load(id)); }
+            for id in [1, 2, 3] { let _ = Windows::step(&mut state, WindowsInput::Reserve { id }, crate::runtime::Time(0)); }
+            for id in order { let _ = Windows::step(&mut state, load(id), crate::runtime::Time(0)); }
             assert_eq!(state.waiters(&key()), [1], "{ends:?} {order:?}");
-            let _ = Windows::step(&mut state, ends.clone());
+            let _ = Windows::step(&mut state, ends.clone(), crate::runtime::Time(0));
             assert_eq!(state.waiters(&key()), [1, 3], "{ends:?} {order:?}");
         }
     }

@@ -19,10 +19,9 @@ impl StateOwner for OrderedRecipient {
     type State = ();
     type Input = OrderedRecipientInput;
     type Effect = OrderedRecipientEffect;
-    fn step(_: &mut (), input: Self::Input) -> Effects<Self> {
+    fn step(_: &mut (), input: Self::Input, _now: Time) -> Effects<Self> {
         match input { OrderedRecipientInput::Hold => vec![Effect::Run(OrderedRecipientEffect::Hold)], _ => Vec::new() }
     }
-    fn tick(_: Time) -> Self::Input { OrderedRecipientInput::Idle }
     fn epoch_ended(_: Epoch, _: Cause) -> Self::Input { OrderedRecipientInput::Idle }
     fn closing() -> Self::Input { OrderedRecipientInput::Idle }
 }
@@ -49,13 +48,12 @@ impl StateOwner for OrderedSource {
     type State = Address<OrderedRecipient>;
     type Input = OrderedSourceInput;
     type Effect = OrderedSourceEffect;
-    fn step(target: &mut Self::State, input: Self::Input) -> Effects<Self> {
+    fn step(target: &mut Self::State, input: Self::Input, _now: Time) -> Effects<Self> {
         match input {
             OrderedSourceInput::Go => vec![Effect::Send(Outbound::new(*target, OrderedRecipientInput::Notice)), Effect::Run(OrderedSourceEffect::Observe), Effect::Broadcast(Control::Closing), Effect::Run(OrderedSourceEffect::Observe)],
             OrderedSourceInput::Idle => Vec::new(),
         }
     }
-    fn tick(_: Time) -> Self::Input { OrderedSourceInput::Idle }
     fn epoch_ended(_: Epoch, _: Cause) -> Self::Input { OrderedSourceInput::Idle }
     fn closing() -> Self::Input { OrderedSourceInput::Idle }
 }
@@ -252,4 +250,45 @@ fn rt_prop_addresses_reserved() {
     runtime.start_epoch(1);
     runtime.post(sender, EpochStamp::Epoch(1), ToyInput::Go);
     assert_eq!(crate::test_wait::recv_within(&fired), 3);
+}
+
+struct Recorder;
+
+#[derive(Debug)]
+enum RecorderInput { Poke, Idle }
+
+impl StateOwner for Recorder {
+    const EPOCHED: bool = false;
+    type State = Arc<Mutex<Vec<Time>>>;
+    type Input = RecorderInput;
+    type Effect = ();
+    fn step(seen: &mut Self::State, input: Self::Input, now: Time) -> Effects<Self> {
+        if matches!(input, RecorderInput::Poke) { seen.lock().unwrap().push(now); }
+        Vec::new()
+    }
+    fn epoch_ended(_: Epoch, _: Cause) -> Self::Input { RecorderInput::Idle }
+    fn closing() -> Self::Input { RecorderInput::Idle }
+}
+
+struct NoRuns;
+
+impl EffectRunner<Recorder> for NoRuns {
+    fn run(&mut self, _: EpochStamp, _: (), _: &Back<Recorder>) {}
+}
+
+#[test]
+fn rt_time_stays_monotone_when_the_clock_goes_back() {
+    let clock = Arc::new(ManualClock::new(std::time::Duration::from_millis(1_000)));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut builder = RuntimeBuilder::new(clock.clone());
+    let recorder = builder.add::<Recorder>("recorder", seen.clone(), NoRuns);
+    let runtime = builder.start().unwrap();
+    let poke = |runtime: &Runtime| { runtime.post(recorder, EpochStamp::Control, RecorderInput::Poke); runtime.barrier(); };
+    poke(&runtime);
+    clock.advance(std::time::Duration::from_millis(500));
+    poke(&runtime);
+    clock.set(std::time::Duration::from_millis(200));
+    poke(&runtime);
+    poke(&runtime);
+    assert_eq!(*seen.lock().unwrap(), [Time(1_000), Time(1_500), Time(1_500), Time(1_500)]);
 }

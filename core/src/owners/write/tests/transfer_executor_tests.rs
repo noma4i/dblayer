@@ -15,7 +15,7 @@ use serde_json::json;
 use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome, ReserveTarget};
 use super::rig::{open_gate, peer, settle, Act, ManualSpawn, Stub};
 use crate::spec::support::{StoreStub, StoreStubState};
-use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
+use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferTick, TransferState, Transfers};
 use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, TransferSinks};
 use super::wire::Wire;
 use crate::store::files::FileDirectories;
@@ -149,7 +149,7 @@ impl World {
 
     fn settle(&mut self) {
         let transfers = self.transfers;
-        settle(&mut self.det, &self.spawn, |det| det.post(transfers, EpochStamp::Control, TransferInput::Clock(Time(0))));
+        settle(&mut self.det, &self.spawn, |det| det.post(transfers, EpochStamp::Control, TransferInput::Tick { now: Time(0), kind: TransferTick::Retry { transfer_id: u64::MAX, attempt_id: 0 } }));
     }
 
     fn late(&self, prefixes: &[&str]) -> usize {

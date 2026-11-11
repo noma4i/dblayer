@@ -6,7 +6,6 @@ use super::outbox_harness::{In, Policy, RWhy, St};
 use crate::ffi::EndCause;
 use crate::owners::contract::{Committed, EpochStarted, Online, Rejected, RejectReason};
 use crate::owners::write::outbox::{OutboxInput, OutboxOutcome};
-use crate::runtime::Time;
 
 fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
 
@@ -82,7 +81,6 @@ fn out_done() {
         OutboxInput::TransportError { op_id: id + 100, temporary: true },
         OutboxInput::Dropped { op_id: id + 100 },
         OutboxInput::RetryDue { op_id: id + 100, cycle_id: 1 },
-        OutboxInput::Tick(Time(50)),
     ]);
 }
 

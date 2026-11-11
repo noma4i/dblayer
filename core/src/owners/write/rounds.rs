@@ -24,7 +24,6 @@ pub enum RoundsInput {
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
-    Clock(Time),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,7 +210,7 @@ impl StateOwner for Rounds {
     type Input = RoundsInput;
     type Effect = RoundsEffect;
 
-    fn step(state: &mut RoundsState, input: RoundsInput) -> Effects<Self> {
+    fn step(state: &mut RoundsState, input: RoundsInput, _now: Time) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
         if state.round == Round::Closed {
             if let RoundsInput::RoundStarted { round_id, .. } = input {
@@ -230,12 +229,9 @@ impl StateOwner for Rounds {
             RoundsInput::EpochStarted(started) => state.current_epoch = started.epoch,
             RoundsInput::EpochEnded(ended) => state.epoch_ended(ended.epoch),
             RoundsInput::Closing => state.closing(&mut fx),
-            RoundsInput::Clock(_) => {}
         }
         fx
     }
-
-    fn tick(now: Time) -> RoundsInput { RoundsInput::Clock(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> RoundsInput { RoundsInput::EpochEnded(EpochEnded { epoch, cause }) }
 

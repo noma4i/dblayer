@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use super::Admit;
 use crate::owners::store::{StoreBatch, StoreInput};
 use crate::spec::support::NoEffect;
-use crate::runtime::{Cause, DetScheduler, Effects, Epoch, StateOwner, Time};
+use crate::runtime::{Cause, DetScheduler, Effects, Epoch, StateOwner};
 
 pub const LIMIT: Duration = Duration::from_secs(10);
 
@@ -44,14 +44,12 @@ impl StateOwner for BatchPeer {
     type Input = StoreInput;
     type Effect = NoEffect;
 
-    fn step(state: &mut Batches, input: StoreInput) -> Effects<Self> {
+    fn step(state: &mut Batches, input: StoreInput, _now: crate::runtime::Time) -> Effects<Self> {
         if let StoreInput::Commit(batch) = input {
             state.0.lock().unwrap_or_else(PoisonError::into_inner).push(batch);
         }
         Vec::new()
     }
-
-    fn tick(_now: Time) -> StoreInput { StoreInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> StoreInput { StoreInput::Idle }
 

@@ -231,7 +231,7 @@ impl Owner {
             Step::Stray => self.twin.post(I::TransportError { op_id: 999, temporary: true }),
             Step::SubmitStale => self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH + 1, op: super::outbox_harness::model_op("r", Policy::Rollback, false), reply: 950 }),
             Step::SubmitExpiring => { let op = crate::owners::write::outbox::NewOp { expires_after: Some(std::time::Duration::from_secs(10)), ..super::outbox_harness::model_op("r", Policy::Rollback, false) }; self.twin.post(I::Submit { epoch: super::outbox_harness::EPOCH, op, reply: 951 }) }
-            Step::Age => self.twin.post(I::Tick(crate::runtime::Time(11_000))),
+            Step::Age => { self.twin.det.tick(crate::runtime::Time(11_000)); Vec::new() }
             Step::ResponseError { op, temporary } => self.twin.post(I::Response { op_id: op, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(temporary) }),
             Step::RetryAny => self.twin.post(I::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 903 }),
             Step::DiscardAny => self.twin.post(I::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 904 }),

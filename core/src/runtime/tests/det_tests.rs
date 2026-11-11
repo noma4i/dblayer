@@ -13,8 +13,8 @@ fn single(seed: u64) -> (DetScheduler, Address<Toy>) {
 fn step_is_a_function_of_state_and_input_only() {
     let mut first = ToyState::default();
     let mut second = first.clone();
-    let left = Toy::step(&mut first, ToyInput::WorkRequest(3));
-    let right = Toy::step(&mut second, ToyInput::WorkRequest(3));
+    let left = Toy::step(&mut first, ToyInput::WorkRequest(3), Time(0));
+    let right = Toy::step(&mut second, ToyInput::WorkRequest(3), Time(0));
     assert_eq!(format!("{left:?}"), format!("{right:?}"));
     assert_eq!(first.results, second.results);
 }
@@ -352,4 +352,45 @@ fn a_panic_in_a_step_tells_lifecycle_and_the_owner_keeps_taking_inputs() {
     assert_eq!(det.state(watch).unwrap(), &vec!["toy".to_string()]);
     assert_eq!(det.state(toy).unwrap().failed, vec![7], "the id without a result got its failure cell");
     assert_eq!(det.state(toy).unwrap().total, 2);
+}
+
+#[test]
+fn rt_step_gets_the_time_of_its_turn() {
+    let (mut det, toy) = single(1);
+    det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
+    let seen = det.state(toy).unwrap().nows.len();
+    let traced = det.history(toy).len();
+    det.tick(Time(10));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(1));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deadline(1, Time(100), 9));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(toy).unwrap().nows[seen..], [Time(10), Time(10)]);
+    det.tick(Time(20));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(2));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(toy).unwrap().nows[seen + 2..], [Time(20)]);
+    det.tick(Time(130));
+    det.run_until_quiet(10).unwrap();
+    let state = det.state(toy).unwrap();
+    assert_eq!(state.fired, vec![9]);
+    assert_eq!(state.nows[seen + 3..], [Time(130)]);
+    assert!(state.ticks.iter().all(|at| *at >= Time(100)));
+    let inputs: Vec<_> = det.history(toy).into_iter().skip(traced).map(|entry| entry.input.as_str()).collect();
+    assert_eq!(inputs, ["Deposit(1)", "Deadline(1, Time(100), 9)", "Deposit(2)", "Fire(9)"]);
+}
+
+#[test]
+fn rt_time_stays_monotone_when_the_clock_goes_back() {
+    let (mut det, toy) = single(1);
+    det.start_epoch(1);
+    det.tick(Time(500));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(1));
+    det.run_until_quiet(10).unwrap();
+    let seen = det.state(toy).unwrap().nows.len();
+    det.tick(Time(300));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(2));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(3));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(toy).unwrap().nows[seen..], [Time(500), Time(500)]);
 }

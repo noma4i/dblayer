@@ -437,7 +437,7 @@ impl StateOwner for Feed {
     type Input = FeedInput;
     type Effect = FeedEffect;
 
-    fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
+    fn step(state: &mut FeedState, input: FeedInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut fx = Vec::new();
         if let FeedInput::CableClosed(event) = input {
             for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
@@ -529,8 +529,6 @@ impl StateOwner for Feed {
     }
 
     fn epoch_started(epoch: Epoch) -> Option<FeedInput> { Some(FeedInput::ActivateEpoch(epoch)) }
-
-    fn tick(now: Time) -> FeedInput { FeedInput::Tick(now) }
 
     fn due(input: FeedInput, now: Time) -> (Option<FeedInput>, FeedInput) {
         let input = match input {

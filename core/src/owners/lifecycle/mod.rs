@@ -311,7 +311,7 @@ impl StateOwner for Lifecycle {
     type Input = LifecycleInput;
     type Effect = LifecycleEffect;
 
-    fn step(state: &mut LifecycleState, input: LifecycleInput) -> Effects<Self> {
+    fn step(state: &mut LifecycleState, input: LifecycleInput, _now: Time) -> Effects<Self> {
         #[cfg(test)]
         if let LifecycleInput::CredentialCommitted(ref credential) = input {
             let index = match &state.phase {
@@ -325,8 +325,6 @@ impl StateOwner for Lifecycle {
         state.run(input, &mut fx);
         fx.into_iter().map(Effect::Run).collect()
     }
-
-    fn tick(_now: Time) -> LifecycleInput { LifecycleInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> LifecycleInput { LifecycleInput::Idle }
 

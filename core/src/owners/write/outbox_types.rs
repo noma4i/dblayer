@@ -254,7 +254,6 @@ pub enum OutboxInput {
     /// The server deleted a row (event or NOT_FOUND answer), cascade children included: every operation of it ends `Discarded`.
     RowRemoved { model: String, row_id: String, revision: u64 },
     ExpireRow { model: String, row: String, revision: u64 },
-    Tick(Time),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

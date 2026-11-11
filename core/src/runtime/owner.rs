@@ -54,12 +54,11 @@ pub trait StateOwner: Sized + 'static {
     type Input: Message;
     type Effect: Debug + Send + 'static;
 
-    fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self>;
+    fn step(state: &mut Self::State, input: Self::Input, now: Time) -> Effects<Self>;
     #[cfg(test)]
     fn diagnostic(_state: &Self::State) -> Option<String> { None }
     fn epoch_started(_epoch: Epoch) -> Option<Self::Input> { None }
-    fn tick(now: Time) -> Self::Input;
-    fn due(input: Self::Input, now: Time) -> (Option<Self::Input>, Self::Input) { (Some(Self::tick(now)), input) }
+    fn due(input: Self::Input, _now: Time) -> (Option<Self::Input>, Self::Input) { (None, input) }
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
     fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }

@@ -100,7 +100,6 @@ pub enum CallsInput {
     ActivateEpoch(Epoch),
     EpochEnded(Cause),
     Closing,
-    Idle,
 }
 
 pub struct CallsState {
@@ -232,7 +231,7 @@ impl StateOwner for Calls {
     type Input = CallsInput;
     type Effect = CallsEffect;
 
-    fn step(state: &mut CallsState, input: CallsInput) -> Effects<Self> {
+    fn step(state: &mut CallsState, input: CallsInput, _now: Time) -> Effects<Self> {
         let mut fx = Vec::new();
         let (mut deadlines, mut scheduled, mut finished) = (Vec::new(), Vec::new(), Vec::new());
         match input {
@@ -336,7 +335,7 @@ impl StateOwner for Calls {
                     fx.push(CallsEffect::Drained(Drained { owner: "calls" }));
                 }
             }
-            CallsInput::Response { .. } | CallsInput::TransportError { .. } | CallsInput::Dropped { .. } | CallsInput::Deadline { .. } | CallsInput::RetryDue { .. } | CallsInput::Idle => {}
+            CallsInput::Response { .. } | CallsInput::TransportError { .. } | CallsInput::Dropped { .. } | CallsInput::Deadline { .. } | CallsInput::RetryDue { .. } => {}
         }
         let mut out: Effects<Self> = fx.into_iter().map(Effect::Run).collect();
         out.extend(deadlines.into_iter().map(|call_id| Effect::Schedule { id: crate::runtime::ScheduleId(call_id * 2), after: CALL_DEADLINE, input: CallsInput::Deadline { call_id } }));
@@ -346,8 +345,6 @@ impl StateOwner for Calls {
     }
 
     fn epoch_started(epoch: Epoch) -> Option<CallsInput> { Some(CallsInput::ActivateEpoch(epoch)) }
-
-    fn tick(_now: Time) -> CallsInput { CallsInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, cause: Cause) -> CallsInput { CallsInput::EpochEnded(cause) }
 

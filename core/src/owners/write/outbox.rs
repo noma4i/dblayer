@@ -747,7 +747,6 @@ impl OutboxState {
             OutboxInput::RowRemoved { model, row_id, revision } => self.row_removed(&model, &row_id, revision, fx),
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
-            OutboxInput::Tick(_) => {}
         }
     }
 }
@@ -767,8 +766,9 @@ impl StateOwner for Outbox {
         Some(format!("phase={:?}, online={}, ops={ops:?}, batches={:?}, quiet_waiters={:?}", state.phase, state.online, state.batches.keys().collect::<Vec<_>>(), state.quiet_waiters))
     }
 
-    fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
+    fn step(state: &mut OutboxState, input: OutboxInput, now: crate::runtime::Time) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        state.now = state.now.max(now.0);
         if state.closing {
             match &input {
                 OutboxInput::Committed(committed) if matches!(state.batches.get(&committed.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
@@ -787,9 +787,6 @@ impl StateOwner for Outbox {
         if let OutboxInput::ActivateEpoch(epoch) = &input {
             state.begin_epoch(*epoch);
             return fx;
-        }
-        if let OutboxInput::Tick(now) = &input {
-            state.now = state.now.max(now.0);
         }
         if let OutboxInput::Landed { op_id, reply } = input {
             let answer = state.ops.get(&op_id).map_or(OutboxAnswer::Err(Fault::NotFound), |operation| match &operation.outcome {
@@ -816,8 +813,6 @@ impl StateOwner for Outbox {
     }
 
     fn epoch_started(epoch: Epoch) -> Option<OutboxInput> { Some(OutboxInput::ActivateEpoch(epoch)) }
-
-    fn tick(now: Time) -> OutboxInput { OutboxInput::Tick(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> OutboxInput { OutboxInput::EpochEnded(EpochEnded { epoch, cause }) }
 

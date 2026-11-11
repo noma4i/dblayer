@@ -347,7 +347,6 @@ impl OutboxState {
         if !self.declarations.contains(&(op.model.clone(), op.action.clone())) {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Invalid));
         }
-        self.now = self.now.max(op.created_at);
         Self::resolve_operation(&self.aliases, &mut op);
         let row = op.row_id.clone();
         let unsent_create = (op.action == "destroy")

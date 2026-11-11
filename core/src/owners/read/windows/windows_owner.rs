@@ -375,11 +375,11 @@ impl Windows {
     }
 
     /// Applies the held loads whose smaller ids are all registered, in id order, then the held leaves whose reserved calls all registered.
-    fn apply_held(state: &mut WindowsState) -> Effects<Self> {
+    fn apply_held(state: &mut WindowsState, turn: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         while let Some(id) = state.held_loads.keys().next().copied().filter(|id| state.reserved.range(..*id).next().is_none()) {
             if let Some(input) = state.held_loads.remove(&id) {
-                out.extend(Self::step(state, input));
+                out.extend(Self::step(state, input, turn));
             }
         }
         let reserved = state.reserved.clone();
@@ -481,7 +481,7 @@ impl StateOwner for Windows {
     type Input = WindowsInput;
     type Effect = WindowsEffect;
 
-    fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
+    fn step(state: &mut WindowsState, input: WindowsInput, turn: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         let mut released = false;
         if let WindowsInput::Load { id, .. } | WindowsInput::LoadNoWait { id, .. } = &input {
@@ -494,7 +494,7 @@ impl StateOwner for Windows {
         }
         if matches!(input, WindowsInput::LoadNoWait { .. }) && state.online.is_none() {
             state.held_nowait.push(input);
-            return if released { Self::apply_held(state) } else { out };
+            return if released { Self::apply_held(state, turn) } else { out };
         }
         match input {
             WindowsInput::Reserve { id } => { state.reserved.insert(id); }
@@ -517,7 +517,7 @@ impl StateOwner for Windows {
             WindowsInput::LoadNoWait { key, id, verb, .. } if state.online != Some(true) => {
                 let WindowKind::Relation { relation, .. } = key.kind() else { return out };
                 let message = format!("{}.{relation} {verb} needs the network", key.model);
-                out = Self::step(state, WindowsInput::OfflineRefused { key: key.clone(), message: message.clone() });
+                out = Self::step(state, WindowsInput::OfflineRefused { key: key.clone(), message: message.clone() }, turn);
                 out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Offline { message } } }));
             }
             WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, .. } => Self::load(state, key, (id, now), (goal, force, store_revision), &mut out),
@@ -582,7 +582,7 @@ impl StateOwner for Windows {
                 }
                 Self::every(state, &Ev::Online { online, online_seq, now }, &mut out);
                 for held in std::mem::take(&mut state.held_nowait) {
-                    out.extend(Self::step(state, held));
+                    out.extend(Self::step(state, held, turn));
                 }
             }
             WindowsInput::PowerSaving { saving } => {
@@ -599,12 +599,12 @@ impl StateOwner for Windows {
             WindowsInput::TaskFailed { id } if id & REQUEST_TASK != 0 => {
                 let (request, attempt) = task_request(id);
                 let error = RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Runtime { detail: "the request task failed".into() } };
-                return Self::step(state, WindowsInput::Failure { request, attempt, error });
+                return Self::step(state, WindowsInput::Failure { request, attempt, error }, turn);
             }
             WindowsInput::TaskFailed { id } => {
                 let read_id = id & !READ_TASK;
                 let Some(key) = state.windows.iter().find(|(_, window)| window.reading(read_id)).map(|(key, _)| key.clone()) else { return out };
-                return Self::step(state, WindowsInput::WindowRead { key, read_id, result: Err("the read task failed".into()) });
+                return Self::step(state, WindowsInput::WindowRead { key, read_id, result: Err("the read task failed".into()) }, turn);
             }
             WindowsInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
@@ -636,15 +636,12 @@ impl StateOwner for Windows {
                 Self::every(state, &Ev::Closing, &mut out);
                 out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "windows" })));
             }
-            WindowsInput::Tick(_) => {}
         }
-        if released { out.extend(Self::apply_held(state)); }
+        if released { out.extend(Self::apply_held(state, turn)); }
         out
     }
 
     fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<WindowsInput> { pending.into_iter().map(|id| WindowsInput::TaskFailed { id }).collect() }
-
-    fn tick(now: Time) -> WindowsInput { WindowsInput::Tick(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> WindowsInput { WindowsInput::EpochEnded(EpochEnded { epoch, cause }) }
 

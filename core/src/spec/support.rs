@@ -57,14 +57,12 @@ where
     type Input = SourceInput;
     type Effect = NoEffect;
 
-    fn step(state: &mut SourceState<O>, input: SourceInput) -> Effects<Self> {
+    fn step(state: &mut SourceState<O>, input: SourceInput, _now: crate::runtime::Time) -> Effects<Self> {
         match input {
             SourceInput::Go => state.script.iter().map(|item| Effect::Send(Outbound::new(state.to, item.clone()))).collect(),
             SourceInput::Idle => Vec::new(),
         }
     }
-
-    fn tick(_now: Time) -> SourceInput { SourceInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> SourceInput { SourceInput::Idle }
 
@@ -92,14 +90,12 @@ impl StateOwner for Ender {
     type Input = SourceInput;
     type Effect = NoEffect;
 
-    fn step(state: &mut EnderState, input: SourceInput) -> Effects<Self> {
+    fn step(state: &mut EnderState, input: SourceInput, _now: crate::runtime::Time) -> Effects<Self> {
         match input {
             SourceInput::Go => vec![Effect::Broadcast(crate::runtime::Control::EpochEnded(state.epoch, state.cause))],
             SourceInput::Idle => Vec::new(),
         }
     }
-
-    fn tick(_now: Time) -> SourceInput { SourceInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> SourceInput { SourceInput::Idle }
 
@@ -135,8 +131,8 @@ where
     type Input = O::Input;
     type Effect = O::Effect;
 
-    fn step(state: &mut SpyState<O>, input: O::Input) -> Effects<Self> {
-        let effects = O::step(&mut state.inner, input);
+    fn step(state: &mut SpyState<O>, input: O::Input, now: crate::runtime::Time) -> Effects<Self> {
+        let effects = O::step(&mut state.inner, input, now);
         let mut seen = state.seen.lock().unwrap_or_else(PoisonError::into_inner);
         effects
             .into_iter()
@@ -172,8 +168,6 @@ where
             })
             .collect()
     }
-
-    fn tick(now: Time) -> O::Input { O::tick(now) }
 
     fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
 
@@ -213,12 +207,10 @@ impl<O: StateOwner> StateOwner for Sink<O> {
     type Input = O::Input;
     type Effect = NoEffect;
 
-    fn step(state: &mut Log<String>, input: O::Input) -> Effects<Self> {
+    fn step(state: &mut Log<String>, input: O::Input, _now: crate::runtime::Time) -> Effects<Self> {
         state.lock().unwrap_or_else(PoisonError::into_inner).push(format!("{input:?}"));
         Vec::new()
     }
-
-    fn tick(now: Time) -> O::Input { O::tick(now) }
 
     fn due(input: O::Input, now: Time) -> (Option<O::Input>, O::Input) { O::due(input, now) }
 
@@ -255,7 +247,7 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
     type Input = StoreInput;
     type Effect = NoEffect;
 
-    fn step(state: &mut StoreStubState<O>, input: StoreInput) -> Effects<Self> {
+    fn step(state: &mut StoreStubState<O>, input: StoreInput, _now: crate::runtime::Time) -> Effects<Self> {
         let StoreInput::Commit(batch) = input else { return Vec::new() };
         let current = state.generation.load(Ordering::SeqCst);
         let stale: Vec<String> = batch.basis.iter().filter(|(model, basis)| **basis < current && state.only.is_none_or(|only| only == model.as_str())).map(|(model, _)| model.clone()).collect();
@@ -269,8 +261,6 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
         let committed = Committed { batch: batch.id, revision: state.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 };
         vec![Effect::Send(Outbound::new(state.to, (state.committed)(committed)))]
     }
-
-    fn tick(_now: Time) -> StoreInput { StoreInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> StoreInput { StoreInput::Idle }
 

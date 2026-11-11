@@ -429,12 +429,12 @@ fn call_dropped() {
     assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { request_id: 1, kind: Kind::Mutate, .. }]));
     use crate::runtime::{Effect, StateOwner};
     let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
-    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 });
+    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
     for attempt in 1..40 {
-        Calls::step(&mut state, CallsInput::Dropped { call_id: 1 });
-        Calls::step(&mut state, CallsInput::RetryDue { call_id: 1, attempt });
+        Calls::step(&mut state, CallsInput::Dropped { call_id: 1 }, crate::runtime::Time(0));
+        Calls::step(&mut state, CallsInput::RetryDue { call_id: 1, attempt }, crate::runtime::Time(0));
     }
-    let exhausted = Calls::step(&mut state, CallsInput::Dropped { call_id: 1 });
+    let exhausted = Calls::step(&mut state, CallsInput::Dropped { call_id: 1 }, crate::runtime::Time(0));
     assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id: 1 }))));
     assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Reply { id: 1, answer: Err(CallError::Dropped) }))));
 }
@@ -509,7 +509,7 @@ fn call_deadline_timer_lifecycle() {
     for online in [None, Some(true)] {
         for terminal in 0..4 {
             let mut state = CallsState::new(EPOCH, online, &[("Op", CallKind::Query)]);
-            let scheduled = Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Op".into(), variables: "{}".into(), reply: 1 });
+            let scheduled = Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Op".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
             assert!(scheduled.iter().any(|effect| matches!(effect, Effect::Schedule { id: ScheduleId(2), input: CallsInput::Deadline { call_id: 1 }, .. })));
             let input = match terminal {
                 0 => CallsInput::Deadline { call_id: 1 },
@@ -517,7 +517,7 @@ fn call_deadline_timer_lifecycle() {
                 2 => CallsInput::EpochEnded(Cause::SessionReset),
                 _ => CallsInput::Closing,
             };
-            let finished = Calls::step(&mut state, input);
+            let finished = Calls::step(&mut state, input, crate::runtime::Time(0));
             assert!(finished.iter().any(|effect| matches!(effect, Effect::Cancel(ScheduleId(2)))), "deadline must be unscheduled after terminal input {terminal}, online {online:?}");
         }
     }

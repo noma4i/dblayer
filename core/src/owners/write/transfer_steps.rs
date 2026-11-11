@@ -6,7 +6,7 @@ use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::RejectReason;
 use crate::owners::store::StoreOp;
-use crate::runtime::{Effect, ScheduleId, Time};
+use crate::runtime::{Effect, ScheduleId};
 use crate::transport::NetworkPurpose;
 
 /// Attempt ids come from one counter, so the id of a timer of an attempt is never the id of another timer.
@@ -215,8 +215,7 @@ impl TransferState {
         self.start_in_order(fx);
     }
 
-    pub(super) fn tick(&mut self, now: Time, kind: TransferTick, fx: &mut Fx) {
-        self.now = self.now.max(now);
+    pub(super) fn tick(&mut self, kind: TransferTick, fx: &mut Fx) {
         match kind {
             TransferTick::Expire => self.expire(fx),
             TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(transfer_id, attempt_id, fx),

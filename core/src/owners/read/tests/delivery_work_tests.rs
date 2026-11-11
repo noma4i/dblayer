@@ -68,7 +68,7 @@ impl Work {
     }
 
     fn step(&mut self, input: DeliveryInput) -> Vec<PendingRead> {
-        Deliveries::step(&mut self.state, input).into_iter().filter_map(|effect| match effect {
+        Deliveries::step(&mut self.state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| match effect {
             Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view, mode } }) => Some(PendingRead { stream, read_id, revision, after, view, mode }),
             _ => None,
         }).collect()
@@ -126,7 +126,7 @@ fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usi
 fn dlv_pull_unknown_stream() {
     let mut work = Work::new(1);
     let outcome = Outcomes::<d::PullAnswer>::new().register(EPOCH).id();
-    let effects = Deliveries::step(&mut work.state, DeliveryInput::Pull { stream: 77, outcome, reader: 1 });
+    let effects = Deliveries::step(&mut work.state, DeliveryInput::Pull { stream: 77, outcome, reader: 1 }, crate::runtime::Time(0));
     let answer = d::PullAnswer::Value(Box::new(d::Value::Ended(d::EndCause::Cancelled)));
     assert!(matches!(effects.as_slice(), [Effect::Run(DeliveryEffect::Stream { stream: 77, effect: StreamEffect::Answer { answer: got, .. } })] if *got == answer), "a Pull of a stream that is gone ends as Cancelled at once: {effects:?}");
 }
@@ -134,9 +134,9 @@ fn dlv_pull_unknown_stream() {
 #[test]
 fn dlv_cancel_unknown_stream() {
     let mut work = Work::new(1);
-    let effects = Deliveries::step(&mut work.state, DeliveryInput::Release { stream: 77, reader: None, now: crate::runtime::Time(0) });
+    let effects = Deliveries::step(&mut work.state, DeliveryInput::Release { stream: 77, reader: None, now: crate::runtime::Time(0) }, crate::runtime::Time(0));
     assert!(effects.is_empty(), "a Release of a stream that is gone does nothing: {effects:?}");
-    let effects = Deliveries::step(&mut work.state, DeliveryInput::PullCancelled { stream: 77, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() });
+    let effects = Deliveries::step(&mut work.state, DeliveryInput::PullCancelled { stream: 77, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() }, crate::runtime::Time(0));
     assert!(effects.is_empty(), "a PullCancelled of a stream that is gone does nothing: {effects:?}");
 }
 

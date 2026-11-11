@@ -760,10 +760,9 @@ impl TransferState {
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(None, Some(saving), fx),
             TransferInput::EpochStarted(started) => { self.epoch = started.epoch; self.base_generation = started.generation; },
-            TransferInput::Tick { now, kind } => self.tick(now, kind, fx),
+            TransferInput::Tick { kind, .. } => self.tick(kind, fx),
             TransferInput::EpochEnded(ended) => self.epoch_ended(ended.cause, fx),
             TransferInput::Closing => self.close(fx),
-            TransferInput::Clock(now) => self.now = self.now.max(now),
         }
     }
 
@@ -873,8 +872,9 @@ impl StateOwner for Transfers {
     type Input = TransferInput;
     type Effect = TransferEffect;
 
-    fn step(state: &mut TransferState, input: TransferInput) -> Effects<Self> {
+    fn step(state: &mut TransferState, input: TransferInput, now: Time) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
+        state.now = state.now.max(now);
         if let TransferInput::EpochStarted(started) = &input {
             state.begin_epoch(started.epoch);
         }
@@ -885,8 +885,6 @@ impl StateOwner for Transfers {
         }
         fx
     }
-
-    fn tick(now: Time) -> TransferInput { TransferInput::Clock(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> TransferInput { TransferInput::EpochEnded(EpochEnded { epoch, cause }) }
 

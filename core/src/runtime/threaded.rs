@@ -504,7 +504,9 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         }
         owner.cell.set_now(timeline.now());
         while owner.cell.fire_next_due() {}
-        while let Some(ran) = owner.cell.run_one(owner.name, owner.runner.as_mut(), &back, router.record) {
+        loop {
+            owner.cell.set_now(timeline.now());
+            let Some(ran) = owner.cell.run_one(owner.name, owner.runner.as_mut(), &back, router.record) else { break };
             #[cfg(test)]
             if let Some(state) = O::diagnostic(&owner.cell.state) { *lock(&router.diagnostics[owner.slot]) = state; }
             if router.record {

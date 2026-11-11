@@ -505,14 +505,14 @@ fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
     use crate::owners::write::transfer::{TransferAnswer, TransferEffect, TransferInput, TransferPeers, TransferState, Transfers};
     use crate::runtime::{Address, Effect, StateOwner};
     let mut outbox = OutboxState::new(1, OutboxPeers { store: Address::new(0), session: Some(Address::new(1)), transfer: None });
-    let classified = Outbox::step(&mut outbox, OutboxInput::RestoreFailed { error: "disk".into() });
+    let classified = Outbox::step(&mut outbox, OutboxInput::RestoreFailed { error: "disk".into() }, crate::runtime::Time(0));
     assert!(matches!(classified.as_slice(), [Effect::Run(OutboxEffect::RestoreClassified { epoch: 1 })]), "{classified:?}");
-    let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), action: None, reply: 5 });
+    let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), action: None, reply: 5 }, crate::runtime::Time(0));
     assert!(matches!(effects.as_slice(), [Effect::Run(OutboxEffect::Reply { reply: 5, answer: OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
     let mut transfer = TransferState::new(1, 1, TransferPeers { store: Address::new(0), outbox: Address::new(2), rounds: None });
-    let classified = Transfers::step(&mut transfer, TransferInput::RestoreFailed { error: "disk".into() });
+    let classified = Transfers::step(&mut transfer, TransferInput::RestoreFailed { error: "disk".into() }, crate::runtime::Time(0));
     assert!(matches!(classified.as_slice(), [Effect::Run(TransferEffect::RestoreClassified { epoch: 1 })]), "{classified:?}");
-    let effects = Transfers::step(&mut transfer, TransferInput::Cancel { key: "k".into(), reply: 6 });
+    let effects = Transfers::step(&mut transfer, TransferInput::Cancel { key: "k".into(), reply: 6 }, crate::runtime::Time(0));
     assert!(matches!(effects.as_slice(), [Effect::Run(TransferEffect::Reply { reply: 6, answer: TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
 }
 

@@ -113,13 +113,11 @@ impl StateOwner for StoreWriter {
     type Input = StoreInput;
     type Effect = StoreEffect;
 
-    fn step(state: &mut StoreState, input: StoreInput) -> Effects<Self> {
+    fn step(state: &mut StoreState, input: StoreInput, _now: Time) -> Effects<Self> {
         let mut fx = Vec::new();
         state.run(input, &mut fx);
         fx.into_iter().map(Effect::Run).collect()
     }
-
-    fn tick(_now: Time) -> StoreInput { StoreInput::Idle }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> StoreInput { StoreInput::EpochEnded(EpochEnded { epoch, cause }) }
 

@@ -3,7 +3,7 @@ use crate::owners::contract::{EpochEnded, Published, PublishedState};
 use crate::runtime::{Cause, Effect, StateOwner};
 
 fn step(state: &mut SessionState, input: SessionInput) -> Vec<SessionEffect> {
-    SessionCalls::step(state, input).into_iter().filter_map(|effect| match effect { Effect::Run(value) => Some(value), _ => None }).collect()
+    SessionCalls::step(state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| match effect { Effect::Run(value) => Some(value), _ => None }).collect()
 }
 
 fn setup() -> SessionState {

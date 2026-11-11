@@ -308,7 +308,6 @@ pub enum DeliveryInput {
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
-    Tick(Time),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,7 +571,7 @@ impl StateOwner for Deliveries {
     type Input = DeliveryInput;
     type Effect = DeliveryEffect;
 
-    fn step(state: &mut DeliveriesState, input: DeliveryInput) -> Effects<Self> {
+    fn step(state: &mut DeliveriesState, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
             DeliveryInput::Open { stream, view, epoch, identity, valid, now, revision, deferred } => {
@@ -661,7 +660,6 @@ impl StateOwner for Deliveries {
                 state.closing = true;
                 every(state, &mut out, |machine, fx| machine.closing(fx));
             }
-            DeliveryInput::Tick(_) => {}
         }
         if state.closing && !state.drained && state.streams.values().all(Delivery::settled) {
             state.drained = true;
@@ -671,8 +669,6 @@ impl StateOwner for Deliveries {
     }
 
     fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<DeliveryInput> { pending.into_iter().map(|id| DeliveryInput::TaskFailed { id }).collect() }
-
-    fn tick(now: Time) -> DeliveryInput { DeliveryInput::Tick(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> DeliveryInput { DeliveryInput::EpochEnded(EpochEnded { epoch, cause }) }
 

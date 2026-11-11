@@ -651,7 +651,7 @@ fn xfer_expired_failed_reopen_in_every_order() {
     assert_eq!(orders.len(), 12);
     for order in orders {
         let mut twin = Twin::bare(1);
-        twin.post(TransferInput::Clock(Time(8 * DAY)));
+        twin.det.tick(Time(8 * DAY));
         let mut row = partly(1, KEY);
         row.failed = Some("refused".into());
         row.failed_at = Some(Time(1));
@@ -726,7 +726,7 @@ fn xfer_prop_restored_failed_keeps_failed_at() {
             let outcome = if kind { OutboxOutcome::Rejected { error: "refused".into() } } else { OutboxOutcome::Failed { error: "refused".into() } };
             for event in order.iter().copied() {
                 let out = match event {
-                    Clock => twin.post(TransferInput::Clock(Time(NOW))),
+                    Clock => twin.at(Time(NOW)),
                     Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: BTreeMap::from([(1, BTreeMap::from([(1, outcome.clone())]))]), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                     Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
                     Online => twin.online(true),

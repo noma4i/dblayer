@@ -3,7 +3,7 @@ use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleError, Lifec
 use crate::runtime::{Effect, StateOwner};
 
 fn step(state: &mut LifecycleState, input: LifecycleInput) -> Vec<LifecycleEffect> {
-    Lifecycle::step(state, input).into_iter().filter_map(|effect| match effect { Effect::Run(effect) => Some(effect), _ => None }).collect()
+    Lifecycle::step(state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| match effect { Effect::Run(effect) => Some(effect), _ => None }).collect()
 }
 
 fn restore_ended(saved: bool, expected: [Result<(), LifecycleError>; 3]) {

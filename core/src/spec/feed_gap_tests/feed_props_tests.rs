@@ -174,7 +174,7 @@ impl StateOwner for Readers {
     type Input = DeliveryInput;
     type Effect = NoEffect;
 
-    fn step(state: &mut Log<Saw>, input: DeliveryInput) -> Effects<Self> {
+    fn step(state: &mut Log<Saw>, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut log = state.lock().unwrap_or_else(PoisonError::into_inner);
         match input {
             DeliveryInput::ModelEvent { stream, position, .. } => log.push(Saw::Event { model: model_of(stream), position }),
@@ -183,8 +183,6 @@ impl StateOwner for Readers {
         }
         Vec::new()
     }
-
-    fn tick(now: Time) -> DeliveryInput { DeliveryInput::Tick(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Ended) -> DeliveryInput { DeliveryInput::EpochEnded(EpochEnded { epoch, cause }) }
 

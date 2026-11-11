@@ -26,7 +26,6 @@ pub enum ToyInput {
     Deadline(u64, Time, u32),
     CancelSchedule(u64),
     Fire(u32),
-    Tick(Time),
     Burst(Vec<u32>),
     Fan(u32),
     Retry(u32),
@@ -63,6 +62,7 @@ pub struct ToyState {
     pub failed: Vec<u64>,
     pub fired: Vec<u32>,
     pub ticks: Vec<Time>,
+    pub nows: Vec<Time>,
     pub ended: Vec<(Epoch, Cause)>,
     pub started: Vec<Epoch>,
     pub closed: bool,
@@ -75,7 +75,8 @@ impl StateOwner for Toy {
     type Input = ToyInput;
     type Effect = ToyEffect;
 
-    fn step(state: &mut ToyState, input: ToyInput) -> Effects<Toy> {
+    fn step(state: &mut ToyState, input: ToyInput, now: Time) -> Effects<Toy> {
+        state.nows.push(now);
         match input {
             ToyInput::Go => state.on_go.clone().map(|(to, message)| vec![Effect::Send(Outbound::new(to, message))]).unwrap_or_default(),
             ToyInput::Tell => state.tell.map(|(to, n)| vec![Effect::Send(Outbound::new(to, SinkInput::Note(n)))]).unwrap_or_default(),
@@ -112,11 +113,10 @@ impl StateOwner for Toy {
             ToyInput::CancelSchedule(id) => vec![Effect::Cancel(ScheduleId(id))],
             ToyInput::Fire(n) => {
                 state.fired.push(n);
-                vec![Effect::Run(ToyEffect::Report(n))]
-            }
-            ToyInput::Tick(now) => {
                 state.ticks.push(now);
-                state.on_tick.clone().map(|(to, message)| vec![Effect::Send(Outbound::new(to, message))]).unwrap_or_default()
+                let mut effects = vec![Effect::Run(ToyEffect::Report(n))];
+                effects.extend(state.on_tick.clone().map(|(to, message)| Effect::Send(Outbound::new(to, message))));
+                effects
             }
             ToyInput::Burst(list) => list
                 .into_iter()
@@ -151,8 +151,6 @@ impl StateOwner for Toy {
             }
         }
     }
-
-    fn tick(now: Time) -> ToyInput { ToyInput::Tick(now) }
 
     fn epoch_started(epoch: Epoch) -> Option<ToyInput> { Some(ToyInput::EpochStarted(epoch)) }
 
@@ -260,7 +258,7 @@ impl StateOwner for Hub {
     type Input = HubInput;
     type Effect = HubEffect;
 
-    fn step(_state: &mut (), input: HubInput) -> Effects<Hub> {
+    fn step(_state: &mut (), input: HubInput, _now: Time) -> Effects<Hub> {
         match input {
             HubInput::Begin(epoch) => vec![Effect::Broadcast(Control::EpochStarted(epoch))],
             HubInput::Finish(epoch, cause) => vec![Effect::Broadcast(Control::EpochEnded(epoch, cause))],
@@ -269,8 +267,6 @@ impl StateOwner for Hub {
             HubInput::Idle => vec![],
         }
     }
-
-    fn tick(_now: Time) -> HubInput { HubInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> HubInput { HubInput::Idle }
 
@@ -313,14 +309,12 @@ impl StateOwner for Sink {
     type Input = SinkInput;
     type Effect = SinkEffect;
 
-    fn step(state: &mut Vec<u32>, input: SinkInput) -> Effects<Sink> {
+    fn step(state: &mut Vec<u32>, input: SinkInput, _now: Time) -> Effects<Sink> {
         if let SinkInput::Note(n) = input {
             state.push(n);
         }
         vec![]
     }
-
-    fn tick(_now: Time) -> SinkInput { SinkInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> SinkInput { SinkInput::Idle }
 
@@ -353,14 +347,12 @@ impl StateOwner for Bare {
     type Input = BareInput;
     type Effect = BareEffect;
 
-    fn step(_state: &mut (), input: BareInput) -> Effects<Bare> {
+    fn step(_state: &mut (), input: BareInput, _now: Time) -> Effects<Bare> {
         match input {
             BareInput::Boom => vec![Effect::Run(BareEffect::Explode)],
             BareInput::Idle => vec![],
         }
     }
-
-    fn tick(_now: Time) -> BareInput { BareInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> BareInput { BareInput::Idle }
 
@@ -395,14 +387,12 @@ impl StateOwner for DeathLog {
     type Input = DeathLogInput;
     type Effect = DeathLogEffect;
 
-    fn step(state: &mut Vec<String>, input: DeathLogInput) -> Effects<DeathLog> {
+    fn step(state: &mut Vec<String>, input: DeathLogInput, _now: Time) -> Effects<DeathLog> {
         if let DeathLogInput::Died(executor) = input {
             state.push(executor);
         }
         vec![]
     }
-
-    fn tick(_now: Time) -> DeathLogInput { DeathLogInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> DeathLogInput { DeathLogInput::Idle }
 

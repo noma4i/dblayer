@@ -120,8 +120,7 @@ impl<O: StateOwner> Cell<O> {
         let scheduled = entry.remove();
         self.keys.remove(&scheduled.id);
         if scheduled.retry { self.leave_retry(scheduled.id); }
-        let (clock, input) = O::due(scheduled.input, self.now);
-        if let Some(clock) = clock { self.push(EpochStamp::Control, clock); }
+        let (_, input) = O::due(scheduled.input, self.now);
         self.push(scheduled.stamp, input);
         true
     }
@@ -156,7 +155,7 @@ impl<O: StateOwner> Cell<O> {
         let input_label = label(trace, &input);
         let mut failed = false;
         let mut failures: Vec<EffectId> = Vec::new();
-        let effects = match catch_unwind(AssertUnwindSafe(|| O::step(&mut self.state, input))) {
+        let effects = match catch_unwind(AssertUnwindSafe(|| O::step(&mut self.state, input, self.now))) {
             Ok(effects) => effects,
             Err(_) => {
                 self.executor_dead = true;

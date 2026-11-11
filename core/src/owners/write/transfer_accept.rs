@@ -144,7 +144,6 @@ impl TransferState {
         if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
         }
-        self.now = self.now.max(now);
         let group = joint.as_ref().map(|_| {
             self.next_group += 1;
             self.next_group - 1

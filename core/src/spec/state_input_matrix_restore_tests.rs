@@ -107,7 +107,7 @@ fn own_run(kind: Kind2, steps: &[Phase]) -> Vec<String> {
             Phase::Restore => twin.post(OutboxInput::Restored { ops: vec![stored(kind)], pending_lost: false }),
             Phase::Ready => twin.post(OutboxInput::RestoreReady { epoch: EPOCH }),
             Phase::Online(on) => twin.post(OutboxInput::Online(Online(*on))),
-            Phase::Age => twin.post(OutboxInput::Tick(crate::runtime::Time(11_000))),
+            Phase::Age => { twin.det.tick(crate::runtime::Time(11_000)); Vec::new() }
             Phase::Commit => if twin.batches.contains_key(&1) { twin.committed(1) } else { Vec::new() },
         };
         let mut effects = effects;

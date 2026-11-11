@@ -22,11 +22,10 @@ impl crate::runtime::StateOwner for CapturedStore {
     type Input = crate::owners::store::StoreInput;
     type Effect = crate::spec::support::NoEffect;
 
-    fn step(state: &mut Self::State, input: Self::Input) -> crate::runtime::Effects<Self> {
+    fn step(state: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> crate::runtime::Effects<Self> {
         if let crate::owners::store::StoreInput::Commit(batch) = input { state.lock().unwrap().push(batch); }
         Vec::new()
     }
-    fn tick(_: crate::runtime::Time) -> Self::Input { crate::owners::store::StoreInput::Idle }
     fn epoch_ended(_: u64, _: crate::runtime::Cause) -> Self::Input { crate::owners::store::StoreInput::Idle }
     fn closing() -> Self::Input { crate::owners::store::StoreInput::Idle }
 }

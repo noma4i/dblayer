@@ -260,7 +260,6 @@ pub enum WindowsInput {
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
-    Tick(Time),
 }
 
 /// An input of one machine.

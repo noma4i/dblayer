@@ -59,7 +59,7 @@ impl StateOwner for Network {
     type Input = NetworkInput;
     type Effect = NetworkEffect;
 
-    fn step(state: &mut NetworkState, input: NetworkInput) -> Effects<Self> {
+    fn step(state: &mut NetworkState, input: NetworkInput, _now: Time) -> Effects<Self> {
         let run = |effects: Vec<NetworkEffect>| effects.into_iter().map(Effect::Run).collect();
         let reply = |id| NetworkEffect::Reply { id, closed: false };
         match (state.mode, input) {
@@ -87,8 +87,6 @@ impl StateOwner for Network {
             (_, NetworkInput::Idle) | (NetworkMode::Closed, _) => Vec::new(),
         }
     }
-
-    fn tick(_now: Time) -> NetworkInput { NetworkInput::Idle }
 
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> NetworkInput { NetworkInput::Idle }
 

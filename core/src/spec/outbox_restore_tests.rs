@@ -382,7 +382,7 @@ fn out_prop_restore_answer() {
     let mut effects = restore(&mut twin, vec![answered]);
     effects.extend(ready(&mut twin));
     effects.extend(twin.post(OutboxInput::Online(Online(true))));
-    effects.extend(twin.post(OutboxInput::Tick(crate::runtime::Time(5))));
+    twin.det.tick(crate::runtime::Time(5));
     effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
     assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
 }

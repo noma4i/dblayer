@@ -56,7 +56,7 @@ fn out_queued_expired() {
         let id = submit_op(&mut twin, op, 30);
         twin.committed(id);
         twin.waiter(id);
-        assert!(twin.post(OutboxInput::Tick(Time(seconds * 1000))).is_empty(), "no timer: time alone does nothing");
+        twin.det.tick(Time(seconds * 1000));
         (twin, id)
     };
     let (mut twin, id) = queued_for(11);
@@ -76,7 +76,7 @@ fn out_queued_expired() {
         let mut twin = Twin::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
-        twin.post(OutboxInput::Tick(Time(11_000)));
+        twin.det.tick(Time(11_000));
         twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
         let ready = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         let stage = twin.stage(1);
@@ -188,8 +188,8 @@ fn out_expiry_clock_at_select() {
         twin.committed(id);
         twin.waiter(id);
         assert_eq!(twin.stage(id), Some(St::Queued), "the slot is busy");
-        let ticked = twin.post(OutboxInput::Tick(Time(now_ms)));
-        assert_eq!((ticked.is_empty(), twin.stage(id)), (true, Some(St::Queued)), "a Tick advances the clock but selects nothing: {ticked:?}");
+        twin.det.tick(Time(now_ms));
+        assert_eq!(twin.stage(id), Some(St::Queued), "the clock moves but selects nothing");
         twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
         twin.committed(blocker);
         (twin, id)

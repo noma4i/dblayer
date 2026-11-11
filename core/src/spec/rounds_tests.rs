@@ -20,7 +20,7 @@ fn busy(state: &mut RoundsState, epoch: u64, ids: &[u64]) { state.active.insert(
 fn step(state: &mut RoundsState, input: RoundsInput) -> (Vec<RoundsEffect>, Vec<String>) {
     let mut runs = Vec::new();
     let mut sends = Vec::new();
-    for effect in Rounds::step(state, input) {
+    for effect in Rounds::step(state, input, crate::runtime::Time(0)) {
         match effect {
             Effect::Run(run) => runs.push(run),
             Effect::Send(outbound) => sends.push(format!("{:?}", outbound.payload)),

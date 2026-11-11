@@ -282,7 +282,6 @@ pub enum SessionInput {
     Snapshot { epoch: Epoch, online: bool },
     Published(Published),
     EpochEnded(EpochEnded),
-    Idle,
     Closing,
 }
 
@@ -409,7 +408,7 @@ impl StateOwner for SessionCalls {
         Some(format!("phase={:?}, online={:?}, restored_answer={:?}, taking={:?}, saving={:?}, drained_held={}, resume_waiters={:?}", state.phase, state.online, state.restored_answer, state.resume_taking, state.resume_saving, matches!(state.phase, SessionPhase::Closed) && state.resume_taking.is_some(), state.resume_waiters))
     }
 
-    fn step(state: &mut SessionState, input: SessionInput) -> Effects<Self> {
+    fn step(state: &mut SessionState, input: SessionInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut fx = Vec::new();
         state.run(input, &mut fx);
         fx.into_iter().map(|effect| match effect {
@@ -417,8 +416,6 @@ impl StateOwner for SessionCalls {
             other => Effect::Run(other),
         }).collect()
     }
-
-    fn tick(_now: Time) -> SessionInput { SessionInput::Idle }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> SessionInput { SessionInput::EpochEnded(EpochEnded { epoch, cause }) }
 

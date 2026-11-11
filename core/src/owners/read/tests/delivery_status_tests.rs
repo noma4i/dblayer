@@ -17,7 +17,7 @@ fn blob_view() -> View {
 
 fn opened() -> DeliveriesState {
     let mut state = DeliveriesState::new(EPOCH, DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) });
-    let effects = Deliveries::step(&mut state, DeliveryInput::Open { stream: STREAM, view: blob_view(), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
+    let effects = Deliveries::step(&mut state, DeliveryInput::Open { stream: STREAM, view: blob_view(), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None }, crate::runtime::Time(0));
     assert!(effects.iter().any(|effect| matches!(effect, Effect::Run(DeliveryEffect::Stream { effect: StreamEffect::StatusInterest { plus: true, key }, .. }) if key == "Chat:r1:photo")));
     state
 }
@@ -42,20 +42,20 @@ fn statuses(state: &DeliveriesState) -> Vec<(i64, d::BlobStatus)> {
 #[test]
 fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_row() {
     let mut state = opened();
-    let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued) }));
+    let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued) }, crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
     assert!(statuses(&state).is_empty(), "no value before the row was read");
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
     assert_eq!(statuses(&state), [(4, d::BlobStatus::of(&Shown::Queued))], "the value carries the revision of the row read that completed it");
 
-    let asked = reads(Deliveries::step(&mut state, commit(&["r1"])));
+    let asked = reads(Deliveries::step(&mut state, commit(&["r1"]), crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } });
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } }, crate::runtime::Time(0));
     let shown = statuses(&state);
     assert_eq!(shown.len(), 1, "the journal keeps the latest status only");
     assert_eq!((shown[0].0, shown[0].1.local_url.as_deref(), shown[0].1.state.as_str()), (5, Some("file:copy"), "queued"), "a re-read row gives the value its commit revision");
 
-    let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 6, blob: d::BlobStatus::of(&Shown::Uploading { progress: 40 }) }));
+    let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 6, blob: d::BlobStatus::of(&Shown::Uploading { progress: 40 }) }, crate::runtime::Time(0)));
     assert!(asked.is_empty(), "a new state of the transfer reads no row");
     let shown = statuses(&state);
     assert_eq!((shown[0].0, shown[0].1.progress, shown[0].1.local_url.as_deref()), (6, 40, Some("file:copy")), "a new transfer status gives the value its own revision");
@@ -64,8 +64,8 @@ fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_
 #[test]
 fn xfer_status_quiet_on_other_rows() {
     let mut state = opened();
-    assert!(reads(Deliveries::step(&mut state, commit(&["r2"]))).is_empty());
+    assert!(reads(Deliveries::step(&mut state, commit(&["r2"]), crate::runtime::Time(0))).is_empty());
     assert_eq!(state.streams_examined(), 0);
-    assert_eq!(reads(Deliveries::step(&mut state, commit(&["r1"]))).len(), 1);
+    assert_eq!(reads(Deliveries::step(&mut state, commit(&["r1"]), crate::runtime::Time(0))).len(), 1);
     assert_eq!(state.streams_examined(), 1);
 }

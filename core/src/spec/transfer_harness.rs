@@ -33,12 +33,10 @@ where
     type Input = O::Input;
     type Effect = NoEffect;
 
-    fn step(state: &mut Log<O::Input>, input: O::Input) -> Effects<Self> {
+    fn step(state: &mut Log<O::Input>, input: O::Input, _now: crate::runtime::Time) -> Effects<Self> {
         state.lock().unwrap_or_else(PoisonError::into_inner).push(input);
         Vec::new()
     }
-
-    fn tick(now: Time) -> O::Input { O::tick(now) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
 
@@ -345,8 +343,16 @@ impl Twin {
         out
     }
 
+    pub fn at(&mut self, now: Time) -> Out {
+        self.det.tick(now);
+        self.collect()
+    }
+
     fn post_held(&mut self, input: TransferInput) -> Out {
         self.follow(&input);
+        if let TransferInput::Tick { now, .. } = &input {
+            self.det.tick(*now);
+        }
         let stamp = if self.ended { EpochStamp::Control } else { EpochStamp::Epoch(EPOCH) };
         self.det.post(Address::<Transfers>::new(TRANSFER_AT), stamp, input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");

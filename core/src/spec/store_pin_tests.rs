@@ -6,7 +6,7 @@ use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput,
 use crate::runtime::{Cause, Effect, StateOwner};
 
 fn step(state: &mut StoreState, input: StoreInput) -> Vec<StoreEffect> {
-    StoreWriter::step(state, input).into_iter().filter_map(|effect| match effect { Effect::Run(effect) => Some(effect), _ => None }).collect()
+    StoreWriter::step(state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| match effect { Effect::Run(effect) => Some(effect), _ => None }).collect()
 }
 
 fn state(revision: u64) -> StoreState {
