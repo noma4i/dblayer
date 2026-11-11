@@ -33,15 +33,74 @@ pub(super) struct RowWrite<'a> {
     pub feed_fields: BTreeMap<(String, Option<i64>), std::collections::HashMap<String, std::collections::HashSet<String>>>,
     pub feed_tombstones: BTreeMap<String, BTreeMap<String, i64>>,
     pub feed_hidden: Option<super::apply::HiddenRows>,
+    /// The memory the feed event in its savepoint changed, while the event lands.
+    pub event: Option<EventUndo>,
+}
+
+type FieldKey = (String, Option<i64>);
+
+/// What one feed event changed in the memory of the writer, given back when the Store refuses the event (P-DATA-99).
+#[derive(Default)]
+pub(super) struct EventUndo {
+    pub rows: Vec<((String, String), Option<Option<super::rows::StoredRow>>)>,
+    pub originals: Vec<RowRef>,
+    field_ids: Vec<(FieldKey, String)>,
+    fields: Vec<(FieldKey, Option<std::collections::HashMap<String, std::collections::HashSet<String>>>)>,
+    tombstones: Vec<(String, String, Option<i64>)>,
+    hidden: Option<Option<super::apply::HiddenRows>>,
+    candidates: usize,
+    overlay: usize,
 }
 
 impl RowWrite<'_> {
+    /// A feed event starts in its savepoint: the writer notes what the event changes from here on.
+    pub fn begin_event(&mut self, overlay: usize) { self.event = Some(EventUndo { candidates: self.candidates, overlay, ..EventUndo::default() }); }
+
+    /// The Store refused the feed event: its savepoint rolled back, the memory returns to the state before it.
+    pub fn refuse_event(&mut self, overlay: &mut super::feed_write::OverlayWrites) {
+        let Some(undo) = self.event.take() else { return };
+        for (key, before) in undo.rows.into_iter().rev() {
+            match before { Some(row) => { self.current.insert(key, row); } None => { self.current.remove(&key); } }
+        }
+        for row in undo.originals { self.originals.remove(&row); }
+        for (key, before) in undo.fields.into_iter().rev() {
+            match before { Some(fields) => { self.feed_fields.insert(key, fields); } None => { self.feed_fields.remove(&key); } }
+        }
+        for (key, id) in undo.field_ids { if let Some(fields) = self.feed_fields.get_mut(&key) { fields.remove(&id); } }
+        for (model, id, before) in undo.tombstones.into_iter().rev() {
+            let Some(rows) = self.feed_tombstones.get_mut(&model) else { continue };
+            match before { Some(revision) => { rows.insert(id, revision); } None => { rows.remove(&id); } }
+        }
+        if let Some(hidden) = undo.hidden { self.feed_hidden = hidden; }
+        self.candidates = undo.candidates;
+        overlay.truncate(undo.overlay);
+    }
+
+    /// The feed event replaces the hidden rows and the unconfirmed fields it read after its write.
+    pub fn replace_feed_reads(&mut self, hidden: super::apply::HiddenRows, fields: Vec<(FieldKey, std::collections::HashMap<String, std::collections::HashSet<String>>)>) {
+        let before = std::mem::replace(&mut self.feed_hidden, Some(hidden));
+        for (key, value) in fields {
+            let old = self.feed_fields.insert(key.clone(), value);
+            if let Some(undo) = self.event.as_mut() { undo.fields.push((key, old)); }
+        }
+        if let Some(undo) = self.event.as_mut() { undo.hidden.get_or_insert(before); }
+    }
+
+    /// A server delete of the feed event leaves a tombstone at the revision of the batch.
+    pub fn feed_tombstone(&mut self, model: &str, id: &str) {
+        let before = self.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), self.revision);
+        if let Some(undo) = self.event.as_mut() { undo.tombstones.push((model.to_string(), id.to_string(), before)); }
+    }
+
     pub fn prefetch(&mut self, model: &str, ids: &[String], closing: Option<i64>) -> Result<(), StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !missing.is_empty() {
             let mut rows = reader.stored_rows_with_revisions(model, &missing)?;
-            for id in missing { self.current.insert((model.to_string(), id.clone()), rows.remove(&id)); }
+            for id in missing {
+                if let Some(undo) = self.event.as_mut() { undo.rows.push(((model.to_string(), id.clone()), None)); }
+                self.current.insert((model.to_string(), id.clone()), rows.remove(&id));
+            }
         }
         let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(&(model.to_string(), closing)).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !needed.is_empty() {
@@ -49,8 +108,12 @@ impl RowWrite<'_> {
             let mut fields = unconfirmed_fields(&reader, closing, model, &needed)?;
             let mut tombstones = reader.tombstones(model, &needed)?;
             for id in needed {
+                if let Some(undo) = self.event.as_mut() { undo.field_ids.push(((model.to_string(), closing), id.clone())); }
                 self.feed_fields.entry((model.to_string(), closing)).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
-                if let Some(value) = tombstones.remove(&id) { self.feed_tombstones.entry(model.to_string()).or_default().insert(id, value); }
+                if let Some(value) = tombstones.remove(&id) {
+                    let before = self.feed_tombstones.entry(model.to_string()).or_default().insert(id.clone(), value);
+                    if let Some(undo) = self.event.as_mut() { undo.tombstones.push((model.to_string(), id, before)); }
+                }
             }
         }
         Ok(())
@@ -60,7 +123,9 @@ impl RowWrite<'_> {
         let key = (model.to_string(), id.to_string());
         if !self.current.contains_key(&key) {
             let reader = Reader::new(self.connection, self.models);
-            self.current.insert(key.clone(), reader.stored_row(model, id)?);
+            let row = reader.stored_row(model, id)?;
+            if let Some(undo) = self.event.as_mut() { undo.rows.push((key.clone(), None)); }
+            self.current.insert(key.clone(), row);
         }
         Ok(self.current.get(&key).cloned().flatten())
     }
@@ -68,7 +133,7 @@ impl RowWrite<'_> {
     pub fn apply(&mut self, envelope: &BatchPlan) -> Result<CommitResult, StoreError> {
         let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
         let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
-        let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, (self.now, self.revision, self.generation), Some(self.originals), Some((&mut self.current, &hidden)))?;
+        let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, (self.now, self.revision, self.generation), Some(self.originals), Some((&mut self.current, &hidden, &mut EventUndo::default())))?;
         for operation in &envelope.entity_ops {
             if let EntityOp::Destroy { model, id, reason } = operation {
                 if reason.writes_tombstone() { self.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), self.revision); }

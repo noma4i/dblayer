@@ -16,12 +16,12 @@ pub(in super::super) fn apply_envelope_at(
     planned: &BatchPlan,
     (now_ms, revision, generation): (i64, i64, Generation),
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
-    mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
+    mut feed_cache: Option<(&mut Prefetched, &HiddenRows, &mut EventUndo)>,
 ) -> Result<CommitResult, StoreError> {
     let mut followed = planned.clone();
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
-    super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _)| &mut **current))?;
+    super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _, _)| &mut **current))?;
     followed.reduce_repeats();
     followed.validate(generation)?;
     let envelope = &followed;
@@ -36,28 +36,15 @@ pub(in super::super) fn apply_envelope_at(
             let mut rows = reader.stored_rows(&model, &ids)?;
             for id in ids {
                 let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-                originals.entry(RowRef::new(ModelKey::new(&model), row_id)).or_insert_with(|| rows.remove(&id).map(|stored| stored.row));
+                let row = RowRef::new(ModelKey::new(&model), row_id);
+                if let Some((_, _, undo)) = feed_cache.as_mut() { undo.originals.push(row.clone()); }
+                originals.entry(row).or_insert_with(|| rows.remove(&id).map(|stored| stored.row));
             }
         }
     }
-    let Some((current, hidden)) = feed_cache else { return write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut Undo::default()) };
-    let mut undo = Undo::default();
-    undo.rows = envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }).collect();
-    let outcome = write_followed(connection, models, envelope, (now_ms, revision), originals.as_deref_mut(), Some((&mut *current, hidden)), &mut undo);
-    if outcome.is_err() {
-        for (key, before) in undo.rows.into_iter().rev() {
-            match before { Some(row) => { current.insert(key, row); } None => { current.remove(&key); } }
-        }
-        if let Some(originals) = originals { for row in undo.originals { originals.remove(&row); } }
-    }
-    outcome
-}
-
-/// What one write changed in the memory of the feed writer: the cached rows before it and the originals it added, given back when the write fails.
-#[derive(Default)]
-struct Undo {
-    rows: Vec<((String, String), Option<Option<crate::store::StoredRow>>)>,
-    originals: Vec<RowRef>,
+    let Some((current, hidden, undo)) = feed_cache else { return write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut EventUndo::default()) };
+    undo.rows.extend(envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }));
+    write_followed(connection, models, envelope, (now_ms, revision), originals, Some((current, hidden)), undo)
 }
 
 fn write_followed(
@@ -67,7 +54,7 @@ fn write_followed(
     (now_ms, revision): (i64, i64),
     originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
     mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
-    undo: &mut Undo,
+    undo: &mut EventUndo,
 ) -> Result<CommitResult, StoreError> {
     let mut wrote = false;
     let mut tombstoned = false;

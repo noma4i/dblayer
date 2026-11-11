@@ -13,6 +13,7 @@ use crate::store::operation::{delete_operation, failure_cells, write_operation_e
 use crate::owners::write::operation_machine::OperationEvent;
 use crate::store::sync_state::{operation_keys, recompute_sync, SyncKey};
 use crate::value::sync::OperationFailure;
+use super::row_write::EventUndo;
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
