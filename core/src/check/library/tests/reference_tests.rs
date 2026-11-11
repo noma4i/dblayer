@@ -109,5 +109,5 @@ async fn compare(owner: &Arc<LibraryOwner>, programs: Vec<Vec<Input>>) -> (usize
 async fn library_matches_reference_loads() {
     let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: true });
     let (compared, holes, found) = compare(&owner, programs()).await;
-    assert!(found.is_empty(), "compared {compared} programs to depth {}, {} seeds of length {LENGTH}, not compared (spec holes) {holes:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
+    assert!(found.is_empty() && holes.is_empty(), "compared {compared} programs to depth {}, {} seeds of length {LENGTH}, not compared because of spec holes (must be empty) {holes:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
 }

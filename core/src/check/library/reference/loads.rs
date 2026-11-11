@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::shapes::{self, PAGE_SIZE};
 use super::window::{Key, Phase, Run};
-use super::{Call, Ending, Form, Held, LibraryRef, Sent};
+use super::{Call, Ending, Form, Held, LibraryRef, Owner, Sent};
 use crate::check::value::Observation;
 
 /// library.md section 4: the load calls, and the plumbing of one load (its request, its cancel, its outcome).
@@ -27,6 +27,7 @@ impl LibraryRef {
                 ("MomentsFeed", variables)
             }
             Key::Node => ("MomentTranscodeStatus", json!({ "momentId": "m1" })),
+            Key::Nodes(_) => ("ContainersByIds", json!({ "ids": ["m1"] })),
         }
     }
 
@@ -36,7 +37,7 @@ impl LibraryRef {
         let (operation, variables) = self.request_of(key, page);
         let id = format!("r{}", self.next_request);
         self.next_request += 1;
-        self.held.push(Held { id: id.clone(), live: true, key });
+        self.held.push(Held { id: id.clone(), live: true, owner: Owner::Window(key) });
         self.requests.push(Sent { id: id.clone(), operation, variables });
         if let Some(run) = self.run_of(key) {
             run.phase = Phase::Flight(id);
@@ -45,8 +46,8 @@ impl LibraryRef {
 
     /// A new load of `page`: with the network on it sends at once (the "loads" word of library.md section 4), otherwise it waits.
     pub(super) fn start_run(&mut self, key: Key, page: u32) {
-        *self.run_of(key) = Some(Run { page, phase: Phase::Waiting, network: 0, server: 0 });
-        if self.online {
+        *self.run_of(key) = Some(Run { page, phase: Phase::Waiting, attempts: 0 });
+        if self.on() {
             self.send(key);
         }
     }
@@ -70,8 +71,12 @@ impl LibraryRef {
             (Form::LoadMore, Ending::More(result)) => Observation::new("more", json!({ "relation": "feed", "result": result })),
             (Form::LoadAll, Ending::Done) => Observation::new("loaded_all", json!({ "load": call.name })),
             (Form::Node, Ending::Done) => Observation::new("node", json!({ "row": "m1", "present": present })),
+            (Form::Nodes, Ending::Rows(rows)) => Observation::new("nodes", json!({ "relation": "nodes", "rows": if rows > 0 { json!(["m1"]) } else { json!([]) } })),
             (form, ending) => Observation::new("unparsed", json!(format!("{form:?} cannot end with {ending:?}"))),
         };
+        if call.form == Form::Nodes {
+            self.windows.remove(&Key::Nodes(id));
+        }
         self.outcomes.push((id, shapes::tag(item, &call.name)));
     }
 
@@ -91,21 +96,23 @@ impl LibraryRef {
         }
     }
 
-    /// library.md section 4, row "any load / no relation in the request / 0 / `Invalid` (K28, G3)": the stand models declare no `nodes` relation for `Container`.
+    /// library.md section 4 `nodes(ids)`: 1 request always (K2, K4), without the network the call waits (H4). The stand schema must declare a `Container` relation `nodes`.
     fn nodes_call(&mut self, name: String) -> Vec<Observation> {
-        vec![shapes::tag(shapes::error("invalid"), &name)]
+        let id = self.add_call(Form::Nodes, &name, None);
+        self.start_run(Key::Nodes(id), 1);
+        Vec::new()
     }
 
     /// `begin_load`, `refresh`, `node`, `node(force)`: the rows for page 1.
     fn single_call(&mut self, form: Form, name: String, force: bool) -> Vec<Observation> {
         let key = if form == Form::Node { Key::Node } else { Key::Feed };
         let forced = form == Form::Refresh || force;
-        let (now, online) = (self.now, self.online);
+        let now = self.now;
         let (fresh, running) = {
             let window = self.win(key);
             (window.fresh(now), window.load.as_ref().map(|run| run.page))
         };
-        if forced && !online {
+        if forced && self.online == Some(false) {
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
         let id = self.add_call(form, &name, Some(key));
@@ -116,7 +123,6 @@ impl LibraryRef {
             _ if !forced && fresh => self.finish(id, Ending::Done),
             None => self.start_run(key, 1),
             Some(page) if forced && page > 1 => {
-                self.mark("H6_refresh_over_a_later_page");
                 if let Some(run) = self.run_of(key).take() {
                     self.kill(&run);
                 }
@@ -129,7 +135,7 @@ impl LibraryRef {
 
     /// library.md section 4 order (coordinator answer for H1, H2): network, then a running load (the call waits and decides again), then `cursor`.
     fn load_more_call(&mut self, name: String) -> Vec<Observation> {
-        if !self.online {
+        if self.online == Some(false) {
             return vec![shapes::tag(shapes::error("offline"), &name)];
         }
         let (cursor, pages, busy) = {
@@ -157,8 +163,9 @@ impl LibraryRef {
         let id = self.add_call(Form::LoadAll, &name, Some(Key::Feed));
         self.handles.insert(name, id);
         if busy {
-            self.mark("H5_load_all_over_a_running_load");
-        } else if fresh && !force && !cursor {
+            return Vec::new();
+        }
+        if fresh && !force && !cursor {
             self.finish(id, Ending::Done);
         } else if fresh && !force {
             self.start_run(Key::Feed, pages + 1);

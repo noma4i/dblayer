@@ -6,11 +6,14 @@ use crate::check::value::Observation;
 pub const LIFETIME_MS: i64 = 300_000;
 /// `paginate size: 20` of the stand schema.
 pub const PAGE_SIZE: u64 = 20;
-/// docs/server-sync.md "Retries": a plain load repeats 3 times after a network failure and 2 times after a temporary server failure.
-pub const NETWORK_RETRIES: u32 = 3;
-pub const SERVER_RETRIES: u32 = 2;
-/// docs/server-sync.md "Retries": the delay ceilings in ms, the last one repeats.
-pub const BACKOFF_CEILINGS: [u64; 6] = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+/// Coordinator answers H11, C3: the retry limit counts sends, the first one included. Network 3 sends, server 2 sends, one counter per load, the limit is the one of the class of the current refusal.
+pub const NETWORK_SENDS: u32 = 3;
+pub const SERVER_SENDS: u32 = 2;
+
+/// Coordinator answer H12: the pause before the retry n is at most `1 s * 2^(n-1)`, never above 30 s (the jitter only shortens it).
+pub fn pause_ceiling_ms(attempt: u32) -> u64 {
+    (1_000u64 << attempt.saturating_sub(1).min(5)).min(30_000)
+}
 
 /// How the stand shows the session request of `login`.
 pub const SESSION_OPERATION: &str = "session/api/auth/social";

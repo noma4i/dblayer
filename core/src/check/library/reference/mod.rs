@@ -30,6 +30,7 @@ enum Form {
 enum Ending {
     Done,
     More(&'static str),
+    Rows(u64),
     Failed(&'static str),
 }
 
@@ -43,11 +44,18 @@ struct Call {
     queued: bool,
 }
 
+/// Who a held request belongs to.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Owner {
+    Window(Key),
+    Session,
+}
+
 /// A request the mock holds. A dead one was cancelled by the library: an answer to it reaches nobody.
 struct Held {
     id: String,
     live: bool,
-    key: Key,
+    owner: Owner,
 }
 
 struct Sent {
@@ -60,8 +68,10 @@ struct Sent {
 /// An input the spec does not decide marks a hole: `hole` names the first one the program met.
 pub struct LibraryRef {
     live: bool,
-    online: bool,
+    online: Option<bool>,
     identity: bool,
+    /// The session call of `login`: its call number and whether its request was sent.
+    login_call: Option<(u64, bool)>,
     now: i64,
     back: i64,
     next_request: u64,
@@ -79,8 +89,9 @@ impl Default for LibraryRef {
     fn default() -> Self {
         Self {
             live: false,
-            online: false,
+            online: None,
             identity: false,
+            login_call: None,
             now: 0,
             back: 0,
             next_request: 1,
@@ -117,6 +128,21 @@ impl LibraryRef {
 
     fn win(&mut self, key: Key) -> &mut Window {
         self.windows.entry(key).or_default()
+    }
+
+    /// The network is known to be on (library.md section 2: `online` is None, true or false).
+    fn on(&self) -> bool {
+        self.online == Some(true)
+    }
+
+    /// The requests of this step as the stand shows them: `request`, then `sent`.
+    fn announce(&mut self) -> Vec<Observation> {
+        let mut shown = Vec::new();
+        for sent in self.requests.drain(..) {
+            shown.push(shapes::request(&sent.id));
+            shown.push(shapes::sent(&sent.id, sent.operation, sent.variables));
+        }
+        shown
     }
 
     fn apply(&mut self, op: Op) -> Vec<Observation> {
@@ -157,10 +183,7 @@ impl RefModel for LibraryRef {
         let mut shown = self.apply(op);
         self.outcomes.sort_by_key(|(seq, _)| *seq);
         shown.extend(self.outcomes.drain(..).map(|(_, item)| item));
-        for sent in self.requests.drain(..) {
-            shown.push(shapes::request(&sent.id));
-            shown.push(shapes::sent(&sent.id, sent.operation, sent.variables));
-        }
+        shown.extend(self.announce());
         shown
     }
 }

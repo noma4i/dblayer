@@ -1,9 +1,10 @@
-use super::shapes::{self, NETWORK_RETRIES, SERVER_RETRIES};
+use super::shapes::{self, NETWORK_SENDS, SERVER_SENDS};
 use super::window::{Key, Phase, Run};
-use super::{Ending, Form, LibraryRef};
+use super::{Ending, Form, LibraryRef, Owner};
 use crate::check::value::Observation;
 
 /// What an answer input sends to the oldest request the mock holds.
+#[derive(Clone)]
 pub(super) enum Reply {
     Page { rows: u64, more: bool },
     Error(String),
@@ -30,9 +31,10 @@ impl LibraryRef {
             if !held.live {
                 continue;
             }
-            match reply {
-                Reply::Page { rows, more } => self.page_answer(held.key, rows, more),
-                Reply::Error(kind) => self.refusal(held.key, &kind),
+            match (held.owner, reply) {
+                (Owner::Session, reply) => self.session_answer(reply),
+                (Owner::Window(key), Reply::Page { rows, more }) => self.page_answer(key, rows, more),
+                (Owner::Window(key), Reply::Error(kind)) => self.refusal(key, &kind),
             }
             return vec![shapes::replied(&held.id, &how)];
         }
@@ -44,6 +46,7 @@ impl LibraryRef {
         self.land(key, run, rows, more);
     }
 
+    /// Coordinator answers H11, H12: one counter of sends per load, the limit of the class of this refusal, a permanent refusal ends at once.
     fn refusal(&mut self, key: Key, kind: &str) {
         let class = match kind {
             "temporary" => Class::Network,
@@ -51,16 +54,13 @@ impl LibraryRef {
             _ => Class::Permanent,
         };
         let Some(mut run) = self.run_of(key).take() else { return };
-        match class {
-            Class::Network => run.network += 1,
-            Class::Server => run.server += 1,
-            Class::Permanent => {}
-        }
-        if run.network > 0 && run.server > 0 {
-            self.mark("H11_mixed_refusal_classes");
-        }
-        let exhausted = class == Class::Permanent || run.network > NETWORK_RETRIES || run.server > SERVER_RETRIES;
-        if !exhausted {
+        run.attempts += 1;
+        let limit = match class {
+            Class::Network => NETWORK_SENDS,
+            Class::Server => SERVER_SENDS,
+            Class::Permanent => 0,
+        };
+        if run.attempts < limit {
             run.phase = Phase::Backoff(0);
             *self.run_of(key) = Some(run);
             return;
@@ -73,29 +73,13 @@ impl LibraryRef {
         self.fail(key, name);
     }
 
-    /// The load ends with a refusal: the window is not fresh any more and every call waiting on it gets the error.
-    /// A `load_more` that waited behind the load decides again (library.md section 4, `load_more` order, step 3).
+    /// The load ends with a refusal (H7): the window is not fresh any more and every call waiting on it, a queued `load_more` too, gets the same error.
     fn fail(&mut self, key: Key, kind: &'static str) {
         self.win(key).unfresh = true;
-        let waiting: Vec<(u64, bool)> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| (call.id, call.queued)).collect();
-        for (id, _) in waiting.iter().filter(|(_, queued)| !queued) {
-            self.finish(*id, Ending::Failed(kind));
+        let waiting: Vec<u64> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| call.id).collect();
+        for id in waiting {
+            self.finish(id, Ending::Failed(kind));
         }
-        let queued: Vec<u64> = waiting.iter().filter(|(_, queued)| *queued).map(|(id, _)| *id).collect();
-        let (cursor, pages) = {
-            let window = self.win(key);
-            (window.cursor.is_some(), window.pages)
-        };
-        let Some(first) = queued.first().copied() else { return };
-        if !cursor {
-            queued.iter().for_each(|id| self.finish(*id, Ending::More("no_more")));
-            return;
-        }
-        if let Some(call) = self.calls.iter_mut().find(|call| call.id == first) {
-            call.queued = false;
-            call.target = Some(pages + 1);
-        }
-        self.start_run(key, pages + 1);
     }
 
     /// A page lands: page 1 (and the node) replaces the window and stamps it, a later page appends. Then the waiting calls end and the chain goes on.
@@ -103,6 +87,7 @@ impl LibraryRef {
         let now = self.now;
         let window = self.win(key);
         match (key, run.page) {
+            (Key::Nodes(id), _) => return self.finish(id, Ending::Rows(rows)),
             (Key::Node, _) => {
                 window.members = u64::from(rows > 0);
                 window.cursor = None;
@@ -127,25 +112,26 @@ impl LibraryRef {
         for (id, form, queued, target) in &waiting {
             match form {
                 Form::BeginLoad | Form::Refresh | Form::Node => self.finish(*id, Ending::Done),
-                Form::LoadMore if !queued && (*target == Some(run.page) || run.page == 1) => self.finish(*id, Ending::More(result)),
+                Form::LoadMore if !queued && *target == Some(run.page) => self.finish(*id, Ending::More(result)),
                 Form::LoadAll if !cursor => self.finish(*id, Ending::Done),
                 Form::LoadMore | Form::LoadAll | Form::Nodes => {}
             }
         }
-        let chain = waiting.iter().any(|(id, form, _, _)| *form == Form::LoadAll && self.calls.iter().any(|call| call.id == *id));
-        let queued = waiting.iter().find(|(id, form, queued, _)| *form == Form::LoadMore && *queued && self.calls.iter().any(|call| call.id == *id)).map(|(id, ..)| *id);
+        let alive = |this: &Self, id: u64| this.calls.iter().any(|call| call.id == id);
+        let chain = waiting.iter().any(|(id, form, ..)| *form == Form::LoadAll && alive(self, *id));
+        let owed = waiting.iter().any(|(id, form, queued, target)| *form == Form::LoadMore && !queued && target.is_some_and(|page| page > pages) && alive(self, *id));
+        let queued: Vec<u64> = waiting.iter().filter(|(id, form, queued, _)| *form == Form::LoadMore && *queued && alive(self, *id)).map(|(id, ..)| *id).collect();
         if !cursor {
-            for (id, form, queued, _) in &waiting {
-                if *form == Form::LoadMore && *queued {
-                    self.finish(*id, Ending::More("no_more"));
-                }
-            }
+            let rest: Vec<u64> = waiting.iter().filter(|(id, form, ..)| *form == Form::LoadMore && alive(self, *id)).map(|(id, ..)| *id).collect();
+            rest.iter().for_each(|id| self.finish(*id, Ending::More("no_more")));
             return;
         }
-        if chain || queued.is_some() {
-            if let Some(call) = self.calls.iter_mut().find(|call| Some(call.id) == queued) {
-                call.queued = false;
-                call.target = Some(pages + 1);
+        if chain || owed || !queued.is_empty() {
+            if !owed {
+                if let Some(call) = self.calls.iter_mut().find(|call| Some(call.id) == queued.first().copied()) {
+                    call.queued = false;
+                    call.target = Some(pages + 1);
+                }
             }
             self.start_run(key, pages + 1);
         }

@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
-use super::shapes::{self, BACKOFF_CEILINGS};
-use super::window::{Phase, Run};
-use super::window::Key;
-use super::{Ending, LibraryRef};
+use super::landing::Reply;
+use super::shapes;
+use super::window::{Key, Phase, Run};
+use super::{Ending, Held, LibraryRef, Owner, Sent};
 use crate::check::value::Observation;
 
 fn not_open() -> Vec<Observation> {
@@ -12,7 +12,7 @@ fn not_open() -> Vec<Observation> {
 
 /// library.md section 7 and the stand inputs of the environment.
 impl LibraryRef {
-    /// The stand opens with the network on, the clock goes back by the `clock_back` total, the saved windows stay (library.md section 7 `close` + `open`).
+    /// The symbolic stand opens with the network unknown, the clock goes back by the `clock_back` total, the saved windows and the identity stay (library.md section 7 `close` + `open`).
     pub(super) fn open(&mut self) -> Vec<Observation> {
         if self.live {
             return vec![shapes::error("already_open")];
@@ -20,23 +20,56 @@ impl LibraryRef {
         self.now -= self.back;
         self.back = 0;
         self.live = true;
-        self.online = true;
+        self.online = None;
         vec![Observation::bare("opened")]
     }
 
-    /// The session call of the stand: one request, answered at once, the identity is there after it.
+    /// The session request goes to the front of the requests the stand holds (it answers the session first).
+    fn send_session(&mut self) {
+        let id = format!("r{}", self.next_request);
+        self.next_request += 1;
+        self.held.insert(0, Held { id: id.clone(), live: true, owner: Owner::Session });
+        self.requests.push(Sent { id, operation: shapes::SESSION_OPERATION, variables: Value::Null });
+        if let Some((_, sent)) = &mut self.login_call {
+            *sent = true;
+        }
+    }
+
+    /// The stand input `login`: the session call, then an answer to the oldest request the stand holds.
+    /// Coordinator answer H3: with an identity the call ends with `AlreadyAuthenticated` at once, without a known network it waits for the network.
     pub(super) fn login(&mut self) -> Vec<Observation> {
         if !self.live {
             return not_open();
         }
-        if !self.online || self.identity {
-            self.mark("H3_login_outside_first_online");
-            return Vec::new();
+        let mut shown = Vec::new();
+        if self.identity {
+            shown.push(shapes::error("session"));
+        } else if self.login_call.is_some() {
+            self.mark("H14_second_login_while_the_first_waits");
+            return shown;
+        } else {
+            let call = self.next_call;
+            self.next_call += 1;
+            self.login_call = Some((call, false));
+            if self.on() {
+                self.send_session();
+                shown.extend(self.announce());
+            }
         }
-        let id = format!("r{}", self.next_request);
-        self.next_request += 1;
+        shown.extend(self.answer(Reply::Page { rows: 0, more: false }));
+        shown
+    }
+
+    /// The session request is answered with the page body of the stand: the identity is there.
+    pub(super) fn session_answer(&mut self, reply: Reply) {
+        let Reply::Page { .. } = reply else {
+            self.mark("H14_session_request_refused");
+            return;
+        };
         self.identity = true;
-        vec![shapes::request(&id), shapes::sent(&id, shapes::SESSION_OPERATION, Value::Null), shapes::replied(&id, "page"), shapes::session()]
+        if let Some((call, _)) = self.login_call.take() {
+            self.outcomes.push((call, shapes::session()));
+        }
     }
 
     /// Every waiting call ends with `kind` and every request the mock holds is cancelled.
@@ -44,6 +77,9 @@ impl LibraryRef {
         let ids: Vec<u64> = self.calls.iter().map(|call| call.id).collect();
         for id in ids {
             self.finish(id, Ending::Failed(kind));
+        }
+        if self.login_call.take().is_some() {
+            self.mark("H14_session_call_ended_by_close_or_reset");
         }
         self.held.iter_mut().for_each(|held| held.live = false);
     }
@@ -83,39 +119,42 @@ impl LibraryRef {
         self.windows.iter().filter(|(_, window)| window.load.is_some()).map(|(key, _)| *key).collect()
     }
 
-    /// `Online(false)`: running requests are cancelled and the loads wait. `Online(true)`: a waiting load starts.
+    /// `Online(false)`: running requests are cancelled and the loads wait. `Online(true)`: the waiting session call and the waiting loads start.
     pub(super) fn set_online(&mut self, online: bool) -> Vec<Observation> {
         if !self.live {
             return not_open();
         }
-        let was = self.online;
-        self.online = online;
-        for key in self.running() {
-            if was && !online {
+        let was_on = self.on();
+        self.online = Some(online);
+        if was_on && !online {
+            for key in self.running() {
                 let Some(run) = self.run_of(key).take() else { continue };
                 self.kill(&run);
                 *self.run_of(key) = Some(Run { phase: Phase::Waiting, ..run });
             }
-            if !was && online && matches!(self.run_of(key), Some(Run { phase: Phase::Waiting, .. })) {
-                self.send(key);
+        }
+        if !was_on && online {
+            if matches!(self.login_call, Some((_, false))) {
+                self.send_session();
+            }
+            for key in self.running() {
+                if matches!(self.run_of(key), Some(Run { phase: Phase::Waiting, .. })) {
+                    self.send(key);
+                }
             }
         }
         vec![Observation::new("online", json!(online))]
     }
 
-    /// The clock moves. A retry pause that reaches the ceiling of its delay sends the request again (docs/server-sync.md "Retries").
+    /// The clock moves. A retry pause that reached its ceiling sends the request again.
     pub(super) fn tick(&mut self, ms: u64) -> Vec<Observation> {
         self.now += ms as i64;
         for key in self.running() {
             let Some(run) = self.run_of(key) else { continue };
-            let retries = (run.network + run.server).max(1) as usize;
+            let ceiling = shapes::pause_ceiling_ms(run.attempts);
             let Phase::Backoff(elapsed) = &mut run.phase else { continue };
             *elapsed += ms;
-            if ms < BACKOFF_CEILINGS[BACKOFF_CEILINGS.len() - 1] {
-                self.mark("H12_retry_delay_below_the_ceiling");
-                continue;
-            }
-            if *elapsed >= BACKOFF_CEILINGS[(retries - 1).min(BACKOFF_CEILINGS.len() - 1)] {
+            if *elapsed >= ceiling {
                 self.send(key);
             }
         }

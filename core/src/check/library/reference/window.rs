@@ -1,10 +1,11 @@
 use super::shapes::LIFETIME_MS;
 
-/// The windows O1 knows: the feed list and the transcode status node of the row `m1`.
+/// The windows O1 knows: the feed list, the transcode status node of the row `m1`, and one slot per running `nodes` call (it has no window, only a load).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Key {
     Feed,
     Node,
+    Nodes(u64),
 }
 
 /// Where a load is: its request is held by the mock, it waits out a retry pause, or it waits for the network.
@@ -15,13 +16,12 @@ pub(super) enum Phase {
     Waiting,
 }
 
-/// One load of a window: the page and the failures it met so far.
+/// One load of a window: the page and the sends made so far (one counter for both refusal classes).
 #[derive(Clone, Debug)]
 pub(super) struct Run {
     pub(super) page: u32,
     pub(super) phase: Phase,
-    pub(super) network: u32,
-    pub(super) server: u32,
+    pub(super) attempts: u32,
 }
 
 /// library.md section 2: the saved fields (`members`, `cursor`, `landed_at`, `fresh_until`), `unfresh` and the load.
