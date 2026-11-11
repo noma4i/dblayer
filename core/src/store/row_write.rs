@@ -90,15 +90,13 @@ impl RowWrite<'_> {
         admitted_with_fields(&reader, kind, admission, model, patch, spec, guards, self.feed_fields.get(&(model.to_string(), admission.closing)), self.feed_tombstones.get(model), Some(&stored))
     }
 
-    pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {
+    pub fn upsert(&mut self, model: &str, row: &RowValue, source: crate::schema::RowSource) -> Result<Option<CommitResult>, StoreError> {
         let id = RowId::new(&row.row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let value: Value = serde_json::from_str(&row.values)?;
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
-        let kind = if local { RowKind::Local } else { RowKind::Server };
+        let kind = if source == crate::schema::RowSource::Local { RowKind::Local } else { RowKind::Server };
         let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: self.closing })? else { return Ok(None) };
-        let mut envelope = BatchPlan::new(self.generation);
-        envelope.response_rows = response;
-        envelope.writes_local = local;
+        let mut envelope = BatchPlan::from_source(self.generation, source);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         self.apply(&envelope).map(Some)
     }

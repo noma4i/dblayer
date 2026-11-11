@@ -67,6 +67,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| StoreError::Constraint(format!("{model} has no relation {relation}")))?;
     let remote = declared.remote.as_ref().ok_or_else(|| StoreError::Constraint(format!("{model}.{relation} is not remote")))?;
+    if page.source == crate::schema::RowSource::NodeReread && declared.node.is_some() { envelope.source = page.source; }
     let (scope, key) = super::windows::window_identity(spec, model, &relation, remote, &params).map_err(fault)?;
     let stored = super::windows::read_window(writer.connection, &key)?;
     let issued = super::windows::max_sequence(writer.connection)? + 1;

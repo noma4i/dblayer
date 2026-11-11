@@ -172,7 +172,7 @@ pub(super) enum Emit {
     Run(WindowEffect),
     Pin { epoch: Epoch, request: RequestId },
     Unpin { request: RequestId },
-    Commit { landed_at: i64, request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool },
+    Commit { landed_at: i64, request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool, source: crate::schema::RowSource },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
     Announce { streams: Vec<InterestId> },

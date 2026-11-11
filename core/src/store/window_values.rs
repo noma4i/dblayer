@@ -10,6 +10,7 @@ use crate::schema::{FieldKind, FieldSpec};
 use crate::value::{read_id, ScalarKind};
 
 pub(crate) struct WindowPage<'a> {
+    pub source: crate::schema::RowSource,
     pub key: &'a WindowKey,
     pub page: u32,
     pub replace_all: bool,

@@ -203,6 +203,20 @@ pub struct RowRule {
     pub test: RowTest,
 }
 
+/// The source of the rows of one write batch (P-DATA-100).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowSource {
+    /// The answer of a page of a window, of `nodes` or of a `node` read by the caller.
+    #[default]
+    Page,
+    /// The answer of a `node` read that a `changed_by` event started or entered.
+    NodeReread,
+    Event,
+    Response,
+    Create,
+    Local,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationSpec {
     pub name: String,
@@ -321,8 +335,14 @@ impl RelationSpec {
         self.is_global && self.remote.as_ref().is_some_and(|remote| remote.shape == RemoteShape::Single)
     }
 
-    pub fn takes_created_rows(&self) -> bool {
-        self.joins_created && self.remote.is_some() && self.by_columns.is_empty() && self.text_params.is_empty()
+    /// P-DATA-100: whether a row written by a batch of `source` may enter a loaded window of this selection.
+    pub fn admits(&self, source: RowSource) -> bool {
+        match source {
+            RowSource::Page | RowSource::Local => false,
+            RowSource::NodeReread => self.joins_node,
+            RowSource::Event | RowSource::Response => self.joins_events,
+            RowSource::Create => (self.joins_created && self.by_columns.is_empty() && self.text_params.is_empty()) || self.lists_every_row_of_its_params(),
+        }
     }
 
     pub fn lists_every_row_of_its_params(&self) -> bool {

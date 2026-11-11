@@ -68,6 +68,7 @@ impl Window {
             marker: None,
             members: 0,
             landing_marker: None,
+            reread_by_event: false,
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
@@ -355,10 +356,10 @@ impl Windows {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
                 Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
-                Emit::Commit { landed_at, request, basis, page, number, replace_all, base_revision, marker, keep_rows } => {
+                Emit::Commit { landed_at, request, basis, page, number, replace_all, base_revision, marker, keep_rows, source } => {
                     let mut ops = Vec::new();
                     if !keep_rows {
-                        ops.push(StoreOp::Window { landed_at, key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision });
+                        ops.push(StoreOp::Window { landed_at, key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision, source });
                     }
                     if let Some(marker) = marker {
                         ops.push(StoreOp::WindowMarker { landed_at: (number == 1).then_some(landed_at), key: key.name.clone(), model: key.model.clone(), marker });

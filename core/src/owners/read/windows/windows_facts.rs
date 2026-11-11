@@ -52,6 +52,8 @@ pub(super) struct Facts {
     pub(super) members: i64,
     /// The marker and the member count that the landing in flight makes the saved ones.
     pub(super) landing_marker: Option<(Marker, i64, bool)>,
+    /// A `changed_by` event marked the window since its last landing: the next landing is a `NodeReread` (M24).
+    pub(super) reread_by_event: bool,
     pub(super) fx: RefCell<Vec<Emit>>,
 }
 
@@ -88,7 +90,10 @@ impl Facts {
                 self.marker.clone_from(&saved.marker);
                 self.members = saved.members;
             }
-            Ev::Stale { cause } => if !self.covers(*cause) { self.stale_marked.set(true) },
+            Ev::Stale { cause } => {
+                if !self.covers(*cause) { self.stale_marked.set(true) }
+                if *cause == StaleCause::Change { self.reread_by_event = true; }
+            }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
@@ -97,6 +102,8 @@ impl Facts {
 
     /// A backward clock remains fresh while its offset is shorter than the window lifetime.
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && now < self.fresh_until && i128::from(self.landed_at) - i128::from(now) < i128::from(self.fresh_until) - i128::from(self.landed_at) }
+
+    pub(super) fn page_source(&self) -> crate::schema::RowSource { if self.reread_by_event { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
 
     pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
 
@@ -239,7 +246,7 @@ impl Facts {
         let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
         self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
-        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
+        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source: self.page_source() });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
         Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
@@ -390,6 +397,7 @@ impl Facts {
         self.replace_all = false;
         let chain = self.members_complete && self.cursor.is_some();
         self.outcome = LastLoad::Landed;
+        self.reread_by_event = false;
         if !dependency_models.is_empty() {
             self.dependency_models = dependency_models.clone();
         }

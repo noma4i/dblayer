@@ -1,1 +1,0 @@
-SELECT EXISTS(SELECT 1 FROM query_window WHERE key = ?1)

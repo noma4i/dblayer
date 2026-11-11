@@ -199,11 +199,7 @@ pub struct BatchPlan {
     pub snapshot: Option<RowRef>,
     pub item_snapshots: Vec<(String, RowRef)>,
     pub generation: Generation,
-    pub writes_local: bool,
-    pub node_reread: bool,
-    /// The rows come from an event or from an answer of the server: relations that `joins_events` take them into their windows.
-    pub server_rows: bool,
-    pub response_rows: bool,
+    pub source: crate::schema::RowSource,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
 }
@@ -245,16 +241,13 @@ impl BatchPlan {
             snapshot: None,
             item_snapshots: Vec::new(),
             generation,
-            writes_local: false,
-            node_reread: false,
-            server_rows: false,
-            response_rows: false,
+            source: crate::schema::RowSource::Page,
             pending_locals: Vec::new(),
             network: None,
         }
     }
 
-    pub fn from_server(generation: Generation) -> Self { Self { server_rows: true, ..Self::new(generation) } }
+    pub fn from_source(generation: Generation, source: crate::schema::RowSource) -> Self { Self { source, ..Self::new(generation) } }
 
     pub fn is_empty(&self) -> bool {
         self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty()

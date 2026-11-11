@@ -89,6 +89,7 @@ impl Store {
         let mut results = Vec::new();
         let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None };
         let mut overlay = Vec::new();
+        let rows_source = if batch.author == BatchAuthor::Outbox { crate::schema::RowSource::Response } else { crate::schema::RowSource::Page };
         let (observed, refused) = if batch.author == BatchAuthor::Feed {
             super::feed_write::land(&mut writer, &batch.rows, &mut overlay, &mut results)?
         } else {
@@ -96,7 +97,7 @@ impl Store {
                 let value: serde_json::Value = serde_json::from_str(text)?;
                 let row_id = value.get("id").and_then(serde_json::Value::as_str).ok_or_else(|| StoreError::Constraint("row has no id".into()))?;
                 let row = RowValue { row_id: row_id.into(), values: text.clone() };
-                if let Some(result) = writer.upsert(model, &row, false, batch.author == BatchAuthor::Outbox)? { results.push(result); }
+                if let Some(result) = writer.upsert(model, &row, rows_source)? { results.push(result); }
             }
             (Vec::new(), Vec::new())
         };
@@ -128,7 +129,7 @@ impl Store {
             if let crate::owners::store::StoreOp::RemoveIntent { op_id } = op {
                 if rolled_back.contains(op_id) { continue; }
             }
-            if !super::batch_common::apply_common(&mut writer, op, index, files, &mut results, batch.author == BatchAuthor::Outbox)? {
+            if !super::batch_common::apply_common(&mut writer, op, index, files, &mut results, rows_source)? {
                 return Err(StoreError::Constraint(format!("unsupported store operation: {op:?}")));
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }

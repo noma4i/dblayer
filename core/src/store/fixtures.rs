@@ -73,7 +73,7 @@ pub fn append(target: &ScopeRef, row_id: &str, order_key: &str) -> ScopeOp {
 }
 
 pub fn envelope(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> BatchPlan {
-    let mut envelope = BatchPlan::from_server(store.generation());
+    let mut envelope = BatchPlan::from_source(store.generation(), crate::schema::RowSource::Event);
     envelope.entity_ops = entity_ops;
     envelope.scope_ops = scope_ops;
     envelope

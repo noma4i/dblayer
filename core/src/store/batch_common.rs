@@ -5,15 +5,15 @@ use super::file_write::PreparedFile;
 use super::row_write::RowWrite;
 use super::StoreError;
 
-pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize, files: &[PreparedFile], results: &mut Vec<CommitResult>, response: bool) -> Result<bool, StoreError> {
+pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize, files: &[PreparedFile], results: &mut Vec<CommitResult>, source: crate::schema::RowSource) -> Result<bool, StoreError> {
     match op {
         StoreOp::JournalSessionEnd => super::reset::write_intent_in_transaction(writer.connection, "session_end", writer.now)?,
         StoreOp::Rows { model, rows } | StoreOp::LocalRows { model, rows } => {
-            let local = matches!(op, StoreOp::LocalRows { .. });
+            let source = if matches!(op, StoreOp::LocalRows { .. }) { crate::schema::RowSource::Local } else { source };
             let ids: Vec<String> = rows.iter().map(|row| row.row_id.clone()).collect();
             writer.prefetch(model, &ids, writer.closing)?;
             for row in rows {
-                if let Some(result) = writer.upsert(model, row, local, response && !local)? { results.push(result); }
+                if let Some(result) = writer.upsert(model, row, source)? { results.push(result); }
             }
         }
         StoreOp::RemoveRows { model, ids } => {
@@ -34,7 +34,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_str(values)?;
             for (name, value) in fields { join_local(&mut row, name, value); }
             let joined = crate::owners::store::RowValue { row_id: row_id.clone(), values: serde_json::Value::Object(row).to_string() };
-            if let Some(result) = writer.upsert(model, &joined, true, false)? { results.push(result); }
+            if let Some(result) = writer.upsert(model, &joined, crate::schema::RowSource::Local)? { results.push(result); }
         }
         StoreOp::StaleFamilies { families } => results.push(writer.stale_families(families)?),
         StoreOp::MarkStale { models, keys } => super::windows::mark_stale(writer.connection, models, keys)?,
@@ -98,9 +98,9 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             writer.connection.execute(include_str!("sql/upload_ops/retire_transfer_outcome.sql"), rusqlite::params![id, cycle])?;
         }
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),
-        StoreOp::Window { landed_at, key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
+        StoreOp::Window { landed_at, key, model, page, replace_all, cursor, roots, related, total, base_revision, source } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-            let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision, landed_at: *landed_at };
+            let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision, landed_at: *landed_at, source: *source };
             results.push(super::window_write::land(writer, &page)?);
         }
         StoreOp::WindowMarker { landed_at, key, model, marker } => {

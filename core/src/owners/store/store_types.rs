@@ -218,7 +218,8 @@ pub enum StoreOp {
     BlobCachePut { content_sha256: String, blob_id: String, created_at: u64 },
     BlobCacheRemove { content_sha256: String },
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
-    Window { landed_at: i64, key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64 },
+    /// `source` = `NodeReread` when a `changed_by` event started or entered the load; the Store takes it only for a `node` read (P-DATA-100).
+    Window { landed_at: i64, key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64, source: crate::schema::RowSource },
     /// The marker of a media window: it replaces the stored one and moves `landed_at` of the window, the rows stay.
     WindowMarker { landed_at: Option<i64>, key: String, model: String, marker: crate::store::WindowMarker },
 }

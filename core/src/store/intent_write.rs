@@ -38,23 +38,6 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
             }
             None => {
                 prior.rows.push(PriorRow::Created { model: model.clone(), id: row_id.clone() });
-                let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.clone()))?.spec;
-                for relation in spec.relations.iter().filter(|relation| relation.takes_created_rows()) {
-                    for params in relation.row_params(&fields) {
-                        let key = spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))?;
-                        let direction = match relation.remote.as_ref().map(|remote| &remote.shape) {
-                            Some(crate::schema::RemoteShape::Connection { direction, .. }) => *direction,
-                            _ => crate::schema::PageDirection::Forward,
-                        };
-                        let window = super::window_key(key.as_str(), direction);
-                        let loaded: bool = reader.connection().query_row(include_str!("sql/intent_write/effects.sql"), [&window], |row| row.get(0))?;
-                        if !loaded { continue; }
-                        let first = reader.scope_first_key(model, key.as_str())?;
-                        let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
-                        envelope.scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), key.clone()), row: id(row_id)?, order_key });
-                        prior.rows.push(PriorRow::Join { model: model.clone(), id: row_id.clone(), scope_key: key.to_string(), before: None, owned: writer.revision });
-                    }
-                }
                 fields
             }
         };
@@ -87,7 +70,7 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     let models = writer.models;
     let reader = Reader::new(connection, models);
     let (mut envelope, _) = effects(&reader, writes, writer)?;
-    envelope.writes_local = true;
+    envelope.source = crate::schema::RowSource::Local;
     writer.apply(&envelope)
 }
 
@@ -96,6 +79,7 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, acti
     let models = writer.models;
     let reader = Reader::new(connection, models);
     let (mut envelope, prior) = effects(&reader, writes, writer)?;
+    envelope.source = crate::schema::RowSource::Create;
     let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
     let held = crate::store::plan::op_effect::read_prior(writer.connection, seq)?;
     let prior = match (held, append) {

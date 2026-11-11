@@ -163,7 +163,7 @@ pub(super) fn apply_upsert(
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(info, row);
     canonicalize(info, &mut next);
-    if !envelope.writes_local && info.spec.has_local() {
+    if envelope.source != crate::schema::RowSource::Local && info.spec.has_local() {
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
             None => {
@@ -333,14 +333,12 @@ pub(super) fn declared_membership(connection: &Connection, info: &ModelInfo, mod
     use crate::schema::{RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
     for relation in info.spec.relations.iter().filter(|relation| relation.constants_described()) {
-        let event = relation.joins_events && envelope.server_rows && (!relation.membership.is_empty() || relation.has_threshold());
         let bound = relation.text_params.iter().all(|parameter| {
             relation.membership.contains_key(parameter) || relation.row_rules.iter().any(|rule| matches!(&rule.test, crate::schema::RowTest::GreaterThan { parameter: bound } if bound == parameter))
         });
-        let response = relation.joins_events && envelope.response_rows && bound;
-        let joins = event || response || envelope.node_reread && relation.joins_node;
+        let joins = relation.remote.is_some() && bound && relation.admits(envelope.source) && (envelope.source != crate::schema::RowSource::Create || old.is_none());
         if !joins && !(old.is_some() && bound && (!relation.membership.is_empty() || !relation.row_rules.is_empty())) { continue; }
-        if event || envelope.node_reread && relation.joins_node {
+        if joins && matches!(envelope.source, crate::schema::RowSource::Event | crate::schema::RowSource::NodeReread) {
             for rule in relation.membership.values() {
                 let field = match rule { crate::schema::Membership::Contains(field) | crate::schema::Membership::Equals(field) => field };
                 if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
