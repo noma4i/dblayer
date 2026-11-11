@@ -221,3 +221,57 @@ fn rt_prop_close_against_query_no_old_transport_window() {
     let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();
     assert!(late.is_empty(), "late calls reached the old transport after the close: {late:?}");
 }
+
+enum Turn {
+    Stale,
+    Load,
+    LoadRefused,
+    Commit,
+}
+
+/// P-WIN-34: the sources of the landing batches that the owner of the windows hands to the Store, in the order of the inputs.
+#[test]
+fn win_change_after_commit_marks_the_next_load() {
+    use crate::schema::RowSource::{NodeReread, Page};
+    use Turn::{Commit, Load, LoadRefused, Stale};
+    let node = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), json!("n1"))].into_iter().collect());
+    let cases: Vec<(&str, WindowKey, Vec<Turn>, Vec<crate::schema::RowSource>)> = vec![
+        ("a: a load without Stale(Change)", node.clone(), vec![Load], vec![Page]),
+        ("b: Stale(Change), a load, the next load", node.clone(), vec![Stale, Load, Commit, Load], vec![NodeReread, Page]),
+        ("c: Stale(Change) after the landing batch, before Committed", node.clone(), vec![Load, Stale, Commit, Load], vec![Page, NodeReread]),
+        ("d: Stale(Change), a refused load, a new load", node.clone(), vec![Stale, LoadRefused, Load], vec![NodeReread]),
+        ("e: Stale(Change) of a list window", key(), vec![Stale, Load], vec![Page]),
+    ];
+    let mut wrong = Vec::new();
+    for (case, window, turns, want) in cases {
+        let mut rig = rig();
+        rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestPassive { key: window.clone(), id: 9 });
+        rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: window.clone(), read_id: 1, result: Ok(None) });
+        rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
+        for turn in turns {
+            let landed = rig.batches.all().len();
+            match turn {
+                Stale => rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Stale { model: "Moment".into(), keys: w::StaleKeys::All, cause: w::StaleCause::Change }),
+                Load | LoadRefused => {
+                    let reply = if matches!(turn, Load) { Reply::data(json!({ "rows": ["r1"], "cursor": null })) } else { Reply::fail(TransportError::Decode("broken".into())) };
+                    rig.mock.enqueue("Page", reply);
+                    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: window.clone(), id: 1, goal: w::Goal::First, force: true, store_revision: 0 });
+                    let (batches, rest) = (rig.batches.clone(), rig.rest.clone());
+                    let refused = matches!(turn, LoadRefused);
+                    pump(&mut rig.det, |_| if refused { rest.lock().unwrap().iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. })) } else { batches.all().len() > landed });
+                }
+                Commit => {
+                    let batch = rig.batches.all().last().expect("a landing batch").id;
+                    let committed = crate::owners::contract::Committed { batch, revision: 5, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+                    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Committed(committed));
+                }
+            }
+            rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
+        }
+        let got: Vec<crate::schema::RowSource> = rig.batches.all().iter().flat_map(|batch| batch.ops.iter().filter_map(|op| match op { StoreOp::Window { source, .. } => Some(*source), _ => None })).collect();
+        if got != want {
+            wrong.push(format!("{case}: the landing batches carry {got:?}, the spec asks {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
+}
