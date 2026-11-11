@@ -1,12 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use rusqlite::OptionalExtension;
 use serde_json::{Map, Value};
 
-use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef};
+use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::schema::{AssociationKind, PageDirection, RemoteShape};
-use crate::value::{fractional_between, read_id};
+use crate::schema::AssociationKind;
+use crate::value::read_id;
 
 use super::merge::{unconfirmed_fields, Admission, RowKind};
 use super::row_write::RowWrite;
@@ -39,26 +38,6 @@ fn touch_parents(writer: &mut RowWrite<'_>, owner: &RowRef, rows: &[&Map<String,
         if writer.stored(parent.model.as_str(), parent.id.as_str())?.is_some() { touches.push(EntityOp::Touch { model: parent.model, id: parent.id }); }
     }
     Ok(touches)
-}
-
-fn joins(writer: &RowWrite<'_>, reader: &Reader<'_>, model: &str, id: &RowId, joins: &[Value]) -> Result<Vec<ScopeOp>, StoreError> {
-    let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
-    let mut result = Vec::new();
-    for join in joins {
-        let Some(relation) = join.get("relation").and_then(Value::as_str) else { continue };
-        let Some(params) = join.get("params").and_then(Value::as_object) else { continue };
-        let Some(declared) = spec.relations.iter().find(|candidate| candidate.name == relation) else { continue };
-        let Some(remote) = declared.remote.as_ref() else { continue };
-        let Ok(scope_key) = spec.selection_key(relation, params) else { continue };
-        let direction = match remote.shape { RemoteShape::Connection { direction, .. } => direction, _ => PageDirection::Forward };
-        let key = super::window_key(scope_key.as_str(), direction);
-        let loaded = reader.connection().query_row(include_str!("sql/feed_write/joins.sql"), [&key], |row| row.get::<_, i64>(0)).optional()?;
-        if loaded.is_none() || reader.scope_has_member(model, scope_key.as_str(), id.as_str())? { continue; }
-        let last = reader.scope_last_key(model, scope_key.as_str())?;
-        let order_key = fractional_between(last.as_deref(), None).map_err(fault)?;
-        result.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), scope_key), row: id.clone(), order_key });
-    }
-    Ok(result)
 }
 
 fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mut OverlayWrites) -> Result<Option<CommitResult>, StoreError> {
@@ -99,8 +78,6 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
             let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
-        let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-        envelope.scope_ops = joins(writer, &reader, model, &id, wanted)?;
         let arrives_new = old.is_none();
         let (correlated, looked_at) = if arrives_new { super::correlate::correlated_temp(writer, model, &row)? } else { (None, 0) };
         writer.candidates += looked_at;

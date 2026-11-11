@@ -203,27 +203,13 @@ impl SchemaFeedCodec {
         }
     }
 
-    /// The upsert payload: the normalized row, the rows of the related models and the scopes the row joins.
+    /// The upsert payload: the normalized row and the rows of the related models; the Store decides the windows the row enters.
     fn upsert(&self, model: &str, node: Map<String, Value>, set: &Map<String, Value>) -> Result<Option<Value>, String> {
         let normalized = normalize_nodes(&self.db, model, std::slice::from_ref(&node)).map_err(|error| error.to_string())?;
         let Some(root) = normalized.roots.into_iter().next() else { return Ok(None) };
         let Some(id) = root.get("id").and_then(read_id) else { return Ok(None) };
         let related: Vec<Value> = normalized.related.into_iter().map(|(related, row)| json!({"model":related.as_str(), "row":row})).collect();
-        let joins = self.joins_of(model, &root);
-        Ok(Some(json!({"op":"upsert", "model":model, "id":id.as_str(), "row":root, "related":related, "joins":joins, "set":set})))
-    }
-
-    /// The relations an upserted row joins by its columns: the declared part of a join, the Store checks the loaded window and the membership.
-    pub fn joins_of(&self, model: &str, row: &Map<String, Value>) -> Vec<Value> {
-        let Ok(spec) = self.db.spec(model) else { return Vec::new() };
-        spec.relations
-            .iter()
-            .filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty() && relation.constants_described() && relation.row_passes_literals(row))
-            .filter_map(|relation| {
-                let params: Map<String, Value> = relation.by_columns.iter().filter_map(|column| row.get(column).filter(|value| !value.is_null()).map(|value| (column.clone(), value.clone()))).collect();
-                (params.len() == relation.by_columns.len()).then(|| json!({"relation":relation.name, "params":params}))
-            })
-            .collect()
+        Ok(Some(json!({"op":"upsert", "model":model, "id":id.as_str(), "row":root, "related":related, "set":set})))
     }
 }
 

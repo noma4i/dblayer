@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Put an event row that enters a loaded window of an `[:event, :response]` scope at the head of the window.
 - Give a window without network after a started load the phase of its last outcome, not Loading.
 - Drop the refusal of a window when its last reader leaves.
 
