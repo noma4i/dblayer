@@ -220,7 +220,7 @@ impl super::Life {
 
     pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool, revision: i64, deferred: Option<crate::owners::read::deliveries::Deferred>) {
         let identity = self.published().identity.is_some();
-        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)(), revision, deferred });
+        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, revision, deferred });
     }
 
     /// The next value of a stream: the answer comes with the next value of the journal.
@@ -267,7 +267,7 @@ impl super::Life {
     }
 
     /// The last handle of the stream is gone.
-    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time((self.wiring.now)() as u64) }); }
+    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None }); }
 
     /// A reader takes the stream: the first claim wins and a later one is refused.
     pub async fn claim_reader(&self, stream: StreamId, reader: u64) -> bool {
@@ -278,5 +278,5 @@ impl super::Life {
     }
 
     /// The reader left the stream and its handle is still held: the interest of the stream ends.
-    pub fn release_reader(&self, stream: StreamId, reader: u64) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: Some(reader), now: crate::runtime::Time((self.wiring.now)() as u64) }); }
+    pub fn release_reader(&self, stream: StreamId, reader: u64) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: Some(reader) }); }
 }

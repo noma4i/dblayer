@@ -14,7 +14,7 @@ use crate::identity::RowId;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ReplyId, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, ScopedChannel};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
-use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
+use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner};
 
 pub const JOURNAL_LIMIT: usize = 256;
 
@@ -280,7 +280,7 @@ pub enum DeliveryEffect {
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
     /// `deferred` is set for a stream of rows on temporary ids that has no server id yet: its window opens at the swap.
-    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64, deferred: Option<Deferred> },
+    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, revision: i64, deferred: Option<Deferred> },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, position: u64, relevant: Option<(i64, u64)>, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
@@ -303,7 +303,7 @@ pub enum DeliveryInput {
     Cancel { stream: StreamId, reply: ReplyId },
     ClaimReader { stream: StreamId, reader: u64, reply: ReplyId },
     /// `reader` is the reader that left the stream while its handle is held, `None` is the drop of the handle.
-    Release { stream: StreamId, reader: Option<u64>, now: Time },
+    Release { stream: StreamId, reader: Option<u64> },
     SinkClosed { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -572,7 +572,7 @@ impl StateOwner for Deliveries {
     fn step(state: &mut DeliveriesState, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            DeliveryInput::Open { stream, view, epoch, identity, valid, revision, deferred, .. } => {
+            DeliveryInput::Open { stream, view, epoch, identity, valid, revision, deferred } => {
                 if state.streams.contains_key(&stream) {
                     return out;
                 }
@@ -623,7 +623,7 @@ impl StateOwner for Deliveries {
                 let claimed = state.streams.get_mut(&stream).is_none_or(|machine| machine.claim(reader));
                 out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::ReaderClaimed { reply, claimed } }));
             }
-            DeliveryInput::Release { stream, reader, .. } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
+            DeliveryInput::Release { stream, reader } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
             DeliveryInput::SinkClosed { stream } => on(state, stream, &mut out, |machine, fx| machine.sink_closed(fx)),
             DeliveryInput::Pull { stream, outcome, reader } => {
                 if state.streams.contains_key(&stream) {

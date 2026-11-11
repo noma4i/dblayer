@@ -565,6 +565,15 @@ for target, pattern in ((source / "runtime" / "owner.rs", r"\bfn due\("), (sourc
         if re.search(pattern, line):
             findings.append(f"Z46 Feed takes the time of its step, no input of Feed carries a time and no owner rewrites a due input: {target.relative_to(root)}:{number}")
 
+deliveries = source / "owners" / "read" / "deliveries" / "mod.rs"
+if deliveries.exists():
+    text = deliveries.read_text()
+    body = enum_body(text, "DeliveryInput")
+    start = text.find(body) if body else -1
+    for found in re.finditer(r"\bnow:", body):
+        number = text.count("\n", 0, start + found.start()) + 1
+        findings.append(f"Z47 an input of Deliveries carries no time: the owner reads the time of its step: {deliveries.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
