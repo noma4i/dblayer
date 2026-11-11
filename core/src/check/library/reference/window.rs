@@ -1,11 +1,11 @@
 use super::shapes::LIFETIME_MS;
 
-/// The windows O1 knows: the feed list, the transcode status node of the row `m1`, and one slot per running `nodes` call (it has no window, only a load).
+/// The windows O1 knows: the feed list, the transcode status node of the row `m1`, and the key of `nodes(["m1"])` (it has no window, only a load that calls with the same ids join).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Key {
     Feed,
     Node,
-    Nodes(u64),
+    Nodes,
 }
 
 /// Where a load is: its request is held by the mock, it waits out a retry pause, or it waits for the network.

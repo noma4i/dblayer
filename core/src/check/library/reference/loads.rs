@@ -27,7 +27,7 @@ impl LibraryRef {
                 ("MomentsFeed", variables)
             }
             Key::Node => ("MomentTranscodeStatus", json!({ "momentId": "m1" })),
-            Key::Nodes(_) => ("ContainersByIds", json!({ "ids": ["m1"] })),
+            Key::Nodes => ("ContainersByIds", json!({ "ids": ["m1"] })),
         }
     }
 
@@ -35,8 +35,7 @@ impl LibraryRef {
     pub(super) fn send(&mut self, key: Key) {
         let page = self.run_of(key).as_ref().map_or(1, |run| run.page);
         let (operation, variables) = self.request_of(key, page);
-        let id = format!("r{}", self.next_request);
-        self.next_request += 1;
+        let id = self.provisional();
         self.held.push(Held { id: id.clone(), live: true, owner: Owner::Window(key) });
         self.requests.push(Sent { id: id.clone(), operation, variables });
         if let Some(run) = self.run_of(key) {
@@ -74,9 +73,6 @@ impl LibraryRef {
             (Form::Nodes, Ending::Rows(rows)) => Observation::new("nodes", json!({ "relation": "nodes", "rows": if rows > 0 { json!(["m1"]) } else { json!([]) } })),
             (form, ending) => Observation::new("unparsed", json!(format!("{form:?} cannot end with {ending:?}"))),
         };
-        if call.form == Form::Nodes {
-            self.windows.remove(&Key::Nodes(id));
-        }
         self.outcomes.push((id, shapes::tag(item, &call.name)));
     }
 
@@ -96,11 +92,13 @@ impl LibraryRef {
         }
     }
 
-    /// library.md section 4 `nodes(ids)`: 1 request always (K2, K4), without the network the call waits (H4). The stand schema must declare a `Container` relation `nodes`.
+    /// library.md section 4 `nodes(ids)` (coordinator answer D1): the freshness is not read, a call with the ids of a load that runs joins it (0 requests, the outcome at its landing), without the network the call waits (H4).
     fn nodes_call(&mut self, name: String) -> Vec<Observation> {
-        let id = self.next_call;
-        self.add_call(Form::Nodes, &name, Some(Key::Nodes(id)));
-        self.start_run(Key::Nodes(id), 1);
+        let busy = self.win(Key::Nodes).load.is_some();
+        self.add_call(Form::Nodes, &name, Some(Key::Nodes));
+        if !busy {
+            self.start_run(Key::Nodes, 1);
+        }
         Vec::new()
     }
 

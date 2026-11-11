@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::super::model::RefModel;
 use super::super::value::{Input, Observation};
 use ops::{parse, Op};
-use window::{Key, Window};
+use window::{Key, Phase, Run, Window};
 
 mod env;
 mod landing;
@@ -84,6 +84,7 @@ pub struct LibraryRef {
     now: i64,
     back: i64,
     next_request: u64,
+    next_provisional: u64,
     next_call: u64,
     held: Vec<Held>,
     handles: HashMap<String, u64>,
@@ -104,6 +105,7 @@ impl Default for LibraryRef {
             now: 0,
             back: 0,
             next_request: 1,
+            next_provisional: 1,
             next_call: 1,
             held: Vec::new(),
             handles: HashMap::new(),
@@ -144,13 +146,40 @@ impl LibraryRef {
         self.online == Some(true)
     }
 
-    /// The requests of this step as the stand shows them: `request`, then `sent`.
-    fn announce(&mut self) -> Vec<Observation> {
-        let mut shown = Vec::new();
-        for sent in self.requests.drain(..) {
-            shown.push(shapes::request(&sent.id));
-            shown.push(shapes::sent(&sent.id, sent.operation, sent.variables));
+    /// A new request waits under a provisional id; the ids are final when the input ends.
+    fn provisional(&mut self) -> String {
+        self.next_provisional += 1;
+        format!("p{}", self.next_provisional - 1)
+    }
+
+    fn rename(&mut self, from: &str, to: &str) {
+        self.held.iter_mut().filter(|held| held.id == from).for_each(|held| held.id = to.into());
+        for window in self.windows.values_mut() {
+            if let Some(Run { phase: Phase::Flight(id), .. }) = &mut window.load {
+                if id == from {
+                    *id = to.into();
+                }
+            }
         }
+    }
+
+    /// The requests of one input as the stand shows them (H16): in the canonical order of (operation, variables as text), numbered in that order, `request` then `sent`. The held list takes them in the same order.
+    fn announce(&mut self) -> Vec<Observation> {
+        let mut batch: Vec<Sent> = self.requests.drain(..).collect();
+        batch.sort_by_key(|sent| (sent.operation, sent.variables.to_string()));
+        let mut shown = Vec::new();
+        let mut moved = Vec::new();
+        for sent in batch {
+            let id = format!("r{}", self.next_request);
+            self.next_request += 1;
+            self.rename(&sent.id, &id);
+            if let Some(at) = self.held.iter().position(|held| held.id == id) {
+                moved.push(self.held.remove(at));
+            }
+            shown.push(shapes::request(&id));
+            shown.push(shapes::sent(&id, sent.operation, sent.variables));
+        }
+        self.held.extend(moved);
         shown
     }
 

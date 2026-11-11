@@ -87,7 +87,11 @@ impl LibraryRef {
         let now = self.now;
         let window = self.win(key);
         match (key, run.page) {
-            (Key::Nodes(id), _) => return self.finish(id, Ending::Rows(rows)),
+            (Key::Nodes, _) => {
+                let waiting: Vec<u64> = self.calls.iter().filter(|call| call.key == Some(Key::Nodes)).map(|call| call.id).collect();
+                waiting.into_iter().for_each(|id| self.finish(id, Ending::Rows(rows)));
+                return;
+            }
             (Key::Node, _) => {
                 window.members = u64::from(rows > 0);
                 window.cursor = None;
@@ -123,7 +127,7 @@ impl LibraryRef {
         let queued: Vec<u64> = waiting.iter().filter(|(id, form, queued, _)| *form == Form::LoadMore && *queued && alive(self, *id)).map(|(id, ..)| *id).collect();
         if !cursor {
             let rest: Vec<u64> = waiting.iter().filter(|(id, form, ..)| *form == Form::LoadMore && alive(self, *id)).map(|(id, ..)| *id).collect();
-            rest.iter().for_each(|id| self.finish(*id, Ending::More("no_more")));
+            rest.iter().for_each(|id| self.finish(*id, Ending::More("loaded_last")));
             return;
         }
         if chain || owed || !queued.is_empty() {

@@ -26,9 +26,8 @@ impl LibraryRef {
 
     /// The session request goes to the front of the requests the stand holds (it answers the session first).
     fn send_session(&mut self) {
-        let id = format!("r{}", self.next_request);
-        self.next_request += 1;
-        self.held.insert(0, Held { id: id.clone(), live: true, owner: Owner::Session });
+        let id = self.provisional();
+        self.held.push(Held { id: id.clone(), live: true, owner: Owner::Session });
         self.requests.push(Sent { id, operation: shapes::SESSION_OPERATION, variables: Value::Null });
         if let Some(login) = &mut self.login_call {
             login.sent = true;
@@ -62,6 +61,10 @@ impl LibraryRef {
                 self.start_login(call, Vec::new());
                 shown.extend(self.announce());
             }
+        }
+        if let Some(at) = self.held.iter().rposition(|held| held.owner == Owner::Session) {
+            let session = self.held.remove(at);
+            self.held.insert(0, session);
         }
         shown.extend(self.answer(Reply::Page { rows: 0, more: false }));
         shown
