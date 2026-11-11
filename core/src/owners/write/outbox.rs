@@ -180,7 +180,7 @@ impl OutboxState {
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear || self.awaits_ended_create(operation)
     }
 
     /// The temp ids the operation waits for: its own row when it acts on one, every temp id of the body except the row it creates.
