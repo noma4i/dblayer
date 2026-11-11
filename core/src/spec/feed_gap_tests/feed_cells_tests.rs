@@ -805,3 +805,14 @@ fn census_refused(twin: &mut Twin) -> u64 {
         _ => None,
     }).expect("the owner answers the census")
 }
+
+#[test]
+fn feed_gap_invalid_marks_lost() {
+    let mut twin = live();
+    twin.step(chat("c1"));
+    twin.step(Input::Dropped { to: To::Active });
+    twin.step(Input::HandshakeDone);
+    let effects = twin.step(Input::RejectedAt(1, Reject::Invalid));
+    assert_eq!(effects, [Effect::Stale { model: "Chat".into(), all: true }], "the windows of the model turn stale, nothing is written again");
+    assert!(twin.step(Input::StrayBatch).is_empty(), "an invalid batch is not retried at the next step");
+}
