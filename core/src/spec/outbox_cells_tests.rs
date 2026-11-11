@@ -836,6 +836,28 @@ fn out_server_removed_row_all_stages() {
     }
 }
 
+/// P-OUT-60: the Store refuses the removal batch of an operation whose row the server removed as invalid data: the batch is not written again, the operation ends `Discarded`.
+#[test]
+fn out_removed_row_invalid_is_not_retried() {
+    let mut wrong = Vec::new();
+    for stage in [St::Queued, St::Sending, St::Failed] {
+        let ctx = if stage == St::Queued { offline() } else { ready() };
+        let (mut twin, id) = reach(stage, &ctx);
+        twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 });
+        let effects = refuse(&mut twin, id, RejectReason::Invalid);
+        let answered = if stage == St::Failed {
+            let receipt = twin.receipt(id, EPOCH);
+            answers(&twin.post(OutboxInput::Outcome { receipt, reply: WAITER, discard_on_failure: false }), WAITER)
+        } else { answers(&effects, WAITER) };
+        let got = (kinds(&effects), timers(&effects), answered, twin.stage(id));
+        let want = (Vec::new(), 0, vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)], Some(St::Done));
+        if got != want {
+            wrong.push(format!("{stage:?}: (batches, timers, answers, stage) = {got:?}, the spec asks {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
+}
+
 #[test]
 fn out_persisting_attempt_invalid() {
     let mut twin = Twin::new();
