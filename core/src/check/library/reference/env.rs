@@ -12,7 +12,7 @@ fn not_open() -> Vec<Observation> {
 
 /// library.md section 7 and the stand inputs of the environment.
 impl LibraryRef {
-    /// The symbolic stand opens with the network unknown, the clock goes back by the `clock_back` total, the saved windows and the identity stay (library.md section 7 `close` + `open`).
+    /// The symbolic stand opens with the network off until the first platform message (network.md), the clock goes back by the `clock_back` total, the saved windows and the identity stay (library.md section 7 `close` + `open`).
     pub(super) fn open(&mut self) -> Vec<Observation> {
         if self.live {
             return vec![shapes::error("already_open")];
@@ -20,7 +20,7 @@ impl LibraryRef {
         self.now -= self.back;
         self.back = 0;
         self.live = true;
-        self.online = None;
+        self.online = Some(false);
         vec![Observation::bare("opened")]
     }
 
@@ -36,6 +36,14 @@ impl LibraryRef {
         }
     }
 
+    /// A session call starts: its request goes out when the network is on.
+    fn start_login(&mut self, call: u64, queued: Vec<u64>) {
+        self.login_call = Some(Login { call, sent: false, attempts: 0, pause: None, queued });
+        if self.on() {
+            self.send_session();
+        }
+    }
+
     /// The stand input `login`: the session call, then an answer to the oldest request the stand holds.
     /// Coordinator answer H3: with an identity the call ends with `AlreadyAuthenticated` at once, without a known network it waits for the network.
     pub(super) fn login(&mut self) -> Vec<Observation> {
@@ -45,15 +53,13 @@ impl LibraryRef {
         let mut shown = Vec::new();
         if self.identity {
             shown.push(shapes::error("session"));
-        } else if self.login_call.is_some() {
-            self.mark("H14_second_login_while_the_first_waits");
-            return shown;
         } else {
             let call = self.next_call;
             self.next_call += 1;
-            self.login_call = Some(Login { call, sent: false, attempts: 0, pause: None });
-            if self.on() {
-                self.send_session();
+            if let Some(first) = &mut self.login_call {
+                first.queued.push(call);
+            } else {
+                self.start_login(call, Vec::new());
                 shown.extend(self.announce());
             }
         }
@@ -67,10 +73,11 @@ impl LibraryRef {
         let Some(login) = &mut self.login_call else { return };
         match reply {
             Reply::Page { .. } => {
-                let call = login.call;
+                let (call, queued) = (login.call, std::mem::take(&mut login.queued));
                 self.login_call = None;
                 self.identity = true;
                 self.outcomes.push((call, shapes::session()));
+                queued.into_iter().for_each(|id| self.outcomes.push((id, shapes::error("session"))));
             }
             Reply::Error(kind) if kind == "temporary" || kind == "server" => {
                 login.attempts += 1;
@@ -78,9 +85,13 @@ impl LibraryRef {
                 login.pause = Some(0);
             }
             Reply::Error(_) => {
-                let call = login.call;
+                let (call, mut queued) = (login.call, std::mem::take(&mut login.queued));
                 self.login_call = None;
                 self.outcomes.push((call, shapes::error("graphql")));
+                if !queued.is_empty() {
+                    let next = queued.remove(0);
+                    self.start_login(next, queued);
+                }
             }
         }
     }
@@ -93,6 +104,7 @@ impl LibraryRef {
         }
         if let Some(login) = self.login_call.take() {
             self.outcomes.push((login.call, shapes::error(kind)));
+            login.queued.into_iter().for_each(|id| self.outcomes.push((id, shapes::error(kind))));
         }
         self.held.iter_mut().for_each(|held| held.live = false);
     }

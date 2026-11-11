@@ -50,6 +50,8 @@ struct Login {
     sent: bool,
     attempts: u32,
     pause: Option<u64>,
+    /// Logins called while this one is out: they go after its end.
+    queued: Vec<u64>,
 }
 
 /// Who a held request belongs to.
