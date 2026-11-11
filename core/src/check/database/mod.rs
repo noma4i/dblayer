@@ -158,6 +158,8 @@ impl Call {
 pub struct DatabaseSut {
     database: Option<Arc<Database>>,
     mock: Arc<Mock>,
+    /// The secret slot of the app: one for the whole stand, so it survives `close` + `open` like the keychain.
+    credentials: Arc<Credentials>,
     clock: Arc<TestClock>,
     /// The clock reading in ms and the ms the next `open` sets it back by (`clock_back`).
     clock_now: u64,
@@ -176,6 +178,7 @@ impl Default for DatabaseSut {
         Self {
             database: None,
             mock: Mock::new(),
+            credentials: Arc::default(),
             clock: TestClock::new(1_800_000_000_000),
             clock_now: 1_800_000_000_000,
             back: 0,
@@ -311,7 +314,7 @@ impl DatabaseSut {
         let config = Config { path, data_version: None };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
         let (encrypted, credentials, http): EncryptedParts = if encrypted {
-            (Some(crate::transport::encrypted::tests::protocol_tests::config()), Some(Arc::new(Credentials::default())), Some(self.mock.clone()))
+            (Some(crate::transport::encrypted::tests::protocol_tests::config()), Some(self.credentials.clone()), Some(self.mock.clone()))
         } else {
             (None, None, None)
         };
@@ -319,12 +322,12 @@ impl DatabaseSut {
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).await.is_err() { return error("operations"); }
-                if database.set_online(true).is_err() { return error("online"); }
+                if self.symbolic.is_none() && database.set_online(true).is_err() { return error("online"); }
                 self.database = Some(database);
                 let _ = self.settle().await;
                 vec![Observation::bare("opened")]
             }
-            Err(_) => error("open"),
+            Err(open_error) => error(error_kind(&open_error)),
         }
     }
 
