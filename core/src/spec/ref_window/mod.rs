@@ -131,10 +131,6 @@ impl Window {
         if self.outcome == Outcome::None { self.outcome = Outcome::Fresh; }
     }
 
-    /// The last interest went away: a refusal does not outlive it.
-    fn interest_left(&mut self) {
-        if self.interest.is_empty() && self.outcome == Outcome::Failed { self.outcome = Outcome::None; }
-    }
 
     /// A load of `page`: a request online, `Waiting` otherwise. `announce` adds `WindowState`.
     fn begin(&mut self, page: u32, force: bool, announce: bool) -> Vec<Effect> {
@@ -154,7 +150,14 @@ impl Window {
     /// The goal a waiter gets when it joins while `page` is the page in flight or about to be asked.
     fn after(page: u32) -> Want { Want::Next(page + 1) }
 
+    /// P-WIN-32: the outcome belongs to the current interest (streams and calls), the last one leaving takes it away.
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
+        let effects = self.step_input(input);
+        if self.state != State::Opening && !self.watched() { self.outcome = Outcome::None; }
+        effects
+    }
+
+    fn step_input(&mut self, input: Input) -> Vec<Effect> {
         if self.unread && self.state == State::Idle && matches!(input, Input::InterestPlus { .. } | Input::InterestPassive { .. } | Input::Load { .. }) {
             self.unread = false;
             self.state = State::Opening;
@@ -294,7 +297,6 @@ impl Window {
             Input::Load { id, goal, force } => self.idle_load(id, goal, force),
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                self.interest_left();
                 self.waiters.remove(&id);
                 Vec::new()
             }
@@ -381,7 +383,6 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                self.interest_left();
                 self.waiters.remove(&id);
                 if self.watched() {
                     Vec::new()
@@ -461,7 +462,6 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                self.interest_left();
                 self.waiters.remove(&id);
                 Vec::new()
             }

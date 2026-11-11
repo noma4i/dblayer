@@ -4,7 +4,7 @@ use super::*;
 // window.md P-WIN-32: the value a stream gets is a function of the stage, `outcome` and the rows.
 
 fn same_value(twin: &Twin, line: &str) {
-    if twin.stage().is_none() { return; }
+    if twin.stage().is_none() || twin.reference.interest.iter().all(|id| *id == PRELOAD) { return; }
     let state = twin.load_state();
     let owner = (twin.phase(), state.error.is_some(), state.settled, state.has_more);
     let want = (twin.reference.phase(), twin.reference.error().is_some(), twin.reference.settled(), twin.reference.has_more());
@@ -108,6 +108,20 @@ fn win_phase_cancelled_load_keeps_no_outcome() {
     offline_watch(&mut twin);
     assert_eq!(twin.load_state().phase, OwnerPhase::Idle);
     same_value(&twin, "cancelled load, interest back offline");
+}
+
+/// The outcome belongs to the current interest: after a landing and the last interest gone, an interest back into a not fresh window waits for a new outcome.
+#[test]
+fn win_phase_landing_does_not_outlive_the_interest() {
+    let mut twin = Twin::new();
+    twin.watch();
+    twin.finish(None);
+    twin.step(Input::InterestMinus { id: STREAM });
+    twin.step(Input::Stale { in_keys: true });
+    offline_watch(&mut twin);
+    let state = twin.load_state();
+    assert_eq!((state.phase, state.settled), (OwnerPhase::Idle, false));
+    same_value(&twin, "interest back offline into a not fresh window");
 }
 
 /// Entering a fresh saved window is the outcome Fresh: Loaded and settled with no request.

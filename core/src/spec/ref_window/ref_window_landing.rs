@@ -140,7 +140,6 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                self.interest_left();
                 self.waiters.remove(&id);
                 if !self.watched() {
                     self.state = State::Idle;

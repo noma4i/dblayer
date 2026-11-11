@@ -13,7 +13,7 @@ impl LibraryRef {
         self.calls.iter().any(|call| call.key == Some(key)) || self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key))
     }
 
-    /// The last interest went away (section 3 `phase`): the request is taken back, the window is not fresh any more and a refusal goes.
+    /// The last interest went away (section 3 `phase`): the request is taken back, the window is not fresh any more and the outcome goes with it (`step` clears it).
     pub(super) fn leave(&mut self, key: Key) {
         if self.interest(key) {
             return;
@@ -22,7 +22,6 @@ impl LibraryRef {
             self.kill(&run);
             self.win(key).unfresh = true;
         }
-        self.win(key).interest_left();
     }
 
     pub(super) fn open_feed(&mut self, name: String, key: Key, count: bool, on_connect: bool) -> Vec<Observation> {

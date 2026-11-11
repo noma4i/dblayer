@@ -91,13 +91,6 @@ impl Window {
         }
     }
 
-    /// The last interest went away: a refusal does not outlive it, `Landed` and `Fresh` stay.
-    pub(super) fn interest_left(&mut self) {
-        if self.outcome == Outcome::Failed {
-            self.outcome = Outcome::None;
-        }
-    }
-
     /// library.md section 3 `loaded`: a landing of this run, or a saved window that is fresh.
     pub(super) fn loaded(&self, now: i64) -> bool {
         self.landed_run || (self.landed_at.is_some() && self.fresh(now))

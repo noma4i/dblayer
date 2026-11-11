@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::super::model::RefModel;
 use super::super::value::{Input, Observation};
 use ops::{parse, Op};
-use window::{Key, Phase, Run, Window};
+use window::{Key, Outcome, Phase, Run, Window};
 
 mod env;
 mod landing;
@@ -223,6 +223,15 @@ impl LibraryRef {
         shown
     }
 
+    /// library.md section 3: the outcome belongs to the current interest, the last interest (streams and calls) taking it away.
+    fn drop_outcomes_without_interest(&mut self) {
+        for key in [Key::Feed, Key::Node, Key::Nodes, Key::Members] {
+            if !self.interest(key) {
+                self.win(key).outcome = Outcome::None;
+            }
+        }
+    }
+
     fn apply(&mut self, op: Op) -> Vec<Observation> {
         match op {
             Op::Open => self.open(),
@@ -264,6 +273,7 @@ impl RefModel for LibraryRef {
             Err(message) => return vec![Observation::new("unparsed", json!(message))],
         };
         let mut shown = self.apply(op);
+        self.drop_outcomes_without_interest();
         self.outcomes.sort_by_key(|(seq, _)| *seq);
         shown.extend(self.outcomes.drain(..).map(|(_, item)| item));
         shown.extend(self.announce());
