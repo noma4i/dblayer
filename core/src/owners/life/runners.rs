@@ -155,7 +155,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 let result = store.write_batch(&batch, self.db.files(), self.db.pointer_guards(), min_pin_revision).map(|written| {
                     for fault in written.faults { wiring.fault(fault); }
                     WriteDone { revision: written.revision, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents, removed_operations: written.removed_operations, removed_rows: written.removed_rows, resets: written.resets, notice: written.notice, shown: written.shown, files_removed: written.files_removed }
-                }).map_err(|error| match error { crate::store::StoreError::Invalid(_) => crate::owners::contract::RejectReason::Invalid, other => crate::owners::contract::RejectReason::Storage(other.to_string()) });
+                }).map_err(|error| error.reject_reason());
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::Pinned { epoch, request_id, base_revision } => wiring.to_windows_in(epoch, WindowsInput::Pinned { request_id, base_revision }),

@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Refuse a write with data the Store cannot accept as `Invalid` and do not retry it: a feed gap, an upload and a restored upload end instead of looping.
 - Skip the request of a preload window whose saved data is still fresh at open.
 - Send the real parent id in a write that names a row created before it.
 - End a write on a row whose create was refused, without a request.

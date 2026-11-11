@@ -1,3 +1,4 @@
+use crate::owners::contract::RejectReason;
 use crate::store::PlanFault;
 use crate::store::ddl::DdlError;
 
@@ -41,7 +42,18 @@ impl From<rusqlite::Error> for StoreError {
 }
 
 impl StoreError {
-
+    pub(crate) fn reject_reason(&self) -> RejectReason {
+        match self {
+            StoreError::Constraint(_) | StoreError::Plan(_) | StoreError::Json(_) | StoreError::UnknownModel(_) | StoreError::Invalid(_) => RejectReason::Invalid,
+            StoreError::Sqlite(_)
+            | StoreError::Ddl(_)
+            | StoreError::Io(_)
+            | StoreError::Poisoned(_)
+            | StoreError::Refused
+            | StoreError::AlreadyAttached(_)
+            | StoreError::CorruptManifest(_) => RejectReason::Storage(self.to_string()),
+        }
+    }
     pub(crate) fn is_apply_failure(&self) -> bool {
         match self {
             StoreError::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) => !matches!(
