@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> Duration;
-    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+    fn sleep_until(&self, deadline: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
     fn on_advance(&self, _wake: Arc<dyn Fn() + Send + Sync>) {}
     fn armed(&self, _count: u64) {}
 }
@@ -16,8 +16,8 @@ impl Clock for SystemClock {
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
     }
 
-    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        Box::pin(tokio::time::sleep(duration))
+    fn sleep_until(&self, deadline: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep(deadline.saturating_sub(self.now())))
     }
 }
 
@@ -88,8 +88,7 @@ impl Clock for ManualClock {
         crate::lock::effect(|| self.armed_changed.notify_waiters());
     }
 
-    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        let deadline = self.now().saturating_add(duration);
+    fn sleep_until(&self, deadline: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
             loop {
                 let changed = self.changed.notified();

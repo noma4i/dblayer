@@ -22,7 +22,7 @@ impl Clock for TestClock {
         self.start + self.started.elapsed()
     }
 
-    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        Box::pin(tokio::time::sleep(duration))
+    fn sleep_until(&self, deadline: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep(deadline.saturating_sub(self.now())))
     }
 }

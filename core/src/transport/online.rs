@@ -45,7 +45,7 @@ impl Connectivity {
         loop {
             self.online().await;
             tokio::select! {
-                () = clock.sleep(deadline.saturating_sub(clock.now())) => return,
+                () = clock.sleep_until(deadline) => return,
                 () = self.offline() => {}
             }
         }
