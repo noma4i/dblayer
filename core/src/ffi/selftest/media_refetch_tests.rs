@@ -151,3 +151,47 @@ async fn win_chain_marker_change_resets() {
     assert!(calls[3].get("afterSequence").is_none_or(Value::is_null), "{calls:?}");
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_chain_pages_share_rows() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+        *models = serde_json::from_str::<Value>(include_str!("../../../../fixtures/media-marker.json")).unwrap()["models"].clone();
+        let all = models.as_array_mut().unwrap();
+        let mut author = all[0].clone();
+        author["key"] = json!("MediaAuthor");
+        author["relations"] = json!([]);
+        let mut fields = author["fields"].as_array().unwrap().clone();
+        fields.retain(|field| field["name"] == "id" || field["name"] == "text");
+        author["fields"] = json!(fields);
+        let mut key = fields.iter().find(|field| field["name"] == "text").unwrap().clone();
+        key["name"] = json!("authorId");
+        key["indexed"] = json!(true);
+        all[0]["fields"].as_array_mut().unwrap().push(key);
+        all[0]["associations"] = json!([{"dependent": null, "foreign_key": "authorId", "from": "author", "kind": "belongs_to", "name": "author", "newer": [], "sets": {}, "target": "MediaAuthor", "touches_parent": false}]);
+        all.push(author);
+    }).await;
+    let document = include_str!("../../../../fixtures/operations/queries/media.graphql");
+    rig.database.register_operations(json!([{"name":"chatMedia", "document":document},{"name":"chatMediaState", "document":document}]).to_string()).await.unwrap();
+    rig.world.answer_with("chatMedia", json!({"data":{}}));
+    rig.world.answer_with("chatMediaState", json!({"data":{}}));
+    let page = |numbers: &[(i32, &str)], more: bool| {
+        let nodes: Vec<_> = numbers.iter().map(|(n, name)| json!({"id":n.to_string(),"text":"media","sequenceNumber":n,"author":{"id":"a1","text":name}})).collect();
+        Fault::Answer(json!({"data":{"node":{"messages":{"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":numbers.last().unwrap().0.to_string()}}}}}))
+    };
+    rig.world.fail_next("chatMediaState", chain_marker("1", 0, 3));
+    rig.world.fail_next("chatMedia", page(&[(1, "Ann"), (2, "Ann")], true));
+    rig.world.fail_next("chatMedia", page(&[(2, "Ann B"), (3, "Ann B")], false));
+    rig.world.fail_next("chatMediaState", chain_marker("1", 3, 3));
+    let rows = std::sync::Arc::new(ChainRows::default());
+    let query = crate::ffi::QuerySpec::json(r#"{"model":"MediaEntry","relation":"media","params":{"chatId":"c1"}}"#);
+    let _stream = rig.database.watch(crate::ffi::ReadRequest::List { query }, rows.clone());
+    crate::test_wait::settled(&rig, "a chain whose pages share an author and a moved row lands", || rows.rows.last().is_some_and(|state| state.phase == Some(crate::ffi::ReadPhase::Loaded) || state.error.is_some())).await;
+    assert!(rows.rows.last().unwrap().error.is_none(), "{:?}", rows.rows.last().unwrap().error);
+    assert_eq!(chain_ids(&rows), ["1", "2", "3"], "the row both pages hold lands once at its first place");
+    let epoch = rig.database.session_epoch();
+    let read = |query: &str| { let database = rig.database.clone(); let query = crate::ffi::QuerySpec::json(query); async move { bound(database.read_query(epoch, query)).await.unwrap() } };
+    let authors = read(r#"{"model":"MediaAuthor"}"#).await;
+    assert_eq!(authors.len(), 1, "the shared author is 1 row");
+    assert!(authors[0].cells.iter().any(|cell| matches!(cell, crate::ffi::Cell::Text { value } if value == "Ann B")), "the last page of the author wins: {:?}", authors[0].cells);
+    rig.database.close_now();
+}
