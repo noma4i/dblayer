@@ -51,15 +51,15 @@ fn docs_with_list() -> crate::schema::ModelSpec {
     spec
 }
 
-/// P-DATA-100: a row of an operation response that can enter a `membership` scope carries the membership field after the merge with the stored row, else the batch is refused as `Invalid`.
+/// P-DATA-100: a row of an operation response without the membership field is written and joins no list, the batch is not refused.
 #[test]
-fn store_response_row_needs_its_membership_field() {
+fn store_response_row_without_its_membership_field_is_written() {
     let response = |id: u64, row: serde_json::Value| StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("docs".to_string(), row.to_string())], intents: 0, credential: None, ops: Vec::new() };
     let cases = [
-        ("no field in the response, no stored row", None, serde_json::json!({"id":"x", "text":"new"}), None),
-        ("no field in the response, the stored row has it", Some(serde_json::json!({"id":"x", "text":"old", "lists":["a"]})), serde_json::json!({"id":"x", "text":"new"}), Some(serde_json::json!(["a"]))),
-        ("the field in the response", None, serde_json::json!({"id":"x", "text":"new", "lists":["b"]}), Some(serde_json::json!(["b"]))),
-        ("an empty list in the response", Some(serde_json::json!({"id":"x", "text":"old", "lists":["a"]})), serde_json::json!({"id":"x", "text":"new", "lists":[]}), Some(serde_json::json!([]))),
+        ("no field in the response, no stored row", None, serde_json::json!({"id":"x", "text":"new"}), serde_json::json!([])),
+        ("no field in the response, the stored row has it", Some(serde_json::json!({"id":"x", "text":"old", "lists":["a"]})), serde_json::json!({"id":"x", "text":"new"}), serde_json::json!(["a"])),
+        ("the field in the response", None, serde_json::json!({"id":"x", "text":"new", "lists":["b"]}), serde_json::json!(["b"])),
+        ("an empty list in the response", Some(serde_json::json!({"id":"x", "text":"old", "lists":["a"]})), serde_json::json!({"id":"x", "text":"new", "lists":[]}), serde_json::json!([])),
     ];
     let mut wrong = Vec::new();
     for (case, stored, row, want) in cases {
@@ -70,9 +70,8 @@ fn store_response_row_needs_its_membership_field() {
         let written = database.write_batch(&response(2, row), database.files(), database.pointer_guards(), None);
         let refused = written.as_ref().err().map(|error| error.reject_reason());
         let after = database.read(&["docs"], |reader| Ok(reader.point("docs", "x")?.filter(|row| row.get("text") == Some(&serde_json::json!("new"))).map(|row| row.get("lists").cloned().unwrap_or(serde_json::json!([]))))).unwrap();
-        let expected_refusal = want.is_none().then_some(crate::owners::contract::RejectReason::Invalid);
-        if (refused.clone(), after.clone()) != (expected_refusal.clone(), want.clone()) {
-            wrong.push(format!("{case}: refusal {refused:?}, written lists {after:?}, the spec asks refusal {expected_refusal:?}, lists {want:?}"));
+        if (refused.clone(), after.clone()) != (None, Some(want.clone())) {
+            wrong.push(format!("{case}: refusal {refused:?}, written lists {after:?}, the spec asks no refusal, lists {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
