@@ -657,8 +657,8 @@ for path in sorted((source / "owners" / "write").rglob("*.rs")):
         start = text.find(f"pub struct {name} {{")
         if start < 0: continue
         body = text[start:text.find("\n}\n", start)]
-        for found in re.finditer(r"^\s*pub(\([a-z]+\))? now:", body, re.M):
-            number = text.count("\n", 0, start + found.start()) + 2
+        for found in re.finditer(r"^[ \t]*pub(\([a-z]+\))? now:", body, re.M):
+            number = text.count("\n", 0, start + found.start()) + 1
             findings.append(f"Z54 the state keeps no copy of the time of the turn (R5): {path.relative_to(root)}:{number}")
 
 if findings:
