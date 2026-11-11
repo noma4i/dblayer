@@ -4,13 +4,16 @@
 
 ### Changed
 
-- Put an event row that enters a loaded window of an `[:event, :response]` scope at the head of the window.
+- Add an event row to the head of a loaded `[:event, :response]` window.
+- Add a created row to the head of loaded membership lists of its parameters.
+- Skip created rows in an `insert_on: [:create]` scope with constant variables and no rule.
 - Give a window without network after a started load the phase of its last outcome, not Loading.
 - Drop the refusal of a window when its last reader leaves.
 
 ### Fixed
 
 - Show the load error of a window again after a failed read of the stream recovers.
+- Insert rows of node rereads started by `changed_by` into `insert_on: [:node]` windows.
 - Keep the other events of a feed batch when one event carries data that does not decode.
 - Refuse a write with data the Store cannot accept as `Invalid` and do not retry it: a feed gap, an upload and a restored upload end instead of looping.
 - Skip the request of a preload window whose saved data is still fresh at open.
