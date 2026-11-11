@@ -128,6 +128,8 @@ impl OutboxState {
                         self.finish(id, OutboxOutcome::Discarded, true, fx);
                     }
                 }
+                let created = Self::created_temps(&self.ops[&op_id]);
+                self.ended_creates.extend(created);
                 let dependents = self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
                 for id in dependents {
                     if self.ops[&id].pending_owned || self.ops[&id].pair_in_flight {

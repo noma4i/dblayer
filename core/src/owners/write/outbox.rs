@@ -92,6 +92,7 @@ pub struct OutboxState {
     pub(super) orphan_transfers: BTreeSet<OpId>,
     pub(super) removing: BTreeSet<OpId>,
     pub(super) aliases: BTreeMap<(String, String), String>,
+    pub(super) ended_creates: std::collections::BTreeSet<String>,
 }
 
 impl OutboxState {
@@ -147,6 +148,7 @@ impl OutboxState {
             orphan_transfers: BTreeSet::new(),
             removing: BTreeSet::new(),
             aliases: BTreeMap::new(),
+            ended_creates: std::collections::BTreeSet::new(),
         }
     }
 
@@ -202,23 +204,30 @@ impl OutboxState {
         if open { TempDependency::Open } else { TempDependency::Clear }
     }
 
+    /// The temp ids of the rows the operation creates.
+    pub(super) fn created_temps(operation: &QueuedOperation) -> Vec<String> {
+        match &operation.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).collect(),
+            _ if operation.op.action == "create" && crate::identity::is_temp_id(&operation.op.row_id) => vec![operation.op.row_id.clone()],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The operation waits for a temp id whose `create` ended without a real id.
+    fn awaits_ended_create(&self, operation: &QueuedOperation) -> bool {
+        Self::awaited_temps(operation).iter().any(|temp| self.ended_creates.contains(temp))
+    }
+
     /// The Queued operations that wait for the rows the ended `create` made (and for the rows of those operations in turn), the latest first.
     fn dependents_of(&self, create: OpId) -> Vec<OpId> {
         let Some(first) = self.ops.get(&create) else { return Vec::new() };
-        let own_temps = |operation: &QueuedOperation| -> Vec<String> {
-            match &operation.op.origin {
-                OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).collect(),
-                _ if operation.op.action == "create" && crate::identity::is_temp_id(&operation.op.row_id) => vec![operation.op.row_id.clone()],
-                _ => Vec::new(),
-            }
-        };
-        let mut ended = own_temps(first);
+        let mut ended = Self::created_temps(first);
         if ended.is_empty() { return Vec::new(); }
         let mut found: Vec<&QueuedOperation> = Vec::new();
         loop {
             let next = self.ops.values().find(|other| other.op_id != create && other.stage == Stage::Queued && other.sequence > first.sequence && !found.iter().any(|seen| seen.op_id == other.op_id) && Self::awaited_temps(other).iter().any(|temp| ended.contains(temp)));
             let Some(next) = next else { break };
-            ended.extend(own_temps(next));
+            ended.extend(Self::created_temps(next));
             found.push(next);
         }
         found.sort_by_key(|operation| std::cmp::Reverse(operation.sequence));
@@ -534,13 +543,14 @@ impl OutboxState {
         if operation.stage != Stage::Queued || !self.online {
             return;
         }
-        if self.row_busy(op_id) {
+        let ended = self.awaits_ended_create(operation);
+        if !ended && self.row_busy(op_id) {
             return;
         }
-        if self.expired(op_id) {
+        if ended || self.expired(op_id) {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
-                operation.reject_error = Some(super::failure::expired());
+                operation.reject_error = Some(if ended { super::failure::row_never_created() } else { super::failure::expired() });
             }
             return self.store(op_id, CommitKind::Rollback, fx);
         }
