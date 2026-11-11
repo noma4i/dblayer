@@ -95,6 +95,21 @@ fn out_submit_intent_written() {
     assert!(sends.is_empty(), "{sends:?}");
 }
 
+/// P-OUT-59: a reserved operation carries the `created_at` of its transfer, and the step that picks it for sending judges its expiry by the time of that step.
+#[test]
+fn out_reserved_expiry_reads_the_step_time() {
+    const EXPIRES_MS: u64 = 10_000;
+    let created_at = 50_000;
+    for (name, wait, sent) in [("1 ms over the term", EXPIRES_MS + 1, false), ("the term is exact", EXPIRES_MS, true)] {
+        let mut twin = Twin::new();
+        twin.det.tick(crate::runtime::Time(created_at + wait));
+        let op = crate::owners::write::outbox::NewOp { effects: Default::default(), expires_after: Some(std::time::Duration::from_millis(EXPIRES_MS)), ..model_op("r", Policy::Rollback, true) };
+        raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at });
+        let stage = twin.state().stage_of(4);
+        assert_eq!(stage == Some(Stage::Sending), sent, "{name}: created at {created_at}, picked at {}: the stage is {stage:?}", created_at + wait);
+    }
+}
+
 #[test]
 fn out_submit_undeclared() {
     let mut twin = Twin::new();
