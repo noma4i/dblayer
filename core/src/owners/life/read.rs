@@ -102,8 +102,8 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.pulls.clone(),
         ports.executor.clone(),
         Box::new(move |stamp, effect| match effect {
-            DeliveryEffect::WantPlus { model, id, stream, scoped } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantPlus { model, id, stream, scoped, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
-            DeliveryEffect::WantMinus { model, id } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantMinus { model, id, now: crate::runtime::Time((deliveries_wiring.now)() as u64) }),
+            DeliveryEffect::WantPlus { model, id, stream, scoped } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantPlus { model, id, stream, scoped }),
+            DeliveryEffect::WantMinus { model, id } => deliveries_wiring.to_feed_at(stamp, FeedInput::WantMinus { model, id }),
             DeliveryEffect::Stream { stream, effect: StreamEffect::CloseSink } => deliveries_wiring.to_deliveries(DeliveryInput::SinkClosed { stream }),
             DeliveryEffect::CancelAnswered { reply } | DeliveryEffect::Stream { effect: StreamEffect::Cancelled { reply }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Cancelled);
@@ -141,7 +141,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
-            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, wiring.gate.clone(), wiring.now.clone()).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
+            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, wiring.gate.clone()).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.install(feed_at, "feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };

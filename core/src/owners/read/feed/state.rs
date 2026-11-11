@@ -1,8 +1,7 @@
 use super::*;
 
 impl FeedState {
-    pub(super) fn frames_sent(&mut self, now: Option<Time>, fx: &[Fx]) {
-        let Some(now) = now else { return };
+    pub(super) fn frames_sent(&mut self, now: Time, fx: &[Fx]) {
         for effect in fx {
             if let Fx::Run(FeedEffect::Seal { connection, .. }) = effect {
                 if let Some(found) = self.connection_mut(*connection) { found.last_sent = now; }

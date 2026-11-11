@@ -559,6 +559,12 @@ for path in files:
         if re.search(r"\bread_id: Option<", line):
             findings.append(f"Z45 every window machine opens by reading its saved window (ensure), none is made without the read: {path.relative_to(root)}:{number}")
 
+for target, pattern in ((source / "runtime" / "owner.rs", r"\bfn due\("), (source / "owners" / "read" / "feed" / "mod.rs", r"\bnow: Time\b")):
+    if not target.exists(): continue
+    for number, line in enumerate(target.read_text().splitlines(), 1):
+        if re.search(pattern, line):
+            findings.append(f"Z46 Feed takes the time of its step, no input of Feed carries a time and no owner rewrites a due input: {target.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

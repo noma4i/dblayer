@@ -48,14 +48,13 @@ pub struct FeedIo {
     open: Connections,
     rest: Rest<FeedEffect>,
     gate: Arc<crate::runtime::EpochGate>,
-    now: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 /// The codes of a closing server that no retry changes: the session is over.
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, gate: Arc<crate::runtime::EpochGate>, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self { Self { lines, codec, handle, gate, now, counted: None, admit: None, open: Connections::default(), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, gate: Arc<crate::runtime::EpochGate>) -> Self { Self { lines, codec, handle, gate, counted: None, admit: None, open: Connections::default(), rest } }
 
     /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
     pub fn admitted_by(mut self, admit: Admit) -> Self {
@@ -79,7 +78,7 @@ impl FeedIo {
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
         self.open.retain(|_, open| !open.cancel.is_cancelled());
         self.open.insert(connection, Open { frames: Some(frames), cancel: cancel.clone(), closing: closing.clone(), reason: reason.clone() });
-        let (lines, codec, back, gate, now) = (self.lines.clone(), self.codec.clone(), back.clone(), self.gate.clone(), self.now.clone());
+        let (lines, codec, back, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
         let report = back.clone();
@@ -91,12 +90,12 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
-            Self::run((lines, codec), (gate, epoch), connection, (cancel, closing), queued, (reply, move |event| report.reply(stamp, FeedInput::CableClosed(event))), (reason, now)).await;
+            Self::run((lines, codec), (gate, epoch), connection, (cancel, closing), queued, (reply, move |event| report.reply(stamp, FeedInput::CableClosed(event))), reason).await;
             ended.cancel();
         }));
     }
 
-    async fn run((lines, codec): (Arc<dyn CableLines>, Arc<dyn FeedCodec>), (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, (reply, report): (impl Fn(FeedInput) + Clone + Send + 'static, impl Fn(CableClose)), (reason, now): (Arc<AtomicU8>, Arc<dyn Fn() -> i64 + Send + Sync>)) {
+    async fn run((lines, codec): (Arc<dyn CableLines>, Arc<dyn FeedCodec>), (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, (reply, report): (impl Fn(FeedInput) + Clone + Send + 'static, impl Fn(CableClose)), reason: Arc<AtomicU8>) {
         {
             let line = match crate::runtime::send_in_epoch(&gate, epoch, || async { Ok(lines.connect(&cancel).await) }).await {
                 Ok(Ok(line)) => line,
@@ -114,7 +113,7 @@ impl FeedIo {
                 }
                 Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
-            reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection, now: crate::runtime::Time(now() as u64) });
+            reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let closed = Arc::new(AtomicBool::new(false));
             let writer = {
                 let (line, reply, gate, cancel, closing, closed) = (line.clone(), reply.clone(), gate.clone(), cancel.clone(), closing.clone(), closed.clone());
@@ -133,7 +132,7 @@ impl FeedIo {
                     true
                 }
             };
-            let reader = Self::read(line.clone(), codec, connection, reply, now);
+            let reader = Self::read(line.clone(), codec, connection, reply);
             let event = tokio::select! {
                 biased;
                 () = cancel.cancelled() => None,
@@ -150,7 +149,7 @@ impl FeedIo {
         }
     }
 
-    async fn read(line: Arc<dyn CableLine>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, reply: impl Fn(FeedInput), now: Arc<dyn Fn() -> i64 + Send + Sync>) -> CableClose {
+    async fn read(line: Arc<dyn CableLine>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, reply: impl Fn(FeedInput)) -> CableClose {
         loop {
             match line.next().await {
                 Incoming::Frame { counter, body } => {
@@ -159,7 +158,7 @@ impl FeedIo {
                         Err(reason) => { reply(FeedInput::ProtocolError { connection_id: connection, reason }); return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: false }; },
                     };
                     let last = matches!(&frame, Frame::Ended | Frame::Error { id: None, .. });
-                    reply(FeedInput::FrameOpened { connection_id: connection, counter, frame, now: crate::runtime::Time(now() as u64) });
+                    reply(FeedInput::FrameOpened { connection_id: connection, counter, frame });
                     if last {
                         return CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Server, intended: false };
                     }

@@ -58,7 +58,6 @@ pub trait StateOwner: Sized + 'static {
     #[cfg(test)]
     fn diagnostic(_state: &Self::State) -> Option<String> { None }
     fn epoch_started(_epoch: Epoch) -> Option<Self::Input> { None }
-    fn due(input: Self::Input, _now: Time) -> (Option<Self::Input>, Self::Input) { (None, input) }
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
     fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }

@@ -120,8 +120,7 @@ impl<O: StateOwner> Cell<O> {
         let scheduled = entry.remove();
         self.keys.remove(&scheduled.id);
         if scheduled.retry { self.leave_retry(scheduled.id); }
-        let (_, input) = O::due(scheduled.input, self.now);
-        self.push(scheduled.stamp, input);
+        self.push(scheduled.stamp, scheduled.input);
         true
     }
 

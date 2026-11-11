@@ -221,31 +221,31 @@ pub enum FeedInput {
     CableClosed(CableClose),
     ActivateEpoch(Epoch),
     /// `stream` = the id is a stream `Events` of Deliveries: it gets `Joined` and `ModelReady`.
-    WantPlus { model: String, id: SubscriptionId, stream: bool, scoped: Vec<ScopedChannel>, now: Time },
-    WantMinus { model: String, id: SubscriptionId, now: Time },
-    HandshakeDone { connection_id: ConnectionId, key_id: u64, now: Time },
-    FrameOpened { connection_id: ConnectionId, counter: u64, frame: Frame, now: Time },
+    WantPlus { model: String, id: SubscriptionId, stream: bool, scoped: Vec<ScopedChannel> },
+    WantMinus { model: String, id: SubscriptionId },
+    HandshakeDone { connection_id: ConnectionId, key_id: u64 },
+    FrameOpened { connection_id: ConnectionId, counter: u64, frame: Frame },
     ProtocolError { connection_id: ConnectionId, reason: ProtocolReason },
     Event { connection_id: ConnectionId, channel: Channel, event: FramedEvent },
     ChannelConfirmed { connection_id: ConnectionId, channel: Channel },
     /// The server closed the subscription of one channel: `failed` = with an error of the request.
-    ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError>, now: Time },
-    ChannelResubscribe { connection_id: ConnectionId, channel: Channel, now: Time },
+    ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError> },
+    ChannelResubscribe { connection_id: ConnectionId, channel: Channel },
     Dropped { connection_id: ConnectionId },
     SubscriptionEnded { connection_id: ConnectionId },
     Resubscribe { connection_id: ConnectionId },
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
     HandshakeDeadline { connection_id: ConnectionId },
-    Keepalive { connection_id: ConnectionId, counter: u64, now: Time },
-    PongDeadline { connection_id: ConnectionId, counter: u64, now: Time },
+    Keepalive { connection_id: ConnectionId, counter: u64 },
+    PongDeadline { connection_id: ConnectionId, counter: u64 },
     /// The timer of a closing connection: its drain is over.
     Drain { connection_id: ConnectionId },
     Committed(Committed),
     /// The payloads of the events of a batch with the rows read at its landing: they arrive before the `Committed` of the batch.
     Observed { batch: BatchId, payloads: Vec<String> },
     Rejected(Rejected),
-    Tick(Time),
-    Online { online: Online, online_seq: u64, now: Time },
+    Tick,
+    Online { online: Online, online_seq: u64 },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
@@ -396,21 +396,21 @@ impl Feed {
         for item in fx {
             match item {
                 Fx::Run(effect) => out.push(Effect::Run(effect)),
-                Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick(Time(0)) }),
+                Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick }),
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
                 Fx::Resubscribe { connection, attempt } => {
                     out.push(Effect::Backoff { id: ScheduleId(connection), policy: RetryPolicy::Cable, attempt, input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
-                    out.push(Effect::Backoff { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), policy: RetryPolicy::Cable, attempt, input: FeedInput::ChannelResubscribe { connection_id: connection, channel, now: Time(0) } });
+                    out.push(Effect::Backoff { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), policy: RetryPolicy::Cable, attempt, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),
                 Fx::CancelDrain { connection } => out.push(Effect::Cancel(drain_schedule(connection))),
                 Fx::CancelHandshake { connection } => out.push(Effect::Cancel(ScheduleId(HANDSHAKE_SCHEDULE | connection))),
-                Fx::Keepalive { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(KEEPALIVE_SCHEDULE | connection), after: KEEPALIVE, input: FeedInput::Keepalive { connection_id: connection, counter, now: Time(0) } }),
-                Fx::PongDeadline { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(PONG_SCHEDULE | connection), after: PONG_DEADLINE, input: FeedInput::PongDeadline { connection_id: connection, counter, now: Time(0) } }),
+                Fx::Keepalive { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(KEEPALIVE_SCHEDULE | connection), after: KEEPALIVE, input: FeedInput::Keepalive { connection_id: connection, counter } }),
+                Fx::PongDeadline { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(PONG_SCHEDULE | connection), after: PONG_DEADLINE, input: FeedInput::PongDeadline { connection_id: connection, counter } }),
                 Fx::CancelKeepalive { connection } => out.push(Effect::Cancel(ScheduleId(KEEPALIVE_SCHEDULE | connection))),
                 Fx::CancelPong { connection } => out.push(Effect::Cancel(ScheduleId(PONG_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
@@ -437,7 +437,7 @@ impl StateOwner for Feed {
     type Input = FeedInput;
     type Effect = FeedEffect;
 
-    fn step(state: &mut FeedState, input: FeedInput, _now: crate::runtime::Time) -> Effects<Self> {
+    fn step(state: &mut FeedState, input: FeedInput, now: crate::runtime::Time) -> Effects<Self> {
         let mut fx = Vec::new();
         if let FeedInput::CableClosed(event) = input {
             for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
@@ -454,10 +454,6 @@ impl StateOwner for Feed {
             fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census(), refused: state.refused }));
             return Self::lower(state, fx);
         }
-        let now = match &input {
-            FeedInput::WantPlus { now, .. } | FeedInput::WantMinus { now, .. } | FeedInput::HandshakeDone { now, .. } | FeedInput::FrameOpened { now, .. } | FeedInput::ChannelEnded { now, .. } | FeedInput::ChannelResubscribe { now, .. } | FeedInput::Keepalive { now, .. } | FeedInput::PongDeadline { now, .. } | FeedInput::Online { now, .. } | FeedInput::Tick(now) => Some(*now),
-            _ => None,
-        };
         let draining = match state.mode {
             Mode::Draining { connection, then } if !matches!(input, FeedInput::Observed { .. } | FeedInput::Committed(_) | FeedInput::Rejected(_)) => {
                 state.draining(connection, then, input, &mut fx);
@@ -504,8 +500,8 @@ impl StateOwner for Feed {
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
-            FeedInput::Keepalive { connection_id, counter, now } => state.keepalive(connection_id, counter, now, &mut fx),
-            FeedInput::PongDeadline { connection_id, counter, now } => state.pong_deadline(connection_id, counter, now, &mut fx),
+            FeedInput::Keepalive { connection_id, counter } => state.keepalive(connection_id, counter, now, &mut fx),
+            FeedInput::PongDeadline { connection_id, counter } => state.pong_deadline(connection_id, counter, now, &mut fx),
             FeedInput::Drain { .. } => {}
             FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
             FeedInput::Committed(committed) => {
@@ -514,7 +510,7 @@ impl StateOwner for Feed {
                 if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All, cause: StaleCause::Change })); }
             }
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
-            FeedInput::Tick(_) => {
+            FeedInput::Tick => {
                 if state.mode == Mode::Live {
                     state.flush_pending(&mut fx);
                 }
@@ -529,17 +525,6 @@ impl StateOwner for Feed {
     }
 
     fn epoch_started(epoch: Epoch) -> Option<FeedInput> { Some(FeedInput::ActivateEpoch(epoch)) }
-
-    fn due(input: FeedInput, now: Time) -> (Option<FeedInput>, FeedInput) {
-        let input = match input {
-            FeedInput::Tick(_) => FeedInput::Tick(now),
-            FeedInput::Keepalive { connection_id, counter, .. } => FeedInput::Keepalive { connection_id, counter, now },
-            FeedInput::PongDeadline { connection_id, counter, .. } => FeedInput::PongDeadline { connection_id, counter, now },
-            FeedInput::ChannelResubscribe { connection_id, channel, .. } => FeedInput::ChannelResubscribe { connection_id, channel, now },
-            input => input,
-        };
-        (None, input)
-    }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> FeedInput { FeedInput::EpochEnded(EpochEnded { epoch, cause }) }
 
