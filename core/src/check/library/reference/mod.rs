@@ -44,6 +44,14 @@ struct Call {
     queued: bool,
 }
 
+/// The session call of `login`: its call number, whether its request is out, the refusals so far and the pause before the next send.
+struct Login {
+    call: u64,
+    sent: bool,
+    attempts: u32,
+    pause: Option<u64>,
+}
+
 /// Who a held request belongs to.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Owner {
@@ -70,8 +78,7 @@ pub struct LibraryRef {
     live: bool,
     online: Option<bool>,
     identity: bool,
-    /// The session call of `login`: its call number and whether its request was sent.
-    login_call: Option<(u64, bool)>,
+    login_call: Option<Login>,
     now: i64,
     back: i64,
     next_request: u64,

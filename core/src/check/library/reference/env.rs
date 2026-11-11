@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use super::landing::Reply;
 use super::shapes;
 use super::window::{Key, Phase, Run};
-use super::{Ending, Held, LibraryRef, Owner, Sent};
+use super::{Ending, Held, LibraryRef, Login, Owner, Sent};
 use crate::check::value::Observation;
 
 fn not_open() -> Vec<Observation> {
@@ -30,8 +30,9 @@ impl LibraryRef {
         self.next_request += 1;
         self.held.insert(0, Held { id: id.clone(), live: true, owner: Owner::Session });
         self.requests.push(Sent { id, operation: shapes::SESSION_OPERATION, variables: Value::Null });
-        if let Some((_, sent)) = &mut self.login_call {
-            *sent = true;
+        if let Some(login) = &mut self.login_call {
+            login.sent = true;
+            login.pause = None;
         }
     }
 
@@ -50,7 +51,7 @@ impl LibraryRef {
         } else {
             let call = self.next_call;
             self.next_call += 1;
-            self.login_call = Some((call, false));
+            self.login_call = Some(Login { call, sent: false, attempts: 0, pause: None });
             if self.on() {
                 self.send_session();
                 shown.extend(self.announce());
@@ -61,14 +62,26 @@ impl LibraryRef {
     }
 
     /// The session request is answered with the page body of the stand: the identity is there.
+    /// Coordinator answer H14c: a temporary refusal repeats the same request by the session policy and the call waits, a permanent refusal ends the call with the error and leaves no identity.
     pub(super) fn session_answer(&mut self, reply: Reply) {
-        let Reply::Page { .. } = reply else {
-            self.mark("H14_session_request_refused");
-            return;
-        };
-        self.identity = true;
-        if let Some((call, _)) = self.login_call.take() {
-            self.outcomes.push((call, shapes::session()));
+        let Some(login) = &mut self.login_call else { return };
+        match reply {
+            Reply::Page { .. } => {
+                let call = login.call;
+                self.login_call = None;
+                self.identity = true;
+                self.outcomes.push((call, shapes::session()));
+            }
+            Reply::Error(kind) if kind == "temporary" || kind == "server" => {
+                login.attempts += 1;
+                login.sent = true;
+                login.pause = Some(0);
+            }
+            Reply::Error(_) => {
+                let call = login.call;
+                self.login_call = None;
+                self.outcomes.push((call, shapes::error("graphql")));
+            }
         }
     }
 
@@ -78,8 +91,8 @@ impl LibraryRef {
         for id in ids {
             self.finish(id, Ending::Failed(kind));
         }
-        if self.login_call.take().is_some() {
-            self.mark("H14_session_call_ended_by_close_or_reset");
+        if let Some(login) = self.login_call.take() {
+            self.outcomes.push((login.call, shapes::error(kind)));
         }
         self.held.iter_mut().for_each(|held| held.live = false);
     }
@@ -127,6 +140,11 @@ impl LibraryRef {
         let was_on = self.on();
         self.online = Some(online);
         if was_on && !online {
+            if let Some(login) = &mut self.login_call {
+                login.sent = false;
+                login.pause = None;
+            }
+            self.held.iter_mut().filter(|held| held.owner == Owner::Session).for_each(|held| held.live = false);
             for key in self.running() {
                 let Some(run) = self.run_of(key).take() else { continue };
                 self.kill(&run);
@@ -134,7 +152,7 @@ impl LibraryRef {
             }
         }
         if !was_on && online {
-            if matches!(self.login_call, Some((_, false))) {
+            if matches!(self.login_call, Some(Login { sent: false, .. })) {
                 self.send_session();
             }
             for key in self.running() {
@@ -149,6 +167,14 @@ impl LibraryRef {
     /// The clock moves. A retry pause that reached its ceiling sends the request again.
     pub(super) fn tick(&mut self, ms: u64) -> Vec<Observation> {
         self.now += ms as i64;
+        if let Some(login) = &mut self.login_call {
+            if let Some(elapsed) = &mut login.pause {
+                *elapsed += ms;
+                if *elapsed >= shapes::pause_ceiling_ms(login.attempts) {
+                    self.send_session();
+                }
+            }
+        }
         for key in self.running() {
             let Some(run) = self.run_of(key) else { continue };
             let ceiling = shapes::pause_ceiling_ms(run.attempts);
