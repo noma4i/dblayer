@@ -169,7 +169,7 @@ async fn write_dependents_of_an_ended_create_end_refused() {
                 let edit = bound(rig.database.act(epoch, "Message".into(), temp, "edit".into(), json!({"text":"edited"}).to_string(), "{}".into())).await.unwrap();
                 refused.release();
                 let ended = bound(rig.database.confirmed(edit, false)).await;
-                settled(&rig.database, "the refused row is gone", || rows.emptied()).await;
+                rig.settle().await;
                 let outcome = (ended, sent_strings(&rig, "MessageEdit").len(), rows.emptied());
                 rig.database.close_now();
                 outcome
@@ -185,7 +185,7 @@ async fn write_dependents_of_an_ended_create_end_refused() {
                 let rows = watched(&rig.database, "Record", &child.optimistic_value.clone().unwrap().id);
                 refused.release();
                 let ended = bound(rig.database.confirmed(child, false)).await;
-                settled(&rig.database, "the row of the child is gone", || rows.emptied()).await;
+                rig.settle().await;
                 let outcome = (ended, sent_strings(&rig, "CreateRecord").len(), rows.emptied());
                 rig.database.close_now();
                 outcome
@@ -201,7 +201,7 @@ async fn write_dependents_of_an_ended_create_end_refused() {
                 bound(rig.database.discard(epoch, "Message".into(), temp, None)).await.unwrap();
                 rig.database.set_online(true).unwrap();
                 let ended = bound(rig.database.confirmed(edit, false)).await;
-                settled(&rig.database, "the discarded row is gone", || rows.emptied()).await;
+                rig.settle().await;
                 let outcome = (ended, sent_strings(&rig, "MessageEdit").len(), rows.emptied());
                 rig.database.close_now();
                 outcome
@@ -234,9 +234,12 @@ async fn write_upload_on_a_refused_temp_row_ends_refused() {
     let upload = bound(rig.database.upload(epoch, "Message".into(), temp, "upload".into(), request(&source))).await.unwrap();
     refused.release();
     let ended = bound(rig.database.confirmed(upload, false)).await;
-    settled(&rig.database, "the refused row is gone", || rows.emptied()).await;
+    rig.settle().await;
     let mut failed = Vec::new();
     failed.extend(refusal_failure(&ended, "upload on a refused create"));
+    if !rows.emptied() {
+        failed.push("upload on a refused create: the row with the temporary id is still visible".into());
+    }
     let final_mutations = rig.world.log().iter().filter(|entry| entry.operation == "SendMessageFile").count();
     if final_mutations != 0 {
         failed.push(format!("the final mutation of the upload went to the server {final_mutations} times"));
