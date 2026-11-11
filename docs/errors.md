@@ -8,14 +8,14 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Closed` | A call on a database that was opened and closed. Every call answers `Closed` before it reads its arguments. A second `close` succeeds. |
 | `NoSession` | Server work without a session or transport, such as a send, a load or a create of a server model on a database opened without a session. |
 | `Session` | A sealed answer of the encrypted session carried a session code (`code`, `detail`). See [ending a session](server-sync.md#ending-a-session). |
-| `Unauthorized` | The server refused the request with HTTP 401 or 403. The session stays. |
+| `Unauthorized` | The server refused the credential with HTTP 401 or the session code `Unauthenticated`. The session stays. |
 | `Security` | The server key or the response did not pass the check (`code`: `ServerKeyMismatch`, `ResponseAuthentication`, `TlsTrust`). |
 | `Config` | The open or the server config was refused (`code`: `InvalidFormat`, `UnsupportedVersion`, `InvalidRequest`). `open` also fails with `Config` on Android below API 34 when the manifest lacks `FOREGROUND_SERVICE_DATA_SYNC`. |
 | `Invalid` | An argument or a declaration is wrong: a `limit` of 0, a load call without a relation, a second reader of a stream, an unreadable upload file, `encrypted` without credentials. |
 | `NotFound` | The row, the operation or the model does not exist. `upload` on a missing row ends with `NotFound`. |
 | `AlreadyExists` | A `create` with an id that exists (`model`, `id`). |
 | `Offline` | The network is away and the call fails at once instead of waiting. |
-| `Network`, `Http` | The request failed on the network, or the server answered with a status (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
+| `Network`, `Http` | The request failed on the network, or the server answered with a status, for example 403 (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
 | `RequestTooLarge` | The request exceeds the local limit (`size`, `limit`). |
 | `ResponseTooLarge` | The answer exceeds the limit (`limit`): 16 MiB for a GraphQL answer, 64 KiB for the answer of a file upload. The platform stops reading at the limit. A read or an upload fails without a retry. A sent mutation counts as an unknown outcome and repeats with the same request id. When the retries end, the operation fails with `kind` `response_too_large` and `responseLimit`. |
 | `Graphql` | The server answered with GraphQL errors (`messages`, `extensions`). |
