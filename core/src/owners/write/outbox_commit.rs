@@ -32,6 +32,15 @@ impl OutboxState {
         }
     }
 
+    /// The operation of a row the server removed ends `Discarded`: its removal landed, or the Store refused it as invalid data (P-OUT-60).
+    fn discard_removed(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
+        self.removed.remove(&op_id);
+        self.removing.remove(&op_id);
+        if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
+        self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Discarded)), fx);
+        self.finish(now, op_id, OutboxOutcome::Discarded, true, fx);
+    }
+
     pub(super) fn operation_committed(&mut self, now: u64, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
@@ -45,12 +54,8 @@ impl OutboxState {
             self.cancelled_commits.insert(op_id, revision);
             return;
         }
-        if kind == CommitKind::RemoveRow && self.removed.remove(&op_id) {
-            self.removing.remove(&op_id);
-            if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
-            self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Discarded)), fx);
-            self.finish(now, op_id, OutboxOutcome::Discarded, true, fx);
-            return;
+        if kind == CommitKind::RemoveRow && self.removed.contains(&op_id) {
+            return self.discard_removed(now, op_id, fx);
         }
         if self.removed.contains(&op_id) {
             self.remove_row_operation(op_id, fx);
@@ -266,6 +271,7 @@ impl OutboxState {
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.retry_timer(op_id, fx),
+                RejectReason::Invalid if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
                 RejectReason::Invalid | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
             }
             return;
