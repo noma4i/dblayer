@@ -34,6 +34,7 @@ mod session_replay_tests;
 mod id_reuse_tests;
 mod rig_events;
 mod stale_event_tests;
+mod data_event_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;

@@ -39,11 +39,13 @@ pub(super) fn events(edit: impl FnOnce(&mut Value)) -> impl FnOnce(&mut Value) {
 }
 
 impl Rig {
-    pub(super) async fn land(&self, model: &str, row: Value) { self.frame(model, row).await }
+    pub(super) async fn land(&self, model: &str, row: Value) { self.frame(model, row).await; }
 
-    pub(super) async fn land_removed(&self, model: &str, id: &str) { self.frame(model, json!({"id": id, "deleted": true})).await }
+    pub(super) async fn land_seen(&self, model: &str, row: Value) -> ReadValue { self.frame(model, row).await }
 
-    async fn frame(&self, model: &str, row: Value) {
+    pub(super) async fn land_removed(&self, model: &str, id: &str) { self.frame(model, json!({"id": id, "deleted": true})).await; }
+
+    async fn frame(&self, model: &str, row: Value) -> ReadValue {
         let events = &self.switch.events;
         let epoch = self.database.session_epoch();
         let (stream, reader) = {
@@ -62,7 +64,8 @@ impl Rig {
         let token = bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
         assert!(events.peer.event(&token, json!({"data": {"rigEvents": {model: row}}})), "the subscription is open");
         let seen = bound(stream.pull(reader)).await;
-        assert!(matches!(seen, Some(ReadValue::Event { .. })), "{model} event landed: {seen:?}");
+        let Some(seen @ ReadValue::Event { .. }) = seen else { panic!("{model} event landed: {seen:?}") };
         self.settle().await;
+        seen
     }
 }
