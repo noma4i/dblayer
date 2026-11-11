@@ -299,11 +299,13 @@ impl OutboxState {
                     fx.push(Effect::Send(Outbound::new(peer, super::transfer::TransferInput::DiscardOutcome { key, result })));
                 }
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                self.return_dependents(op_id);
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
             }
             RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.confirmed_discards.contains_key(&op_id) => {
                 let error = self.confirmed_discards[&op_id].1.clone();
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                self.return_dependents(op_id);
                 let fault = Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")));
                 self.answer_discarded_outcome(op_id, OutboxAnswer::Err(fault.clone()), fx);
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
@@ -318,6 +320,7 @@ impl OutboxState {
                         self.finish(id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                     }
                 }
+                self.end_dependents(op_id, &reason, fx);
                 let transfer_ids = self.take_retry_uploads(op_id);
                 if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
@@ -351,6 +354,7 @@ impl OutboxState {
                         }
                         if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = None; operation.before_cancel = None; }
                     }
+                    self.return_dependents(op_id);
                     for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
                         Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal));
                     }

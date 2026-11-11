@@ -234,6 +234,26 @@ impl OutboxState {
         found.into_iter().map(|operation| operation.op_id).collect()
     }
 
+    /// The rollback of `create` did not happen and `create` is back in `Failed`: its dependents wait again and the recorded list is cleared.
+    pub(super) fn return_dependents(&mut self, create: OpId) {
+        let Some(dependents) = self.ops.get_mut(&create).map(|operation| std::mem::take(&mut operation.ended_dependents)) else { return };
+        for id in dependents {
+            if let Some(other) = self.ops.get_mut(&id).filter(|other| other.stage == Stage::RollingBack(Why::Rejected)) {
+                other.stage = Stage::Queued;
+                other.reject_error = None;
+            }
+        }
+    }
+
+    /// The epoch ended the rollback of `create`: its dependents end with it.
+    pub(super) fn end_dependents(&mut self, create: OpId, reason: &RejectReason, fx: &mut Effects<Outbox>) {
+        let dependents = self.ops.get_mut(&create).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
+        for id in dependents {
+            self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+            self.finish(id, OutboxOutcome::Ended(end_cause(reason)), false, fx);
+        }
+    }
+
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
     pub fn slots_taken(&self) -> usize {
         self.ops.values().filter(|operation| operation.stage == Stage::PersistingAttempt || (operation.stage == Stage::Sending && !operation.waiting_retry)).count()
@@ -397,7 +417,8 @@ impl OutboxState {
             earlier.append(&mut ops);
             ops = earlier;
         }
-        let dependents = if kind == CommitKind::Rollback { self.dependents_of(op_id) } else { Vec::new() };
+        let recorded = if kind == CommitKind::Rollback { self.ops.get(&op_id).map(|create| create.ended_dependents.clone()).unwrap_or_default() } else { Vec::new() };
+        let dependents = if kind != CommitKind::Rollback { Vec::new() } else if recorded.is_empty() { self.dependents_of(op_id) } else { recorded };
         if !dependents.is_empty() {
             let outcome = OutboxOutcome::Rejected { error: super::failure::row_never_created() };
             let mut earlier = Vec::new();
