@@ -239,3 +239,17 @@ async fn library_matches_reference_streams_part_8() {
 async fn library_matches_reference_streams_without_session() {
     assert_matches(stream_family(true, &DIVERGENT, depth().min(1))).await;
 }
+
+/// Requirement: library.md section 4 "open `List`" for the window `container_members` (coordinator answer H20: `ContainerMembers` with `containerId` and `first: 30`).
+/// Observable: the requests after the open of the stream `u1`. Assert: no program diverges. Red: the core sends no request for the open of `u1` (see the report).
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_streams_members() {
+    assert_matches(stream_family(false, &[], 1)).await;
+}
+
+/// Requirement: library.md section 4 row `Entity(never)` (any state, 0 requests, the row, Loaded): opened without identity it shows the row, not `Ended`.
+/// Observable: the first `pull` of `e1`. Assert: no program diverges. Red: the core ends the stream with `session_ended`.
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_streams_entity_never_without_session() {
+    assert_matches(stream_family(true, &[], 1)).await;
+}
