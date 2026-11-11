@@ -32,7 +32,7 @@ impl Owner for LibraryOwner {
     }
 
     async fn real(&self) -> Box<dyn Sut> {
-        Box::new(DatabaseSut::symbolic_hiding(if self.reference { vec!["subscription"] } else { Vec::new() }))
+        Box::new(if self.reference { DatabaseSut::symbolic() } else { DatabaseSut::symbolic_hiding(Vec::new()) })
     }
 
     fn properties(&self) -> Vec<Property> {
