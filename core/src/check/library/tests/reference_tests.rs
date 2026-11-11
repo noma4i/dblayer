@@ -43,9 +43,6 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
-/// The streams whose open the core answers differently from library.md section 4 (see the report): `u1` sends no request. Its test is the last one and stays red.
-const DIVERGENT: [&str; 1] = ["u1"];
-
 /// The letters of the family with streams: the environment, the streams, the loads of the feed, the answers, without the streams named in `left_out`.
 fn stream_letters(left_out: &[&str]) -> Vec<Input> {
     let skipped = ["node", "nodes", "clock_back"];
@@ -192,7 +189,7 @@ async fn library_matches_reference_loads_without_session() {
 /// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program diverges and none meets a spec hole.
 /// The family runs as 8 tests (program `index % 6`) and the family without a session as 1.
 async fn streams_part(part: usize) {
-    assert_matches(part_of(stream_family(false, &DIVERGENT, depth()), part, 8)).await;
+    assert_matches(part_of(stream_family(false, &[], depth()), part, 8)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -237,12 +234,5 @@ async fn library_matches_reference_streams_part_8() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_without_session() {
-    assert_matches(stream_family(true, &DIVERGENT, depth().min(1))).await;
-}
-
-/// Requirement: library.md section 4 "open `List`" for the window `container_members` (coordinator answer H20: `ContainerMembers` with `containerId` and `first: 30`).
-/// Observable: the requests after the open of the stream `u1`. Assert: no program diverges. Red: the core sends no request for the open of `u1` (see the report).
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_members() {
-    assert_matches(stream_family(false, &[], 1)).await;
+    assert_matches(stream_family(true, &[], depth().min(1))).await;
 }
