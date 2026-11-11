@@ -87,6 +87,8 @@ pub(super) enum Input {
     Refused { model: String },
     /// `Committed` of a batch whose children left parents without a row: the windows of these models turn `Stale`.
     CommittedStale(Vec<String>),
+    /// `Committed` of a batch whose events at these places the Store refused alone (P-DATA-99).
+    CommittedRefused(Vec<usize>),
     Rejected(Reject),
     /// `Committed` or `Rejected` of a batch that is not in `landing`.
     StrayBatch,
@@ -390,7 +392,8 @@ impl Feed {
         self.commit(now, effects);
     }
 
-    fn verdict(&mut self, nth: usize, rejected: Option<Reject>) -> Vec<Effect> {
+    /// P-FEED-37: an event at a place of `refused` is lost at its own position and stales its own model, the rest of the batch lands.
+    fn verdict(&mut self, nth: usize, rejected: Option<Reject>, refused: &[usize]) -> Vec<Effect> {
         let Some(batch) = self.landing.remove(nth) else { return Vec::new() };
         if let Some(Some(models)) = self.stale_landing.remove(nth) {
             let mut effects = Vec::new();
@@ -408,6 +411,13 @@ impl Feed {
         let mut effects = Vec::new();
         match rejected {
             None => {
+                let (lost, landed): (Vec<(usize, Ev)>, Vec<(usize, Ev)>) = batch.into_iter().enumerate().partition(|(place, _)| refused.contains(place));
+                let lost: Vec<Ev> = lost.into_iter().map(|(_, event)| event).collect();
+                let batch: Vec<Ev> = landed.into_iter().map(|(_, event)| event).collect();
+                if !lost.is_empty() {
+                    let lost_models = self.mark(&lost, |_| Slot::Lost);
+                    Self::stale(&lost_models, &mut effects);
+                }
                 let mut models: Vec<String> = Vec::new();
                 for event in &batch {
                     self.ledger.entry(event.model.clone()).or_default()[event.position as usize - 1] = Slot::Landed(event.payload.clone());
@@ -578,7 +588,7 @@ impl Feed {
     }
 
     fn step_inner(&mut self, input: Input) -> Vec<Effect> {
-        let verdict = matches!(input, Input::Committed | Input::CommittedStale(_) | Input::Rejected(_));
+        let verdict = matches!(input, Input::Committed | Input::CommittedStale(_) | Input::CommittedRefused(_) | Input::Rejected(_));
         if self.mode == Mode::Draining && !verdict {
             return self.draining(input);
         }
@@ -686,9 +696,10 @@ impl Feed {
                     effects.extend(self.dropped(to));
                 }
             }
-            Input::Committed => return self.verdict(0, None),
-            Input::CommittedAt(nth) => return self.verdict(nth, None),
-            Input::RejectedAt(nth, reason) => return self.verdict(nth, Some(reason)),
+            Input::Committed => return self.verdict(0, None, &[]),
+            Input::CommittedRefused(places) => return self.verdict(0, None, &places),
+            Input::CommittedAt(nth) => return self.verdict(nth, None, &[]),
+            Input::RejectedAt(nth, reason) => return self.verdict(nth, Some(reason), &[]),
             Input::Refused { model } => {
                 if self.mode == Mode::Live && self.want.contains_key(&model) {
                     self.refused += 1;
@@ -697,11 +708,11 @@ impl Feed {
             }
             Input::CommittedStale(parents) => {
                 let landed = !self.landing.is_empty();
-                let mut effects = self.verdict(0, None);
+                let mut effects = self.verdict(0, None, &[]);
                 if landed { effects.extend(parents.into_iter().map(|model| Effect::Stale { model, all: true })); }
                 return effects;
             }
-            Input::Rejected(reason) => return self.verdict(0, Some(reason)),
+            Input::Rejected(reason) => return self.verdict(0, Some(reason), &[]),
             Input::StrayBatch | Input::StrayRepeat => {}
             Input::Tick => {
                 if self.mode == Mode::Live && !self.pending.is_empty() {

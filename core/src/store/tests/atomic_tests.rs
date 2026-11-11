@@ -36,6 +36,38 @@ fn store_prop_expiry_any_author() {
     assert!(database.read(&["presence"], |reader| reader.point("presence", "p1")).unwrap().is_none());
 }
 
+/// P-DATA-99: a data error of one event undoes that event alone, the events around it are written and observed with their rows.
+#[test]
+fn store_bad_event_rolls_back_alone() {
+    use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, RelationSpec, RemoteShape, VariableSource};
+    use crate::value::ScalarKind;
+    let mut list = RelationSpec::new("list", &[]);
+    list.text_params.push("list".into());
+    list.membership.insert("list".into(), Membership::Contains("lists".into()));
+    list.joins_events = true;
+    let mut remote = crate::schema_fixtures::remote("DocList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
+    list.remote = Some(remote);
+    let mut spec = ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional(), FieldSpec::list("lists", ScalarKind::Str).nullable().optional()]);
+    spec.relations.push(list);
+    let bad_events = [
+        ("an event without a row", serde_json::json!({"op":"upsert", "id":"x"})),
+        ("a row without its membership field", serde_json::json!({"op":"upsert", "id":"x", "row":{"id":"x", "text":"x"}})),
+    ];
+    for (case, bad) in bad_events {
+        let database = Store::open_models(None, vec![spec.clone()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+        let good = |id: &str| ("docs".to_string(), serde_json::json!({"op":"upsert", "id":id, "row":{"id":id, "text":id, "lists":["a"]}, "observe":true}).to_string());
+        let rows = vec![good("a"), ("docs".to_string(), bad.to_string()), good("b")];
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops: Vec::new() };
+        let written = database.write_batch(&batch, database.files(), database.pointer_guards(), None).unwrap();
+        assert_eq!(written.refused, vec![1], "{case}: the bad event is refused alone");
+        let after = |at: usize| serde_json::from_str::<serde_json::Value>(&written.observed[at]).unwrap()["after"]["text"].clone();
+        assert_eq!((after(0), after(2)), (serde_json::json!("a"), serde_json::json!("b")), "{case}: the events around it are observed with their rows");
+        let stored = database.read(&["docs"], |reader| Ok([reader.point("docs", "a")?.is_some(), reader.point("docs", "x")?.is_some(), reader.point("docs", "b")?.is_some()])).unwrap();
+        assert_eq!(stored, [true, false, true], "{case}: only the rows of the good events are written");
+    }
+}
+
 #[test]
 fn store_prop_overlay_snapshot() {
     let directory = tempfile::tempdir().unwrap();

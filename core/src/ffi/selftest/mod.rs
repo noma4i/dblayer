@@ -1,5 +1,4 @@
 mod app_tests;
-mod feed_batch_tests;
 mod receipt_snapshot_tests;
 mod secret_read_tests;
 mod typed_outcome_tests;

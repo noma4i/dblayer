@@ -228,6 +228,11 @@ impl Twin {
                 let batch = self.batch();
                 vec![FeedInput::Rejected(Rejected { batch, reason: Self::reject_reason(reason) })]
             }
+            Input::CommittedRefused(places) => {
+                let batch = self.batch();
+                let refused = places.iter().map(|place| (*place, RejectReason::Invalid)).collect();
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused })]
+            }
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })],
             Input::Tick => vec![FeedInput::Tick],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],

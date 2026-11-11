@@ -366,6 +366,18 @@ fn feed_live_rejected_invalid() {
     assert_eq!(twin.state().mode(), f::Mode::Live);
 }
 
+/// P-FEED-37: an event the Store refused alone is lost at its own position, the events around it reach the stream.
+#[test]
+fn feed_refused_event_is_lost_alone() {
+    let mut twin = live();
+    for payload in ["c1", "c2", "c3"] {
+        twin.step(chat(payload));
+    }
+    twin.step(Input::Tick);
+    assert_eq!(twin.step(Input::CommittedRefused(vec![1])), [Effect::Stale { model: "Chat".into(), all: true }]);
+    assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
+}
+
 #[test]
 fn feed_live_rejected_closed() {
     let mut twin = live_immediate();
