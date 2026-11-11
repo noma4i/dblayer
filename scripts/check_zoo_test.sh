@@ -253,4 +253,26 @@ impl TransferState { fn step(&mut self, now: Time) { self.last_turn = self.last_
 at_green core/src/store/intent_write.rs 'fn intent(writer: &RowWrite, (append, created_at): (bool, u64)) { let at = created_at; }'
 at_red core/src/store/intent_write.rs 'fn intent(writer: &RowWrite) { let created_at = writer.now; }'
 at_red core/src/store/intent_write.rs 'fn intent(connection: &Connection, now_ms: i64) { record(now_ms); }'
+at_green core/src/store/batch_plan.rs 'pub struct BatchPlan {
+    pub tx_id: Uuid,
+    pub source: crate::schema::RowSource,
+}'
+at_red core/src/store/batch_plan.rs 'pub struct BatchPlan {
+    pub tx_id: Uuid,
+    pub came_from_server: bool,
+}'
+at_red core/src/store/batch_plan.rs 'pub struct BatchPlan {
+    pub(crate) took_created: Option<bool>,
+}'
+at_green core/src/store/apply/apply_rows.rs 'pub(super) fn declared_membership(connection: &Connection, envelope: &BatchPlan) -> Result<(), StoreError> {
+    let joins = relation.admits(envelope.source) && envelope.source != RowSource::Create;
+    Ok(())
+}'
+at_red core/src/store/apply/apply_rows.rs 'pub(super) fn declared_membership(connection: &Connection, envelope: &BatchPlan) -> Result<(), StoreError> {
+    let joins = relation.admits(envelope.source) || envelope.took_created;
+    Ok(())
+}'
+at_red core/src/store/apply/apply_rows.rs 'pub(super) fn membership_moves(info: &ModelInfo, plan: &crate::store::BatchPlan, moves: &mut Vec<ScopeOp>) {
+    if plan.from_page { return; }
+}'
 echo "check_zoo_test: ok"

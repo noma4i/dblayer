@@ -697,6 +697,31 @@ for path in sorted(source.rglob("*.rs")):
         if re.search(r"\bjoins_of\b|feed_write/joins\.sql", line):
             findings.append(f"Z56 no second calculation of the entry of an event row outside the Store (P-DATA-100): {path.relative_to(root)}:{number}")
 
+
+batch_plan = source / "store" / "batch_plan.rs"
+if batch_plan.exists():
+    text = batch_plan.read_text()
+    start = text.find("pub struct BatchPlan {")
+    if start >= 0:
+        body = text[start:text.find("\n}", start)]
+        for found in re.finditer(r"^[ \t]*(?:pub(?:\([a-z]+\))?\s+)?(\w+)\s*:\s*(?:Option<\s*)?bool\b", body, re.M):
+            number = text.count("\n", 0, start + found.start()) + 1
+            findings.append(f"Z56 the batch plan carries no flag of the source of its rows: the source is the one RowSource value (P-DATA-100): {batch_plan.relative_to(root)}:{number}")
+for path in sorted((source / "store").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    text = path.read_text()
+    for header in re.finditer(r"fn (declared_membership|membership_moves)\b[^{]*\{", text):
+        names = re.findall(r"(\w+)\s*:\s*&\s*(?:'\w+\s+)?(?:\w+::)*BatchPlan\b", header.group(0))
+        depth, end = 1, header.end()
+        while depth and end < len(text):
+            depth += {"{": 1, "}": -1}.get(text[end], 0)
+            end += 1
+        for name in names:
+            for found in re.finditer(rf"\b{name}\.(\w+)", text[header.end():end]):
+                if found.group(1) == "source": continue
+                number = text.count("\n", 0, header.end() + found.start()) + 1
+                findings.append(f"Z56 the entry of a row in a window reads only the source of the batch, RelationSpec::admits decides it (P-DATA-100): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")
