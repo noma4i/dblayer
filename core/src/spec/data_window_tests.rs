@@ -518,7 +518,7 @@ fn data_event_join_goes_through_membership() {
     let spec = |rows: [&[&str]; 3]| rows.map(|ids| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>());
     let entered = seen(&bench);
     bench.event(json!({"id":"e1", "text":"wanted", "shelves":["A"]}));
-    bench.event(json!({"id":"s1", "text":"wanted", "shelves":["A"]}));
+    bench.event(json!({"id":"s1", "text":"t", "shelves":["A"]}));
     let again = seen(&bench);
     let want = spec([&["e1"], &["e1", "s1"], &["e2", "s2"]]);
     assert_eq!((entered, again), (want.clone(), want), "the rows that pass the window rules enter at the head; a repeated event enters once and a member keeps its place");
