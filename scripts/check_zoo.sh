@@ -610,6 +610,20 @@ if session_inputs.exists():
         number = text.count("\n", 0, start + found.start()) + 1
         findings.append(f"Z50 an input of Session carries no time: the owner reads the time of its step: {session_inputs.relative_to(root)}:{number}")
 
+for path in sorted((source / "owners").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.search(r"\b(set_phase|failed_phase)\b", line):
+            findings.append(f"Z51 the phase of a window is a function of the stage, the outcome and the rows, no code writes it: {path.relative_to(root)}:{number}")
+window_facts = source / "owners" / "read" / "windows" / "windows_facts.rs"
+if window_facts.exists():
+    text = window_facts.read_text()
+    start = text.find("pub(super) struct Facts {")
+    body = text[start:text.find("\n}\n", start)] if start >= 0 else ""
+    for found in re.finditer(r"\bphase:", body):
+        number = text.count("\n", 0, start + found.start()) + 1
+        findings.append(f"Z51 the window keeps no phase field: the value computes it: {window_facts.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

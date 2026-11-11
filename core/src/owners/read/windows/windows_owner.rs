@@ -4,6 +4,8 @@ use super::*;
 pub(super) struct Window {
     pub(super) machine: InitializedStateMachine<Facts>,
     pub(super) opening: Option<Opening>,
+    /// The value the streams got last.
+    pub(super) announced: Option<WindowState>,
 }
 
 pub(super) struct Opening {
@@ -55,9 +57,7 @@ impl Window {
             replace_all: false,
             reread_due: false,
             has_rows: false,
-            phase: Phase::Idle,
-            settled: false,
-            error: None,
+            outcome: LastLoad::None,
             landed_revision: 0,
             store_seen: 0,
             request_base: std::cell::Cell::new(0),
@@ -71,7 +71,7 @@ impl Window {
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
-        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening }
+        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening, announced: None }
     }
 
     pub(super) fn handle(&mut self, event: Ev, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
@@ -116,6 +116,11 @@ impl Window {
         if let Some(request) = previous.filter(|request| Some(*request) != self.request_id()) {
             effects.insert(0, Emit::Unpin { request });
         }
+        let value = self.load_state();
+        if self.announced.as_ref() != Some(&value) && !matches!(self.machine.state(), WinState::Ended {}) && !effects.iter().any(|effect| matches!(effect, Emit::Announce { .. })) {
+            effects.push(Emit::Announce { streams: self.machine.interest.iter().copied().filter(|id| *id != PRELOAD).collect() });
+        }
+        if effects.iter().any(|effect| matches!(effect, Emit::Announce { .. })) { self.announced = Some(value); }
         effects
     }
 
@@ -167,6 +172,8 @@ impl Window {
             WinState::Ended {} => WindowStage::Ended,
         }
     }
+
+    pub(super) fn load_state(&self) -> WindowState { self.machine.load_state(self.opening.is_none() && matches!(self.machine.state(), WinState::Loading { .. } | WinState::Landing { .. })) }
 
     pub(super) fn reading(&self, read_id: u64) -> bool { self.opening.as_ref().is_some_and(|opening| opening.read_id == read_id) }
 
@@ -306,7 +313,7 @@ impl WindowsState {
 
     pub fn waiters(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(Window::waiters).unwrap_or_default() }
 
-    pub fn load_state(&self, key: &WindowKey) -> Option<WindowState> { self.windows.get(key).map(|window| window.machine.load_state()) }
+    pub fn load_state(&self, key: &WindowKey) -> Option<WindowState> { self.windows.get(key).map(Window::load_state) }
 
     pub fn windows(&self) -> usize { self.windows.len() }
 
@@ -364,7 +371,8 @@ impl Windows {
                     out.push(Effect::Backoff { id: ScheduleId(request), policy, attempt, input: WindowsInput::RetryDue { request } });
                 }
                 Emit::CancelRetry { request } => out.push(Effect::Cancel(ScheduleId(request))),
-                Emit::Announce { state, streams } => {
+                Emit::Announce { streams } => {
+                    let state = window.load_state();
                     for stream in streams {
                         out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::WindowState { stream, state: state.clone() })));
                     }

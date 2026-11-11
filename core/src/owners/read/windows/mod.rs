@@ -28,7 +28,7 @@ pub(crate) fn landed_tail(pages: u32, page: u32, replace_all: bool, preserve: bo
     (pages.max(page), page < pages)
 }
 
-#[state_machine(initial = "WinState::idle()", state(name = "WinState"))]
+#[state_machine(initial = "WinState::idle()", state(name = "WinState"), after_dispatch = "Self::release_outcome")]
 impl Facts {
     #[state]
     fn idle(&mut self, context: &mut Ctx<'_>, event: &Ev) -> Outcome<WinState> {
@@ -42,7 +42,7 @@ impl Facts {
             Ev::InterestPlus { id } => {
                 self.add_interest(*id);
                 if self.is_fresh(context.now) {
-                    self.set_phase(Phase::Loaded);
+                    self.enter_fresh();
                     self.announce();
                     Handled
                 } else {
@@ -51,8 +51,7 @@ impl Facts {
             }
             Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
             Ev::OfflineRefused { message } => {
-                self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
-                self.set_phase(self.failed_phase());
+                self.outcome = LastLoad::Failed(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.announce();
                 Handled
             }
@@ -123,7 +122,6 @@ impl Facts {
                     return Handled;
                 }
                 self.fresh = false;
-                self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
                 self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
@@ -250,8 +248,7 @@ impl Facts {
             Ev::Online { online: true, .. } => self.leave_waiting(context, *force, *page),
             Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, *force, *page),
             Ev::OfflineRefused { message } => {
-                self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
-                self.set_phase(self.failed_phase());
+                self.outcome = LastLoad::Failed(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.announce();
                 Handled
             }

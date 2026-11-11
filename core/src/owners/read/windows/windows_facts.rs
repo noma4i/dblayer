@@ -37,10 +37,8 @@ pub(super) struct Facts {
     pub(super) replace_all: bool,
     pub(super) reread_due: bool,
     pub(super) has_rows: bool,
-    pub(super) phase: Phase,
-    /// The first load of the interest now held ended with an outcome.
-    pub(super) settled: bool,
-    pub(super) error: Option<crate::ffi::DbError>,
+    /// How the last load of the interest now held ended: the phase, `settled` and `error` of the value come from it.
+    pub(super) outcome: LastLoad,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     pub(super) landed_revision: i64,
     pub(super) store_seen: i64,
@@ -121,31 +119,47 @@ impl Facts {
     /// The generation of every model when the request leaves: the answer may name models the window did not know before.
     pub(super) fn basis(&self) -> GenerationsAtIssue { GenerationsAtIssue { base: self.base_generation, generations: self.generations.clone() } }
 
-    pub(super) fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision), has_more: self.cursor.is_some(), settled: self.settled, total: None } }
+    /// P-WIN-32: the value of the window from the stage (`loading` = a request in flight or landing), the outcome and the rows.
+    pub(super) fn load_state(&self, loading: bool) -> WindowState {
+        let phase = match &self.outcome {
+            _ if loading => Phase::Loading,
+            LastLoad::None => Phase::Idle,
+            LastLoad::Fresh | LastLoad::Landed => Phase::Loaded,
+            LastLoad::Failed(_) if self.has_rows => Phase::Loaded,
+            LastLoad::Failed(_) => Phase::Failed,
+        };
+        let settled = match &self.outcome {
+            LastLoad::None => false,
+            LastLoad::Landed => !(self.members_complete && self.cursor.is_some()),
+            LastLoad::Fresh | LastLoad::Failed(_) => true,
+        };
+        let error = match &self.outcome { LastLoad::Failed(error) => Some(error.clone()), _ => None };
+        let loaded = (self.landed_revision != 0 || matches!(self.outcome, LastLoad::Fresh | LastLoad::Landed)).then_some(self.landed_revision);
+        WindowState { phase, error, loaded, has_more: self.cursor.is_some(), settled, total: None }
+    }
 
-    pub(super) fn set_phase(&mut self, phase: Phase) {
-        self.phase = phase;
-        self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
+    /// An interest or a load meets a fresh window that has no outcome yet.
+    pub(super) fn enter_fresh(&mut self) {
+        if self.outcome == LastLoad::None { self.outcome = LastLoad::Fresh; }
+    }
+
+    /// The outcome belongs to the interest now held: the last stream or call that leaves takes it away.
+    pub(super) fn release_outcome(&mut self, _: StateOrSuperstate<'_, WinState, Superstate>, _: &Ev) {
+        if !self.watched() { self.outcome = LastLoad::None; }
     }
 
     pub(super) fn add_interest(&mut self, id: InterestId) {
-        if id != PRELOAD && self.interest.iter().all(|existing| *existing == PRELOAD) {
-            self.settled = false;
-        }
         self.interest.insert(id);
     }
 
     pub(super) fn drop_interest(&mut self, id: &InterestId) {
         self.interest.remove(id);
         self.waiters.remove(id);
-        if self.interest.is_empty() {
-            self.settled = false;
-        }
     }
 
     pub(super) fn announce(&mut self) {
         let streams = self.interest.iter().copied().filter(|id| *id != PRELOAD).collect();
-        self.emit(Emit::Announce { state: self.load_state(), streams });
+        self.emit(Emit::Announce { streams });
     }
 
     pub(super) fn answer(&mut self, id: InterestId, outcome: WindowOutcome) { self.push_fx(WindowEffect::Outcome { id, outcome }); }
@@ -156,8 +170,6 @@ impl Facts {
         }
     }
 
-    pub(super) fn failed_phase(&self) -> Phase { if self.has_rows { Phase::Loaded } else { Phase::Failed } }
-
     pub(super) fn page_cursor(&self, page: u32) -> Option<String> { if page > 1 { self.cursor.clone() } else { None } }
 
     pub(super) fn page_limit_reached(&self) -> bool { self.page_count >= self.max_pages }
@@ -167,7 +179,6 @@ impl Facts {
         self.replace_all = false;
         let next = if self.is_online() && !self.deferred() {
             let (request, attempt) = ctx.request();
-            self.phase = Phase::Loading;
             self.emit(Emit::Pin { epoch: self.epoch, request });
             WinState::loading(self.issue(request, attempt, page, force))
         } else {
@@ -182,7 +193,6 @@ impl Facts {
     /// A window that waited goes to the network: `Loading` with a new request.
     pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, force: bool, page: u32) -> Outcome<WinState> {
         let (request, attempt) = ctx.request();
-        self.phase = Phase::Loading;
         self.emit(Emit::Pin { epoch: self.epoch, request });
         self.announce();
         Transition(WinState::loading(self.issue(request, attempt, page, force)))
@@ -304,8 +314,7 @@ impl Facts {
         self.landing_marker = None;
         self.fresh = false;
         self.reread_due = false;
-        self.set_phase(self.failed_phase());
-        self.error = Some(failure.clone());
+        self.outcome = LastLoad::Failed(failure.clone());
         self.answer_all(&WindowOutcome::Failed { failure });
         self.announce();
         Transition(WinState::idle())
@@ -330,9 +339,13 @@ impl Facts {
         let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
         let next_page = self.page + 1;
         match goal {
-            Goal::First if fresh && !force => self.immediate(id, loaded),
+            Goal::First if fresh && !force => {
+                self.enter_fresh();
+                self.immediate(id, loaded)
+            }
             Goal::All if fresh && !force => {
                 if self.cursor.is_none() {
+                    self.enter_fresh();
                     self.immediate(id, loaded)
                 } else if self.page_limit_reached() {
                     self.immediate(id, WindowOutcome::PageLimit)
@@ -374,17 +387,14 @@ impl Facts {
             self.landed_at = self.answered_at;
             self.fresh_until = self.answered_at + if rows { self.lifetime.0 } else { self.lifetime.1 };
         }
-        self.error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
         let chain = self.members_complete && self.cursor.is_some();
-        let settled = self.settled;
-        self.set_phase(Phase::Loaded);
+        self.outcome = LastLoad::Landed;
         if !dependency_models.is_empty() {
             self.dependency_models = dependency_models.clone();
         }
         if chain {
-            self.settled = settled;
             if self.watched() {
                 let loaded = WindowOutcome::Loaded { revision, has_more: true, fetched: true };
                 let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);

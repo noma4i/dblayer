@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Give a window without network after a started load the phase of its last outcome, not Loading.
+- Drop the refusal of a window when its last reader leaves.
+
 ### Fixed
 
 - Skip the request of a preload window whose saved data is still fresh at open.

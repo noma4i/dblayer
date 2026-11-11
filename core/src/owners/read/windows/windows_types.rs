@@ -130,6 +130,15 @@ impl Chain {
     }
 }
 
+/// P-WIN-32: how the last load of the interest now held ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum LastLoad {
+    None,
+    Fresh,
+    Landed,
+    Failed(crate::ffi::DbError),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowOutcome {
     Loaded { revision: i64, has_more: bool, fetched: bool },
@@ -166,7 +175,7 @@ pub(super) enum Emit {
     Commit { landed_at: i64, request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
-    Announce { state: WindowState, streams: Vec<InterestId> },
+    Announce { streams: Vec<InterestId> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
