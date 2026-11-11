@@ -93,6 +93,8 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), 
 
 A created row joins a list only by `insert_on: [:create]`: a loaded remote scope without parameters that declares it takes the row at the front (`scope :owned, insert_on: [:create] do ... end`). A scope with parameters or a column filter does not take a created row: the row enters it when a page of that scope lands, or, for a column filter, when a later write of the row makes it match. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Readers receive the swap as a `rewrite` edit that carries the `temporary` id, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
+A write that names a row whose `create` is not answered yet waits for that answer and goes out with the real id, at any depth of its values. If the `create` ends without a server row (the server refuses it, it is discarded or it expires), the waiting write ends rejected and sends no request. A query, a mutation or a session call whose values hold a temporary id is refused with `Invalid`. A `create` operation cannot map a variable to the row `id`: the generator reports it.
+
 Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `confirmed()` waits for that operation alone.
 
 If the storage format changes, the library clears the server cache and keeps queued intentions.
