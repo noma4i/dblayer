@@ -345,7 +345,7 @@ Each request has one retry owner. Core `RetryPolicy` defines the common delay ca
 | Request                                                              | Retry owner                   | Budget                                                                         |
 | -------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
 | Encrypted read, bootstrap, standalone mutation, session call, logout | Encrypted HTTP                | Unlimited until success, terminal refusal or cancellation                      |
-| Plain load                                                           | Query executor                | 3 retries for network failures, 2 for temporary server failures                |
+| Plain load                                                           | Query executor                | 3 sends for network failures, 2 for temporary server failures, the first included |
 | Queued mutation, including encrypted and final upload mutations      | Durable outbox                | 40 undelivered attempts, then Failed with the edit and Pending owner preserved |
 | Upload transfer step or multipart part                               | Durable upload step           | 50 retries per step or part                                                    |
 | Logical subscription and shared socket reconnect                     | Each connection independently | Unlimited while needed                                                         |
