@@ -4,9 +4,14 @@ use super::*;
 impl Sut for DatabaseSut {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
         match input.name.as_str() {
-            "open" => return self.open(input.text("models").unwrap_or(""), input.flag("encrypted").unwrap_or(false)).await,
+            "open" => return self.open(input.text("models").unwrap_or(""), input.flag("encrypted").unwrap_or(false), input.text("path").map(str::to_string)).await,
+            "clock_back" => {
+                self.back += input.number("ms").unwrap_or(0);
+                return Vec::new();
+            }
             "tick" => {
                 self.clock.advance(input.number("ms").unwrap_or(0));
+                self.clock_now += input.number("ms").unwrap_or(0);
                 return self.settle().await;
             }
             "answer" | "error" | "drop" | "ready" | "frame" => {

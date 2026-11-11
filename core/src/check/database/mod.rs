@@ -159,6 +159,9 @@ pub struct DatabaseSut {
     database: Option<Arc<Database>>,
     mock: Arc<Mock>,
     clock: Arc<TestClock>,
+    /// The clock reading in ms and the ms the next `open` sets it back by (`clock_back`).
+    clock_now: u64,
+    back: u64,
     heard: Arc<Heard>,
     rows: HashMap<String, String>,
     receipts: HashMap<String, WireOperationReceipt>,
@@ -173,6 +176,8 @@ impl Default for DatabaseSut {
             database: None,
             mock: Mock::new(),
             clock: TestClock::new(1_800_000_000_000),
+            clock_now: 1_800_000_000_000,
+            back: 0,
             heard: Arc::default(),
             rows: HashMap::new(),
             receipts: HashMap::new(),
@@ -265,6 +270,15 @@ impl DatabaseSut {
         }
     }
 
+    /// A call whose observations carry its name (`call`) when the input asked for it with `named`.
+    fn launch_named(&mut self, call: Option<String>, work: impl std::future::Future<Output = Done> + Send + 'static) {
+        self.launch(async move {
+            let mut done = work.await;
+            done.observed = tagged(done.observed, &call);
+            done
+        });
+    }
+
     fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
         self.calls.push(Call { work: Some(Box::pin(work)), woken: Arc::new(std::sync::atomic::AtomicBool::new(true)), holds: Arc::default(), done: None });
     }
@@ -292,8 +306,13 @@ impl DatabaseSut {
         observed
     }
 
-    async fn open(&mut self, models: &str, encrypted: bool) -> Vec<Observation> {
-        let config = Config { path: None, data_version: None };
+    async fn open(&mut self, models: &str, encrypted: bool, path: Option<String>) -> Vec<Observation> {
+        if self.back > 0 {
+            self.clock_now = self.clock_now.saturating_sub(self.back);
+            self.clock = TestClock::new(self.clock_now);
+            self.back = 0;
+        }
+        let config = Config { path, data_version: None };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
         let (encrypted, credentials, http): EncryptedParts = if encrypted {
             (Some(crate::transport::encrypted::tests::protocol_tests::config()), Some(Arc::new(Credentials::default())), Some(self.mock.clone()))
@@ -325,6 +344,7 @@ impl DatabaseSut {
         let text = |key: &str| input.text(key).map(str::to_string);
         let params = input.args.get("params").map_or_else(|| "{}".to_string(), Value::to_string);
         let model = text_or(input, "model", "Moment");
+        let call = if input.flag("named").unwrap_or(false) { text("as") } else { None };
         match input.name.as_str() {
             "create" => {
                 let (Some(name), Some(text)) = (text("as"), text("text")) else { return Some(error("arguments")) };
@@ -401,18 +421,18 @@ impl DatabaseSut {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
-                        self.launch(async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded", json!({ "load": name }))) });
+                        self.launch_named(call.clone(), async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded", json!({ "load": name }))) });
                     }
-                    Err(error) => return Some(self::error(error_kind(&error))),
+                    Err(error) => return Some(tagged(self::error(error_kind(&error)), &call)),
                 }
             }
             "refresh" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
-                self.launch(async move { database.refresh(epoch, model, Some(relation.clone()), params).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
+                self.launch_named(call.clone(), async move { database.refresh(epoch, model, Some(relation.clone()), params).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
             }
             "load_more" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
-                self.launch(async move {
+                self.launch_named(call.clone(), async move {
                     match database.load_more(epoch, model, Some(relation.clone()), params).await {
                         Ok(result) => done("more", json!({ "relation": relation, "result": more_name(result) })),
                         Err(error) => failed(&error),
@@ -422,8 +442,8 @@ impl DatabaseSut {
             "node" => {
                 let (Some(relation), Some(row)) = (text("relation"), text("row")) else { return Some(error("arguments")) };
                 let id = self.id_of(&row);
-                self.launch(async move {
-                    match database.node(epoch, model, relation, id, false).await {
+                self.launch_named(call.clone(), async move {
+                    match database.node(epoch, model, relation, id, input.flag("force").unwrap_or(false)).await {
                         Ok(found) => done("node", json!({ "row": row, "present": found.is_some() })),
                         Err(error) => failed(&error),
                     }
@@ -444,7 +464,7 @@ impl DatabaseSut {
                 let ids: Vec<String> = rows.iter().map(|row| self.id_of(row)).collect();
                 let by_id: HashMap<String, String> = rows.iter().map(|row| (self.id_of(row), row.clone())).collect();
                 let model = text_or(input, "model", "Moment");
-                self.launch(async move {
+                self.launch_named(call.clone(), async move {
                     match database.nodes(epoch, model, relation.clone(), ids).await {
                         Ok(found) => done("nodes", json!({ "relation": relation, "rows": found.iter().map(|row| by_id.get(&row.id).cloned().unwrap_or_else(|| row.id.clone())).collect::<Vec<_>>() })),
                         Err(error) => failed(&error),
@@ -457,9 +477,9 @@ impl DatabaseSut {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
-                        self.launch(async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded_all", json!({ "load": name }))) });
+                        self.launch_named(call.clone(), async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded_all", json!({ "load": name }))) });
                     }
-                    Err(error) => return Some(self::error(error_kind(&error))),
+                    Err(error) => return Some(tagged(self::error(error_kind(&error)), &call)),
                 }
             }
             "peek_row" => {
@@ -558,6 +578,14 @@ impl DatabaseSut {
         self.streams.insert(name.into(), Pulled { stream, queue, task });
         Vec::new()
     }
+}
+
+fn tagged(observed: Vec<Observation>, call: &Option<String>) -> Vec<Observation> {
+    let Some(call) = call else { return observed };
+    observed.into_iter().map(|mut item| {
+        if let Value::Object(fields) = &mut item.value { fields.insert("call".into(), call.clone().into()); } else { item.value = json!({ "call": call }); }
+        item
+    }).collect()
 }
 
 fn names_arg(input: &Input, key: &str) -> Option<Vec<String>> {
