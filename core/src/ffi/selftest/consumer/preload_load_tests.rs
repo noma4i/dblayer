@@ -83,3 +83,27 @@ async fn boundary_fresh_load_orders() {
         assert_eq!(asked_keys(&stand), expected(), "{order}: one request per key: {:?}", stand.asked());
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_stream_stamped_before_the_shared_answer_asks_nothing() {
+    use crate::ffi::selftest::rig_tests::bound;
+    use crate::runtime::Clock;
+
+    let stand = Stand::prepare().await;
+    let fixture: Value = serde_json::from_str(include_str!("../../../../tests/corpus/consumer/my_profile.json")).unwrap();
+    stand.answer("myProfile", fixture["data"].clone());
+    stand.sign_in().await;
+    stand.settle().await;
+    let clock = stand.clock.manual();
+    let opened = clock.now();
+    stand.clock.advance(5);
+    bound(stand.database.refresh(stand.database.session_epoch(), "CurrentUser".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    stand.settle().await;
+    let asked = stand.requests("myProfile");
+    clock.set(opened);
+    let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+    let _stream = stand.database.watch_query(r#"{"model":"CurrentUser","relation":"profile","params":{}}"#, rows.clone());
+    stand.settle().await;
+    assert_eq!(stand.requests("myProfile"), asked, "a stream stamped 5 ms before the answer landed shares that answer");
+    assert_eq!(rows.len(), 1);
+}

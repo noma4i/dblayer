@@ -68,8 +68,8 @@ impl Window {
 
     fn is_online(&self) -> bool { self.online == Some(true) }
 
-    /// Loaded, not marked stale and `landed_at <= now < fresh_until` by the `now` of the input.
-    fn fresh_at(&self) -> bool { self.fresh && self.landed_at <= self.now && self.now < self.fresh_until }
+    /// Loaded, not marked stale, `now < fresh_until` and `now` less than one lifetime before `landed_at`.
+    fn fresh_at(&self) -> bool { self.fresh && self.now < self.fresh_until && self.landed_at - self.now < self.fresh_until - self.landed_at }
 
     pub(super) fn join(&mut self, id: u32) {
         if id != PRELOAD && self.interest.iter().all(|held| *held == PRELOAD) { self.settled = false; }

@@ -183,9 +183,14 @@ fn win_prop_freshness_by_input_time() {
 
 #[test]
 fn win_prop_clock_back() {
-    let mut twin = fresh_idle();
-    twin.now = NOW - 1;
-    assert_eq!(requests(&twin.watch()), 1, "a clock before landed_at does not make the window fresh");
+    for (before, asked) in [(1, 0), (LIFE - 1, 0), (LIFE, 1), (LIFE + 1, 1)] {
+        let mut twin = fresh_idle();
+        twin.now = NOW - before;
+        assert_eq!(requests(&twin.watch()), asked, "a stream stamped {before} ms before landed_at");
+        let mut twin = fresh_idle();
+        twin.now = NOW - before;
+        assert_eq!(requests(&twin.call(2, Goal::First)), asked, "a call stamped {before} ms before landed_at");
+    }
 }
 
 #[test]
