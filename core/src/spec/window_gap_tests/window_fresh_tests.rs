@@ -172,13 +172,169 @@ fn win_landing_next_page_keeps_fresh_until() {
     assert_eq!(requests(&twin.call(3, Goal::First)), 1, "page 2 did not move landed_at: the window expires from page 1");
 }
 
-#[test]
-fn win_prop_freshness_by_input_time() {
-    for (now, asked) in [(NOW + LIFE - 1, 0), (NOW + LIFE, 1)] {
-        let mut twin = fresh_idle();
-        twin.now = now;
-        assert_eq!(requests(&twin.watch()), asked, "now = {now}");
+#[derive(Clone, Copy, Debug)]
+enum Turn {
+    Watch,
+    Unwatch,
+    Call,
+    Refresh,
+    Respond,
+    RespondEmpty,
+    Land,
+    NetDown,
+    NetUp,
+    Preload,
+    Register,
+}
+
+#[derive(Clone, Copy)]
+enum Rig {
+    Plain,
+    Awaiting,
+}
+
+#[derive(Default)]
+struct Flight {
+    request: u64,
+    attempt: u32,
+    batch: u64,
+    revision: i64,
+    online_seq: u64,
+}
+
+struct Trace {
+    lines: Vec<String>,
+    requests: Vec<usize>,
+}
+
+type Plan = Vec<(Turn, u64, i64)>;
+
+fn input_of(turn: Turn, stamp: i64, flight: &Flight) -> w::WindowsInput {
+    let page = |rows: Vec<String>| AnswerPage::new(1, rows, None);
+    match turn {
+        Turn::Watch => w::WindowsInput::InterestPlus { key: key(), id: u64::from(STREAM), now: stamp },
+        Turn::Unwatch => w::WindowsInput::InterestMinus { key: key(), id: u64::from(STREAM) },
+        Turn::Call => w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 0, now: stamp },
+        Turn::Refresh => w::WindowsInput::LoadNoWait { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 0, now: stamp, verb: "refresh" },
+        Turn::Respond => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(vec!["r1".into()]), now: stamp },
+        Turn::RespondEmpty => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(Vec::new()), now: stamp },
+        Turn::Land => w::WindowsInput::Committed(Committed { batch: flight.batch, revision: flight.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
+        Turn::NetDown => w::WindowsInput::Online { online: Online(false), online_seq: flight.online_seq, now: stamp },
+        Turn::NetUp => w::WindowsInput::Online { online: Online(true), online_seq: flight.online_seq, now: stamp },
+        Turn::Preload => w::WindowsInput::PreloadKeys { keys: vec![key()], now: stamp },
+        Turn::Register => w::WindowsInput::RegisterOperations { now: stamp },
     }
+}
+
+fn drive(rig: Rig, plan: &Plan, honest: bool) -> Trace {
+    let mut twin = match rig {
+        Rig::Plain => Twin::new(),
+        Rig::Awaiting => {
+            let mut twin = Twin::awaiting_operations();
+            twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
+            twin
+        }
+    };
+    take(&twin.log);
+    let mut flight = Flight::default();
+    let mut trace = Trace { lines: Vec::new(), requests: Vec::new() };
+    for (turn, step, junk) in plan {
+        twin.det.tick(Time(*step));
+        if matches!(turn, Turn::NetUp) {
+            flight.online_seq += 1;
+        }
+        if matches!(turn, Turn::Land) {
+            flight.revision += 1;
+        }
+        let input = input_of(*turn, if honest { i64::try_from(*step).expect("a small step") } else { *junk }, &flight);
+        match turn {
+            Turn::Respond | Turn::RespondEmpty | Turn::Land | Turn::Preload => twin.post(input),
+            _ => twin.post_call(input),
+        }
+        let emitted = take(&twin.log);
+        let commit = emitted.iter().find_map(|entry| match entry {
+            Emitted::Send { to: STORE, input } if input.contains("author: Window") => Some(input.clone()),
+            _ => None,
+        });
+        let (effects, outcomes) = twin.split(emitted);
+        for effect in &effects {
+            match effect {
+                Effect::Request { request, attempt, .. } => (flight.request, flight.attempt) = (*request, *attempt),
+                Effect::Commit { request, .. } => flight.batch = *request,
+                _ => {}
+            }
+        }
+        trace.requests.push(requests(&effects));
+        trace.lines.push(format!("{turn:?}@{step}: {effects:?} {outcomes:?} {commit:?} {:?} {:?}", twin.stage(), twin.state().load_state(&key())));
+    }
+    trace
+}
+
+fn plan_of(seed: u64, rig: Rig) -> Plan {
+    const DELTAS: [u64; 7] = [0, 1, 1_000, 150_000, 299_999, 300_000, 600_000];
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut roll = |bound: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        usize::try_from(state % bound as u64).expect("a small roll")
+    };
+    let mut turns = vec![Turn::Watch, Turn::Unwatch, Turn::Call, Turn::Refresh, Turn::Respond, Turn::Respond, Turn::RespondEmpty, Turn::Land, Turn::Land, Turn::NetDown, Turn::NetUp];
+    if matches!(rig, Rig::Awaiting) {
+        turns.extend([Turn::Preload, Turn::Register, Turn::NetUp]);
+    }
+    let mut step = NOW as u64;
+    (0..24)
+        .map(|_| {
+            let turn = turns[roll(turns.len())];
+            step += DELTAS[roll(DELTAS.len())];
+            let at = i64::try_from(step).expect("a small step");
+            let junk = [0, at - 1, at + 1, at - 2 * LIFE, at + 3 * LIFE, at - 10 * LIFE][roll(6)];
+            (turn, step, junk)
+        })
+        .collect()
+}
+
+#[test]
+fn win_prop_fresh_for_any_input_times() {
+    let start = NOW as u64;
+    let expired = (NOW + LIFE) as u64;
+    let landed = |end: Turn, step: u64, junk: i64| -> Plan { vec![(Turn::Watch, start, NOW), (Turn::Respond, start, NOW), (Turn::Land, start, NOW), (Turn::Unwatch, start, NOW), (end, step, junk)] };
+    let cases: [(&str, Plan, usize); 5] = [
+        ("fresh input time, step at fresh_until", landed(Turn::Call, expired, NOW + LIFE - 1), 1),
+        ("input time after the end, step inside the life", landed(Turn::Call, expired - 1, NOW + LIFE + 5), 0),
+        ("input time before landed_at, step at fresh_until", landed(Turn::Call, expired, NOW - 1), 1),
+        ("input time far before landed_at, step at fresh_until", landed(Turn::Watch, expired, NOW - LIFE), 1),
+        ("stream input time after the end, step inside the life", landed(Turn::Watch, expired - 1, NOW + 3 * LIFE), 0),
+    ];
+    for (name, plan, asked) in cases {
+        for honest in [false, true] {
+            let trace = drive(Rig::Plain, &plan, honest);
+            assert_eq!(trace.requests.last(), Some(&asked), "{name}, honest={honest}: {:?}", trace.lines.last());
+        }
+    }
+    let stamped = vec![(Turn::Watch, start, NOW), (Turn::Respond, start + 500, NOW - 777), (Turn::Land, start + 500, NOW - 777)];
+    for honest in [false, true] {
+        let trace = drive(Rig::Plain, &stamped, honest);
+        assert!(trace.lines[1].contains(&format!("landed_at: {}", NOW + 500)), "landed_at is the time of the step of Response, honest={honest}: {}", trace.lines[1]);
+    }
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = (1..=8u64)
+            .map(|seed| {
+                scope.spawn(move || {
+                    let rig = if seed % 2 == 0 { Rig::Plain } else { Rig::Awaiting };
+                    let plan = plan_of(seed, rig);
+                    let (skewed, honest) = (drive(rig, &plan, false), drive(rig, &plan, true));
+                    assert_eq!(skewed.lines, honest.lines, "seed {seed}: the time of the input changed what the owner did");
+                })
+            })
+            .collect();
+        for run in runs {
+            if let Err(panic) = run.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    });
 }
 
 #[test]
