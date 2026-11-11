@@ -65,6 +65,7 @@ mod outbox_selector_tests;
 mod outbox_rollback_dependents_tests;
 mod transfer_harness;
 mod transfer_accept_tests;
+mod transfer_time_tests;
 mod transfer_rowless_tests;
 mod transfer_batch_tests;
 mod transfer_batch_intent_tests;

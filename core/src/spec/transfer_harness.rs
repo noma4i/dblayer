@@ -17,7 +17,7 @@ pub(super) const EPOCH: Epoch = 1;
 pub(super) const DAY: u64 = 86_400_000;
 const STORE_AT: usize = 0;
 const OUTBOX_AT: usize = 1;
-const TRANSFER_AT: usize = 2;
+pub(super) const TRANSFER_AT: usize = 2;
 const ROUNDS_AT: usize = 3;
 
 /// A peer that keeps the typed inputs it receives.
