@@ -323,6 +323,30 @@ fn out_group_last_member_removed() {
         "the started pair is released, the shared mutation ends Discarded, no empty group remains: {} {done:?}", twin.session_text);
 }
 
+/// P-OUT-60: the Store refuses the removal batch of a group member as invalid data: the batch is not written again, the member ends `Discarded`, the answer of the pair lands for the members left.
+#[test]
+fn out_group_member_removal_invalid_is_not_retried() {
+    use super::outbox_cells_tests::{timers, transfer_outcomes};
+    use super::outbox_harness::St;
+    use crate::owners::contract::{Rejected, RejectReason};
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    let first = twin.stores[0].0;
+    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Invalid }));
+    assert_eq!(
+        (twin.stores.len(), timers(&refused), transfer_outcomes(&refused), twin.stage(group)),
+        (0, 0, vec![crate::owners::write::outbox_types::OutboxOutcome::Discarded], Some(St::Sending)),
+        "the refused removal is not written again, the member 12 ends Discarded, the group waits for the pair: {refused:?}");
+    let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
+    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!(
+        (twin.stores.len(), twin.store_text.contains("IntentOrigin"), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")),
+        (1, false, true, false),
+        "the answer of the pair lands once with Confirmed for 11, the removal batch is not issued again: {}", twin.store_text);
+}
+
 #[test]
 fn out_group_member_removal_rejected() {
     use super::outbox_harness::St;
