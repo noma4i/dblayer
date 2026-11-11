@@ -327,3 +327,33 @@ fn data_matches_window() {
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
 }
+
+#[test]
+fn data_membership_window_leave() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreBatch, StoreOp};
+    use crate::schema::FieldSpec;
+    use crate::store::Store;
+    use crate::value::ScalarKind;
+
+    let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
+    models[0].fields.push(FieldSpec::list("shelves", ScalarKind::Str));
+    let mut shelf = relation("shelf", false, false);
+    shelf.text_params.push("shelf".into());
+    shelf.membership.insert("shelf".into(), Membership::Contains("shelves".into()));
+    models[0].relations.push(shelf);
+    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let ids = |shelf: &str| {
+        let query = db.remote_relation_query("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap()).unwrap().unwrap();
+        db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
+    };
+    for (shelf, held) in [("A", [json!(["m1"]), json!([])]), ("B", [json!([]), json!(["m1"])])] {
+        let key = WindowKey::relation("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap());
+        let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
+        let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
+        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
+    }
+}
