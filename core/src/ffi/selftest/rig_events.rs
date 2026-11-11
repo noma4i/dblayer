@@ -53,25 +53,35 @@ impl Rig {
     pub(super) async fn land_removed(&self, model: &str, id: &str) { self.land(model, json!({"id": id, "deleted": true})).await; }
 
     async fn frame(&self, model: &str, row: Value) -> ReadValue {
-        let events = &self.switch.events;
-        let epoch = self.database.session_epoch();
-        let (stream, reader) = {
-            let mut streams = events.streams.lock().await;
-            match streams.get(&(epoch, model.to_string())) {
-                Some(entry) => entry.clone(),
-                None => {
-                    let stream = self.database.subscribe_values(epoch, ReadRequest::Events { model: model.into() });
-                    let crate::ffi::ReadClaim::Claimed { reader } = stream.claim_reader().await else { panic!("the event reader claim ended") };
-                    assert!(matches!(bound(stream.pull(reader)).await, Some(ReadValue::Ready)), "the cable is ready for {model}");
-                    streams.insert((epoch, model.to_string()), (stream.clone(), reader));
-                    (stream, reader)
-                }
-            }
-        };
-        let token = bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
-        assert!(events.peer.event(&token, json!({"data": {"rigEvents": {model: row}}})), "the subscription is open");
+        let (stream, reader) = self.event_stream(model).await;
+        let token = bound(self.switch.events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
+        assert!(self.switch.events.peer.event(&token, json!({"data": {"rigEvents": {model: row}}})), "the subscription is open");
         let seen = bound(stream.pull(reader)).await;
         let Some(seen @ ReadValue::Event { .. }) = seen else { panic!("{model} event landed: {seen:?}") };
         seen
+    }
+
+    pub(super) async fn land_together(&self, frames: &[(&str, Value)], debounce_ms: u64) -> Vec<Option<ReadValue>> {
+        let mut streams = Vec::new();
+        for (model, _) in frames { streams.push(self.event_stream(model).await); }
+        let token = bound(self.switch.events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
+        for (model, row) in frames { assert!(self.switch.events.peer.event(&token, json!({"data": {"rigEvents": {*model: row}}})), "the subscription is open"); }
+        self.clock.advance(debounce_ms);
+        let mut seen = Vec::new();
+        for (stream, reader) in streams { seen.push(bound(stream.pull(reader)).await); }
+        self.settle().await;
+        seen
+    }
+
+    async fn event_stream(&self, model: &str) -> (Arc<ReadStream>, u64) {
+        let events = &self.switch.events;
+        let epoch = self.database.session_epoch();
+        let mut streams = events.streams.lock().await;
+        if let Some(entry) = streams.get(&(epoch, model.to_string())) { return entry.clone(); }
+        let stream = self.database.subscribe_values(epoch, ReadRequest::Events { model: model.into() });
+        let crate::ffi::ReadClaim::Claimed { reader } = stream.claim_reader().await else { panic!("the event reader claim ended") };
+        assert!(matches!(bound(stream.pull(reader)).await, Some(ReadValue::Ready)), "the cable is ready for {model}");
+        streams.insert((epoch, model.to_string()), (stream.clone(), reader));
+        (stream, reader)
     }
 }
