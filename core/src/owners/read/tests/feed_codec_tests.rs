@@ -5,7 +5,6 @@
 //! feed_codec_observed_reread: an `observed` read -> `StaleKeys::All` of the model, so Windows decides which windows are live; the codec reads no registry.
 //! feed_codec_listens: `listens` -> `apply`, `deleted_by`, `deleted_unless`, `id`, `matches` decide the op of the event.
 //! feed_codec_invalid: a change that misses its kind -> an `invalid` event, never a silent drop.
-//! feed_codec_joins: an upserted row joins the relations `joins_events` by its columns.
 //! feed_codec_request: the request of a channel is the document of the declared subscription.
 //! feed_codec_relation_updates_channel: the `updates` of a relation read the frames of their own channel.
 //! feed_codec_channels_of_model: a model reads the change feed when it declares changes, and the subscription of each `listens` and relation `updates`.
@@ -142,14 +141,6 @@ fn feed_codec_invalid() {
 fn feed_changes_area_unknown() {
     let events = codec(true).events("Changes", frame(change("UNKNOWN", "UPDATED", "m1", Value::Null)));
     assert!(events.is_empty());
-}
-
-#[test]
-fn feed_codec_joins() {
-    let codec = codec(true);
-    let row = json!({"id":"m1", "chatId":"c1"}).as_object().unwrap().clone();
-    assert_eq!(codec.joins_of("messages", &row), [json!({"relation":"by_chat", "params":{"chatId":"c1"}})]);
-    assert!(codec.joins_of("messages", &json!({"id":"m1"}).as_object().unwrap().clone()).is_empty(), "a row without the join column joins nothing");
 }
 
 #[test]

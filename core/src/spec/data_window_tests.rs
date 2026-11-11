@@ -368,7 +368,7 @@ mod by_source {
     use crate::value::ScalarKind;
     use std::cell::Cell;
 
-    pub(super) const COLUMNS: [&str; 5] = ["plain", "event", "created", "node", "cols"];
+    pub(super) const COLUMNS: [&str; 6] = ["plain", "event", "created", "node", "cols", "thread"];
 
     pub(super) struct Bench {
         pub(super) db: Store,
@@ -376,7 +376,7 @@ mod by_source {
     }
 
     fn params_of(name: &str) -> serde_json::Map<String, Value> {
-        if name == "cols" { json!({"groupId":"g"}).as_object().unwrap().clone() } else { Default::default() }
+        if name == "cols" || name == "thread" { json!({"groupId":"g"}).as_object().unwrap().clone() } else { Default::default() }
     }
 
     pub(super) fn moment_models_with(columns: Vec<RelationSpec>, extra: Vec<FieldSpec>) -> Vec<crate::schema::ModelSpec> {
@@ -445,7 +445,10 @@ mod by_source {
         let mut cols = relation("cols", false, false);
         cols.is_global = false;
         cols.by_columns = vec!["groupId".into()];
-        let columns = vec![relation("plain", false, false), relation("event", false, true), relation("created", true, false), node, cols, relation("pager", false, false), relation("unloaded", true, true)];
+        let mut thread = relation("thread", false, true);
+        thread.is_global = false;
+        thread.by_columns = vec!["groupId".into()];
+        let columns = vec![relation("plain", false, false), relation("event", false, true), relation("created", true, false), node, cols, thread, relation("pager", false, false), relation("unloaded", true, true)];
         let bench = Bench::open(moment_models_with(columns, Vec::new()));
         for name in COLUMNS.into_iter().chain(["pager"]) {
             bench.page(name, &params_of(name), vec![json!({"id":"s1", "text":"t", "groupId":"g"})]);
@@ -458,11 +461,11 @@ mod by_source {
     }
 
     /// P-DATA-100 cells: the declared `insert_on` of the window against the source of the batch.
-    pub(super) fn entering(source: &str, cached: bool) -> [bool; 5] {
+    pub(super) fn entering(source: &str, cached: bool) -> [bool; 6] {
         match source {
-            "event" | "response" => [false, true, false, false, cached],
-            "create" => [false, false, true, false, true],
-            _ => [false, false, false, false, cached],
+            "event" | "response" => [false, true, false, false, cached, true],
+            "create" => [false, false, true, false, true, true],
+            _ => [false, false, false, false, cached, cached],
         }
     }
 }
