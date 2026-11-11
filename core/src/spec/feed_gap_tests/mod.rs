@@ -371,3 +371,4 @@ fn live_immediate() -> Twin { live_with(Twin::immediate()) }
 mod feed_cells_tests;
 mod feed_props_tests;
 mod feed_state_input_matrix_tests;
+mod feed_time_tests;
