@@ -20,7 +20,7 @@ fn read_done(twin: &mut Twin, revision: i64, items: Vec<OperationInfo>) {
 
 fn opened() -> Twin {
     let mut twin = Twin::new();
-    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: queue_view(), epoch: EPOCH, identity: false, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: queue_view(), epoch: EPOCH, identity: false, valid: true, revision: 0, deferred: None });
     twin.run();
     twin
 }
@@ -42,7 +42,7 @@ fn reads(entries: Vec<Emitted<DeliveryEffect>>) -> Vec<i64> {
 #[test]
 fn dlv_open_operations() {
     let mut twin = Twin::new();
-    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: queue_view(), epoch: EPOCH, identity: false, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: queue_view(), epoch: EPOCH, identity: false, valid: true, revision: 0, deferred: None });
     twin.run();
     let entries = take(&twin.log);
     assert!(entries.iter().all(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { .. }, .. }))), "a read and nothing else: no window, no subscription");

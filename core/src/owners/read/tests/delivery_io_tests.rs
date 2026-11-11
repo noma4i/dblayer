@@ -89,7 +89,7 @@ fn rig_with(snapshots: impl FnOnce(std::path::PathBuf) -> Arc<dyn Snapshots>) ->
 }
 
 fn open(rig: &mut Rig, revision: i64) {
-    rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: STREAM, view: view(), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision, deferred: None });
+    rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: STREAM, view: view(), epoch: EPOCH, identity: true, valid: true, revision, deferred: None });
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Committed(crate::owners::contract::Committed { batch: 0, revision, tables: vec!["row_people".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     let loaded = WindowState { phase: WindowPhase::Loaded, error: None, loaded: Some(revision), has_more: false, settled: true, total: None };
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::WindowState { stream: STREAM, state: loaded });

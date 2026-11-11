@@ -14,7 +14,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
     temporary.remote = false;
     temporary.live = false;
     let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-1".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| real.clone())) };
-    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
     (twin, resolved)
 }
 
@@ -41,7 +41,7 @@ fn dlv_deferred_index_other_model() {
     let mut real = other.clone();
     real.subject = "real-user".into();
     let deferred = d::Deferred { temps: vec![("User".into(), "temp-1".into())], rebind: d::Rebind::new(move || signal.load(Ordering::SeqCst).then(|| real.clone())) };
-    twin.post(d::DeliveryInput::Open { stream: STREAM + 1, view: other, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    twin.post(d::DeliveryInput::Open { stream: STREAM + 1, view: other, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
     take(&twin.log);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-1", 0)], vec![]);
     let read_id = twin.state().read_id(STREAM + 1);
@@ -108,7 +108,7 @@ fn dlv_deferred_index_released() {
         take(&twin.log);
         match ending {
             "cancel" => twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 }),
-            "release" => twin.post(d::DeliveryInput::Release { stream: STREAM, reader: None, now: crate::runtime::Time(0) }),
+            "release" => twin.post(d::DeliveryInput::Release { stream: STREAM, reader: None }),
             "sink" => {
                 twin.post(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 });
                 assert!(Twin::modelled(take(&twin.log)).contains(&Effect::CloseSink));

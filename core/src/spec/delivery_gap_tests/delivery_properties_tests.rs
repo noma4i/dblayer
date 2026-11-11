@@ -18,7 +18,7 @@ fn rig(kind: Kind) -> Rig {
     let log = new_log();
     let deliveries = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
-    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     if kind == Kind::Events {
         det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Joined { stream: STREAM, position: 0 });
         det.post(deliveries, EpochStamp::Control, d::DeliveryInput::ModelReady { stream: STREAM });
@@ -306,7 +306,7 @@ fn dlv_prop_gap_bounded() {
 fn mem_events_flood_without_reader() {
     use crate::runtime::StateOwner;
     let mut state = d::DeliveriesState::new(EPOCH, peers());
-    drop(Deliveries::step(&mut state, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None }, crate::runtime::Time(0)));
+    drop(Deliveries::step(&mut state, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None }, crate::runtime::Time(0)));
     drop(Deliveries::step(&mut state, d::DeliveryInput::Joined { stream: STREAM, position: 0 }, crate::runtime::Time(0)));
     drop(Deliveries::step(&mut state, d::DeliveryInput::ModelReady { stream: STREAM }, crate::runtime::Time(0)));
     let payload = "x".repeat(1024);
@@ -349,8 +349,8 @@ fn dlv_prop_delta_size() {
 fn dlv_prop_dictionary_bounded() {
     let mut rig = rig(Kind::List);
     for stream in 2..=40u64 {
-        rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
-        rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time(0) });
+        rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
+        rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Release { stream, reader: None });
         rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::SinkClosed { stream });
     }
     rig.det.run_until_quiet(10_000).expect("quiet");
@@ -434,7 +434,7 @@ fn dlv_prop_delta_order() {
     let log: Spied = new_log();
     let addr = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
-    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::idle()) });
     let mut seed = 12_345u64;
     let mut next = move |bound: u64| {

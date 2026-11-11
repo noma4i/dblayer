@@ -15,7 +15,7 @@ fn dlv_count_temp_swap() {
     temporary.remote = false;
     let rebound = real.clone();
     let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-parent".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| rebound.clone())) };
-    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: Some(deferred) });
+    twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
     let first = Twin::modelled(take(&twin.log));
     assert!(!first.contains(&Effect::InterestPlus), "the temporary id must not open a window");
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Count(0) });
@@ -42,7 +42,7 @@ fn dlv_force_load_uses_committed_revision() {
     det.add::<Sink<Feed>>("feed", new_log(), Discard);
     let addr = det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), &log), Discard);
     det.start_epoch(EPOCH);
-    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 37, deferred: None });
+    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, revision: 37, deferred: None });
     det.run_until_quiet(100).unwrap();
     assert_eq!(snapshot(&log).iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") && input.contains("store_revision: 37"))).count(), 1);
 }

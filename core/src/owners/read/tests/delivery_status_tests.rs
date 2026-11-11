@@ -17,7 +17,7 @@ fn blob_view() -> View {
 
 fn opened() -> DeliveriesState {
     let mut state = DeliveriesState::new(EPOCH, DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) });
-    let effects = Deliveries::step(&mut state, DeliveryInput::Open { stream: STREAM, view: blob_view(), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None }, crate::runtime::Time(0));
+    let effects = Deliveries::step(&mut state, DeliveryInput::Open { stream: STREAM, view: blob_view(), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None }, crate::runtime::Time(0));
     assert!(effects.iter().any(|effect| matches!(effect, Effect::Run(DeliveryEffect::Stream { effect: StreamEffect::StatusInterest { plus: true, key }, .. }) if key == "Chat:r1:photo")));
     state
 }

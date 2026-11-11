@@ -193,15 +193,15 @@ impl Twin {
         match &input {
             Input::Open { kind, epoch_current } => {
                 let epoch = if *epoch_current { EPOCH } else { EPOCH + 1 };
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true, revision: 0, deferred: None });
                 self.run();
             }
             Input::OpenNoSession => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true, now: 1_000_000, revision: 0, deferred: None });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true, revision: 0, deferred: None });
                 self.run();
             }
             Input::OpenInvalid => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false, now: 1_000_000, revision: 0, deferred: None });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false, revision: 0, deferred: None });
                 self.run();
             }
             Input::Committed { revision, touches } => {
@@ -239,7 +239,7 @@ impl Twin {
                 self.call(d::DeliveryInput::PullCancelled { stream, outcome });
             }
             Input::Cancel { reply } => self.call(d::DeliveryInput::Cancel { stream, reply: *reply }),
-            Input::Release => self.call(d::DeliveryInput::Release { stream, reader: None, now: crate::runtime::Time(0) }),
+            Input::Release => self.call(d::DeliveryInput::Release { stream, reader: None }),
             Input::SinkClosed => self.call(d::DeliveryInput::SinkClosed { stream }),
             Input::EpochEnded { own } => {
                 self.det.end_epoch(if *own { EPOCH } else { EPOCH + 1 }, Ended::SessionReset);
@@ -345,7 +345,7 @@ fn dlv_wait_subscription_census() {
     assert_eq!(census_of(&mut twin), (1, 0), "an open stream of a window is observed");
     twin.step(Input::EpochEnded { own: true });
     assert_eq!(census_of(&mut twin), (0, 1), "an ended stream stays retained until its Release");
-    twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None, now: crate::runtime::Time(0) });
+    twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None });
     assert_eq!(census_of(&mut twin), (0, 0), "a released stream leaves the census");
 }
 
@@ -552,7 +552,7 @@ fn dlv_opening_unrelated() {
 fn dlv_open_rows_without_a_window_asks_for_nothing() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
 }
 
@@ -561,7 +561,7 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
 fn dlv_open_live() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0, deferred: None });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 

@@ -644,7 +644,7 @@ fn dlv_ended() {
     queue_view.tables = vec!["op".into()];
     queue_view.local = true;
     queue_view.remote = false;
-    queue.call(d::DeliveryInput::Open { stream: STREAM, view: queue_view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0, deferred: None });
+    queue.call(d::DeliveryInput::Open { stream: STREAM, view: queue_view, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     let read_id = queue.read_id();
     queue.call(d::DeliveryInput::Cancel { stream: STREAM, reply: 5 });
     queue.call(d::DeliveryInput::SinkClosed { stream: STREAM });
