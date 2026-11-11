@@ -71,9 +71,9 @@ pub async fn minimize(violation: Violation, keep: usize, properties: &[Property]
     }
 }
 
-/// Writes the program of a violation as `<dir>/<rule>_<seed>.jsonl`.
-pub fn save(dir: &Path, violation: &Violation, seed: u64) -> Result<PathBuf, String> {
-    let name = format!("{}_{seed}", violation.rule.to_lowercase());
+/// Writes the program of a violation as `<dir>/<rule>_<tag>.jsonl`.
+pub fn save(dir: &Path, violation: &Violation, tag: &str) -> Result<PathBuf, String> {
+    let name = format!("{}_{tag}", violation.rule.to_lowercase());
     corpus::write(dir, &Trace { name, steps: violation.steps.clone() })
 }
 
