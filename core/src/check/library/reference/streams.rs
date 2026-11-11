@@ -144,9 +144,10 @@ impl LibraryRef {
         let now = self.now;
         let mut starting = 0;
         for key in [Key::Feed] {
+            let read = self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key));
             let wanted = self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key) && stream.on_connect);
             let window = self.win(key);
-            if self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key)) && window.load.is_none() && (!window.fresh(now) || wanted) {
+            if read && window.load.is_none() && (!window.fresh(now) || wanted) {
                 starting += 1;
                 self.start_run(key, 1);
             }
