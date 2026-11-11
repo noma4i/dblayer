@@ -46,6 +46,10 @@ impl LibraryRef {
             self.mark("H23_stream_opened_again_under_the_name_of_a_live_one");
             return Vec::new();
         }
+        if self.identity && reads.key().is_some() {
+            self.mark("H22_subscription_request_of_a_live_list");
+            return Vec::new();
+        }
         let mut stream = Stream { reads, on_connect, live: self.identity, last: None, pending: Vec::new() };
         if !self.identity {
             stream.pending.push(shapes::ended(&name, "session_ended"));

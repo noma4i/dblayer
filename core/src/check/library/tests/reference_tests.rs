@@ -60,7 +60,7 @@ fn stream_family(anonymous: bool, holes: bool, deep: usize) -> Vec<Vec<Input>> {
 }
 
 /// The spec holes the family with streams may meet: named, counted, skipped.
-const STREAM_HOLES: [&str; 3] = ["H20_members_window_request", "H21_entity_stream_with_a_fetch_other_than_never", "H23_stream_opened_again_under_the_name_of_a_live_one"];
+const STREAM_HOLES: [&str; 4] = ["H22_subscription_request_of_a_live_list", "H20_members_window_request", "H21_entity_stream_with_a_fetch_other_than_never", "H23_stream_opened_again_under_the_name_of_a_live_one"];
 
 /// Like `assert_matches`, but a program that meets a named hole is skipped and counted.
 async fn assert_streams(programs: Vec<Vec<Input>>) {
