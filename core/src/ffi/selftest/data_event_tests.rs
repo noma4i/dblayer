@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::flow_fixtures::add_moment;
+use super::flow_fixtures::{add_chat, add_moment, cell, chat_row, int, text};
 use super::rig_events::events;
 use super::rig_tests::{bound, Rig, World};
 use crate::ffi::tape::Rows;
+use crate::ffi::wire::WireRow;
 use crate::ffi::ReadValue;
+use crate::test_wait::settled;
 use crate::schema::FieldSpec;
 
 /// P-DATA-93: an event with the same values changes neither the row nor its revision and wakes no row stream, yet `Events` gets a new `Event` at the next position.
@@ -58,3 +60,30 @@ async fn xfer_file_calls_resolve_real_id() {
     assert_eq!(rig.world.hits(), hits, "the file calls asked the network nothing");
     rig.database.close_now();
 }
+
+const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
+
+async fn thread_rig() -> (Rig, Arc<Rows>) {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(add_chat)).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
+    let rows = Arc::new(Rows::default());
+    let stream = rig.database.watch_query(THREAD, rows.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    (rig, rows)
+}
+
+fn row_of(rows: &Rows, id: &str) -> Option<WireRow> { rows.0.lock().unwrap().iter().find(|row| row.id == id).cloned() }
+
+/// P-DATA-94: an event of a model without `server_revision` applies whatever its values, older or newer than the stored ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_event_without_revision_applies() {
+    let (rig, rows) = thread_rig().await;
+    assert!(rig.database.db.spec("Message").unwrap().server_revision.is_none(), "the model declares no server_revision");
+    let cells = |rig: &Rig, id: &str| row_of(&rows, id).map(|row| (cell(rig, "Message", &row, "text"), cell(rig, "Message", &row, "at")));
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "first", "at": 9})).await;
+    assert_eq!(cells(&rig, "m1"), Some((text("first"), int(9))), "the first event applies");
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "second", "at": 1})).await;
+    assert_eq!(cells(&rig, "m1"), Some((text("second"), int(1))), "the second event with lower values applies over the first");
+    rig.database.close_now();
+}
+
