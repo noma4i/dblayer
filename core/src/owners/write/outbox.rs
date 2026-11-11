@@ -13,6 +13,13 @@ use crate::schema::OnFailure;
 use crate::owners::store::StoreWriter;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TempDependency {
+    Clear,
+    Open,
+    Ended,
+}
+
 /// What a batch sent to the Store is for.
 /// A write of the device that needs no network: the model, what it writes, the row and its values (or the field for a file).
 #[derive(Clone, Debug)]
@@ -172,19 +179,25 @@ impl OutboxState {
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.awaits_create(operation)
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear
     }
 
-    /// The body carries a temp id that has no alias yet and the `create` of that row is not Done.
-    fn awaits_create(&self, operation: &QueuedOperation) -> bool {
-        if !operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) { return false; }
-        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&operation.op.body) else { return false };
-        let mut waits = false;
-        super::outbox_commit::walk_strings(&mut body, &mut |temp| {
-            waits |= !self.aliases.keys().any(|(_, aliased)| aliased == temp)
-                && self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && other.op.action == "create" && other.op.row_id == *temp);
-        });
-        waits
+    /// The temp ids the operation depends on (its own row when it acts on one, every temp id of the body) and the state of their `create`: Open while an earlier operation addresses the row, Ended when no alias and no such operation is left.
+    fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
+        let creates_own = operation.op.action == "create" || matches!(operation.op.origin, OpSource::TransferGroup { .. });
+        let mut temps = Vec::new();
+        if !creates_own && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
+        if operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) {
+            if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&operation.op.body) {
+                super::outbox_commit::walk_strings(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
+            }
+        }
+        let mut dependency = TempDependency::Clear;
+        for temp in temps.iter().filter(|temp| !self.aliases.keys().any(|(_, aliased)| aliased == *temp)) {
+            if self.ops.values().any(|other| other.op_id != operation.op_id && other.sequence < operation.sequence && other.stage != Stage::Done && Self::addresses_row(other, &other.op.model, temp)) { return TempDependency::Open; }
+            dependency = TempDependency::Ended;
+        }
+        dependency
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -467,13 +480,17 @@ impl OutboxState {
     /// A Queued operation on a free row ends `Rejected{Expired}` when its time is over, else goes to the network while a slot is free: the first `Mutate` of the cycle at once, a repeat after its attempt is written, the 41st attempt never.
     pub(super) fn try_start(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        if operation.stage != Stage::Queued || !self.online || self.row_busy(op_id) {
+        if operation.stage != Stage::Queued || !self.online {
             return;
         }
-        if self.expired(op_id) {
+        let ended = self.temp_dependency(operation) == TempDependency::Ended;
+        if !ended && self.row_busy(op_id) {
+            return;
+        }
+        if ended || self.expired(op_id) {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
-                operation.reject_error = Some(super::failure::expired());
+                operation.reject_error = Some(if ended { super::failure::row_never_created() } else { super::failure::expired() });
             }
             return self.store(op_id, CommitKind::Rollback, fx);
         }
