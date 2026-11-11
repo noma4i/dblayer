@@ -32,6 +32,14 @@ async fn parent_child_rig() -> Rig {
     rig
 }
 
+fn assert_real_parent(sent: &[Vec<String>], temp: &str, variant: &str) {
+    assert!(!sent.is_empty(), "{variant}: the child request never reached the server");
+    for variables in sent {
+        assert!(variables.iter().any(|value| value == "k1"), "{variant}: the child request does not carry the real parent id k1: {variables:?}");
+        assert!(!variables.iter().any(|value| value == temp), "{variant}: the child request carries the temporary id {temp}: {variables:?}");
+    }
+}
+
 /// I4: no request carries a temporary id. A child created on a parent that is still unanswered goes out with the real id of the parent.
 #[tokio::test(flavor = "multi_thread")]
 async fn write_child_create_sends_the_real_parent_id() {
@@ -45,12 +53,7 @@ async fn write_child_create_sends_the_real_parent_id() {
     held.release();
     assert!(bound(rig.database.confirmed(parent, false)).await.is_ok());
     let _ = bound(rig.database.confirmed(child, false)).await;
-    let sent = sent_strings(&rig, "CreateRecord");
-    assert!(!sent.is_empty(), "the child request never reached the server");
-    for variables in &sent {
-        assert!(variables.iter().any(|value| value == "k1"), "the child request does not carry the real parent id k1: {variables:?}");
-        assert!(!variables.contains(&temp), "the child request carries the temporary id {temp}: {variables:?}");
-    }
+    assert_real_parent(&sent_strings(&rig, "CreateRecord"), &temp, "held parent");
     rig.database.close_now();
 }
 
