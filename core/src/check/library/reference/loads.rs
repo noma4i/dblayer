@@ -128,8 +128,8 @@ impl LibraryRef {
         }
         let target = Target::Window(key);
         match running {
-            None if forced || !fresh => self.start_run(target, 1),
-            None => self.finish(id, Ending::Done),
+            _ if !forced && fresh => self.finish(id, Ending::Done),
+            None => self.start_run(target, 1),
             Some(page) if forced && page > 1 => {
                 self.mark("refresh_over_a_later_page");
                 if let Some(run) = self.run_of(target).take() {
