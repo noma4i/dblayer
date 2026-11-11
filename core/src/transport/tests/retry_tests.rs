@@ -166,3 +166,26 @@ async fn a_late_watcher_reads_the_current_snapshot_and_a_dropped_watcher_leaves_
     within(late.changed()).await.unwrap();
     assert_eq!(*late.borrow(), RetrySnapshot::default());
 }
+
+/// A wait keeps its deadline when the clock moves between the read of the wait and the start of its sleep.
+#[tokio::test]
+async fn retry_wait_keeps_its_deadline_when_the_clock_moves() {
+    struct Moving {
+        inner: crate::runtime::ManualClock,
+        by: std::time::Duration,
+    }
+    impl crate::runtime::Clock for Moving {
+        fn now(&self) -> std::time::Duration { self.inner.now() }
+
+        fn sleep(&self, duration: std::time::Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            self.inner.advance(self.by);
+            crate::runtime::Clock::sleep(&self.inner, duration)
+        }
+    }
+    let delay = std::time::Duration::from_millis(1_000);
+    let clock = Moving { inner: crate::runtime::ManualClock::new(std::time::Duration::from_millis(5_000)), by: delay };
+    let online = Connectivity::new(true);
+    let mut wait = Box::pin(online.wait(&clock, delay));
+    let ended = std::future::Future::poll(wait.as_mut(), &mut std::task::Context::from_waker(std::task::Waker::noop())).is_ready();
+    assert!(ended, "the clock stands at the deadline when the sleep starts: the wait ends");
+}
