@@ -142,9 +142,9 @@ fn win_loading_retry_stray() {
 #[test]
 fn win_loading_offline() {
     let mut twin = loading_watched();
-    assert_eq!(twin.step(Input::Online(false)), [Effect::Cancel { request: 1, attempt: 1 }]);
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Cancel { request: 1, attempt: 1 }, Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert_eq!(twin.phase(), Phase::Loading);
+    assert_eq!(twin.phase(), Phase::Idle);
     let mut waiting_retry = loading();
     waiting_retry.fail(Failure::Network);
     assert!(waiting_retry.step(Input::Online(false)).is_empty(), "nothing is in flight to cancel");

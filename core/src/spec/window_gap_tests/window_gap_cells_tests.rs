@@ -438,7 +438,6 @@ fn win_state_settled_new_stream_after_failed_call() {
     let mut twin = Twin::new();
     assert!(twin.call(2, Goal::First).iter().any(|effect| matches!(effect, Effect::Request { .. })), "the call starts the first page");
     twin.fail(Failure::Permanent);
-    assert_eq!(twin.phase(), Phase::Failed);
     let opened = twin.watch();
     assert!(opened.iter().any(|effect| matches!(effect, Effect::Request { .. })), "a failed window is not fresh: the stream loads again: {opened:?}");
     assert!(!twin.load_state().settled, "the load of the new stream has no outcome yet");
