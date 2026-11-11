@@ -199,7 +199,11 @@ impl Facts {
         match event {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
             Ev::Rejected { request: got, reason } if *got == landing.request => {
-                if landing.marked && matches!(reason, RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid) {
+                let returns_mark = match reason {
+                    RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid => true,
+                    RejectReason::NoSession | RejectReason::Closed => false,
+                };
+                if landing.marked && returns_mark {
                     self.reread_by_event.set(true);
                 }
                 match reason {
@@ -214,10 +218,13 @@ impl Facts {
                             Transition(WinState::idle())
                         }
                     }
-                    RejectReason::NoSession | RejectReason::Closed => {
-                        self.end_cause = if matches!(reason, RejectReason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
-                        self.answer_all(&WindowOutcome::Ended { cause: self.end_cause.clone() });
-                        Transition(WinState::ended())
+                    RejectReason::NoSession => {
+                        self.end_cause = EndCause::SessionEnded;
+                        self.finish(None)
+                    }
+                    RejectReason::Closed => {
+                        self.end_cause = EndCause::Closed;
+                        self.finish(None)
                     }
                     RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
                     RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
