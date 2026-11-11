@@ -183,6 +183,7 @@ pub(super) struct Delivery {
     acknowledged: Option<i64>,
     resync_pending: bool,
     resync_failed: bool,
+    read_error: bool,
     rows: Vec<Row>,
     acked_rows: Vec<Row>,
     count: Option<u64>,
@@ -223,6 +224,7 @@ impl Delivery {
             acknowledged: None,
             resync_pending: false,
             resync_failed: false,
+            read_error: false,
             rows: Vec::new(),
             acked_rows: Vec::new(),
             count: None,
@@ -504,6 +506,12 @@ impl Delivery {
             (Stage::Live, Input::ReadRelevant { revision, position, relevant, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 if (revision, position) < (self.read_seen, self.read_position) { return; }
                 (self.read_seen, self.read_position) = (revision, position);
+                let cleared = std::mem::take(&mut self.read_error);
+                if cleared && !self.resync_pending && self.rows == rows && self.total == self.incoming_total {
+                    let state = self.state_at(revision);
+                    self.append(Val::State { revision: self.revision, state }, fx);
+                    return;
+                }
                 if self.resync_pending {
                     self.resync_pending = false;
                     let changed = self.rows != rows || self.total != self.incoming_total;
@@ -535,8 +543,8 @@ impl Delivery {
                     if self.resync_failed { self.end_now(Cause::Storage, fx); return; }
                     self.resync_failed = true;
                     let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
-                    self.window = Ws { phase, error: true, loaded: self.window.loaded };
-                    self.append(Val::State { revision: self.revision, state: self.window.clone() }, fx);
+                    self.read_error = true;
+                    self.append(Val::State { revision: self.revision, state: Ws { phase, error: true, loaded: self.window.loaded } }, fx);
                     self.read_revision = self.read_revision.max(self.revision);
                     fx.push(Effect::Read(self.read_revision));
                     return;
@@ -544,7 +552,7 @@ impl Delivery {
                 let empty = if self.kind == Kind::Count { self.count.unwrap_or(0) == 0 } else { self.rows.is_empty() };
                 let phase = if empty { Phase::Failed } else { Phase::Loaded };
                 let state = Ws { phase, error: true, loaded: self.window.loaded };
-                self.window = state.clone();
+                self.read_error = true;
                 self.append(Val::State { revision: self.revision, state }, fx);
             }
             (Stage::Live, Input::WindowState(state)) if self.kind.reads_rows() => {
