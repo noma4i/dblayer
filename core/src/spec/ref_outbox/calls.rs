@@ -56,6 +56,7 @@ pub fn submit(s: &mut State, epoch: Epoch, spec: &OpSpec, flags: &SubmitFlags, e
     spec.row_id = row_id;
     let id = match spec.op_id { Some(id) => { if id >= s.next_seq { s.next_seq = id + 1; } id } None => { let id = s.next_seq; s.next_seq += 1; id } };
     let mut op = blank_op(id, &spec);
+    op.created_at = s.now;
     op.request_id = fresh_request(s);
 
     let unsent_create = s.ops.values().find(|o| o.model == op.model && o.row_id == op.row_id && o.action == "create" && o.stage == Stage::Queued).map(|o| o.id);
