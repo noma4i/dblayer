@@ -13,6 +13,9 @@ impl WindowKey {
     /// The key `(model, node, ids)`: the order of `ids` is the order of the call.
     pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, serde_json::to_string(ids).unwrap_or_default()) } }
 
+    /// A `node` read: a relation keyed by the param `NODE_PARAM`.
+    pub(super) fn reads_node(&self) -> bool { matches!(self.kind(), WindowKind::Relation { params, .. } if params.contains_key(crate::schema::NODE_PARAM)) }
+
     pub(super) fn is_empty_nodes(&self) -> bool { matches!(self.kind(), WindowKind::Nodes { ids } if ids.is_empty()) }
 
     /// The key `(model, relation, params)`: `params` in the canonical form, keys in alphabetical order.

@@ -13,6 +13,7 @@
 ### Fixed
 
 - Show the load error of a window again after a failed read of the stream recovers.
+- Keep the `insert_on: [:node]` entry for an event that arrives while a `node` read lands.
 - Insert rows of node rereads started by `changed_by` into `insert_on: [:node]` windows.
 - Keep the other events of a feed batch when one event carries data that does not decode.
 - Refuse a write with data the Store cannot accept as `Invalid` and do not retry it: a feed gap, an upload and a restored upload end instead of looping.

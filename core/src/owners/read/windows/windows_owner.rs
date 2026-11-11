@@ -25,7 +25,7 @@ pub(super) struct WindowBasis {
 }
 
 impl Window {
-    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order): (u32, bool, (i64, i64), bool, bool), read_id: u64, ids: (&mut RequestIds, &mut u32), now: i64) -> Self {
+    pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order, reads_node): (u32, bool, (i64, i64), bool, bool, bool), read_id: u64, ids: (&mut RequestIds, &mut u32), now: i64) -> Self {
         let WindowBasis { epoch, online, online_seq, saving, base_generation, generations } = basis;
         let opening = Some(Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
@@ -68,7 +68,8 @@ impl Window {
             marker: None,
             members: 0,
             landing_marker: None,
-            reread_by_event: false,
+            reads_node,
+            reread_by_event: std::cell::Cell::new(false),
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
@@ -333,7 +334,7 @@ impl WindowsState {
 
     fn create(&mut self, key: &WindowKey, read_id: u64, now: i64) {
         let ids = (&mut self.request_ids, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key)), read_id, ids, now);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key), key.reads_node()), read_id, ids, now);
         self.windows.insert(key.clone(), window);
     }
 }

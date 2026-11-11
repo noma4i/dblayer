@@ -52,8 +52,10 @@ pub(super) struct Facts {
     pub(super) members: i64,
     /// The marker and the member count that the landing in flight makes the saved ones.
     pub(super) landing_marker: Option<(Marker, i64, bool)>,
-    /// A `changed_by` event marked the window since its last landing: the next landing is a `NodeReread` (M24).
-    pub(super) reread_by_event: bool,
+    /// The window reads a `node`: only such a window takes the mark of a `changed_by` event (P-WIN-34).
+    pub(super) reads_node: bool,
+    /// A `changed_by` event marked the `node` window: the next landing batch is a `NodeReread` and takes the mark (P-WIN-34, M24).
+    pub(super) reread_by_event: std::cell::Cell<bool>,
     pub(super) fx: RefCell<Vec<Emit>>,
 }
 
@@ -92,7 +94,7 @@ impl Facts {
             }
             Ev::Stale { cause } => {
                 if !self.covers(*cause) { self.stale_marked.set(true) }
-                if *cause == StaleCause::Change { self.reread_by_event = true; }
+                if *cause == StaleCause::Change && self.reads_node { self.reread_by_event.set(true); }
             }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
@@ -103,7 +105,7 @@ impl Facts {
     /// A backward clock remains fresh while its offset is shorter than the window lifetime.
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && now < self.fresh_until && i128::from(self.landed_at) - i128::from(now) < i128::from(self.fresh_until) - i128::from(self.landed_at) }
 
-    pub(super) fn page_source(&self) -> crate::schema::RowSource { if self.reread_by_event { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
+    pub(super) fn page_source(&self) -> crate::schema::RowSource { if self.reread_by_event.take() { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
 
     pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
 
@@ -397,7 +399,6 @@ impl Facts {
         self.replace_all = false;
         let chain = self.members_complete && self.cursor.is_some();
         self.outcome = LastLoad::Landed;
-        self.reread_by_event = false;
         if !dependency_models.is_empty() {
             self.dependency_models = dependency_models.clone();
         }
