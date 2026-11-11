@@ -237,8 +237,8 @@ impl Facts {
     }
 
     /// The answer of a request of a media chain, by the phase of the chain.
-    pub(super) fn media_response(&mut self, context: &mut Ctx<'_>, load: &mut Load, answer: &AnswerPage, now: i64) -> Outcome<WinState> {
-        self.answered_at = now;
+    pub(super) fn media_response(&mut self, context: &mut Ctx<'_>, load: &mut Load, answer: &AnswerPage) -> Outcome<WinState> {
+        self.answered_at = context.now;
         let Some(mut chain) = load.chain.take() else { return Handled };
         chain.models.extend(answer.dependency_models.iter().cloned());
         match chain.phase {
@@ -325,8 +325,8 @@ impl Facts {
         Handled
     }
 
-    pub(super) fn idle_load(&mut self, ctx: &mut Ctx<'_>, (id, now): (InterestId, i64), goal: Goal, force: bool) -> Outcome<WinState> {
-        let fresh = self.is_fresh(now);
+    pub(super) fn idle_load(&mut self, ctx: &mut Ctx<'_>, id: InterestId, goal: Goal, force: bool) -> Outcome<WinState> {
+        let fresh = self.is_fresh(ctx.now);
         let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
         let next_page = self.page + 1;
         match goal {

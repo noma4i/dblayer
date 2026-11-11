@@ -327,8 +327,6 @@ enum Held {
 
 #[derive(Debug)]
 struct Delivery {
-    /// The `now` of the open of the stream: the loads this stream asks for carry it.
-    opened_at: i64,
     epoch: Epoch,
     view: View,
     stage: DeliveryStage,
@@ -552,10 +550,10 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
     for emit in emits {
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
-            Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, now: machine.opened_at })),
+            Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
             Emit::InterestPassive => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPassive { key: machine.view.window.clone(), id: stream })),
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
-            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision, now: machine.opened_at })),
+            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Run(DeliveryEffect::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() }),
             Emit::WantMinus => Effect::Run(DeliveryEffect::WantMinus { model: machine.view.model.clone(), id: stream }),
@@ -574,7 +572,7 @@ impl StateOwner for Deliveries {
     fn step(state: &mut DeliveriesState, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            DeliveryInput::Open { stream, view, epoch, identity, valid, now, revision, deferred } => {
+            DeliveryInput::Open { stream, view, epoch, identity, valid, revision, deferred, .. } => {
                 if state.streams.contains_key(&stream) {
                     return out;
                 }
@@ -590,7 +588,6 @@ impl StateOwner for Deliveries {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };
                 let mut machine = machine;
-                machine.opened_at = now;
                 machine.deferred = deferred.filter(|_| machine.view.kind.reads_rows());
                 lower(state.peers, state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);

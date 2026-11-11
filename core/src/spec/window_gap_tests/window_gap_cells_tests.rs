@@ -4,7 +4,7 @@ use super::*;
 fn win_preload_created() {
     let mut twin = Twin::with_preload();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
     let (got, _) = twin.split(take(&twin.log));
     assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key loads without a stream to tell");
@@ -15,12 +15,12 @@ fn win_preload_created() {
 #[test]
 fn win_preload_derived() {
     let mut twin = Twin::new();
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
     let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
     let (got, _) = twin.split(take(&twin.log));
     assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>());
     assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
     assert!(take(&twin.log).is_empty(), "a key that has a machine is not created again");
 }
 
@@ -67,7 +67,7 @@ fn win_rows_of_derived_at_open() {
     opened.watch();
     let at_open = opened.step(Input::Read(saved));
     assert!(at_open.iter().any(|effect| matches!(effect, Effect::DerivePreload { .. })), "open derives the RowsOf keys from the saved source, not only a Store commit");
-    opened.post(w::WindowsInput::RegisterOperations { now: NOW });
+    opened.post(w::WindowsInput::RegisterOperations);
     let (at_register, _) = opened.split(take(&opened.log));
     assert!(at_register.iter().any(|effect| matches!(effect, Effect::DerivePreload { .. })), "RegisterOperations re-derives the RowsOf keys from the saved source");
 }
@@ -76,7 +76,7 @@ fn win_rows_of_derived_at_open() {
 fn win_nodes_empty() {
     let mut twin = Twin::new();
     let nodes = WindowKey::nodes("Moment", &[]);
-    twin.post_call(w::WindowsInput::Load { key: nodes, id: 1, goal: w::Goal::First, force: false, store_revision: 42, now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: nodes, id: 1, goal: w::Goal::First, force: false, store_revision: 42 });
     let (_, outcomes) = twin.split(take(&twin.log));
     assert_eq!(outcomes, [(1, Result3::Loaded)]);
     assert_eq!(twin.state().windows(), 0, "no machine for a key without ids");
@@ -341,12 +341,12 @@ fn win_idle_online() {
 fn win_idle_reload_on_connect() {
     let mut twin = fresh_watched();
     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
-    twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0 });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     assert_eq!(twin.stage(), Some(WindowStage::Loading), "a fresh window with a reload interest loads again when the network returns");
     let mut plain = fresh_watched();
-    plain.post(w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
-    plain.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    plain.post(w::WindowsInput::Online { online: Online(false), online_seq: 0 });
+    plain.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     assert_eq!(plain.stage(), Some(WindowStage::Idle), "a fresh window without the interest stays");
 }
 
@@ -404,8 +404,8 @@ fn win_preload_after_register() {
             registered |= matches!(step, Register);
             match step {
                 Started(identity) => twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity, generation: 0 })),
-                Net => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }),
-                Register => twin.post_call(w::WindowsInput::RegisterOperations { now: NOW }),
+                Net => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 }),
+                Register => twin.post_call(w::WindowsInput::RegisterOperations),
             }
             let step_requests = requests(&twin.split(take(&twin.log)).0);
             assert!(registered || step_requests == 0, "{name}: no request before the operations are declared");

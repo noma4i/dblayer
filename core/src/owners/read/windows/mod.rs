@@ -39,9 +39,9 @@ impl Facts {
                 self.announce();
                 Handled
             }
-            Ev::InterestPlus { id, now } => {
+            Ev::InterestPlus { id } => {
                 self.add_interest(*id);
-                if self.is_fresh(*now) {
+                if self.is_fresh(context.now) {
                     self.set_phase(Phase::Loaded);
                     self.announce();
                     Handled
@@ -49,7 +49,7 @@ impl Facts {
                     self.begin(context, 1, false, true)
                 }
             }
-            Ev::Load { id, goal, force, now, .. } => self.idle_load(context, (*id, *now), *goal, *force),
+            Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
             Ev::OfflineRefused { message } => {
                 self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.set_phase(self.failed_phase());
@@ -71,7 +71,7 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::Online { online: true, now, .. } if !self.is_fresh(*now) && self.watched() => self.begin(context, 1, false, true),
+            Ev::Online { online: true, .. } if !self.is_fresh(context.now) && self.watched() => self.begin(context, 1, false, true),
             Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
             Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
@@ -128,9 +128,9 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
             }
-            Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer, *now),
-            Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) => {
-                self.answered_at = *now;
+            Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer),
+            Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
+                self.answered_at = context.now;
                 self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));

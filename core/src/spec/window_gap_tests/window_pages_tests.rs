@@ -38,7 +38,7 @@ fn win_idle_load_more_backward() {
 fn win_wait_load_more_result() {
     let mut twin = fresh();
     take(&twin.log);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::Next, force: false, store_revision: 0, now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::Next, force: false, store_revision: 0 });
     let end = runs(take(&twin.log));
     assert!(matches!(end.as_slice(), [WindowsEffect::Window { effect: WindowEffect::Outcome { id: 7, outcome: WindowOutcome::Loaded { has_more: false, fetched: false, .. } }, .. }]), "no cursor: the call ends at once with no page fetched: {end:?}");
     let mut more = fresh_with_cursor();
@@ -77,8 +77,8 @@ fn win_reload_on_connect_flag() {
     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
     twin.step(Input::InterestMinus { id: STREAM });
     twin.step(Input::InterestPlus { id: STREAM });
-    twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0 });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     assert_eq!(twin.stage(), Some(WindowStage::Idle), "the flag ended with the Interest- of its id");
 }
 
@@ -86,10 +86,10 @@ fn win_reload_on_connect_flag() {
 fn win_prop_first_load_after_reset() {
     let mut twin = fresh();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 }));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     take(&twin.log);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
-    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0 });
+    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 3"), "the first load of the new epoch is based on its generation: {sent}");
     twin.post(w::WindowsInput::Committed(Committed { batch: 2, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));

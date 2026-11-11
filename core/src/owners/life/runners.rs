@@ -258,7 +258,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
 
 pub(super) struct NetworkRunner {
     pub wiring: Arc<Wiring>,
-    pub db: std::sync::Arc<Store>,
     /// The answer of `set_online` waits for `step_done`: a caller that heard it finds `Online` already queued for every owner.
     pub held_replies: Vec<(u64, bool)>,
 }
@@ -268,7 +267,7 @@ impl EffectRunner<Network> for NetworkRunner {
         let wiring = &self.wiring;
         match effect {
             NetworkEffect::Broadcast { online, online_seq } => {
-                wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() });
+                wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq });
                 wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) });
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
@@ -285,7 +284,7 @@ impl EffectRunner<Network> for NetworkRunner {
                     wiring.to_windows_in(epoch, WindowsInput::PowerSaving { saving });
                 }
                 match owner {
-                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() }),
+                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), online_seq }),
                     Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq, now: crate::runtime::Time((wiring.now)() as u64) }),
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Snapshot(Online(online))),
                     Peer::Outbox => {

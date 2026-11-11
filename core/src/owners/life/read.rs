@@ -68,7 +68,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let windows_io = WindowIo::new(
         codec,
         (admit, wiring.gate.clone()),
-        (ports.executor.clone(), wiring.now.clone()),
+        ports.executor.clone(),
         Box::new(move |stamp, effect| match effect {
             WindowsEffect::Window { effect: WindowEffect::Outcome { id, outcome }, .. } if id & CALL != 0 => {
                 windows_wiring.outcomes.settle(OutcomeId::from_raw(id & !CALL), LifeReply::Window(Box::new(outcome)));
@@ -77,7 +77,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                 let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
                 let launch = derive_handle.launch();
                 crate::task::spawn_blocking_on(&derive_executor, Some(launch), move || { match preload_keys(&db, true) {
-                    Ok(keys) => { let now = db.lock().now_ms(); handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys, now }) }
+                    Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 } });
             }
@@ -201,10 +201,9 @@ impl super::Life {
 
     pub fn load(&self, epoch: Epoch, id: u64, key: WindowKey, (goal, force): (Goal, bool), store_revision: i64, no_wait: Option<&'static str>) {
         if self.is_shut() { return; }
-        let now = (self.wiring.now)();
         self.wiring.to_windows_in(epoch, match no_wait {
-            Some(verb) => WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, verb },
-            None => WindowsInput::Load { key, id, goal, force, store_revision, now },
+            Some(verb) => WindowsInput::LoadNoWait { key, id, goal, force, store_revision, verb },
+            None => WindowsInput::Load { key, id, goal, force, store_revision },
         });
     }
 

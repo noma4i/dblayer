@@ -39,7 +39,6 @@ pub struct WindowIo {
     admit: Admit,
     gate: Arc<crate::runtime::EpochGate>,
     handle: Handle,
-    now: Arc<dyn Fn() -> i64 + Send + Sync>,
     counted: Option<crate::runtime::Handle>,
     open: Open,
     reader: Option<WindowReader>,
@@ -49,8 +48,8 @@ pub struct WindowIo {
 }
 
 impl WindowIo {
-    pub fn new(codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
-        Self { codec, admit, gate, handle, now, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
+    pub fn new(codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), handle: Handle, rest: Rest<WindowsEffect>) -> Self {
+        Self { codec, admit, gate, handle, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
     }
 
     #[cfg(test)]
@@ -77,7 +76,7 @@ impl WindowIo {
         let token = CancelToken::new();
         self.open.retain(|_, flight| !flight.is_cancelled());
         self.open.insert((request, attempt), token.clone());
-        let (codec, back, admit, gate, now) = (self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
+        let (codec, back, admit, gate) = (self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
@@ -97,7 +96,7 @@ impl WindowIo {
             token.cancel();
             if let Some(outcome) = delivered {
                 back.reply(stamp, match outcome {
-                    TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page, now: now() },
+                    TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page },
                     TransportOutcome::Error(error) => WindowsInput::Failure { request, attempt, error },
                     TransportOutcome::Dropped => WindowsInput::Dropped { request, attempt },
                 });

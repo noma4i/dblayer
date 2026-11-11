@@ -5,15 +5,13 @@ use crate::owners::read::windows::{WindowOutcome, AnswerPage, Goal, WindowEffect
 use crate::owners::store::{StoreInput, StoreOp, StoreWriter};
 use crate::runtime::{Address, Effect, StateOwner};
 
-const NOW: i64 = 1_000_000;
-
 fn state() -> WindowsState {
     WindowsState::new(1, Some(true), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) }).with_local_request_ids()
 }
 
 fn load(state: &mut WindowsState) -> Vec<Effect<Windows>> {
     let key = WindowKey { model: "Item".into(), name: "items".into() };
-    let _ = Windows::step(state, WindowsInput::Load { key: key.clone(), id: 1, goal: Goal::First, force: false, store_revision: 0, now: NOW }, crate::runtime::Time(0));
+    let _ = Windows::step(state, WindowsInput::Load { key: key.clone(), id: 1, goal: Goal::First, force: false, store_revision: 0 }, crate::runtime::Time(0));
     Windows::step(state, WindowsInput::WindowRead { key, read_id: 1, result: Ok(None) }, crate::runtime::Time(0))
 }
 
@@ -32,7 +30,7 @@ fn win_loading_pinned() {
     assert!(matches!(store_inputs(initial).as_slice(), [StoreInput::Pin { epoch: 1, request_id: 1 }]));
     let pinned = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 12 }, crate::runtime::Time(0));
     assert!(pinned.iter().any(|effect| matches!(effect, Effect::Run(WindowsEffect::Window { effect: WindowEffect::Request { request: 1, .. }, .. }))));
-    let landed = Windows::step(&mut state, WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec![], None), now: NOW }, crate::runtime::Time(0));
+    let landed = Windows::step(&mut state, WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec![], None) }, crate::runtime::Time(0));
     let inputs = store_inputs(landed);
     assert!(matches!(inputs.as_slice(), [StoreInput::Commit(batch)] if matches!(batch.ops.as_slice(), [StoreOp::Window { base_revision: 12, .. }])));
 }
@@ -50,7 +48,7 @@ fn win_pinned_stray() {
 
 fn no_wait(state: &mut WindowsState) -> Vec<Effect<Windows>> {
     let key = WindowKey { model: "Item".into(), name: "items".into() };
-    Windows::step(state, WindowsInput::LoadNoWait { key, id: 7, goal: Goal::First, force: true, store_revision: 0, now: NOW, verb: "refresh" }, crate::runtime::Time(0))
+    Windows::step(state, WindowsInput::LoadNoWait { key, id: 7, goal: Goal::First, force: true, store_revision: 0, verb: "refresh" }, crate::runtime::Time(0))
 }
 
 fn outcome_of(effects: &[Effect<Windows>]) -> Option<WindowOutcome> {
@@ -69,7 +67,7 @@ fn win_load_nowait_offline() {
 
 #[test]
 fn win_load_nowait_before_snapshot_waits() {
-    let online = |value: bool| WindowsInput::Online { online: Online(value), online_seq: 1, now: NOW };
+    let online = |value: bool| WindowsInput::Online { online: Online(value), online_seq: 1 };
     let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
     assert!(no_wait(&mut state).is_empty(), "no answer and no request before the snapshot");
     assert_eq!(outcome_of(&Windows::step(&mut state, online(false), crate::runtime::Time(0))), Some(WindowOutcome::Offline { message: "Item.items refresh needs the network".into() }), "Online(false) answers the waiting call");
@@ -93,7 +91,7 @@ fn win_prop_nowait_second_epoch_orders() {
         for order in &valid {
             let mut state = WindowsState::new(1, Some(true), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
             let mut effects = Windows::step(&mut state, WindowsInput::EpochEnded(EpochEnded { epoch: 1, cause: Cause::SessionReset }), crate::runtime::Time(0));
-            let online = WindowsInput::Online { online: Online(network), online_seq: 1, now: NOW };
+            let online = WindowsInput::Online { online: Online(network), online_seq: 1 };
             for event in order.iter() {
                 effects.extend(match event {
                     0 => Windows::step(&mut state, WindowsInput::EpochStarted(EpochStarted { epoch: 2, identity: Some(1), generation: 0 }), crate::runtime::Time(0)),

@@ -209,20 +209,20 @@ struct Trace {
 
 type Plan = Vec<(Turn, u64, i64)>;
 
-fn input_of(turn: Turn, stamp: i64, flight: &Flight) -> w::WindowsInput {
+fn input_of(turn: Turn, _stamp: i64, flight: &Flight) -> w::WindowsInput {
     let page = |rows: Vec<String>| AnswerPage::new(1, rows, None);
     match turn {
-        Turn::Watch => w::WindowsInput::InterestPlus { key: key(), id: u64::from(STREAM), now: stamp },
+        Turn::Watch => w::WindowsInput::InterestPlus { key: key(), id: u64::from(STREAM) },
         Turn::Unwatch => w::WindowsInput::InterestMinus { key: key(), id: u64::from(STREAM) },
-        Turn::Call => w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 0, now: stamp },
-        Turn::Refresh => w::WindowsInput::LoadNoWait { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 0, now: stamp, verb: "refresh" },
-        Turn::Respond => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(vec!["r1".into()]), now: stamp },
-        Turn::RespondEmpty => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(Vec::new()), now: stamp },
+        Turn::Call => w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 0 },
+        Turn::Refresh => w::WindowsInput::LoadNoWait { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 0, verb: "refresh" },
+        Turn::Respond => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(vec!["r1".into()]) },
+        Turn::RespondEmpty => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: page(Vec::new()) },
         Turn::Land => w::WindowsInput::Committed(Committed { batch: flight.batch, revision: flight.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
-        Turn::NetDown => w::WindowsInput::Online { online: Online(false), online_seq: flight.online_seq, now: stamp },
-        Turn::NetUp => w::WindowsInput::Online { online: Online(true), online_seq: flight.online_seq, now: stamp },
-        Turn::Preload => w::WindowsInput::PreloadKeys { keys: vec![key()], now: stamp },
-        Turn::Register => w::WindowsInput::RegisterOperations { now: stamp },
+        Turn::NetDown => w::WindowsInput::Online { online: Online(false), online_seq: flight.online_seq },
+        Turn::NetUp => w::WindowsInput::Online { online: Online(true), online_seq: flight.online_seq },
+        Turn::Preload => w::WindowsInput::PreloadKeys { keys: vec![key()] },
+        Turn::Register => w::WindowsInput::RegisterOperations,
     }
 }
 

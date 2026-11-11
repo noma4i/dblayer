@@ -247,9 +247,9 @@ fn win_prop_generation() {
                     twin.det.start_epoch(EPOCH + 1);
                     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 }));
                 }
-                Ev::Online => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }),
-                Ev::Call1 => twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0, now: NOW }),
-                _ => twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["old".into()], None), now: NOW }),
+                Ev::Online => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 }),
+                Ev::Call1 => twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0 }),
+                _ => twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["old".into()], None) }),
             }
             let emitted = take(&twin.log);
             batches.extend(sent_batches(&emitted).into_iter().filter(|batch| batch.contains("\"Moment\": 3")));
@@ -258,7 +258,7 @@ fn win_prop_generation() {
             }
         }
         let (request, attempt) = fresh_request.expect("the new epoch asked for its first page");
-        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None), now: NOW });
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None) });
         twin.run();
         batches.extend(sent_batches(&take(&twin.log)).into_iter().filter(|batch| batch.contains("\"Moment\": 3")));
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
@@ -282,7 +282,7 @@ fn win_orders_preload_sets() {
         let mut twin = Twin::new();
         let mut named = Vec::new();
         for index in order.iter().copied() {
-            twin.post(w::WindowsInput::PreloadKeys { keys: sets[index].clone(), now: NOW });
+            twin.post(w::WindowsInput::PreloadKeys { keys: sets[index].clone() });
             named.extend(sets[index].iter().cloned());
         }
         let last = &sets[*order.last().expect("an order")];
@@ -313,16 +313,16 @@ fn win_orders_direction_keys() {
             let key = keys[side].clone();
             let cursor = format!("cursor{side}");
             match step {
-                0 => twin.post_call(w::WindowsInput::Load { key: key.clone(), id: side as u64 + 1, goal: w::Goal::First, force: false, store_revision: 0, now: NOW }),
+                0 => twin.post_call(w::WindowsInput::Load { key: key.clone(), id: side as u64 + 1, goal: w::Goal::First, force: false, store_revision: 0 }),
                 1 => {
                     let (request, attempt) = asked[side].expect("the load asked");
-                    twin.post(w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec![format!("r{side}")], Some(cursor.clone())), now: NOW });
+                    twin.post(w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec![format!("r{side}")], Some(cursor.clone())) });
                 }
                 2 => {
                     let (request, _) = asked[side].expect("the load asked");
                     twin.post(w::WindowsInput::Committed(Committed { batch: request, revision: 20 + side as i64, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
                 }
-                _ => twin.post_call(w::WindowsInput::Load { key: key.clone(), id: side as u64 + 10, goal: w::Goal::Next, force: false, store_revision: 0, now: NOW }),
+                _ => twin.post_call(w::WindowsInput::Load { key: key.clone(), id: side as u64 + 10, goal: w::Goal::Next, force: false, store_revision: 0 }),
             }
             for (found, request, attempt, page, cursor_sent) in requests_of(take(&twin.log)) {
                 let owner = keys.iter().position(|each| *each == found).expect("a request of one of the two keys");
@@ -394,8 +394,8 @@ fn win_orders_reconnect_gap() {
                 let mut reads = 0;
                 for event in order.iter().copied() {
                     twin.post(match event {
-                        Off => w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW },
-                        On => w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW },
+                        Off => w::WindowsInput::Online { online: Online(false), online_seq: 0 },
+                        On => w::WindowsInput::Online { online: Online(true), online_seq: 1 },
                         Gap => w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: 1 } },
                     });
                     reads += requests(&twin.split(take(&twin.log)).0);

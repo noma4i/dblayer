@@ -136,8 +136,8 @@ fn win_prop_fields_only() {
     twin.call(1, Goal::First);
     assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
     take(&twin.log);
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
 }
@@ -158,13 +158,13 @@ fn win_base_revision() {
     let sent_batch = |twin: &mut Twin| take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     let mut twin = Twin::new();
     twin.pin_revision.store(11, Ordering::SeqCst);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 7, now: NOW });
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 7 });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert!(sent_batch(&mut twin).contains("base_revision: 11"), "the batch carries the revision from Pinned");
     twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 9, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     twin.pin_revision.store(13, Ordering::SeqCst);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5, now: NOW });
-    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
+    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert!(sent_batch(&mut twin).contains("base_revision: 13"), "the next batch carries the next Pinned revision");
 }
 
@@ -216,7 +216,7 @@ fn win_prop_waiters_leave() {
     assert!(twin.step(Input::Online(true)).is_empty());
     let mut preload = Twin::with_preload();
     preload.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-    preload.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    preload.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     preload.reference.step(Input::InterestPlus { id: PRELOAD });
     preload.reference.take_outcomes();
     preload.step(Input::Stale { in_keys: true });
@@ -242,10 +242,10 @@ fn win_dictionary_owner() {
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
     for (key, id) in [(key(), 1), (other.clone(), 2)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: 0 });
     }
     det.run_until_quiet(100).expect("quiet");
-    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["c1".into()], None), now: NOW });
+    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["c1".into()], None) });
     det.run_until_quiet(100).expect("quiet");
     let state = inner(&det, windows);
     assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Loading), Some(WindowStage::Landing)), "the answer of request 2 reaches the key that owns it");
@@ -267,13 +267,13 @@ fn win_landed_revision_per_machine() {
     let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), Arc::new(AtomicU64::new(0)));
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
-    let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision, now: NOW };
+    let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision };
     for (key, id) in [(key(), 1), (other.clone(), 2)] {
         det.post(windows, EpochStamp::Epoch(EPOCH), load(key, id, 0));
     }
     det.run_until_quiet(100).expect("quiet");
     for (request, row, revision) in [(1, "r1", 5), (2, "c1", 9)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None), now: NOW });
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None) });
         det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     }
     det.run_until_quiet(100).expect("quiet");
@@ -288,13 +288,13 @@ fn win_landed_revision_per_machine() {
 fn win_basis_names_every_model_of_the_answer_at_issue() {
     let mut twin = Twin::new();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 1 }));
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     twin.call(1, Goal::First);
     take(&twin.log);
     let mut page = AnswerPage::new(1, vec!["r1".into()], None);
     page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
     page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page, now: NOW });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Chat\": 1") && sent.contains("\"Moment\": 1"), "the generations of the issue: {sent}");
 }
@@ -304,10 +304,10 @@ fn win_basis_names_every_model_of_the_answer_at_issue() {
 fn win_stale_generation_reissues_with_the_generations_of_the_refusal() {
     let mut twin = Twin::new();
     twin.call(1, Goal::First);
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 3)].into() } }));
     take(&twin.log);
-    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
+    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 3"), "the basis of the new request is the generation of the refusal: {sent}");
 }
@@ -331,11 +331,11 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 0 }));
     assert_eq!(twin.state().windows(), 0, "the machines of the old epoch are gone");
     take(&twin.log);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::First, force: false, store_revision: 0 });
     let (requests_before_online, _) = twin.split(take(&twin.log));
     assert_eq!(requests(&requests_before_online), 0, "no request before the addressed Online: {requests_before_online:?}");
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
+    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
@@ -384,8 +384,8 @@ fn win_prop_reconnect_gap_one_reload() {
                     let (effects, _) = twin.split(take(&twin.log));
                     sent.extend(effects);
                 };
-                feed(&mut twin, w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
-                let online = w::WindowsInput::Online { online: Online(true), online_seq: SEQ, now: NOW };
+                feed(&mut twin, w::WindowsInput::Online { online: Online(false), online_seq: 0 });
+                let online = w::WindowsInput::Online { online: Online(true), online_seq: SEQ };
                 let gap = w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: SEQ } };
                 if gap_first {
                     feed(&mut twin, gap);

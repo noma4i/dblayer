@@ -219,7 +219,7 @@ pub enum StaleCause {
 #[derive(Clone, Debug)]
 pub enum WindowsInput {
     /// A stream opened the key (Delivery open) or the preload of the key began.
-    InterestPlus { key: WindowKey, id: InterestId, now: i64 },
+    InterestPlus { key: WindowKey, id: InterestId },
     /// An interest that only watches: the phase goes to the stream, no load starts.
     InterestPassive { key: WindowKey, id: InterestId },
     /// A call that goes to the server only was refused at once because the network is away: the error shows in the state of the window.
@@ -232,11 +232,11 @@ pub enum WindowsInput {
     /// The call of `id` ended before its `Load` came: its place and its held `Load` are void.
     Unreserve { id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
-    Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
+    Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64 },
     /// `refresh`, `load_more`, `node(force)`: a `Load` that does not wait for the network. Without `online = Some(true)` the owner answers `Offline` and applies `OfflineRefused`.
-    LoadNoWait { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64, verb: &'static str },
+    LoadNoWait { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, verb: &'static str },
     Pinned { request_id: RequestId, base_revision: u64 },
-    Response { request: RequestId, attempt: u32, page: AnswerPage, now: i64 },
+    Response { request: RequestId, attempt: u32, page: AnswerPage },
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Dropped { request: RequestId, attempt: u32 },
     Committed(Committed),
@@ -244,12 +244,12 @@ pub enum WindowsInput {
     Stale { model: String, keys: StaleKeys, cause: StaleCause },
     RetryDue { request: RequestId },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
-    PreloadKeys { keys: Vec<WindowKey>, now: i64 },
+    PreloadKeys { keys: Vec<WindowKey> },
     /// The operations of the `.dbl` are declared: the preload keys of a live session start now.
-    RegisterOperations { now: i64 },
+    RegisterOperations,
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
     StoreCommitted { models: Vec<String>, revision: i64 },
-    Online { online: Online, online_seq: u64, now: i64 },
+    Online { online: Online, online_seq: u64 },
     /// The device saves power: a key that only the preload watches waits (Network snapshot and broadcast).
     PowerSaving { saving: bool },
     /// The application came to the front; `seq` grows by 1 with every return.
@@ -266,15 +266,15 @@ pub enum WindowsInput {
 #[derive(Clone, Debug)]
 pub(super) enum Ev {
     Pinned { request: RequestId, base_revision: u64 },
-    InterestPlus { id: InterestId, now: i64 },
+    InterestPlus { id: InterestId },
     InterestPassive { id: InterestId },
     ReloadOnConnect { id: InterestId },
     OfflineRefused { message: String },
     InterestMinus { id: InterestId },
-    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
+    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
     /// The Store published this revision: a request issued from now on is based on it.
     StoreSeen { revision: i64 },
-    Response { request: RequestId, attempt: u32, page: AnswerPage, now: i64 },
+    Response { request: RequestId, attempt: u32, page: AnswerPage },
     /// `Failure` and `Dropped`: the cells are the same, a dropped request is a temporary network error.
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Committed { request: RequestId, revision: i64 },
@@ -283,7 +283,7 @@ pub(super) enum Ev {
     Foreground,
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
-    Online { online: bool, online_seq: u64, now: i64 },
+    Online { online: bool, online_seq: u64 },
     PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
     Saved(Option<SavedWindow>),
@@ -335,6 +335,7 @@ impl RequestIds {
 pub(super) struct Ctx<'a> {
     pub(super) request_ids: &'a mut RequestIds,
     pub(super) next_attempt: &'a mut u32,
+    pub(super) now: i64,
 }
 
 impl Ctx<'_> {

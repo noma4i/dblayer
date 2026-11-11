@@ -27,7 +27,7 @@ fn win_preload_existing_same() {
     let mut twin = fresh_watched();
     twin.step(Input::InterestPlus { id: PRELOAD });
     take(&twin.log);
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
     assert!(take(&twin.log).is_empty(), "a preload that already holds the key changes nothing");
 }
 
@@ -123,9 +123,9 @@ fn win_prop_preload_power_saving() {
 fn win_preload_derived_limit() {
     let mut twin = Twin::new();
     let other = WindowKey { model: "Moment".into(), name: "other".into() };
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key(), other.clone()], now: NOW });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key(), other.clone()] });
     assert_eq!(twin.state().windows(), 2, "a window for every derived key");
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
     assert_eq!(twin.state().interest(&other), Vec::<u64>::new(), "a key that the source no longer names loses the preload interest");
     assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
 }

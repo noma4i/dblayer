@@ -6,8 +6,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const NOW: i64 = 1_000_000;
-
 use serde_json::json;
 
 use super::rig::{admit, open_gate_over, collector, pump, runtime, saw_input, BatchPeer, Batches};
@@ -37,7 +35,7 @@ impl WindowCodec for Pages {
 
 fn key() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
 
-fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0, now: NOW } }
+fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 } }
 
 struct WindowStore;
 
@@ -83,7 +81,7 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let batches = Batches::default();
     let (rest, take_rest) = collector();
     let gate = open_gate_over(EPOCH, transport);
-    let io = WindowIo::new(Arc::new(Pages), (admit(), gate.clone()), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
+    let io = WindowIo::new(Arc::new(Pages), (admit(), gate.clone()), runtime.handle().clone(), take_rest);
     let flights = super::ports::RequestsOnTheWay::default();
     let io = io.flights_in(flights.clone());
     let io = match reader { Some(reader) => io.reading(reader), None => io };
@@ -217,7 +215,7 @@ fn rt_prop_close_against_query_no_old_transport_window() {
     pump(&mut rig.det, |_| mock.calls().len() == 1);
     rig.gate.close(EPOCH);
     let other = WindowKey { model: "Moment".into(), name: "other".into() };
-    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: other, read_id: 2, result: Ok(None) });
     pump(&mut rig.det, |det| saw_input(det, "Dropped") == 1);
     let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();

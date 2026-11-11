@@ -375,7 +375,7 @@ fn win_register_in_flight_nothing() {
         };
         let before = twin.stage();
         take(&twin.log);
-        twin.post(w::WindowsInput::RegisterOperations { now: NOW });
+        twin.post(w::WindowsInput::RegisterOperations);
         let (effects, outcomes) = twin.split(take(&twin.log));
         assert!(effects.is_empty() && outcomes.is_empty(), "RegisterOperations leaves the request in flight untouched: {state}");
         assert_eq!(twin.stage(), before, "the state is unchanged: {state}");

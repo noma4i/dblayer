@@ -238,7 +238,7 @@ fn win_wait_refresh_result() {
     let mut offline = fresh();
     offline.step(Input::Online(false));
     take(&offline.log);
-    offline.post(w::WindowsInput::LoadNoWait { key: key(), id: 9, goal: goal_of(Goal::First), force: true, store_revision: 0, now: offline.now, verb: "refresh" });
+    offline.post(w::WindowsInput::LoadNoWait { key: key(), id: 9, goal: goal_of(Goal::First), force: true, store_revision: 0, verb: "refresh" });
     let (_, answered) = offline.split(take(&offline.log));
     assert!(answered.contains(&(9, Result3::Failed)), "refresh goes as LoadNoWait and the owner answers Offline at once (D-252)");
 
@@ -301,12 +301,12 @@ fn win_wait_nodes() {
     let mut twin = Twin::new();
     let nodes = WindowKey::nodes("Moment", &["m1", "m2"]);
     take(&twin.log);
-    twin.post_call(w::WindowsInput::Load { key: nodes.clone(), id: 1, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: nodes.clone(), id: 1, goal: w::Goal::First, force: false, store_revision: 0 });
     assert!(matches!(runs(take(&twin.log)).as_slice(), [WindowsEffect::Window { effect: WindowEffect::Request { page: 1, .. }, .. }]));
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["m1".into()], None), now: NOW });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["m1".into()], None) });
     twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })));
-    twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+    twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");
 }
 
@@ -356,7 +356,7 @@ impl EffectRunner<Spy<Windows>> for Executor {
         match effect {
             WindowEffect::Request { request, attempt, page, .. } => {
                 log.push(Seen::Requested(request));
-                back.reply(stamp, w::WindowsInput::Response { request, attempt, page: AnswerPage::new(page, vec!["r1".into()], None), now: NOW });
+                back.reply(stamp, w::WindowsInput::Response { request, attempt, page: AnswerPage::new(page, vec!["r1".into()], None) });
             }
             WindowEffect::Cancel { request, .. } => log.push(Seen::Cancelled(request)),
             WindowEffect::Outcome { id, outcome } => log.push(Seen::Outcome(u32::try_from(id).expect("a test id"), outcome)),
@@ -421,10 +421,10 @@ pub(super) fn explore_rig() -> DetScheduler {
     let windows = det.add::<Spy<Windows>>("windows", SpyState::new(w::WindowsState::new(EPOCH, Some(true), peers()), &new_log()), Executor { log: log.clone() });
     let windows = Address::<Windows>::new(windows.index());
     det.start_epoch(EPOCH);
-    let load = |id: u64| w::WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0, now: NOW };
+    let load = |id: u64| w::WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 };
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![load(1), load(2)] }, Silent);
     let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Change }] }, Silent);
-    let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW }, w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }] }, Silent);
+    let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), online_seq: 0 }, w::WindowsInput::Online { online: Online(true), online_seq: 1 }] }, Silent);
     for source in [callers, marks, network] {
         det.post(source, EpochStamp::Control, SourceInput::Go);
     }

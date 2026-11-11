@@ -5,15 +5,13 @@ use crate::runtime::{Address, StateOwner};
 
 use crate::test_wait::permutations;
 
-const NOW: i64 = 1_000_000;
-
 fn state() -> WindowsState {
     WindowsState::new(1, Some(true), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) })
 }
 
 fn key() -> WindowKey { WindowKey { model: "Item".into(), name: "items".into() } }
 
-fn load(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: Goal::First, force: false, store_revision: 0, now: NOW } }
+fn load(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: Goal::First, force: false, store_revision: 0 } }
 
 /// boundary_load_cancel_orders (P-BND-01): whatever the order in which the loads of reserved calls arrive, the window registers their interests in the order of the ids.
 #[test]

@@ -160,7 +160,7 @@ impl Life {
         self.wiring.to_calls(CallsInput::Declare(calls));
         self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone() });
         self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations });
-        self.wiring.to_windows(WindowsInput::RegisterOperations { now: (self.wiring.now)() });
+        self.wiring.to_windows(WindowsInput::RegisterOperations);
     }
 
     /// The clock of the runtime, the time that the platform calls hand to the owners.

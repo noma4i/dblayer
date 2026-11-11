@@ -245,29 +245,30 @@ impl Twin {
 
     /// Feeds one input of the table to both sides. Returns the effects of the reference after the check against the owner.
     fn step(&mut self, input: Input) -> Vec<Effect> {
+        self.det.tick(crate::runtime::Time(self.now as u64));
         take(&self.log);
         let k = key();
         match &input {
-            Input::InterestPlus { id: PRELOAD } => self.post(w::WindowsInput::PreloadKeys { keys: vec![k], now: self.now }),
-            Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id), now: self.now }),
+            Input::InterestPlus { id: PRELOAD } => self.post(w::WindowsInput::PreloadKeys { keys: vec![k] }),
+            Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id) }),
             Input::InterestPassive { id } => self.post_call(w::WindowsInput::InterestPassive { key: k, id: id64(*id) }),
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: id64(*id) }),
-            Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0, now: self.now }),
+            Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0 }),
             Input::Response { request, attempt, cursor, rows } => {
                 let page = AnswerPage::new(1, if *rows { vec!["r1".into()] } else { Vec::new() }, cursor.map(cursor_text));
-                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
             Input::TransportError { request, attempt, failure } => {
                 self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { class: class_of(*failure), failure: crate::ffi::DbError::Network { detail: "e".into() } } });
             }
             Input::MarkerAnswer { request, attempt, marker } => {
                 let page = AnswerPage::marked(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() });
-                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
             Input::MoreWithoutCursor { request, attempt } => {
                 let mut page = AnswerPage::new(1, Vec::new(), None);
                 page.more = true;
-                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
@@ -291,7 +292,7 @@ impl Twin {
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
             Input::Online(on) => {
                 self.online_seq += u64::from(*on);
-                self.post(w::WindowsInput::Online { online: Online(*on), online_seq: self.online_seq, now: self.now });
+                self.post(w::WindowsInput::Online { online: Online(*on), online_seq: self.online_seq });
             }
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);

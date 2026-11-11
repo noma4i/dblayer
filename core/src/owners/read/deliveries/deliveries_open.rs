@@ -4,7 +4,6 @@ impl Delivery {
     pub(super) fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
         let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None } };
         Self {
-            opened_at: 0,
             epoch,
             view,
             stage,

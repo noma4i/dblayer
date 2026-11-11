@@ -405,7 +405,7 @@ impl Life {
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
         let store = builder.reserve::<StoreWriter>();
-        let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
+        let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
             let state = SessionState::with_operations(exchange.session_operations(), None);
