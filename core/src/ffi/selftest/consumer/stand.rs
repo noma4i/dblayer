@@ -127,9 +127,9 @@ impl FakeHttp for Server {
                 _ => {}
             }
             self.asked.lock().unwrap().push((operation.clone(), request["body"]["variables"].clone()));
-            crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
             self.sequenced.lock().unwrap().push((operation.clone(), sequence.unwrap_or(0)));
             self.request_ids.lock().unwrap().push((operation.clone(), request["requestId"].clone()));
+            crate::lock::effect(|| self.received.send_modify(|count| *count += 1));
             if let Admission::Refused(refusal) = admission {
                 if refusal["error"] == SEQUENCE_CONFLICT { self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) });
