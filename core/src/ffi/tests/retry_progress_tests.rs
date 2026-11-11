@@ -44,12 +44,12 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
                 let (retries, clock) = (retries.clone(), clock.manual());
                 async move { super::encrypted::fetch_server_config_with(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, Arc::new(Refusing), Some(retries), super::encrypted::Waits { connectivity: crate::transport::Connectivity::new(true), clock }).await }
             });
-            crate::test_wait::within(clock.await_armed(0)).await;
+            crate::test_wait::within_named(8, "the first retry timer is armed", clock.await_armed(0)).await;
             let reader = retries.subscribe();
-            assert_eq!(crate::test_wait::within(reader.next()).await.map(|snapshot| (snapshot.waiting.len(), snapshot.waiting[0].owner)), Some((1, crate::transport::RetryOwner::Bootstrap)), "the first call returns the current snapshot");
+            assert_eq!(crate::test_wait::within_named(8, "the first read of the snapshot", reader.next()).await.map(|snapshot| (snapshot.waiting.len(), snapshot.waiting[0].owner)), Some((1, crate::transport::RetryOwner::Bootstrap)), "the first call returns the current snapshot");
             let mut held: Held = Box::pin({
                 let reader = reader.clone();
-                async move { crate::test_wait::within(reader.next()).await }
+                async move { crate::test_wait::within_named(8, "the held read", reader.next()).await }
             });
             assert!(poll_once(&mut held).is_pending(), "{order:?}: the waiting call passed the cancel check and waits for a change");
 
@@ -59,7 +59,7 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
                     Change => {
                         let armed = clock.armed();
                         clock.advance(1_000);
-                        crate::test_wait::within(clock.await_armed(armed)).await;
+                        crate::test_wait::within_named(8, "the retry timer is armed again after the clock moved", clock.await_armed(armed)).await;
                         changed = Some(retries.current());
                     }
                     Cancel => {
@@ -80,13 +80,13 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
                 }
             }
             if !done {
-                let late = crate::test_wait::within(held).await;
+                let late = crate::test_wait::within_named(8, "the held read ends after the cancel", held).await;
                 assert_eq!(late, None, "{order:?} round {round}: the call that waited through the cancel returned {late:?}");
             }
-            assert_eq!(crate::test_wait::within(reader.next()).await, None, "{order:?} round {round}: a call that starts after the cancel returned a value");
+            assert_eq!(crate::test_wait::within_named(8, "a read after the cancel", reader.next()).await, None, "{order:?} round {round}: a call that starts after the cancel returned a value");
             call.abort();
             let gone = retries.subscribe();
-            crate::test_wait::within(async { while !retries.current().waiting.is_empty() { gone.next().await; } }).await;
+            crate::test_wait::within_named(8, "the aborted call leaves the registry", async { while !retries.current().waiting.is_empty() { gone.next().await; } }).await;
         }
     }
 }
