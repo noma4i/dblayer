@@ -270,3 +270,14 @@ fn data_event_delete_missing_row() {
     assert_eq!(text(&db), Value::Null, "the tombstone keeps a late page from bringing the row back");
 }
 
+#[test]
+fn feed_event_keeps_pending_fields() {
+    let db = open_moments();
+    let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "text": "local"}).to_string() }], ..Default::default() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: 5, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "userId": "u2", "text": "server"}}).to_string();
+    write(&db, BatchAuthor::Feed, vec![("moments".into(), event)], Vec::new());
+    let field = |name: &str| db.read(&["moments"], |reader| reader.point("moments", "m1")).unwrap().and_then(|row| row.get(name).cloned()).unwrap_or(Value::Null);
+    assert_eq!(field("text"), json!("local"), "the field of the open operation stays local");
+    assert_eq!(field("userId"), json!("u2"), "the other fields come from the event");
+}
