@@ -19,10 +19,8 @@ impl Window {
         self.cursor_reset_used = false;
         self.replace_all = false;
         let chain = self.members_complete && self.cursor.is_some();
-        let settled = self.settled;
-        self.set_phase(Phase::Loaded);
+        self.outcome = Outcome::Landed;
         if chain {
-            self.settled = settled;
             let watched = self.watched();
             for (id, want) in self.waiters.clone() {
                 if !(matches!(want, Want::All) || matches!(want, Want::Next(c) if c > page)) {
@@ -35,7 +33,6 @@ impl Window {
                 if self.is_online() {
                     let (request, attempt) = self.request_ids();
                     self.state = State::Loading { request, attempt, retry: false, page: next, force: false, attempts: 0 };
-                    self.phase = Phase::Loading;
                     return vec![Effect::Request { request, attempt, page: next }, Effect::WindowState];
                 }
                 self.state = State::Waiting { force: false, page: next };
@@ -74,8 +71,7 @@ impl Window {
             if self.is_online() {
                 let (request, attempt) = self.request_ids();
                 self.state = State::Loading { request, attempt, retry: false, page: next, force: false, attempts: 0 };
-                self.phase = Phase::Loading;
-                return vec![Effect::Request { request, attempt, page: next }, Effect::WindowState];
+                        return vec![Effect::Request { request, attempt, page: next }, Effect::WindowState];
             }
             self.state = State::Waiting { force: false, page: next };
             return vec![Effect::WindowState];
@@ -123,8 +119,7 @@ impl Window {
             Input::Online(true) => self.leave_waiting(force, page),
             Input::PowerSaving(_) if self.is_online() && !self.deferred() => self.leave_waiting(force, page),
             Input::OfflineRefused => {
-                self.last_error = Some(true);
-                self.set_phase(self.failed_phase());
+                self.refuse(true);
                 vec![Effect::WindowState]
             }
             Input::InterestPlus { id } => {
@@ -145,9 +140,7 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                if self.interest.is_empty() {
-                    self.settled = false;
-                }
+                self.interest_left();
                 self.waiters.remove(&id);
                 if !self.watched() {
                     self.state = State::Idle;
@@ -162,7 +155,6 @@ impl Window {
     pub(super) fn leave_waiting(&mut self, force: bool, page: u32) -> Vec<Effect> {
         let (request, attempt) = self.request_ids();
         self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
-        self.phase = Phase::Loading;
         vec![self.issue_effect(request, attempt, page), Effect::WindowState]
     }
 }

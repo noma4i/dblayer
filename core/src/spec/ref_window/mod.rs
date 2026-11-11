@@ -27,8 +27,7 @@ impl Window {
             has_rows: false,
             landed_revision: 0,
             foreground_seen: 0,
-            phase: Phase::Idle,
-            settled: false,
+            outcome: Outcome::None,
             outcomes: Vec::new(),
             now: 1_000_000,
             landed_at: 0,
@@ -72,7 +71,6 @@ impl Window {
     fn fresh_at(&self) -> bool { self.fresh && self.now < self.fresh_until && self.landed_at - self.now < self.fresh_until - self.landed_at }
 
     pub(super) fn join(&mut self, id: u32) {
-        if id != PRELOAD && self.interest.iter().all(|held| *held == PRELOAD) { self.settled = false; }
         self.interest.insert(id);
     }
 
@@ -102,7 +100,41 @@ impl Window {
         for id in std::mem::take(&mut self.waiters).into_keys() { self.outcomes.push((id, result)); }
     }
 
-    fn failed_phase(&self) -> Phase { if self.has_rows { Phase::Loaded } else { Phase::Failed } }
+    /// P-WIN-32: one function of the stage, `outcome` and the rows.
+    pub(super) fn phase(&self) -> Phase {
+        match (self.state, self.outcome) {
+            (State::Loading { .. } | State::Landing { .. }, _) => Phase::Loading,
+            (_, Outcome::None) => Phase::Idle,
+            (_, Outcome::Fresh | Outcome::Landed) => Phase::Loaded,
+            (_, Outcome::Failed) if self.has_rows => Phase::Loaded,
+            (_, Outcome::Failed) => Phase::Failed,
+        }
+    }
+
+    pub(super) fn settled(&self) -> bool {
+        match self.outcome {
+            Outcome::None => false,
+            Outcome::Landed => !(self.members_complete && self.cursor.is_some()),
+            Outcome::Fresh | Outcome::Failed => true,
+        }
+    }
+
+    /// The refusal of `Failed`: only a landing removes it.
+    pub(super) fn error(&self) -> Option<bool> { if self.outcome == Outcome::Failed { self.last_error } else { None } }
+
+    fn refuse(&mut self, network: bool) {
+        self.last_error = Some(network);
+        self.outcome = Outcome::Failed;
+    }
+
+    fn enter_fresh(&mut self) {
+        if self.outcome == Outcome::None { self.outcome = Outcome::Fresh; }
+    }
+
+    /// The last interest went away: a refusal does not outlive it.
+    fn interest_left(&mut self) {
+        if self.interest.is_empty() && self.outcome == Outcome::Failed { self.outcome = Outcome::None; }
+    }
 
     /// A load of `page`: a request online, `Waiting` otherwise. `announce` adds `WindowState`.
     fn begin(&mut self, page: u32, force: bool, announce: bool) -> Vec<Effect> {
@@ -111,7 +143,6 @@ impl Window {
         if self.is_online() && !self.deferred() {
             let (request, attempt) = self.request_ids();
             self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
-            self.phase = Phase::Loading;
             effects.push(self.issue_effect(request, attempt, page));
         } else {
             self.state = State::Waiting { force, page };
@@ -241,11 +272,6 @@ impl Window {
         Vec::new()
     }
 
-    fn set_phase(&mut self, phase: Phase) {
-        self.phase = phase;
-        self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
-    }
-
     pub(super) fn has_more(&self) -> bool { self.cursor.is_some() }
 
     fn page_limit_reached(&self) -> bool { self.page_count >= self.max_pages }
@@ -259,7 +285,7 @@ impl Window {
             Input::InterestPlus { id } => {
                 self.join(id);
                 if self.fresh_at() {
-                    self.set_phase(Phase::Loaded);
+                    self.enter_fresh();
                     vec![Effect::WindowState]
                 } else {
                     self.begin(1, false, true)
@@ -268,9 +294,7 @@ impl Window {
             Input::Load { id, goal, force } => self.idle_load(id, goal, force),
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                if self.interest.is_empty() {
-                    self.settled = false;
-                }
+                self.interest_left();
                 self.waiters.remove(&id);
                 Vec::new()
             }
@@ -286,8 +310,7 @@ impl Window {
             Input::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(1, false, true),
             Input::Online(true) if !self.fresh_at() && self.watched() => self.begin(1, false, true),
             Input::OfflineRefused => {
-                self.last_error = Some(true);
-                self.set_phase(self.failed_phase());
+                self.refuse(true);
                 vec![Effect::WindowState]
             }
             _ => Vec::new(),
@@ -296,9 +319,15 @@ impl Window {
 
     fn idle_load(&mut self, id: u32, goal: Goal, force: bool) -> Vec<Effect> {
         match goal {
-            Goal::First if self.fresh_at() && !force => self.immediate(id, Result3::Loaded),
+            Goal::First if self.fresh_at() && !force => {
+                self.enter_fresh();
+                self.immediate(id, Result3::Loaded)
+            }
             Goal::All if self.fresh_at() && !force => match self.cursor {
-                None => self.immediate(id, Result3::Loaded),
+                None => {
+                    self.enter_fresh();
+                    self.immediate(id, Result3::Loaded)
+                }
                 Some(_) if self.page_limit_reached() => self.immediate(id, Result3::PageLimit),
                 Some(cursor) => {
                     self.waiters.insert(id, Want::All);
@@ -352,16 +381,13 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                if self.interest.is_empty() {
-                    self.settled = false;
-                }
+                self.interest_left();
                 self.waiters.remove(&id);
                 if self.watched() {
                     Vec::new()
                 } else {
                     self.state = State::Idle;
                     self.fresh = false;
-                    self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
                     vec![Effect::Cancel { request: step, attempt }]
                 }
             }
@@ -414,9 +440,9 @@ impl Window {
         self.chain = None;
         self.state = State::Idle;
         self.fresh = false;
+        self.outcome = Outcome::Failed;
         self.last_error = Some(network);
         self.reread_due = false;
-        self.set_phase(self.failed_phase());
         self.answer_all(Result3::Failed);
         vec![Effect::WindowState]
     }
@@ -435,9 +461,7 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
-                if self.interest.is_empty() {
-                    self.settled = false;
-                }
+                self.interest_left();
                 self.waiters.remove(&id);
                 Vec::new()
             }

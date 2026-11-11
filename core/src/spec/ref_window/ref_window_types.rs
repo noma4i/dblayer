@@ -11,6 +11,15 @@ pub(in super::super) enum Phase {
     Failed,
 }
 
+/// window.md P-WIN-32: the result of the last load of the interest; the phase, `settled` and the error are functions of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in super::super) enum Outcome {
+    None,
+    Fresh,
+    Landed,
+    Failed,
+}
+
 pub(in super::super) const PRELOAD: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,8 +192,7 @@ pub(in super::super) struct Window {
     pub(in super::super) has_rows: bool,
     pub(in super::super) landed_revision: i64,
     pub(in super::super) foreground_seen: u64,
-    pub(in super::super) phase: Phase,
-    pub(in super::super) settled: bool,
+    pub(in super::super) outcome: Outcome,
     pub(in super::super) outcomes: Vec<(u32, Result3)>,
     /// The time of the step, set by the test before every step.
     pub(in super::super) now: i64,

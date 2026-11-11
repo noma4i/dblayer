@@ -356,7 +356,7 @@ impl Twin {
         let Some(stage) = self.stage() else { return };
         assert_eq!(stage, stage_of(&self.reference.state), "the stage");
         if stage != WindowStage::Ended {
-            assert_eq!(self.phase(), self.reference.phase, "the phase");
+            assert_eq!(self.phase(), self.reference.phase(), "the phase");
         }
         let interest: Vec<u64> = self.reference.interest.iter().map(|id| id64(*id)).collect();
         let mut owner_interest = self.state().interest(&key());
@@ -368,7 +368,8 @@ impl Twin {
         assert_eq!(self.state().waiters(&key()), waiters, "the waiters");
         if stage != WindowStage::Ended {
             let state = self.load_state();
-            assert_eq!((state.has_more, state.settled), (self.reference.has_more(), self.reference.settled), "has_more and settled");
+            assert_eq!((state.has_more, state.settled), (self.reference.has_more(), self.reference.settled()), "has_more and settled");
+            assert_eq!(state.error.is_some(), self.reference.error().is_some(), "the error");
         }
     }
 
