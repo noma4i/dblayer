@@ -43,13 +43,14 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
+/// Three families: a session with every input, a session whose body has no second `login` (so the rows after it are seen apart from the divergence of a repeated login), and no session (depth 1: its reads all end with `NoSession`).
 fn programs() -> Vec<Vec<Input>> {
     let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
+    let without_login: Vec<Input> = letters.iter().filter(|input| input.name != "login").cloned().collect();
     let mut out = Vec::new();
-    for anonymous in [false, true] {
-        let head = prelude(anonymous);
-        out.extend(all_traces(&letters, depth()).into_iter().map(|body| [head.clone(), body].concat()));
-        out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
+    for (head, body, deep) in [(prelude(false), &letters, depth()), (prelude(false), &without_login, depth()), (prelude(true), &letters, depth().min(1))] {
+        out.extend(all_traces(body, deep).into_iter().map(|trace| [head.clone(), trace].concat()));
+        out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(body, seed, LENGTH)].concat()));
     }
     out.extend(retry_programs());
     out
