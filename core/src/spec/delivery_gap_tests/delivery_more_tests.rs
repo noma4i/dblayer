@@ -21,7 +21,7 @@ fn dlv_count_temp_swap() {
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Count(0) });
     take(&twin.log);
     resolved.store(true, Ordering::SeqCst);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let read_id = twin.read_id();
     take(&twin.log);
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), data: d::ReadData::Count(0) });

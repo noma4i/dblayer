@@ -93,7 +93,7 @@ fn out_failed_other() {
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
         OutboxInput::RetryDue { op_id: id, cycle_id: 1 },
-        OutboxInput::Committed(Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
+        OutboxInput::Committed(Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
         OutboxInput::Rejected(Rejected { batch: 999, reason: RejectReason::Storage("disk".into()) }),
     ]);
 }

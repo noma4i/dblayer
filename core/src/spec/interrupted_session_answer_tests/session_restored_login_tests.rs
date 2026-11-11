@@ -8,7 +8,7 @@ pub(super) fn restored_login(rig: &mut Rig) -> u64 {
 
 pub(super) fn commit_landing(rig: &mut Rig, effects: &[SessionEffect]) -> Vec<SessionEffect> {
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
+    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
 }
 
 pub(super) fn login_response(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> {
@@ -34,7 +34,7 @@ pub(super) fn clearing_op(effects: &[SessionEffect]) -> u64 {
 
 fn finish_take(rig: &mut Rig, effects: Vec<SessionEffect>) -> Vec<SessionEffect> {
     let [SessionEffect::CommitResumeAnswer { batch, answer: None, .. }] = effects[..] else { panic!("the outcome must be removed: {effects:?}") };
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
+    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
 }
 
 #[test]

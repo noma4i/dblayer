@@ -61,7 +61,7 @@ fn landed(id: &str) -> crate::store::Row {
 }
 
 fn committed_with(twin: &mut Twin, shown: Vec<Option<crate::store::Row>>) -> Out {
-    twin.answer(|batch| TransferInput::Committed(crate::owners::contract::Committed { batch, revision: 4, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0 }))
+    twin.answer(|batch| TransferInput::Committed(crate::owners::contract::Committed { batch, revision: 4, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0, refused: Vec::new() }))
 }
 
 #[test]

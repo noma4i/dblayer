@@ -21,7 +21,7 @@ fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
 }
 
 fn commit_first(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
+    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
 }
 
 fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
@@ -63,7 +63,7 @@ fn out_local_write_stale_generation() {
     assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::LocalWrite, generation: 2, .. }]));
     assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
     let [OutboxEffect::Store { batch, .. }] = effects.as_slice() else { unreachable!() };
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: *batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: *batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
 }
 
@@ -218,7 +218,7 @@ fn out_local_write_memory_same() {
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
     assert_eq!(twin.stores.len(), 1);
     assert!(twin.store_text.contains("EphemeralRows { model: \"Moment\"") && twin.store_text.contains("row_id: \"w\""), "{}", twin.store_text);
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Written { revision: 12, shown: None, files_removed: 0 }]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
     twin.det.tick(Time(110));
@@ -249,7 +249,7 @@ fn out_prop_landing_no_stale() {
 fn store_outcome(twin: &mut Twin, batch: u64, outcome: Option<RejectReason>) -> Vec<OutboxEffect> {
     take_fx(&twin.log, None);
     let input = match outcome {
-        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
+        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0, refused: Vec::new() }),
         Some(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
     };
     twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Control, input);

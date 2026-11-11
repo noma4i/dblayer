@@ -385,10 +385,10 @@ impl Twin {
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
-    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
+    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })) }
 
     /// `Committed` for a batch of shown values: the Store answers them apart from the batches the tests answer in order.
-    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 })) }
+    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })) }
 
     pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) })) }
 

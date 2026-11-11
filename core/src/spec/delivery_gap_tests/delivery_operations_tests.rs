@@ -10,7 +10,7 @@ fn queue_view() -> d::View {
 }
 
 fn commit(twin: &mut Twin, revision: i64, table: &str) {
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
 }
 
 fn read_done(twin: &mut Twin, revision: i64, items: Vec<OperationInfo>) {

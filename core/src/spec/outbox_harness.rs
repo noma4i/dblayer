@@ -317,7 +317,7 @@ impl Twin {
 
     pub(super) fn commit_batch(&mut self, batch: BatchId) -> Vec<OutboxEffect> {
         self.revision += 1;
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }))
+        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
     }
 
     pub(super) fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> { let batch = self.batches[&id]; self.reject_batch(batch, reason) }

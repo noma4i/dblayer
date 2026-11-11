@@ -206,12 +206,12 @@ impl Twin {
             }
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
             }
             Input::Changed { revision, rows, reset } => {
                 let tables = rows.iter().map(|(table, _)| table.clone()).collect();
                 let changed = rows.iter().cloned().collect::<std::collections::BTreeSet<_>>();
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
             Input::ReadRelevant { revision, position, relevant, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
@@ -570,7 +570,7 @@ fn dlv_open_live() {
 fn dlv_committed_reset_reads_no_row_stream() {
     let mut twin = open_rows();
     take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], rows: None, models: Models::All, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], rows: None, models: Models::All, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(Twin::modelled(take(&twin.log)), []);
 }
 

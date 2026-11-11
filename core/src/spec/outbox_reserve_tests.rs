@@ -134,7 +134,7 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     let batch = &store[0].1;
     assert!(batch.contains("RemoveIntent { op_id: 4 }") && batch.contains("TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: Confirmed") && batch.contains("TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: Failed"), "{batch}");
     assert!(sends.iter().all(|(to, _)| *to != TRANSFER_AT));
-    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 37, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 37, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
     assert_eq!(events.len(), 1);
     assert!(events[0].1.contains("MutationOutcomes { batch_id: 9") && events[0].1.contains("(11, 2, Confirmed { revision: 37") && events[0].1.contains("(12, 4, Failed") && events[0].1.contains("intent_removed: true"), "{events:?}");
@@ -151,7 +151,7 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
     assert!(store.contains("MarkError") && store.contains("transfer_id: 11, cycle_id: 1") && store.contains("transfer_id: 12, cycle_id: 1"), "{store}");
-    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("MutationOutcomes") && input.contains("intent_removed: false")), "{sends:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "a".into(), reply: 1, uploads: vec![upload(11, 2), upload(12, 2)] });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
@@ -160,7 +160,7 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::Storage("disk".into()) }));
     assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("RetryOutcome") && input.contains("(11, 2)") && input.contains("Err(Rejected(Storage")), "{sends:?}");
     raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "a".into(), reply: 2, uploads: vec![upload(11, 2), upload(12, 2)] });
-    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 3, revision: 21, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 3, revision: 21, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("RetryOutcome") && input.contains("(11, 2)") && input.contains("(12, 2)") && input.contains("Ok(21)")), "{sends:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
@@ -178,7 +178,7 @@ fn out_group_rollback_outcome() {
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
     assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 1, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 1, outcome: Rejected"), "{store}");
-    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
     assert!(matches!(events.as_slice(), [(_, input)] if input.contains("(11, 1, Rejected") && input.contains("(12, 1, Rejected")), "{events:?}");
 }
@@ -439,12 +439,12 @@ fn out_group_outcome_each_member() {
 fn out_retry_outcome_target() {
     use crate::owners::contract::{Committed, Rejected, RejectReason};
     use crate::owners::write::outbox::OpSource;
-    let committed = |revision: i64| Committed { batch: 2, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 };
+    let committed = |revision: i64| Committed { batch: 2, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
     let failed = |twin: &mut Twin| {
         let op = crate::owners::write::outbox::NewOp { origin: OpSource::Transfer { transfer_id: 1, cycle_id: 1 }, ..model_op("r", Policy::Keep, false) };
         raw(twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op });
         raw(twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
-        raw(twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        raw(twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         raw(twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 1, uploads: vec![upload(1, 2)] });
     };
     let retry_outcome = |sends: &[(usize, String)]| -> Vec<String> { sends.iter().filter(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome")).map(|(_, text)| text.clone()).collect() };

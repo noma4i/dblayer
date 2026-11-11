@@ -108,7 +108,7 @@ fn out_sending_other() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     unchanged_by(&mut twin, id, St::Sending, vec![
-        OutboxInput::Committed(crate::owners::contract::Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
+        OutboxInput::Committed(crate::owners::contract::Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
         OutboxInput::Rejected(crate::owners::contract::Rejected { batch: 999, reason: RejectReason::Storage("disk".into()) }),
     ]);
 }

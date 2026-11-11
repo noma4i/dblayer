@@ -55,7 +55,7 @@ fn written(at: u64, due: u64) -> Vec<CommitKind> {
     twin.det.tick(Time(at));
     let effects = twin.post(input_of(Turn::Write, "w", 60));
     let batch = effects.iter().find_map(|effect| match effect { OutboxEffect::Store { batch, .. } => Some(*batch), _ => None }).expect("the batch of the write");
-    twin.post(OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    twin.post(OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let expired = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(due) });
     expired.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
 }

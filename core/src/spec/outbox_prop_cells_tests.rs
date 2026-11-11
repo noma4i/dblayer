@@ -18,7 +18,7 @@ fn optimistic_row() -> crate::store::Row {
 fn commit_shown(twin: &mut Twin, id: crate::owners::write::outbox::OpId, shown: Vec<Option<crate::store::Row>>) -> Vec<OutboxEffect> {
     let batch = twin.batches[&id];
     twin.revision += 1;
-    twin.post(OutboxInput::Committed(Committed { batch, revision: twin.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0 }))
+    twin.post(OutboxInput::Committed(Committed { batch, revision: twin.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0, refused: Vec::new() }))
 }
 
 fn receipt_of(effects: &[OutboxEffect], reply: u64) -> Receipt {

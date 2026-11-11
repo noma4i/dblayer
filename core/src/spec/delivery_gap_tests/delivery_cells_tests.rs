@@ -16,7 +16,7 @@ fn dlv_cancelling_pull_twice() {
 fn dlv_live_committed_seen() {
     let mut twin = live_rows();
     take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 1, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 1, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert!(Twin::modelled(take(&twin.log)).is_empty());
 }
 
@@ -310,7 +310,7 @@ fn dlv_prop_value_revision_relevant_commit() {
 #[test]
 fn dlv_prop_commit_during_read_is_delivered() {
     fn commit(twin: &mut Twin, revision: i64) -> Vec<Effect> {
-        twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }));
+        twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         Twin::modelled(take(&twin.log))
     }
     fn complete(twin: &mut Twin, read_id: u64, revision: i64, values: &[&str]) {

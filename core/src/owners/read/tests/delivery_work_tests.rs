@@ -248,7 +248,7 @@ fn dlv_committed_rows_select_the_entity_streams_of_those_rows() {
         work.pull(stream);
     }
     let table = table_name(&model(0));
-    let committed = |revision: i64, rows: ChangedRows| DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.clone()], rows, models: Models::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 });
+    let committed = |revision: i64, rows: ChangedRows| DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.clone()], rows, models: Models::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() });
     let examined = work.state.streams_examined();
 
     let reads = work.step(committed(100, Some([(table.clone(), "b".to_string())].into())));
