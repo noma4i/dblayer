@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::corpus;
-use super::model::{expected_trace, run, Divergence, Owner};
-use super::value::Input;
+use super::model::{expected_trace, run, Divergence, DivergenceKind, Owner};
+use super::value::{Input, Trace};
 
 /// Every sequence of 1 to `depth` inputs of the alphabet, shorter first.
 pub fn all_traces(alphabet: &[Input], depth: usize) -> Vec<Vec<Input>> {
@@ -52,7 +52,14 @@ pub async fn find(owner: &dyn Owner, depth: usize, seeds: &[u64], length: usize)
     None
 }
 
-/// Removes inputs while a divergence stays: the result is a trace where no single input can go.
+fn same_fault(a: &DivergenceKind, b: &DivergenceKind) -> bool {
+    match (a, b) {
+        (DivergenceKind::Property { name: a, .. }, DivergenceKind::Property { name: b, .. }) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Removes inputs while the same fault stays: the result is a trace where no single input can go.
 pub async fn minimize(owner: &dyn Owner, divergence: Divergence) -> Divergence {
     let mut current = divergence;
     current.inputs.truncate(current.step);
@@ -65,6 +72,9 @@ pub async fn minimize(owner: &dyn Owner, divergence: Divergence) -> Divergence {
                 continue;
             }
             if let Err(smaller) = run(owner, owner.name(), &candidate).await {
+                if !same_fault(&smaller.fault, &current.fault) {
+                    continue;
+                }
                 let mut smaller = *smaller;
                 smaller.inputs.truncate(smaller.step);
                 current = smaller;
@@ -78,8 +88,16 @@ pub async fn minimize(owner: &dyn Owner, divergence: Divergence) -> Divergence {
     }
 }
 
-/// Writes the trace of a divergence (inputs with the observations the model expects) into a corpus directory.
+/// Writes the trace of a divergence into a corpus directory: inputs with the observations the model expects, or the observations the core gave when the owner has no model.
 pub fn save(owner: &dyn Owner, dir: &Path, divergence: &Divergence) -> Result<PathBuf, String> {
-    let name = format!("{}_step{}_{}", owner.name(), divergence.step, divergence.inputs.len());
-    corpus::write(dir, &expected_trace(owner, &name, &divergence.inputs))
+    let rule = match &divergence.fault {
+        DivergenceKind::Property { name, .. } => format!("{}_", name.to_lowercase()),
+        DivergenceKind::Observations => String::new(),
+    };
+    let name = format!("{}_{rule}step{}_{}", owner.name(), divergence.step, divergence.inputs.len());
+    let trace = match owner.model() {
+        Some(mut model) => expected_trace(model.as_mut(), &name, &divergence.inputs),
+        None => Trace { name, steps: divergence.steps.clone() },
+    };
+    corpus::write(dir, &trace)
 }

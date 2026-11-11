@@ -159,8 +159,8 @@ impl Owner for CounterOwner {
         vec![inc(1), inc(2), epoch_ended()]
     }
 
-    fn model(&self) -> Box<dyn RefModel> {
-        Box::new(CounterRef::new())
+    fn model(&self) -> Option<Box<dyn RefModel>> {
+        Some(Box::new(CounterRef::new()))
     }
 
     async fn real(&self) -> Box<dyn Sut> {

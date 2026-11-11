@@ -351,8 +351,8 @@ impl Owner for LifecycleOwner {
         self.alphabet.clone()
     }
 
-    fn model(&self) -> Box<dyn RefModel> {
-        Box::new(LifecycleRef::new(self.full))
+    fn model(&self) -> Option<Box<dyn RefModel>> {
+        Some(Box::new(LifecycleRef::new(self.full)))
     }
 
     async fn real(&self) -> Box<dyn Sut> {

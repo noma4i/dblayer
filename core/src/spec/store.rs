@@ -153,8 +153,8 @@ impl Owner for StoreOwner {
         self.alphabet.clone()
     }
 
-    fn model(&self) -> Box<dyn RefModel> {
-        Box::new(StoreRef::new(self.full))
+    fn model(&self) -> Option<Box<dyn RefModel>> {
+        Some(Box::new(StoreRef::new(self.full)))
     }
 
     async fn real(&self) -> Box<dyn Sut> {
