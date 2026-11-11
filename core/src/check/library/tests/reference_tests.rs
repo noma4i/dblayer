@@ -53,6 +53,11 @@ fn family(anonymous: bool, keep: fn(&Input) -> bool, deep: usize, extra: Vec<Vec
     out
 }
 
+/// Part `part` of 4 of a family: the programs whose index modulo 4 is `part - 1`.
+fn quarter(programs: Vec<Vec<Input>>, part: usize) -> Vec<Vec<Input>> {
+    programs.into_iter().enumerate().filter(|(index, _)| index % 4 == part - 1).map(|(_, program)| program).collect()
+}
+
 fn kinds(items: &[Observation]) -> String {
     items.iter().map(|item| item.value["kind"].as_str().map_or_else(|| item.kind.clone(), |kind| format!("{}:{kind}", item.kind))).collect::<Vec<_>>().join(",")
 }
@@ -110,15 +115,45 @@ async fn assert_matches(programs: Vec<Vec<Input>>) {
 
 /// Requirement: library.md sections 3 to 7 for the slice O1 (environment and loads): after every input the stand shows what the reference shows.
 /// Observable: the requests (`sent`), the answers, the outcomes of the loads by name, the errors. Assert: no program of the modeled inputs diverges and none meets a spec hole.
-/// The 3 families run as 3 tests, so each stays inside the time limit of a test on a loaded machine.
+/// The 2 heavy families run as 4 tests each and the family without a session as 1, so each test stays inside the time limit of a test on a loaded machine.
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads() {
-    assert_matches(family(false, |_| true, depth(), retry_programs())).await;
+async fn library_matches_reference_loads_part_1() {
+    assert_matches(quarter(family(false, |_| true, depth(), retry_programs()), 1)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_second_login() {
-    assert_matches(family(false, |input| input.name != "login", depth(), Vec::new())).await;
+async fn library_matches_reference_loads_part_2() {
+    assert_matches(quarter(family(false, |_| true, depth(), retry_programs()), 2)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_part_3() {
+    assert_matches(quarter(family(false, |_| true, depth(), retry_programs()), 3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_part_4() {
+    assert_matches(quarter(family(false, |_| true, depth(), retry_programs()), 4)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_second_login_part_1() {
+    assert_matches(quarter(family(false, |input| input.name != "login", depth(), Vec::new()), 1)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_second_login_part_2() {
+    assert_matches(quarter(family(false, |input| input.name != "login", depth(), Vec::new()), 2)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_second_login_part_3() {
+    assert_matches(quarter(family(false, |input| input.name != "login", depth(), Vec::new()), 3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_loads_without_second_login_part_4() {
+    assert_matches(quarter(family(false, |input| input.name != "login", depth(), Vec::new()), 4)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
