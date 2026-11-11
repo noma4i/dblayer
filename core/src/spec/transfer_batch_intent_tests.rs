@@ -122,3 +122,38 @@ fn xfer_batch_mixed_outcomes() {
     let (reply, out) = twin.outcome(ids[1], 1);
     assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "boom".into() }, None)]);
 }
+
+#[test]
+fn xfer_invalid_batch_is_not_retried() {
+    let mixed = |reason: RejectReason| {
+        let (mut twin, ids) = persisting_joint();
+        twin.commit();
+        let members = vec![(ids[0], 1, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }), (ids[1], 1, OutboxOutcome::Failed { error: "boom".into() })];
+        twin.post(TransferInput::MutationOutcomes { batch_id: 1, members, intent_removed: false });
+        let out = twin.reject(reason);
+        (twin, ids, out)
+    };
+    let (_, _, storage) = mixed(RejectReason::Storage("disk".into()));
+    assert_eq!(storage.timers, 1, "a storage refusal of the mixed outcomes is retried by the Backoff");
+    let (mut twin, ids, invalid) = mixed(RejectReason::Invalid);
+    assert_eq!(invalid.timers, 0, "a data error of the mixed outcomes has no Backoff: {invalid:?}");
+    while twin.stage(ids[1]) != TransferStage::Failed {
+        assert!(twin.state().transfers.contains_key(&ids[1]) && twin.stage(ids[1]) != TransferStage::Done, "the member waits for a write");
+        let out = twin.commit();
+        assert_eq!(out.timers, 0, "{out:?}");
+    }
+    assert_eq!(twin.state().transfers[&ids[1]].error.as_deref(), Some("Internal(Invalid)"), "the transfer failed with the invalid kind");
+
+    let restore = |reason: RejectReason| {
+        let mut twin = Twin::new();
+        let id = twin.failed("Moment:r1:upload");
+        twin.retry("Moment:r1:upload", Some(crate::owners::write::transfer::Source { path: "/new/video".into(), parts: 2 }));
+        twin.copy_done(id);
+        twin.commit();
+        twin.post(TransferInput::StagedPromoteFailed { transfer_id: id, detail: "rename".into() });
+        twin.reject(reason)
+    };
+    assert_eq!(restore(RejectReason::Storage("disk".into())).timers, 1, "a storage refusal of the restore of the old row is retried");
+    let invalid = restore(RejectReason::Invalid);
+    assert_eq!((invalid.timers, invalid.batches.len()), (0, 0), "a data error of the restore is not retried: {invalid:?}");
+}
