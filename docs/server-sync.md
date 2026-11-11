@@ -135,7 +135,9 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------- |
 | `invalidCode`, `invalidPhone`, `invalidProvider`, `providerRejected`, `alreadyAuthenticated` | the server refused the step                                                       | kept, the sequence is confirmed           |
 | `rateLimited`, `accountUnavailable`                                                          | too many codes or a disabled account                                              | kept, the sequence is confirmed           |
-| `sequenceConflict`, `unauthenticated`, `sessionEnded`                                        | the server holds another request for this sequence or no session                  | kept, the pending request stays           |
+| `sequenceConflict`                                                                           | the server holds another request for this sequence                                | kept, the pending request stays           |
+| `unauthenticated`                                                                            | the server does not accept the session for this request                           | kept, the request is removed, the call throws `Unauthorized` |
+| `sessionEnded`                                                                               | the server ended the session                                                      | erased with the account data              |
 | `replayedRequest`                                                                            | a read arrived twice. The core already repeated it once with a new request id     | kept                                      |
 | `serverKeyMismatch`                                                                          | the session key differs from the pinned key                                       | kept                                      |
 | `stateLost`                                                                                  | a stored credential has no matching sequence state, final without automatic retry | kept, recovery belongs to the application |
@@ -181,7 +183,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | Mutation receipt `confirmed()`                                                                | the queued mutation got the sealed refusal. `Rejected` carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`)                                                                      | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it                                                  |
 
-`retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `revoked` answer. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
+`retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. `sequenceConflict` does not confirm it and keeps the request pending. `unauthenticated` removes the request and keeps the session. `sessionEnded` ends the session. The credential stays for every other code. Sign-in state changes only through `sessionReset()`, `sessionEnded` and a `revoked` answer. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` reach the rejected outcome with the same code. The action's declaration decides whether to keep its optimistic value.
 
@@ -192,7 +194,9 @@ Recovery depends on the response and whether it confirms the sequence:
 | The refusal                                                                                 | The request                                                                               | Do                                                                             |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code)            | spent, nothing is pending                                                                 | fix the cause, then `retry`. The core sends the mutation as a new request      |
-| did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too                                  | `sessionReset()`, sign in again, then `retry`                                  |
+| did not confirm it, and the code is `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
+| `unauthenticated` or HTTP 401 | removed, nothing is pending, the session stays | the call throws `Unauthorized`. Fix the cause, then `retry` |
+| `sessionEnded` | removed, the session ends and the account data is erased | sign in again |
 | HTTP 3xx or 4xx other than 401, 408, 425 and 429, without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with `Http(code)` | Fix the cause before sending again |
 | lost connection, timeout, HTTP 408, 429 or 5xx                                              | pending                                                                                   | the durable owner repeats the saved request under the [retry policy](#retries) |
 | stored request whose path is now declared sessionless                                       | removed without sending or advancing the sequence                                         | nothing to do                                                                  |
@@ -200,11 +204,11 @@ Recovery depends on the response and whether it confirms the sequence:
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. Opening the database again sends nothing after removal.
 The [retry owner](#retries) preserves Pending across temporary failures.
-HTTP 401 returns immediately with pending preserved.
+HTTP 401 returns `Unauthorized` at once and removes the pending request. The session, data and credential stay.
 HTTP 401 and the `UNAUTHENTICATED` code reach the caller as `Unauthorized`: the session, its data and the credential stay. HTTP 403 stays `Http(403)`.
 Opening the database with a session sends the stored request. The application calls nothing.
 
-The library closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
+The library closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. After `sequenceConflict` every call, sign-in too, fails with `sequenceConflict` until `sessionReset()`, because the stored request is still pending.
 
 For mutations with `clientMutationId` in the SDL input type, the generator sets `client_mutation_id` in the action spec.
 The model needs no field declaration. Without SDL, automatic key passing is off.
@@ -447,7 +451,7 @@ Rules of the session:
 - Every mutation, including a credentialed sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
 - The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or the next open with a session sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes.
 - While a request is pending, a different mutation fails with a network error and sends nothing. The library sends the pending request when the database opens with a session. When a queued operation owns the request, the answer also closes that operation.
-- A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
+- A refused step such as `invalidCode` confirms the sequence. `sequenceConflict` does not: the pending request stays and every later call fails with `sequenceConflict` until `sessionReset()`. `unauthenticated` removes the request and keeps the session: the call throws `Unauthorized` and the next call goes out. `sessionEnded` ends the session and erases the account data. The core never clears the session for `sequenceConflict` or `unauthenticated`.
 - Database format changes and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
 - Changes to the session tables migrate their stored values within the same transaction that recreates the database tables.
 - Missing sequence state for a stored credential returns the typed session error above before sending. Its detail remains `lost session sequence state for the stored credential`.
