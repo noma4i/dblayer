@@ -371,6 +371,7 @@ pub struct Landing {
     pub cursor: Option<String>,
     pub rows: bool,
     pub models: BTreeSet<String>,
+    pub marked: bool,
 }
 
 /// What the state of a window that loads keeps: the request in flight and how often it was tried.

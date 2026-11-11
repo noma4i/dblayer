@@ -129,11 +129,12 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer),
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
                 self.answered_at = context.now;
+                let source = self.page_source();
                 self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
-                self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false, source: self.page_source() });
-                Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone() }))
+                self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false, source });
+                Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone(), marked: source == crate::schema::RowSource::NodeReread }))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
                 if error.class == ErrorClass::InvalidCursor && !self.cursor_reset_used {
@@ -188,26 +189,31 @@ impl Facts {
         self.env(event);
         match event {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
-            Ev::Rejected { request: got, reason } if *got == landing.request => match reason {
-                RejectReason::StaleGeneration { generations, .. } => {
-                    for (model, generation) in generations {
-                        self.generations.insert(model.clone(), *generation);
-                    }
-                    if self.watched() {
-                        self.begin(context, 1, false, false)
-                    } else {
-                        self.fresh = false;
-                        Transition(WinState::idle())
-                    }
+            Ev::Rejected { request: got, reason } if *got == landing.request => {
+                if landing.marked && matches!(reason, RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid) {
+                    self.reread_by_event.set(true);
                 }
-                RejectReason::NoSession | RejectReason::Closed => {
-                    self.end_cause = if matches!(reason, RejectReason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
-                    self.answer_all(&WindowOutcome::Ended { cause: self.end_cause.clone() });
-                    Transition(WinState::ended())
+                match reason {
+                    RejectReason::StaleGeneration { generations, .. } => {
+                        for (model, generation) in generations {
+                            self.generations.insert(model.clone(), *generation);
+                        }
+                        if self.watched() {
+                            self.begin(context, 1, false, false)
+                        } else {
+                            self.fresh = false;
+                            Transition(WinState::idle())
+                        }
+                    }
+                    RejectReason::NoSession | RejectReason::Closed => {
+                        self.end_cause = if matches!(reason, RejectReason::Closed) { EndCause::Closed } else { EndCause::SessionEnded };
+                        self.answer_all(&WindowOutcome::Ended { cause: self.end_cause.clone() });
+                        Transition(WinState::ended())
+                    }
+                    RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
+                    RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
                 }
-                RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
-                RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
-            },
+            }
             Ev::InterestPassive { id } => {
                 self.add_interest(*id);
                 self.announce();

@@ -248,10 +248,11 @@ impl Facts {
         let replace_all = self.replace_all || (!keep_rows && chain.base == 0 && self.marker.as_ref().is_some_and(|saved| saved.values != marker.values));
         self.replace_all = replace_all;
         self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
-        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source: self.page_source() });
+        let source = self.page_source();
+        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
-        Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
+        Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone(), marked: source == crate::schema::RowSource::NodeReread }))
     }
 
     /// The answer of a request of a media chain, by the phase of the chain.
