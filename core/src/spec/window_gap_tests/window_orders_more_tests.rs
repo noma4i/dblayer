@@ -52,7 +52,7 @@ fn win_orders_input_time() {
                 Inside => NOW + 1_000,
                 Edge => NOW + LIFE - 1,
                 Expired => NOW + LIFE,
-                Back => NOW - 1,
+                Back => NOW - LIFE,
             };
             let effects = match tick {
                 Inside => twin.watch(),
