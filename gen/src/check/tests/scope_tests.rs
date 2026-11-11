@@ -151,11 +151,14 @@ fn freshness_is_one_declaration_with_durations() {
 #[test]
 fn insert_on_is_a_closed_set_of_sources() {
     let joined = |options: &str, lines: &str| scope(options, &format!("{lines}    query \"S\"\n"));
+    let node_read = |options: &str| format!("  scope :node, node: :one do\n    parameter :id, :id\n    query \"N\"\n    variables id: :id\n  end\n{}", joined(options, BY_OWNER));
     run(&[
         ("create", &joined(", insert_on: [:create]", ""), None),
         ("event and response", &joined(", insert_on: [:event, :response]", BY_OWNER), None),
-        ("event node", &joined(", insert_on: [:event, :response, :node]", BY_OWNER), None),
-        ("node", &joined(", insert_on: [:node]", BY_OWNER), None),
+        ("event node", &node_read(", insert_on: [:event, :response, :node]"), None),
+        ("node", &node_read(", insert_on: [:node]"), None),
+        ("node without the node read of the model", &joined(", insert_on: [:node]", BY_OWNER), Some("`insert_on` with `:node` needs the `node` scope of the model")),
+        ("event node without the node read of the model", &joined(", insert_on: [:event, :response, :node]", BY_OWNER), Some("`insert_on` with `:node` needs the `node` scope of the model")),
         ("order does not matter", &joined(", insert_on: [:response, :event]", BY_OWNER), None),
         ("unknown source", &joined(", insert_on: [:bogus]", BY_OWNER), Some("`insert_on` takes `:create`, `:event` and `:response`")),
         ("empty list", &joined(", insert_on: []", BY_OWNER), Some("`insert_on` needs at least 1 source")),
