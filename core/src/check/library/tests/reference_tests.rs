@@ -24,6 +24,25 @@ fn seeds() -> u64 {
     std::env::var("DBL_REFERENCE_SEEDS").ok().and_then(|text| text.parse().ok()).unwrap_or(SEEDS)
 }
 
+/// A load refused again and again, each refusal followed by a tick past the retry pause: the number of retries of docs/server-sync.md "Retries" is reached by no short random program.
+fn retry_programs() -> Vec<Vec<Input>> {
+    let named = |kind: &str, name: &str| Input::new(kind).with("as", name).with("named", true).with("relation", "feed");
+    let node = Input::new("node").with("as", "nf").with("named", true).with("relation", "transcode_status").with("row", "m1").with("force", true);
+    let starts = [named("begin_load", "l1"), named("refresh", "rf"), named("begin_load_all", "la"), node];
+    let mut out = Vec::new();
+    for start in starts {
+        for kind in ["temporary", "server"] {
+            let mut body = vec![start.clone()];
+            for _ in 0..5 {
+                body.push(Input::new("answer_error").with("kind", kind));
+                body.push(Input::new("tick").with("ms", 60_000u64));
+            }
+            out.push([prelude(false), body].concat());
+        }
+    }
+    out
+}
+
 fn programs() -> Vec<Vec<Input>> {
     let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
     let mut out = Vec::new();
@@ -32,6 +51,7 @@ fn programs() -> Vec<Vec<Input>> {
         out.extend(all_traces(&letters, depth()).into_iter().map(|body| [head.clone(), body].concat()));
         out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
     }
+    out.extend(retry_programs());
     out
 }
 
