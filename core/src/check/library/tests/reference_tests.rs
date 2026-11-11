@@ -236,3 +236,16 @@ async fn library_matches_reference_streams_part_8() {
 async fn library_matches_reference_streams_without_session() {
     assert_matches(stream_family(true, &[], depth().min(1))).await;
 }
+
+/// Requirement: library.md section 3 `phase(window)`: `load = Waiting` (no network) gives the phase by `outcome`, not Loading; the last cancel takes the request back.
+/// Observable: the phase of the value of a `Count` stream after the network goes away, and after its cancel. Assert: no program diverges.
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_stream_phase_without_network() {
+    let count = Input::new("open_count").with("as", "c1").with("relation", "feed");
+    let offline = Input::new("set_online").with("online", false);
+    let pull = Input::new("pull").with("stream", "c1");
+    let cancel = Input::new("cancel").with("target", "c1");
+    let waiting = vec![count.clone(), offline.clone(), pull.clone()];
+    let cancelled = vec![count, offline, cancel, pull];
+    assert_matches([waiting, cancelled].into_iter().map(|body| [prelude(false), body].concat()).collect()).await;
+}
