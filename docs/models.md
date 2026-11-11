@@ -596,7 +596,7 @@ val audio = Message.audioSince(chatId, afterSequence = 120)
 | `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND | every row of the `where` columns |
 | `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
-| `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts | none |
+| `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts: the model waits for the longest `debounce:` of its subscriptions | none |
 
 Freshness starts when the server response arrives, not when the database stores it.
 
@@ -718,7 +718,7 @@ model WalletTransaction do
 end
 ```
 
-Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `ready`, `event`, `lost`, `gap` or `ended`.
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after the commit of the event. An event that only rereads stores no row itself, so its before and after rows are equal: the reread lands later as a normal load. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `ready`, `event`, `lost`, `gap` or `ended`.
 
 Any model with `changed_by` has an events stream (`scope.events(Model)`), whichever model declares the `changes` source. Opening it prepares the reader. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. The first item is `ready` once the source is open: every event after it reaches the stream, also before iteration or collection reads it. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
 
@@ -739,7 +739,7 @@ val events = scope.events(Message).events(Message)
 events.collect { item -> when (item) { ModelEventItem.Ready -> startWork(); is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Lost -> resync(item.last - item.first + 1uL); is ModelEventItem.Ended -> report(item.cause) } }
 ```
 
-The journal of a reader in the core holds 256 values. A slower reader receives `lost` with the range of missed positions before the events that were kept, without delaying other readers. The kept events and the lost positions add up to the events sent. A failed row read publishes a `lost` position in place of the event and raises the rejected count of the subscription. When the subscription input overflows or the connection breaks, the number of missed events is unknown. The reader receives `gap`, and the library rereads observed selections of affected models. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
+The journal of a reader in the core holds 256 values. A slower reader receives `lost` with the range of missed positions before the events that were kept, without delaying other readers. The kept events and the lost positions add up to the events sent. A failed read of the rows before or after fails the whole commit: its events arrive as `lost` and the observed reads of their models become stale. When the subscription input overflows or the connection breaks, the number of missed events is unknown. The reader receives `gap`, and the library rereads observed selections of affected models. A failure of the stream itself arrives as the last item `ended(cause)`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription at once, without app cleanup. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
 An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
 
@@ -862,7 +862,7 @@ Empty lists, duplicate paths, mixed types and unknown predicate keys fail genera
 Filters run before normalization, deletion and writes for every effect.
 Declarations with the same operation, variables and account share one incoming stream.
 A scope with `variables` sends its subscription with the variables of the open window, and windows with equal variables share one subscription. When such a scope writes `id:`, each entry names a variable of the scope, or generation fails.
-All matching row declarations apply in one commit. `ephemeral` and `reread` effects run separately before that commit.
+All matching row declarations apply in one commit. `ephemeral` values land in that commit. A `reread` marks the read stale after that commit, and the read reloads then.
 Model-level subscriptions are read with `scope.events(Model)`, without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
 `effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
