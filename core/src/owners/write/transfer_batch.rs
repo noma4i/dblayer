@@ -130,7 +130,7 @@ impl TransferState {
         let op_id = if joint { entry.and_then(|entry| entry.op_id) } else { transfer.op_id };
         let Some(op_id) = op_id else { return };
         let origin = match (joint, group) { (true, Some(batch_id)) => IntentOrigin::TransferGroup { batch_id, transfer_ids: ids.to_vec() }, (false, _) => IntentOrigin::Transfer { transfer_id: first }, (true, None) => return };
-        let op = StoreOp::Intent { op_id, model: op.model.clone(), row_id: op.row_id.clone(), action: op.action.clone(), payload: op.body.clone(), effects: Default::default(), origin, attempts: 1, cycle_id: cycle_of(transfer, StoreKind::BatchIntent) };
+        let op = StoreOp::Intent { op_id, created_at: transfer.created_at.0, model: op.model.clone(), row_id: op.row_id.clone(), action: op.action.clone(), payload: op.body.clone(), effects: Default::default(), origin, attempts: 1, cycle_id: cycle_of(transfer, StoreKind::BatchIntent) };
         let batch_id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(batch_id, Pending { ids: ids.to_vec(), kind: StoreKind::BatchIntent, orphan: None, written: Default::default() });
@@ -150,6 +150,7 @@ impl TransferState {
             self.submit_mutation(first, fx);
             return self.start_in_order(now, fx);
         };
+        let Some(created_at) = self.transfers.get(&first).map(|transfer| transfer.created_at.0) else { return };
         let Some(entry) = self.groups.get_mut(&group) else { return };
         let joint = entry.phase == BatchPhase::Mutating;
         let op_id = if joint { entry.op_id } else { self.transfers.get(&first).and_then(|transfer| transfer.op_id) };
@@ -159,7 +160,7 @@ impl TransferState {
             if let Some(transfer) = self.transfers.get_mut(&id) { transfer.submitted = !joint; transfer.intent_live = true; if !joint { transfer.has_operation = true; } }
             self.show(id, Shown::Uploading { progress: 100 }, fx);
         }
-        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op })));
+        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op, created_at })));
         self.start_in_order(now, fx);
     }
 

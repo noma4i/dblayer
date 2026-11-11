@@ -238,12 +238,12 @@ impl TransferState {
                     }
                     if let (Some(op_id), StoreKind::SyncUpload, TransferStage::Accepting, None) = (own, kind, transfer.stage, transfer.prior) {
                         if !transfer.mutation.effects.is_empty() {
-                            ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
+                            ops.push(StoreOp::Effects { op_id, created_at: transfer.created_at.0, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
                         }
                     }
                     if let (Some(op_id), true, TransferStage::PersistingCopy, Some(_)) = (own, matches!(kind, StoreKind::SyncUpload | StoreKind::Completed), transfer.stage, transfer.supply_back) {
                         let payload = transfer.new_source.as_ref().map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
-                        ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload, effects: transfer.supply_values.clone() });
+                        ops.push(StoreOp::Effects { op_id, created_at: transfer.created_at.0, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload, effects: transfer.supply_values.clone() });
                         if transfer.supply_local != "{}" && !transfer.supply_local.is_empty() {
                             ops.push(StoreOp::LocalFields { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), values: transfer.supply_local.clone() });
                         }
@@ -254,7 +254,7 @@ impl TransferState {
                     }
                     if let (Some(op_id), StoreKind::Completed, None, Some(signed)) = (own, kind, transfer.batch_id, transfer.signed_id.as_ref()) {
                         let body = transfer.new_source.as_ref().filter(|_| transfer.supply_back.is_some()).map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone());
-                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id }, attempts: 1, cycle_id: cycle_of(transfer, kind) });
+                        ops.push(StoreOp::Intent { op_id, created_at: transfer.created_at.0, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id }, attempts: 1, cycle_id: cycle_of(transfer, kind) });
                     }
                 }
                 ops
@@ -855,7 +855,7 @@ impl TransferState {
         let input = match transfer.op_id {
             Some(op_id) => {
                 op.effects = Default::default();
-                OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op }
+                OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op, created_at: transfer.created_at.0 }
             }
             None => OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY },
         };

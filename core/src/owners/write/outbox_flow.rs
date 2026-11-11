@@ -428,13 +428,13 @@ impl OutboxState {
     }
 
     /// `Submit` with the intent written by the batch of Transfer: the operation goes out as after `Submitting x Committed`, with no write and no receipt.
-    pub(super) fn submit_reserved(&mut self, now: u64, epoch: Epoch, op_id: OpId, mut op: NewOp, fx: &mut Effects<Outbox>) {
+    pub(super) fn submit_reserved(&mut self, epoch: Epoch, op_id: OpId, mut op: NewOp, created_at: u64, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return;
         }
         Self::resolve_operation(&self.aliases, &mut op);
-        self.add_operation(op_id, op, Stage::Submitting, now);
-        self.operation_committed(now, op_id, CommitKind::Intent, (0, Vec::new()), fx);
+        self.add_operation(op_id, op, Stage::Submitting, created_at);
+        self.operation_committed(created_at, op_id, CommitKind::Intent, (0, Vec::new()), fx);
     }
 
     pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {

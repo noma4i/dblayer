@@ -661,6 +661,12 @@ for path in sorted((source / "owners" / "write").rglob("*.rs")):
             number = text.count("\n", 0, start + found.start()) + 1
             findings.append(f"Z54 the state keeps no copy of the time of the turn (R5): {path.relative_to(root)}:{number}")
 
+for path in sorted((source / "store").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.search(r"\bcreated_at:\s*writer\.now\b", line):
+            findings.append(f"Z55 the created_at of an operation comes from the intent of its owner, the Store reads no clock for it (P-OUT-59): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

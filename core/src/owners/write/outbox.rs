@@ -340,6 +340,7 @@ impl OutboxState {
         let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
                 op_id,
+                created_at: operation.created_at,
                 attempts: operation.attempts,
                 cycle_id: operation.cycle_id,
                 model: operation.op.model.clone(),
@@ -800,7 +801,7 @@ impl OutboxState {
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id } => self.reserve_replacement(epoch, target, transfer_id, cycle_id, fx),
             OutboxInput::FinishReplacement { target, committed } => self.finish_replacement(now, target, committed, fx),
-            OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(now, epoch, op_id, op, fx),
+            OutboxInput::SubmitReserved { epoch, op_id, op, created_at } => self.submit_reserved(epoch, op_id, op, created_at, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),

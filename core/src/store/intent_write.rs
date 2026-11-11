@@ -91,7 +91,7 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     writer.apply(&envelope)
 }
 
-pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, action): (&str, &str, &str), payload: &str, writes: &IntentEffects, append: bool) -> Result<CommitResult, StoreError> {
+pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, action): (&str, &str, &str), payload: &str, writes: &IntentEffects, (append, created_at): (bool, u64)) -> Result<CommitResult, StoreError> {
     let connection = writer.connection;
     let models = writer.models;
     let reader = Reader::new(connection, models);
@@ -132,7 +132,7 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, acti
         temp_id: row_id.is_temp().then_some(row_id),
         input: serde_json::from_str(payload)?,
         base_revision: Some(writer.revision - 1),
-        created_at: writer.now,
+        created_at: i64::try_from(created_at).map_err(|_| StoreError::Constraint("operation time is too large".into()))?,
         dedupe_key: None,
         rollback: Some(prior),
     })));

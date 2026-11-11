@@ -196,7 +196,8 @@ pub enum OutboxInput {
     ReserveReplacement { epoch: Epoch, target: ReserveTarget, transfer_id: u64, cycle_id: u64 },
     FinishReplacement { target: ReserveTarget, committed: bool },
     /// The final mutation of a transfer whose intent the batch of Transfer wrote under `op_id` (`out_submit_intent_written`).
-    SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp },
+    /// `created_at` = the time Transfer wrote into the intent of the operation.
+    SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp, created_at: u64 },
     /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
     ReservedFloor { op_id: OpId },
     AliasesRestored { aliases: BTreeMap<(String, String), String> },
