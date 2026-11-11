@@ -6,6 +6,8 @@ use crate::check::value::Observation;
 pub const LIFETIME_MS: i64 = 300_000;
 /// `paginate size: 20` of the stand schema.
 pub const PAGE_SIZE: u64 = 20;
+/// `paginate size: 30` of the scope `container_members` of the stand schema (fixtures/user.dbl).
+pub const MEMBERS_PAGE_SIZE: u64 = 30;
 /// Coordinator answers H11, C3: the retry limit counts sends, the first one included. Network 3 sends, server 2 sends, one counter per load, the limit is the one of the class of the current refusal.
 pub const NETWORK_SENDS: u32 = 3;
 pub const SERVER_SENDS: u32 = 2;

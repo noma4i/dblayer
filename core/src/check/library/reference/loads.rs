@@ -19,12 +19,12 @@ impl LibraryRef {
 
     fn request_of(&mut self, key: Key, page: u32) -> (&'static str, Value) {
         match key {
-            Key::Feed => {
-                let mut variables = json!({ "first": PAGE_SIZE });
+            Key::Feed | Key::Members => {
+                let (operation, mut variables) = if key == Key::Feed { ("MomentsFeed", json!({ "first": PAGE_SIZE })) } else { ("ContainerMembers", json!({ "containerId": "c1", "first": shapes::MEMBERS_PAGE_SIZE })) };
                 if page > 1 {
-                    variables["after"] = json!(self.win(Key::Feed).cursor);
+                    variables["after"] = json!(self.win(key).cursor);
                 }
-                ("MomentsFeed", variables)
+                (operation, variables)
             }
             Key::Node => ("MomentTranscodeStatus", json!({ "momentId": "m1" })),
             Key::Nodes => ("ContainersByIds", json!({ "ids": ["m1"] })),

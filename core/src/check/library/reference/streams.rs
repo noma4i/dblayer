@@ -2,15 +2,15 @@ use serde_json::{json, Map, Value};
 
 use super::ops::Fetch;
 use super::shapes;
-use super::window::{Key, Outcome, Window};
-use super::{LibraryRef, Reads, Stream};
+use super::window::{Key, Outcome};
+use super::{LibraryRef, Load, Reads, Stream};
 use crate::check::value::Observation;
 
 /// library.md sections 3 and 4: the streams `List`, `Count`, `Entity`, their first value, `pull` and `cancel`. A stream shows one value: the rows, the state of section 3 and nothing else.
 impl LibraryRef {
     /// A window has an interest while a call waits on it or a live stream reads it.
     pub(super) fn interest(&self, key: Key) -> bool {
-        self.calls.iter().any(|call| call.key == Some(key)) || self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key))
+        self.calls.iter().any(|call| call.key == Some(key)) || self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key))
     }
 
     /// The last interest went away (section 3 `phase`): the request is taken back, the window is not fresh any more and its phase follows the rows.
@@ -25,20 +25,29 @@ impl LibraryRef {
         self.win(key).outcome = Some(Outcome::Left);
     }
 
-    pub(super) fn open_feed(&mut self, name: String, count: bool, on_connect: bool) -> Vec<Observation> {
-        self.open_stream(name, Reads::Window { key: Key::Feed, count }, on_connect)
+    pub(super) fn open_feed(&mut self, name: String, key: Key, count: bool, on_connect: bool) -> Vec<Observation> {
+        self.open_stream(name, Reads::Window { key, count }, on_connect, Load::Stale)
     }
 
+    /// Section 4 `Entity(*)`: the window of the stream is the key `node` of its row, the one of the call `node(id)` (coordinator answer H21).
     pub(super) fn open_entity(&mut self, name: String, fetch: Fetch) -> Vec<Observation> {
-        if fetch != Fetch::Never {
-            self.mark("H21_entity_stream_with_a_fetch_other_than_never");
+        if self.live && !self.identity && matches!(fetch, Fetch::IfMissing | Fetch::Force) {
+            self.mark("H24_entity_if_missing_or_force_without_identity");
             return Vec::new();
         }
-        self.open_stream(name, Reads::Row, false)
+        match fetch {
+            Fetch::Never => self.open_stream(name, Reads::Row { key: None }, false, Load::None),
+            Fetch::Stale => self.open_stream(name, Reads::Row { key: Some(Key::Node) }, false, Load::Stale),
+            Fetch::Force => self.open_stream(name, Reads::Row { key: Some(Key::Node) }, false, Load::Force),
+            Fetch::IfMissing => {
+                let load = if self.row { Load::None } else { Load::Stale };
+                self.open_stream(name, Reads::Row { key: Some(Key::Node) }, false, load)
+            }
+        }
     }
 
-    /// Section 4 "open `List`, `Count`": no identity ends the stream at once, a fresh window loads nothing, a window that is not fresh loads when no load runs.
-    fn open_stream(&mut self, name: String, reads: Reads, on_connect: bool) -> Vec<Observation> {
+    /// Section 4 "open `List`, `Count`, `Entity(stale)`": no identity ends the stream at once, a fresh window loads nothing, a window that is not fresh loads when no load runs. `Entity(force)` loads when no load runs.
+    fn open_stream(&mut self, name: String, reads: Reads, on_connect: bool, load: Load) -> Vec<Observation> {
         if !self.live {
             return vec![shapes::error("not_open")];
         }
@@ -46,19 +55,20 @@ impl LibraryRef {
             self.mark("H23_stream_opened_again_under_the_name_of_a_live_one");
             return Vec::new();
         }
-        if self.identity && reads.key().is_some() {
-            self.mark("H22_subscription_request_of_a_live_list");
-            return Vec::new();
-        }
-        let mut stream = Stream { reads, on_connect, live: self.identity, last: None, pending: Vec::new() };
-        if !self.identity {
+        let ends = !self.identity && !matches!(reads, Reads::Row { key: None });
+        let mut stream = Stream { reads, on_connect, wants: load != Load::None, live: !ends, last: None, pending: Vec::new() };
+        if ends {
             stream.pending.push(shapes::ended(&name, "session_ended"));
         }
         self.streams.insert(name, stream);
-        let Some(key) = reads.key().filter(|_| self.identity) else { return Vec::new() };
+        let Some(key) = reads.key().filter(|_| !ends && load != Load::None) else { return Vec::new() };
         let now = self.now;
         let window = self.win(key);
-        if !window.fresh(now) && window.load.is_none() {
+        let wanted = match load {
+            Load::Force => true,
+            Load::Stale | Load::None => !window.fresh(now),
+        };
+        if wanted && window.load.is_none() {
             self.start_run(key, 1);
         }
         Vec::new()
@@ -69,33 +79,28 @@ impl LibraryRef {
         let Some(stream) = self.streams.get(name) else { return Observation::bare("none") };
         let mut fields = Map::new();
         fields.insert("stream".into(), name.into());
-        match stream.reads {
-            Reads::Row => {
-                fields.insert("phase".into(), "loaded".into());
-                fields.insert("rows".into(), json!(if self.row { vec!["m1"] } else { Vec::new() }));
-                Observation::new("snapshot", Value::Object(fields))
+        let count = matches!(stream.reads, Reads::Window { count: true, .. });
+        let window = stream.reads.key().map(|key| self.windows.get(&key).cloned().unwrap_or_default());
+        let rows = match stream.reads {
+            Reads::Row { .. } => usize::from(self.row),
+            Reads::Window { .. } => window.as_ref().map_or(0, |window| window.members as usize),
+        };
+        fields.insert("phase".into(), window.as_ref().map_or("loaded", |window| window.phase(self.now, rows > 0)).into());
+        if let Some(window) = &window {
+            if let Some(error) = window.error {
+                fields.insert("error".into(), error.into());
             }
-            Reads::Window { key, count } => {
-                let window = self.windows.get(&key).cloned().unwrap_or_default();
-                self.window_value(&window, count, &mut fields);
-                Observation::new(if count { "count" } else { "snapshot" }, Value::Object(fields))
+            if window.loaded(self.now) {
+                fields.insert("loaded".into(), true.into());
             }
-        }
-    }
-
-    fn window_value(&self, window: &Window, count: bool, fields: &mut Map<String, Value>) {
-        fields.insert("phase".into(), window.phase(self.now).into());
-        if let Some(error) = window.error {
-            fields.insert("error".into(), error.into());
-        }
-        if window.loaded(self.now) {
-            fields.insert("loaded".into(), true.into());
         }
         if count {
-            fields.insert("count".into(), window.members.into());
+            fields.insert("count".into(), rows.into());
         } else {
-            fields.insert("rows".into(), Value::Array((1..=window.members).map(|index| json!(format!("m{index}"))).collect()));
+            let prefix = stream.reads.key().map_or("m", Key::row_prefix);
+            fields.insert("rows".into(), Value::Array((1..=rows).map(|index| json!(format!("{prefix}{index}"))).collect()));
         }
+        Observation::new(if count { "count" } else { "snapshot" }, Value::Object(fields))
     }
 
     /// The reader of the stream gets its last value and then `Ended(cause)` once.
@@ -147,9 +152,9 @@ impl LibraryRef {
     pub(super) fn reread_on_connect(&mut self) -> usize {
         let now = self.now;
         let mut starting = 0;
-        for key in [Key::Feed] {
-            let read = self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key));
-            let wanted = self.streams.values().any(|stream| stream.live && stream.reads.key() == Some(key) && stream.on_connect);
+        for key in [Key::Feed, Key::Members, Key::Node] {
+            let read = self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key));
+            let wanted = self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key) && stream.on_connect);
             let window = self.win(key);
             if read && window.load.is_none() && (!window.fresh(now) || wanted) {
                 starting += 1;

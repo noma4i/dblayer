@@ -6,6 +6,14 @@ pub(super) enum Key {
     Feed,
     Node,
     Nodes,
+    Members,
+}
+
+impl Key {
+    /// The ids of the rows of a window: `m1..` for moments, `u1..` for the users of `container_members`.
+    pub(super) fn row_prefix(self) -> &'static str {
+        if self == Key::Members { "u" } else { "m" }
+    }
 }
 
 /// Where a load is: its request is held by the mock, it waits out a retry pause, or it waits for the network.
@@ -63,8 +71,7 @@ impl Window {
 
 impl Window {
     /// library.md section 3 `phase(window)` for a window with an interest.
-    pub(super) fn phase(&self, now: i64) -> &'static str {
-        let rows = self.members > 0;
+    pub(super) fn phase(&self, now: i64, rows: bool) -> &'static str {
         let loading = matches!(self.load, Some(Run { phase: Phase::Flight(_) | Phase::Backoff(_), .. }));
         match self.outcome {
             _ if loading => "loading",

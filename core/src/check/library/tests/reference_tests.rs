@@ -43,31 +43,22 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
-/// The letters of the family with streams: the environment, the streams of the feed and the entity of the row `m1`, the loads of the feed, the answers.
-/// The streams with an open hole (`u1`, `e2`, `e3`) go in a family of their own so the skipped programs are counted by hole.
-fn stream_letters(holes: bool) -> Vec<Input> {
-    let hole = |input: &Input| input.text("as").is_some_and(|name| matches!(name, "u1" | "e2" | "e3"));
+/// The letters of the family with streams: the environment, the streams, the loads of the feed, the answers.
+fn stream_letters() -> Vec<Input> {
     let skipped = ["node", "nodes", "clock_back"];
-    alphabet().into_iter().chain(streams()).filter(modeled).filter(|input| !skipped.contains(&input.name.as_str()) && !(input.name == "cancel" && input.text("target") == Some("l1"))).filter(|input| holes || !hole(input)).collect()
+    alphabet().into_iter().chain(streams()).filter(modeled).filter(|input| !skipped.contains(&input.name.as_str()) && !(input.name == "cancel" && input.text("target") == Some("l1"))).collect()
 }
 
-fn stream_family(anonymous: bool, holes: bool, deep: usize) -> Vec<Vec<Input>> {
-    let letters = stream_letters(holes);
+/// Coordinator answer H23: a stream name is a handle of the stand, a program that opens the name of a live stream again is not in the family.
+const REOPENED: &str = "H23_stream_opened_again_under_the_name_of_a_live_one";
+
+fn stream_family(anonymous: bool, deep: usize) -> Vec<Vec<Input>> {
+    let letters = stream_letters();
     let head = prelude(anonymous);
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
     out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
+    out.retain(|program| first_hole(program) != Some(REOPENED));
     out
-}
-
-/// The spec holes the family with streams may meet: named, counted, skipped.
-const STREAM_HOLES: [&str; 4] = ["H22_subscription_request_of_a_live_list", "H20_members_window_request", "H21_entity_stream_with_a_fetch_other_than_never", "H23_stream_opened_again_under_the_name_of_a_live_one"];
-
-/// Like `assert_matches`, but a program that meets a named hole is skipped and counted.
-async fn assert_streams(programs: Vec<Vec<Input>>) {
-    let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: true });
-    let (compared, holes, found) = compare(&owner, programs).await;
-    let unknown: Vec<_> = holes.keys().filter(|name| !STREAM_HOLES.contains(name)).collect();
-    assert!(found.is_empty() && unknown.is_empty(), "compared {compared} programs with streams to depth {}, {} seeds of length {LENGTH}, skipped because of the spec holes {holes:?}, unknown holes {unknown:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
 }
 
 /// One family of programs: its prelude (with or without a session), its body inputs, its exhaustive depth and its extra programs.
@@ -193,34 +184,44 @@ async fn library_matches_reference_loads_without_session() {
     assert_matches(family(true, |input| !is_stream(input), depth().min(1), Vec::new())).await;
 }
 
-/// Requirement: library.md sections 3, 4, 5 and 7 for the slice O2 (streams `List`, `Count`, `Entity(never)`): the value of a stream after `pull`, its end and its `cancel`, the loads that a stream opens or joins.
-/// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program diverges.
+/// Requirement: library.md sections 3, 4, 5 and 7 for the slice O2 (streams `List`, `Count`, `Entity`): the value of a stream after `pull`, its end and its `cancel`, the loads that a stream opens or joins.
+/// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program diverges and none meets a spec hole.
+/// The family runs as 6 tests (program `index % 6`) and the family without a session as 1.
+async fn streams_part(part: usize) {
+    assert_matches(part_of(stream_family(false, depth()), part, 6)).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_part_1() {
-    assert_streams(part_of(stream_family(false, false, depth()), 1, 4)).await;
+    streams_part(1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_part_2() {
-    assert_streams(part_of(stream_family(false, false, depth()), 2, 4)).await;
+    streams_part(2).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_part_3() {
-    assert_streams(part_of(stream_family(false, false, depth()), 3, 4)).await;
+    streams_part(3).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_part_4() {
-    assert_streams(part_of(stream_family(false, false, depth()), 4, 4)).await;
+    streams_part(4).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_streams_part_5() {
+    streams_part(5).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_streams_part_6() {
+    streams_part(6).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_without_session() {
-    assert_streams(stream_family(true, false, depth().min(1))).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_with_holes() {
-    assert_streams(stream_family(false, true, 1)).await;
+    assert_matches(stream_family(true, depth().min(1))).await;
 }

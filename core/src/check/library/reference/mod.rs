@@ -66,22 +66,32 @@ enum Owner {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Reads {
     Window { key: Key, count: bool },
-    Row,
+    Row { key: Option<Key> },
 }
 
 impl Reads {
     fn key(self) -> Option<Key> {
         match self {
             Reads::Window { key, .. } => Some(key),
-            Reads::Row => None,
+            Reads::Row { key } => key,
         }
     }
+}
+
+/// What a stream asks of its window when it opens.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Load {
+    None,
+    Stale,
+    Force,
 }
 
 /// A stream of the reader: its last value pulled and what waits for the next `pull` after its end.
 struct Stream {
     reads: Reads,
     on_connect: bool,
+    /// The stream asks its window to load (`Entity(never)` and an `Entity(if_missing)` of a stored row do not).
+    wants: bool,
     live: bool,
     last: Option<Observation>,
     pending: Vec<Observation>,
@@ -234,13 +244,10 @@ impl LibraryRef {
             Op::Cancel(target) => self.cancel(&target),
             Op::AnswerPage { rows, more } => self.answer(landing::Reply::Page { rows, more }),
             Op::AnswerError(kind) => self.answer(landing::Reply::Error(kind)),
-            Op::OpenFeed { name, on_connect } => self.open_feed(name, false, on_connect),
-            Op::OpenCount(name) => self.open_feed(name, true, false),
+            Op::OpenFeed { name, on_connect } => self.open_feed(name, Key::Feed, false, on_connect),
+            Op::OpenCount(name) => self.open_feed(name, Key::Feed, true, false),
             Op::OpenEntity { name, fetch } => self.open_entity(name, fetch),
-            Op::OpenMembers => {
-                self.mark("H20_members_window_request");
-                Vec::new()
-            }
+            Op::OpenMembers(name) => self.open_feed(name, Key::Members, false, false),
             Op::OpenEvents => {
                 self.mark("unmodeled_events");
                 Vec::new()

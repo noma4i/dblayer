@@ -101,20 +101,20 @@ impl LibraryRef {
                 window.pages = 1;
                 window.land_first(now);
             }
-            (Key::Feed, 1) => {
+            (Key::Feed | Key::Members, 1) => {
                 window.members = rows;
                 window.cursor = more.then(|| format!("c{rows}"));
                 window.pages = 1;
                 window.land_first(now);
             }
-            (Key::Feed, page) => {
+            (Key::Feed | Key::Members, page) => {
                 window.members += rows;
                 window.cursor = more.then(|| format!("c{}", window.members));
                 window.pages = page;
             }
         }
         let (cursor, pages) = (window.cursor.is_some(), window.pages);
-        self.row |= rows > 0;
+        self.row |= rows > 0 && matches!(key, Key::Feed | Key::Node);
         let waiting: Vec<(u64, Form, bool, Option<u32>)> = self.calls.iter().filter(|call| call.key == Some(key)).map(|call| (call.id, call.form, call.queued, call.target)).collect();
         let result = if cursor { "loaded_more" } else { "loaded_last" };
         for (id, form, queued, target) in &waiting {

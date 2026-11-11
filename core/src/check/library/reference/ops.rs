@@ -21,7 +21,7 @@ pub(super) enum Op {
     AnswerError(String),
     OpenFeed { name: String, on_connect: bool },
     OpenCount(String),
-    OpenMembers,
+    OpenMembers(String),
     OpenEntity { name: String, fetch: Fetch },
     OpenEvents,
     Pull(String),
@@ -80,7 +80,7 @@ pub(super) fn parse(input: &Input) -> Result<Op, String> {
             match (input.name.as_str(), input.text("relation")) {
                 ("open_list", Some("feed")) => Op::OpenFeed { name, on_connect: input.flag("refresh_on_connect").unwrap_or(false) },
                 ("open_count", Some("feed")) => Op::OpenCount(name),
-                (_, Some("container_members")) => Op::OpenMembers,
+                ("open_list", Some("container_members")) => Op::OpenMembers(name),
                 _ => return Err(format!("the stream {input} is not a stream of the alphabet")),
             }
         }
