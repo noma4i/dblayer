@@ -338,7 +338,7 @@ pub(super) fn declared_membership(connection: &Connection, info: &ModelInfo, mod
         });
         let joins = relation.remote.is_some() && bound && relation.admits(envelope.source) && (envelope.source != crate::schema::RowSource::Create || old.is_none());
         if !joins && !(old.is_some() && bound && (!relation.membership.is_empty() || !relation.row_rules.is_empty())) { continue; }
-        if joins && matches!(envelope.source, crate::schema::RowSource::Event | crate::schema::RowSource::NodeReread) {
+        if joins && envelope.source != crate::schema::RowSource::Create {
             for rule in relation.membership.values() {
                 let field = match rule { crate::schema::Membership::Contains(field) | crate::schema::Membership::Equals(field) => field };
                 if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }

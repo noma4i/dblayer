@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Refuse an operation response row without the membership field of a list it joins.
 - Add an event row to the head of a loaded `[:event, :response]` window.
 - Add a created row to the head of loaded membership lists of its parameters.
 - Skip created rows in an `insert_on: [:create]` scope with constant variables and no rule.
