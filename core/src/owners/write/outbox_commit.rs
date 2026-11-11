@@ -128,6 +128,16 @@ impl OutboxState {
                         self.finish(id, OutboxOutcome::Discarded, true, fx);
                     }
                 }
+                let dependents = self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
+                for id in dependents {
+                    if self.ops[&id].pending_owned || self.ops[&id].pair_in_flight {
+                        if let Some(operation) = self.ops.get_mut(&id) { operation.pending_owned = false; operation.pair_in_flight = false; }
+                        if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&id].request_id }))); }
+                    }
+                    if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
+                    let error = self.ops[&id].reject_error.clone().unwrap_or_else(super::failure::row_never_created);
+                    self.finish(id, OutboxOutcome::Rejected { error }, true, fx);
+                }
                 self.finish(op_id, outcome, true, fx);
                 self.finish_destroy_of(op_id, revision, fx);
             }
@@ -186,12 +196,11 @@ impl OutboxState {
             if let Some(real) = aliases.get(&(model.to_string(), row.clone())) { *row = real.clone(); }
         };
         resolve(&op.model, &mut op.row_id);
-        if op.body.contains(crate::identity::TEMP_ID_PREFIX) {
+        if aliases.keys().any(|(_, temp)| op.body.contains(temp.as_str())) {
             if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&op.body) {
                 let mut changed = false;
-                crate::identity::walk_temp_ids(&mut body, &mut |text| match aliases.iter().find(|((_, temp), _)| temp == text) {
-                    Some((_, real)) => { text.clone_from(real); changed = true; }
-                    None => {}
+                crate::identity::walk_strings(&mut body, &mut |text| {
+                    if let Some((_, real)) = aliases.iter().find(|((_, temp), _)| temp == text) { text.clone_from(real); changed = true; }
                 });
                 if changed { op.body = body.to_string(); }
             }

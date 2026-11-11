@@ -11,14 +11,19 @@ pub fn is_temp_id(id: &str) -> bool {
     id.starts_with(TEMP_ID_PREFIX)
 }
 
-/// Calls `visit` on every string of `value`, on any depth, that is a temporary id.
-pub fn walk_temp_ids(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
+/// Calls `visit` on every string of `value`, on any depth.
+pub fn walk_strings(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
     match value {
-        serde_json::Value::String(text) if is_temp_id(text) => visit(text),
-        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| walk_temp_ids(item, visit)),
-        serde_json::Value::Object(members) => members.values_mut().for_each(|member| walk_temp_ids(member, visit)),
+        serde_json::Value::String(text) => visit(text),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| walk_strings(item, visit)),
+        serde_json::Value::Object(members) => members.values_mut().for_each(|member| walk_strings(member, visit)),
         _ => {}
     }
+}
+
+/// Calls `visit` on every string of `value`, on any depth, that is a temporary id.
+pub fn walk_temp_ids(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
+    walk_strings(value, &mut |text| if is_temp_id(text) { visit(text) });
 }
 
 /// 0 for a temporary id: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.

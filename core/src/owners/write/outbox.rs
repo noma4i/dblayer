@@ -17,7 +17,6 @@ use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleI
 enum TempDependency {
     Clear,
     Open,
-    Ended,
 }
 
 /// What a batch sent to the Store is for.
@@ -182,8 +181,8 @@ impl OutboxState {
         self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear
     }
 
-    /// The temp ids the operation depends on (its own row when it acts on one, every temp id of the body) and the state of their `create`: Open while an earlier operation addresses the row, Ended when no alias and no such operation is left.
-    fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
+    /// The temp ids the operation waits for: its own row when it acts on one, every temp id of the body except the row it creates.
+    fn awaited_temps(operation: &QueuedOperation) -> Vec<String> {
         let creates_own = operation.op.action == "create" || matches!(operation.op.origin, OpSource::TransferGroup { .. });
         let mut temps = Vec::new();
         if !creates_own && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
@@ -192,12 +191,38 @@ impl OutboxState {
                 crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
             }
         }
-        let mut dependency = TempDependency::Clear;
-        for temp in temps.iter().filter(|temp| !self.aliases.keys().any(|(_, aliased)| aliased == *temp)) {
-            if self.ops.values().any(|other| other.op_id != operation.op_id && other.sequence < operation.sequence && other.stage != Stage::Done && Self::addresses_row(other, &other.op.model, temp)) { return TempDependency::Open; }
-            dependency = TempDependency::Ended;
+        temps
+    }
+
+    /// Open while an earlier operation addresses the row of a temp id the operation waits for and no alias exists yet.
+    fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
+        let open = Self::awaited_temps(operation).iter().filter(|temp| !self.aliases.keys().any(|(_, aliased)| aliased == *temp)).any(|temp| {
+            self.ops.values().any(|other| other.op_id != operation.op_id && other.sequence < operation.sequence && other.stage != Stage::Done && Self::addresses_row(other, &other.op.model, temp))
+        });
+        if open { TempDependency::Open } else { TempDependency::Clear }
+    }
+
+    /// The Queued operations that wait for the rows the ended `create` made (and for the rows of those operations in turn), the latest first.
+    fn dependents_of(&self, create: OpId) -> Vec<OpId> {
+        let Some(first) = self.ops.get(&create) else { return Vec::new() };
+        let own_temps = |operation: &QueuedOperation| -> Vec<String> {
+            match &operation.op.origin {
+                OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).collect(),
+                _ if operation.op.action == "create" && crate::identity::is_temp_id(&operation.op.row_id) => vec![operation.op.row_id.clone()],
+                _ => Vec::new(),
+            }
+        };
+        let mut ended = own_temps(first);
+        if ended.is_empty() { return Vec::new(); }
+        let mut found: Vec<&QueuedOperation> = Vec::new();
+        loop {
+            let next = self.ops.values().find(|other| other.op_id != create && other.stage == Stage::Queued && other.sequence > first.sequence && !found.iter().any(|seen| seen.op_id == other.op_id) && Self::awaited_temps(other).iter().any(|temp| ended.contains(temp)));
+            let Some(next) = next else { break };
+            ended.extend(own_temps(next));
+            found.push(next);
         }
-        dependency
+        found.sort_by_key(|operation| std::cmp::Reverse(operation.sequence));
+        found.into_iter().map(|operation| operation.op_id).collect()
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -255,6 +280,7 @@ impl OutboxState {
                 failed_errors: BTreeMap::new(),
                 retry_uploads: Vec::new(),
                 reject_error: None,
+                ended_dependents: Vec::new(),
                 cause: None,
                 cause_stored: None,
                 cancels: None,
@@ -362,8 +388,33 @@ impl OutboxState {
             earlier.append(&mut ops);
             ops = earlier;
         }
+        let dependents = if kind == CommitKind::Rollback { self.dependents_of(op_id) } else { Vec::new() };
+        if !dependents.is_empty() {
+            let outcome = OutboxOutcome::Rejected { error: super::failure::row_never_created() };
+            let mut earlier = Vec::new();
+            for id in &dependents {
+                let other = &self.ops[id];
+                if let Some((table, key)) = &other.restore_element {
+                    earlier.push(StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() });
+                } else {
+                    earlier.extend([StoreOp::RollBack { op_id: *id }, StoreOp::RemoveAnswer { request_id: other.request_id }]);
+                }
+                earlier.push(StoreOp::RemoveIntent { op_id: *id });
+                if other.pending_owned || other.pair_in_flight { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
+                earlier.extend(Self::transfer_outcomes(other, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+            }
+            earlier.append(&mut ops);
+            ops = earlier;
+        }
         let intents = u64::from(kind == CommitKind::Intent);
         let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
+        for id in &dependents {
+            if let Some(other) = self.ops.get_mut(id) {
+                other.stage = Stage::RollingBack(Why::Rejected);
+                other.reject_error = Some(super::failure::row_never_created());
+            }
+        }
+        if let Some(create) = self.ops.get_mut(&op_id) { create.ended_dependents = dependents; }
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Operation { op_id, kind });
@@ -483,14 +534,13 @@ impl OutboxState {
         if operation.stage != Stage::Queued || !self.online {
             return;
         }
-        let ended = self.temp_dependency(operation) == TempDependency::Ended;
-        if !ended && self.row_busy(op_id) {
+        if self.row_busy(op_id) {
             return;
         }
-        if ended || self.expired(op_id) {
+        if self.expired(op_id) {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
-                operation.reject_error = Some(if ended { super::failure::row_never_created() } else { super::failure::expired() });
+                operation.reject_error = Some(super::failure::expired());
             }
             return self.store(op_id, CommitKind::Rollback, fx);
         }

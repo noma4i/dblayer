@@ -351,6 +351,7 @@ pub struct QueuedOperation {
     pub failed_errors: BTreeMap<u64, String>,
     pub retry_uploads: Vec<crate::owners::store::UploadRow>,
     pub reject_error: Option<String>,
+    pub ended_dependents: Vec<OpId>,
     /// The cause of the last failed attempt and the one the operation row keeps.
     pub cause: Option<crate::value::sync::FailureKind>,
     pub cause_stored: Option<crate::value::sync::FailureKind>,
