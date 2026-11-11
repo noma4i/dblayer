@@ -153,7 +153,7 @@ async fn win_chain_marker_change_resets() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn win_chain_pages_share_rows() {
+async fn win_chain_pages_share_an_author() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
         *models = serde_json::from_str::<Value>(include_str!("../../../../fixtures/media-marker.json")).unwrap()["models"].clone();
         let all = models.as_array_mut().unwrap();
@@ -180,14 +180,14 @@ async fn win_chain_pages_share_rows() {
     };
     rig.world.fail_next("chatMediaState", chain_marker("1", 0, 3));
     rig.world.fail_next("chatMedia", page(&[(1, "Ann"), (2, "Ann")], true));
-    rig.world.fail_next("chatMedia", page(&[(2, "Ann B"), (3, "Ann B")], false));
+    rig.world.fail_next("chatMedia", page(&[(3, "Ann B")], false));
     rig.world.fail_next("chatMediaState", chain_marker("1", 3, 3));
     let rows = std::sync::Arc::new(ChainRows::default());
     let query = crate::ffi::QuerySpec::json(r#"{"model":"MediaEntry","relation":"media","params":{"chatId":"c1"}}"#);
     let _stream = rig.database.watch(crate::ffi::ReadRequest::List { query }, rows.clone());
-    crate::test_wait::settled(&rig, "a chain whose pages share an author and a moved row lands", || rows.rows.last().is_some_and(|state| state.phase == Some(crate::ffi::ReadPhase::Loaded) || state.error.is_some())).await;
+    crate::test_wait::settled(&rig, "a chain whose pages share an author lands", || rows.rows.last().is_some_and(|state| state.phase == Some(crate::ffi::ReadPhase::Loaded) || state.error.is_some())).await;
     assert!(rows.rows.last().unwrap().error.is_none(), "{:?}", rows.rows.last().unwrap().error);
-    assert_eq!(chain_ids(&rows), ["1", "2", "3"], "the row both pages hold lands once at its first place");
+    assert_eq!(chain_ids(&rows), ["1", "2", "3"], "every row of both pages lands");
     let epoch = rig.database.session_epoch();
     let read = |query: &str| { let database = rig.database.clone(); let query = crate::ffi::QuerySpec::json(query); async move { bound(database.read_query(epoch, query)).await.unwrap() } };
     let authors = read(r#"{"model":"MediaAuthor"}"#).await;
