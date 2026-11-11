@@ -67,10 +67,11 @@ impl OutboxState {
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, receipt.clone());
                 }
-                if self.goes_out(op_id) {
+                if self.goes_out(op_id) && !self.expired(now, op_id) {
                     self.start_sending(op_id, fx);
                 } else if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.stage = Stage::Queued;
+                    self.try_start(now, op_id, fx);
                 }
             }
             (CommitKind::Attempt, Stage::PersistingAttempt) => {

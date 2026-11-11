@@ -259,7 +259,7 @@ impl OutboxState {
 
     pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
-    fn expired(&self, now: u64, op_id: OpId) -> bool {
+    pub(super) fn expired(&self, now: u64, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
         operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(now.saturating_sub(operation.created_at)) > after.as_millis())
     }
@@ -801,7 +801,7 @@ impl OutboxState {
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id } => self.reserve_replacement(epoch, target, transfer_id, cycle_id, fx),
             OutboxInput::FinishReplacement { target, committed } => self.finish_replacement(now, target, committed, fx),
-            OutboxInput::SubmitReserved { epoch, op_id, op, created_at } => self.submit_reserved(epoch, op_id, op, created_at, fx),
+            OutboxInput::SubmitReserved { epoch, op_id, op, created_at } => self.submit_reserved(now, epoch, op_id, op, created_at, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),

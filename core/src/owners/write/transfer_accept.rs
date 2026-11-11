@@ -52,7 +52,7 @@ impl TransferState {
         self.begin_failure(now, id, format!("source_failed:{message}"), false, fx);
     }
 
-    pub(super) fn create(&mut self, item: BatchItem, batch_id: Option<u64>, now: Time, stage: TransferStage) -> TransferId {
+    pub(super) fn create(&mut self, item: BatchItem, batch_id: Option<u64>, created_at: Time, stage: TransferStage) -> TransferId {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
@@ -76,7 +76,7 @@ impl TransferState {
             last_part: false,
             aborted: false,
             signed_id: None,
-            created_at: now,
+            created_at,
             error: None,
             cycle_id: 1,
             revision: 0,
