@@ -87,3 +87,23 @@ async fn data_event_without_revision_applies() {
     rig.database.close_now();
 }
 
+/// P-DATA-95: the delete event of a row that is not stored gives `Events` an `Event` with no `before` and no `after`, and leaves a tombstone: a page of a window that was asked before the event and brings the row does not bring it back.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_event_delete_missing_row() {
+    let (rig, rows) = thread_rig().await;
+    rig.world.seed_message("A", "m404", "late", 1);
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("Thread");
+    let database = rig.database.clone();
+    let load = tokio::spawn(async move { database.load(epoch, "Message".into(), "thread".into(), json!({"chatId": "c1"}).to_string()).await });
+    bound(gate.entered()).await;
+    let seen = rig.land_unsettled("Message", json!({"id": "m404", "deleted": true})).await;
+    let ReadValue::Event { before, after, id, .. } = seen else { unreachable!() };
+    assert_eq!((id.as_str(), before.is_none(), after.is_none()), ("m404", true, true), "the event carries no before and no after");
+    gate.release();
+    bound(load).await.unwrap().unwrap();
+    rig.settle().await;
+    assert!(row_of(&rows, "m404").is_none(), "the tombstone keeps the late page from bringing the row back");
+    rig.database.close_now();
+}
+
