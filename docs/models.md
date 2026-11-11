@@ -542,7 +542,7 @@ Each field takes one test, literals are strings, numbers or booleans of the fiel
 A member that stops matching after a row change leaves the window, like a member that loses its list.
 Membership rules require `query`. Local scopes read their `where` columns.
 When a nullable `where` column has a default, an explicit null selects its own window.
-A row from an event, from a node read started by `changed_by`, or from an operation response must carry the membership field after merging the stored row; without it the write is refused as invalid data. A `null` removes the field and counts as missing. An empty array removes previous membership.
+A row from an event, from a node read started by `changed_by`, or from an operation response must carry the membership field after merging the stored row; without it the write is refused as invalid data. A `null` removes the field and counts as missing. An empty array removes previous membership. When a scope with membership lists `:response` in `insert_on`, generation fails for an operation whose response row does not select the membership field under its path (`response from:`, `upsert ... from:` or the default root).
 Missing members join the head once. Existing members keep their places. Unloaded windows are not created.
 Membership and row changes share one commit. Pages retain their server membership, cursors and revision protection.
 When an event joins an active manual node request, that request also inserts the row into matching loaded windows.

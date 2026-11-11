@@ -5,7 +5,7 @@ impl<'a> Run<'a> {
         self.found.push(FileError { file: self.files[file].clone(), error: ParseError::new(pos.line, pos.column, message) });
     }
 
-    pub(super) fn check_model(&mut self, node: &'a ModelDecl) {
+    pub(super) fn check_model(&mut self, node: &'a ModelDecl, nodes: &'a [ModelDecl]) {
         let mut seen = HashSet::new();
         for remote in node.scopes.iter().filter(|scope| scope.is_remote()) {
             self.check_text_types(node, remote);
@@ -32,7 +32,7 @@ impl<'a> Run<'a> {
             self.check_subscription_args(node, scope);
         }
         self.check_mutation_args(node);
-        self.check_response_paths(node);
+        self.check_response_paths(node, nodes);
     }
 
     pub(super) fn check_subscription_args(&mut self, node: &ModelDecl, scope: &ScopeDecl) {

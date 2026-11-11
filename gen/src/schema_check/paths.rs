@@ -60,6 +60,21 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// M75: a row of an operation response carries the membership field of each scope of its model that rows of a response enter.
+    fn require_membership_fields(&mut self, model: &'a ModelDecl, spot: Spot, operation: &str, root: &str, starts: &[&'a Select]) {
+        let prefix: Vec<&str> = root.split('.').collect();
+        let fields: BTreeSet<&str> = model.scopes.iter()
+            .filter(|scope| scope.insert_on.as_ref().is_some_and(|insert| insert.item.contains(&crate::decl::InsertOn::Response)))
+            .flat_map(|scope| scope.membership.iter())
+            .map(|(_, rule, _)| match rule { dblayer::schema::Membership::Contains(field) | dblayer::schema::Membership::Equals(field) => field.as_str() })
+            .collect();
+        for field in fields {
+            let Some(attribute) = model.attributes.iter().find(|attribute| attribute.name == field) else { continue };
+            let Some(path) = self.path_of(model, attribute, field).map(|path| path.join(".")) else { continue };
+            self.follow_inside(Spot { file: spot.file, at: spot.at, label: spot.label }, operation, &prefix, starts, &path);
+        }
+    }
+
     pub(super) fn follow_quiet(&self, operation: &str, starts: Option<&[&'a Select]>, segments: &[&str]) -> Option<Result<Followed<'a>, Miss>> {
         let documents: &'a Operations = self.operations;
         let top;
@@ -102,9 +117,9 @@ impl<'a> Run<'a> {
         }
     }
 
-    pub(super) fn check_response_paths(&mut self, node: &'a ModelDecl) {
+    pub(super) fn check_response_paths(&mut self, node: &'a ModelDecl, nodes: &'a [ModelDecl]) {
         for operation in &node.operations {
-            self.check_operation_paths(node, operation);
+            self.check_operation_paths(node, operation, nodes);
         }
         for subscription in node.subscriptions.iter() {
             self.check_subscription_paths(node, subscription, "subscribe");
@@ -119,18 +134,28 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn check_operation_paths(&mut self, node: &'a ModelDecl, action: &'a OperationDecl) {
-        let Some(operation) = action.mutation.as_ref().map(|found| found.item.as_str()) else { return };
+    fn check_operation_paths(&mut self, node: &'a ModelDecl, action: &'a OperationDecl, nodes: &'a [ModelDecl]) {
+        let Some(mutation) = action.mutation.as_ref() else { return };
+        let operation = mutation.item.as_str();
         let Some(declared) = self.operations.named.get(operation) else { return };
         let root = match &action.response {
             Some(crate::decl::ResponseDecl::Read(read)) => read.from.as_ref(),
             _ => None,
         };
         if let Some(found) = root {
-            self.follow_operation(Spot { file: node.file, at: found.pos, label: "response from" }, operation, &found.item);
+            if let Some(reached) = self.follow_operation(Spot { file: node.file, at: found.pos, label: "response from" }, operation, &found.item) {
+                self.require_membership_fields(node, Spot { file: node.file, at: found.pos, label: "response field" }, operation, &found.item, &reached.selects);
+            }
+        } else if action.response != Some(crate::decl::ResponseDecl::Ignore) && action.name != "destroy" {
+            if let Some((key, Some(Ok(reached)))) = declared.root.as_ref().map(|first| (first.key.as_str(), self.follow_quiet(operation, None, &[first.key.as_str()]))) {
+                self.require_membership_fields(node, Spot { file: node.file, at: mutation.pos, label: "response field" }, operation, key, &reached.selects);
+            }
         }
         for landing in &action.upserts {
-            self.follow_operation(Spot { file: node.file, at: landing.from.pos, label: "upsert" }, operation, &landing.from.item);
+            let Some(reached) = self.follow_operation(Spot { file: node.file, at: landing.from.pos, label: "upsert" }, operation, &landing.from.item) else { continue };
+            if let Some(model) = nodes.iter().find(|candidate| candidate.name == landing.model) {
+                self.require_membership_fields(model, Spot { file: node.file, at: landing.from.pos, label: "response field" }, operation, &landing.from.item, &reached.selects);
+            }
         }
         let Some(result) = &action.returns else { return };
         let payload = root.map(|found| found.item.split('.').next().unwrap_or_default()).or_else(|| declared.root.as_ref().map(|found| found.key.as_str()));
