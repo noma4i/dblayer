@@ -121,9 +121,8 @@ The client validates code shapes without copying the server's vocabulary.
 | `t` and field names | Closed message grammar. Unknown message types and fields remain invalid |
 
 An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
-With `retryable=false`, the feed records the typed subscription error and stops until the next committed credential.
-The next committed credential restarts every stopped live subscription with a saved failure, including GraphQL refusals. The foreground event and the return of the network restart only stopped subscriptions whose saved failure is not a session refusal, and they send no cable resume command. A session refusal (`SessionCode` or a terminal close) stays stopped until the next committed credential.
-With `retryable=true`, the feed retains the GraphQL error and retries after backoff.
+With `retryable=false`, the models of that subscription leave the live set. Their `scope.events(Model)` streams end with `ended(invalid)`. Windows of those models get no error and keep their normal freshness rules. The subscription opens again only when a new reader asks for live data. The foreground event and the return of the network do not restart it.
+With `retryable=true`, the readers of `scope.events(Model)` get `gap`, and the subscription retries after backoff.
 Code spelling never selects retry behavior. For example, `REFUSED` can stop or retry according to the flag.
 Removing the last subscription closes the socket without cable retry attempts, timers or a new connection.
 Other active subscriptions keep using their connection when one subscription is refused.
@@ -145,7 +144,7 @@ Other kinds use the HTTP reread through the encrypted client and the normal SQLi
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expires_in` deletes them.
 A local scope with `subscribe` opens the subscription at the first reader. It releases the subscription after the last reader leaves.
 Events are lost while no reader exists. The server does not replay them.
-Undeclared areas increase `refusedEvents` of `subscriptionCensus()`.
+Records of undeclared areas are ignored and are not counted. A record without area, id or kind increases `refusedEvents` of `subscriptionCensus()`.
 After missed events from a broken subscription or lost channel, the library marks observed selections of affected models for rereading.
 The mark survives an app restart and is cleared only by a load started after the mark.
 Time-based freshness does not clear the mark, even when the selection is fresh.
@@ -153,35 +152,28 @@ Node reads and remote relations default to `5.minutes`. A zero duration always e
 Expiration alone starts no request. Received events still trigger their normal immediate reread.
 The REACTION area may point to several node reads. Then 1 HTTP request runs for each declared model.
 
-While a live subscription exists, 25 seconds without traffic start an encrypted ping.
-If no pong or next arrives within 20 seconds, the client closes the socket and reopens it.
-Only a pong matching the pending ping's `ts` restarts the 25-second idle interval.
+While a live subscription exists, 25 seconds without an outgoing frame start an encrypted ping. Incoming frames do not restart this interval.
+If no pong arrives within 10 seconds, the client closes the socket and reopens it. Other frames do not count as a pong.
 Each ping gets a new session counter value, so delayed pongs cannot confirm a later ping.
 The pending socket receive survives timer, subscription and cancellation events until it returns a frame or the connection closes.
 The client reads its credential before opening a socket. A handshake timeout closes the socket.
 Without subscriptions there are no connections and no timers. Failed opens and closes before any server frame increase a cable backoff: 1 s doubling to 30 s with 20% jitter.
 Each session owns its jitter seed, allocated from an atomic session counter without reading a clock.
-Ready does not reset the counter. A known subscription's `subscribed` or parsed, nonempty `next` response resets it.
-A pong resets it only when its `ts` matches the pending ping.
-Unknown subscription ids, malformed or empty responses and unmatched pongs preserve the retry count and pending ping deadline.
+The first event of a subscription resets the counter. Ready and `subscribed` do not reset it.
+Unknown subscription ids and malformed or empty responses preserve the retry count and pending ping deadline.
 Offline state and an empty subscription list use no attempts and add no retry delay.
-Going offline drops a pending retry delay. Coming back online reopens at once while subscriptions remain, and the failure count stays.
+Going offline drops a pending retry delay. Coming back online reopens at once while subscriptions remain, and the failure count starts from zero.
 The last cancellation, offline transition or transport drop interrupts a pending socket open or handshake receive.
 The platform observer reports the connection state to the core, which passes it to the transport.
 
 | Close | Result |
 | --- | --- |
-| HTTP 401 during open | `SessionCode::Unauthenticated`, stop until the next committed credential |
-| HTTP 403 during open or channel `reject_subscription` | `SessionCode::AccountUnavailable`, stop until the next committed credential |
-| 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until the next committed credential |
-| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until the next committed credential |
-| LOGGED_OUT | `SessionCode::SessionEnded`, stop until the next committed credential |
+| HTTP 401 or 403 during open, a session error during open | Reopen with backoff, like a dropped connection |
+| 4401, 4403, ACCOUNT_LOCKED or LOGGED_OUT | Reopen with backoff, like a dropped connection |
 | 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
 
-No close deletes the credential. Cable receives only the function that reads the credential.
-Terminal refusals also reject later subscriptions without opening sockets or triggering rereads.
-A committed credential clears the refusal and restarts stopped subscriptions.
-Each watched query reports the typed session failure once in the `error` of its stream state until the next committed credential. User-initiated configuration requests and queries remain available.
+No close deletes the credential and no close ends the session. Cable receives only the function that reads the credential.
+A subscription failure never reaches the `error` of a list or entity stream: windows keep their own load state. User-initiated configuration requests and queries remain available.
 `DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.
 
 The fixtures `fixtures/change-events/subscriptions.json` hold the requests and responses of all 4 subscriptions.
