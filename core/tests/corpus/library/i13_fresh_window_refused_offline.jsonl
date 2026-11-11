@@ -1,7 +1,7 @@
 {"trace":"i13_fresh_window_refused_offline"}
 {"in":"open","args":{"encrypted":true}}
-{"in":"login"}
 {"in":"set_online","args":{"online":true}}
+{"in":"login"}
 {"in":"open_list","args":{"as":"s1","relation":"feed"}}
 {"in":"answer_page","args":{"more":false,"rows":1}}
 {"in":"set_online","args":{"online":false}}

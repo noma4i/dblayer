@@ -1,7 +1,7 @@
 {"trace":"i7_s28"}
 {"in":"open","args":{"encrypted":true}}
-{"in":"login"}
 {"in":"set_online","args":{"online":true}}
+{"in":"login"}
 {"in":"refresh","args":{"as":"rf","named":true,"relation":"feed"}}
 {"in":"session_reset"}
 {"in":"close"}

@@ -7,13 +7,13 @@ pub const PAGE_EMPTY: u64 = 0;
 pub const PAGE_ONE: u64 = 1;
 pub const PAGE_MANY: u64 = 3;
 
-/// The inputs every program starts with, kept by `minimize`. `anonymous` stops after `open`, so reads meet a core without a session.
+/// The inputs every program starts with, kept by `minimize`. The symbolic stand leaves the network unknown after `open`, so the network goes on before `login`. `anonymous` stops after `open`, so reads meet a core without a session.
 pub fn prelude(anonymous: bool) -> Vec<Input> {
     let open = Input::new("open").with("encrypted", true);
     if anonymous {
         return vec![open];
     }
-    vec![open, Input::new("login"), Input::new("set_online").with("online", true)]
+    vec![open, Input::new("set_online").with("online", true), Input::new("login")]
 }
 
 fn stream(kind: &str, name: &str) -> Input {

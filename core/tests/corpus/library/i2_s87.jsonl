@@ -1,7 +1,7 @@
 {"trace":"i2_s87"}
 {"in":"open","args":{"encrypted":true}}
-{"in":"login"}
 {"in":"set_online","args":{"online":true}}
+{"in":"login"}
 {"in":"open_count","args":{"as":"c1","relation":"feed"}}
 {"in":"tick","args":{"ms":60000}}
 {"in":"begin_load_all","args":{"as":"la","named":true,"relation":"feed"}}
