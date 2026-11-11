@@ -27,6 +27,8 @@ struct Inner {
     waiting: HashMap<String, oneshot::Sender<Reply>>,
     waiting_puts: HashMap<String, oneshot::Sender<Result<PutReply, DbError>>>,
     waiting_http: HashMap<String, (serde_json::Value, oneshot::Sender<Result<EncryptedReply, DbError>>)>,
+    /// The decrypted body of each encrypted exchange, by request id.
+    bodies: HashMap<String, serde_json::Value>,
     /// The socket of each cable request: the token of the lease.
     cables: HashMap<String, String>,
 }
@@ -58,6 +60,7 @@ fn error_of(kind: &str) -> Option<DbError> {
         "temporary" => Some(DbError::Network { detail: "temporary".into() }),
         "permanent" => Some(DbError::Graphql { messages: vec!["permanent".into()], extensions: None }),
         "auth" => Some(DbError::Http { status: 401, detail: "auth".into() }),
+        "server" => Some(DbError::Http { status: 500, detail: "server".into() }),
         _ => None,
     }
 }
@@ -75,6 +78,12 @@ impl Mock {
         hold(&mut inner, id);
         drop(inner);
         self.arrived.notify_waiters();
+    }
+
+    /// Every request that reached the mock in arrival order with its decrypted body (`Null` when it has none).
+    pub fn sent(&self) -> Vec<(String, serde_json::Value)> {
+        let inner = locked(self);
+        inner.seen.iter().map(|seen| (seen.id.clone(), inner.bodies.get(&seen.id).cloned().unwrap_or(serde_json::Value::Null))).collect()
     }
 
     /// Notified whenever a request arrives.
@@ -121,9 +130,9 @@ impl Mock {
         if kind == "permanent" && locked(self).waiting_http.contains_key(id) {
             return self.answer(id, r#"{"errors":[{"message":"permanent","extensions":{"code":"permanent"}}]}"#);
         }
-        if kind == "auth" {
+        if kind == "auth" || kind == "server" {
             if let Some((_, sender)) = locked(self).waiting_http.remove(id) {
-                return deliver(sender, Ok(EncryptedReply { status: 401, body: String::new() }));
+                return deliver(sender, Ok(EncryptedReply { status: if kind == "auth" { 401 } else { 500 }, body: String::new() }));
             }
         }
         self.finish(id, error)
@@ -200,7 +209,7 @@ impl FakeHttp for Mock {
     async fn post(&self, _path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).map_err(|detail| DbError::Invalid { detail })?;
         let (sender, receiver) = oneshot::channel();
-        self.record("http", purpose_name(purpose), |inner, id| { inner.waiting_http.insert(id, (request, sender)); });
+        self.record("http", purpose_name(purpose), |inner, id| { inner.bodies.insert(id.clone(), request.clone()); inner.waiting_http.insert(id, (request, sender)); });
         receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
     }
 }

@@ -190,6 +190,9 @@ impl DatabaseSut {
         if let Some(database) = self.database.take() { let _ = database.close_database().await; }
     }
 
+    /// Every request that reached the mock, in arrival order: the id and the decrypted body of an encrypted exchange (`Null` for a subscription or a put).
+    pub fn requests(&self) -> Vec<(String, Value)> { self.mock.sent() }
+
     fn id_of(&self, name: &str) -> String {
         self.rows.get(name).cloned().unwrap_or_else(|| name.to_string())
     }
@@ -320,6 +323,8 @@ impl DatabaseSut {
     fn start(&mut self, database: Arc<Database>, input: &Input) -> Option<Vec<Observation>> {
         let epoch = database.session_epoch();
         let text = |key: &str| input.text(key).map(str::to_string);
+        let params = input.args.get("params").map_or_else(|| "{}".to_string(), Value::to_string);
+        let model = text_or(input, "model", "Moment");
         match input.name.as_str() {
             "create" => {
                 let (Some(name), Some(text)) = (text("as"), text("text")) else { return Some(error("arguments")) };
@@ -392,7 +397,7 @@ impl DatabaseSut {
             }
             "begin_load" => {
                 let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
-                match database.begin_load(epoch, "Moment".into(), Some(relation), "{}".into()) {
+                match database.begin_load(epoch, model, Some(relation), params) {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
@@ -403,12 +408,12 @@ impl DatabaseSut {
             }
             "refresh" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
-                self.launch(async move { database.refresh(epoch, "Moment".into(), Some(relation.clone()), "{}".into()).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
+                self.launch(async move { database.refresh(epoch, model, Some(relation.clone()), params).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
             }
             "load_more" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
                 self.launch(async move {
-                    match database.load_more(epoch, "Moment".into(), Some(relation.clone()), "{}".into()).await {
+                    match database.load_more(epoch, model, Some(relation.clone()), params).await {
                         Ok(result) => done("more", json!({ "relation": relation, "result": more_name(result) })),
                         Err(error) => failed(&error),
                     }
@@ -418,7 +423,7 @@ impl DatabaseSut {
                 let (Some(relation), Some(row)) = (text("relation"), text("row")) else { return Some(error("arguments")) };
                 let id = self.id_of(&row);
                 self.launch(async move {
-                    match database.node(epoch, "Moment".into(), relation, id, false).await {
+                    match database.node(epoch, model, relation, id, false).await {
                         Ok(found) => done("node", json!({ "row": row, "present": found.is_some() })),
                         Err(error) => failed(&error),
                     }
@@ -448,7 +453,7 @@ impl DatabaseSut {
             }
             "begin_load_all" => {
                 let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
-                match database.begin_load_all(epoch, "Moment".into(), Some(relation), "{}".into(), input.flag("force").unwrap_or(false)) {
+                match database.begin_load_all(epoch, model, Some(relation), params, input.flag("force").unwrap_or(false)) {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
@@ -522,7 +527,10 @@ impl DatabaseSut {
 
     fn open_stream(&mut self, database: &Arc<Database>, input: &Input) -> Vec<Observation> {
         let Some(name) = input.text("as") else { return error("arguments") };
-        let query = |relation: Option<&str>| QuerySpec { model: "Moment".into(), relation: relation.map(str::to_string), params_json: "{}".into(), conditions: Vec::new(), order: Vec::new(), limit: None, offset: None, refresh_on_connect: false };
+        let params = input.args.get("params").map_or_else(|| "{}".to_string(), Value::to_string);
+        let model = text_or(input, "model", "Moment");
+        let on_connect = input.flag("refresh_on_connect").unwrap_or(false);
+        let query = |relation: Option<&str>| QuerySpec { model: model.clone(), relation: relation.map(str::to_string), params_json: params.clone(), conditions: Vec::new(), order: Vec::new(), limit: None, offset: None, refresh_on_connect: on_connect };
         let request = match input.name.as_str() {
             "open_list" => ReadRequest::List { query: query(input.text("relation")) },
             "open_count" => ReadRequest::Count { query: query(input.text("relation")) },
