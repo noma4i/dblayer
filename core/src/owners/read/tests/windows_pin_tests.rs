@@ -152,3 +152,112 @@ fn win_change_during_the_request_marks_the_next_load() {
     }
     assert_eq!(sources, vec![Page, NodeReread], "the load asked before the change lands as a page, the reread asked after it carries the mark");
 }
+
+/// P-WIN-34: a marked load keeps its mark through a network retry, an offline pause and a last-reader close, until a batch lands.
+#[test]
+fn win_marked_load_keeps_its_mark_until_it_lands() {
+    use crate::ffi::DbError;
+    use crate::owners::contract::{ErrorClass, RequestError};
+    use crate::owners::read::windows::{StaleCause, StaleKeys};
+    use crate::schema::RowSource::NodeReread;
+    struct Run {
+        state: WindowsState,
+        key: WindowKey,
+        pin: Option<u64>,
+        loading: u64,
+        request: Option<(u64, u32)>,
+        sources: Vec<crate::schema::RowSource>,
+        reads: u64,
+    }
+    impl Run {
+        fn new() -> Run {
+            let key = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("n1"))].into_iter().collect());
+            let mut run = Run { state: state(), key, pin: None, loading: 0, request: None, sources: Vec::new(), reads: 0 };
+            run.interest();
+            run
+        }
+        fn step(&mut self, input: WindowsInput) {
+            let effects = Windows::step(&mut self.state, input, crate::runtime::Time(0));
+            for effect in &effects {
+                if let Effect::Run(WindowsEffect::Window { effect: WindowEffect::Request { request, attempt, .. }, .. }) = effect {
+                    self.request = Some((*request, *attempt));
+                }
+            }
+            for input in store_inputs(effects) {
+                match input {
+                    StoreInput::Pin { request_id, .. } => self.pin = Some(request_id),
+                    StoreInput::Commit(batch) => self.sources.extend(batch.ops.iter().filter_map(|op| match op { StoreOp::Window { source, .. } => Some(*source), _ => None })),
+                    _ => {}
+                }
+            }
+        }
+        fn interest(&mut self) {
+            self.reads += 1;
+            self.step(WindowsInput::InterestPassive { key: self.key.clone(), id: 8 + self.reads });
+            self.step(WindowsInput::WindowRead { key: self.key.clone(), read_id: self.reads, result: Ok(None) });
+        }
+        fn load(&mut self) {
+            self.step(WindowsInput::Load { key: self.key.clone(), id: self.reads, goal: Goal::First, force: true, store_revision: 0 });
+            self.loading = self.pin.take().expect("the load pins its request");
+            self.step(WindowsInput::Pinned { request_id: self.loading, base_revision: 1 });
+            assert!(self.request.is_some(), "the pinned load asks the network");
+        }
+        fn change(&mut self) { self.step(WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: StaleCause::Change }); }
+        fn network_down_once(&mut self) {
+            let (request, attempt) = self.request.take().expect("a request is out");
+            self.step(WindowsInput::Failure { request, attempt, error: RequestError { class: ErrorClass::Network, failure: DbError::Dropped { detail: "down".into() } } });
+            assert!(self.request.is_none(), "the failed request waits for its retry");
+        }
+        fn retry(&mut self) {
+            self.step(WindowsInput::RetryDue { request: self.loading });
+            assert!(self.request.is_some(), "the retry asks the network again");
+        }
+        fn answer(&mut self) {
+            let (request, attempt) = self.request.take().expect("a request is out");
+            self.step(WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec![], None) });
+        }
+    }
+    type Order = fn(&mut Run);
+    let cases: Vec<(&str, Order)> = vec![
+        ("a: Stale(Change), load, a temporary refusal, the retry, the answer", |run| {
+            run.change();
+            run.load();
+            run.network_down_once();
+            run.retry();
+            run.answer();
+        }),
+        ("b: load, a temporary refusal, Stale(Change) in the pause, the retry, the answer", |run| {
+            run.load();
+            run.network_down_once();
+            run.change();
+            run.retry();
+            run.answer();
+        }),
+        ("c: Stale(Change), load, request out, Online(false), Online(true), the answer of the new load", |run| {
+            run.change();
+            run.load();
+            run.step(WindowsInput::Online { online: Online(false), online_seq: 1 });
+            run.step(WindowsInput::Online { online: Online(true), online_seq: 2 });
+            let request_id = run.pin.take().expect("the reconnect load pins its request");
+            run.step(WindowsInput::Pinned { request_id, base_revision: 1 });
+            run.answer();
+        }),
+        ("d: Stale(Change), load, request out, the last reader leaves, a new interest and load, the answer", |run| {
+            run.change();
+            run.load();
+            run.step(WindowsInput::InterestMinus { key: run.key.clone(), id: 9 });
+            run.interest();
+            run.step(WindowsInput::Load { key: run.key.clone(), id: run.reads, goal: Goal::First, force: true, store_revision: 0 });
+            run.answer();
+        }),
+    ];
+    let mut wrong = Vec::new();
+    for (case, order) in cases {
+        let mut run = Run::new();
+        order(&mut run);
+        if run.sources != vec![NodeReread] {
+            wrong.push(format!("{case}: landing sources {:?}, the spec asks [NodeReread]", run.sources));
+        }
+    }
+    assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
+}
