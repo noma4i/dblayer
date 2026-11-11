@@ -96,7 +96,7 @@ The native build fingerprint includes both deployment versions.
 2. Run `dblayer-gen` in your build to produce typed models and the model specification.
 3. Create a transport with your GraphQL endpoint and an auth header.
 4. Open the database with the models and the transport.
-5. Register your GraphQL operations. Every mutation a model action names must be registered, or the record fails with `operation <name> is not registered` ([sync state](sync-state.md)).
+5. Register your GraphQL operations. Every mutation a model action names must be registered, or the write call throws `Invalid` and writes nothing ([sync state](sync-state.md)).
 6. Use the generated model API: every read is live ([live data](live-data.md)).
 
 ## Schema changes
