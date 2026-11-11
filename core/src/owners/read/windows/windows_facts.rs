@@ -54,7 +54,7 @@ pub(super) struct Facts {
     pub(super) landing_marker: Option<(Marker, i64, bool)>,
     /// The window reads a `node`: only such a window takes the mark of a `changed_by` event (P-WIN-34).
     pub(super) reads_node: bool,
-    /// A `changed_by` event marked the `node` window: the next landing batch is a `NodeReread` and takes the mark (P-WIN-34, M24).
+    /// A `changed_by` event marked the `node` window: the next request a load sends takes the mark, and that load lands as a `NodeReread` (P-WIN-34, M24).
     pub(super) reread_by_event: std::cell::Cell<bool>,
     pub(super) fx: RefCell<Vec<Emit>>,
 }
