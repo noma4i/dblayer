@@ -18,7 +18,7 @@ Every record knows whether the server has seen it. The state is live like everyt
 | State | When |
 | ----- | ---- |
 | `synced` | nothing is waiting for the server |
-| `pending` | a change is queued and sending has not started or it waits in the queue again (offline, busy slot), or an upload of the record waits for the network (`uploads[action].waitReason == offline`) |
+| `pending` | a change is queued and sending has not started or it waits in the queue again (offline, busy slot), or an upload of the record has not started (`uploads[action].status` is `waiting` or `queued`) |
 | `sending` | an attempt was written and no answer has arrived: the same word as the `status` of the write in the queue of operations |
 | `failed` | the server refused the change and the record is kept for you to decide |
 
