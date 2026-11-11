@@ -43,17 +43,17 @@ fn retry_programs() -> Vec<Vec<Input>> {
     out
 }
 
-/// The letters of the family with streams: the environment, the streams, the loads of the feed, the answers.
-fn stream_letters() -> Vec<Input> {
+/// The letters of the family with streams: the environment, the streams, the loads of the feed, the answers. `members` keeps the stream `u1` of the window `container_members` or leaves it out.
+fn stream_letters(members: bool) -> Vec<Input> {
     let skipped = ["node", "nodes", "clock_back"];
-    alphabet().into_iter().chain(streams()).filter(modeled).filter(|input| !skipped.contains(&input.name.as_str()) && !(input.name == "cancel" && input.text("target") == Some("l1"))).collect()
+    alphabet().into_iter().chain(streams()).filter(modeled).filter(|input| !skipped.contains(&input.name.as_str()) && !(input.name == "cancel" && input.text("target") == Some("l1")) && (members || input.text("as") != Some("u1"))).collect()
 }
 
 /// Coordinator answer H23: a stream name is a handle of the stand, a program that opens the name of a live stream again is not in the family.
 const REOPENED: &str = "H23_stream_opened_again_under_the_name_of_a_live_one";
 
-fn stream_family(anonymous: bool, deep: usize) -> Vec<Vec<Input>> {
-    let letters = stream_letters();
+fn stream_family(anonymous: bool, members: bool, deep: usize) -> Vec<Vec<Input>> {
+    let letters = stream_letters(members);
     let head = prelude(anonymous);
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
     out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
@@ -188,7 +188,7 @@ async fn library_matches_reference_loads_without_session() {
 /// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program diverges and none meets a spec hole.
 /// The family runs as 6 tests (program `index % 6`) and the family without a session as 1.
 async fn streams_part(part: usize) {
-    assert_matches(part_of(stream_family(false, depth()), part, 6)).await;
+    assert_matches(part_of(stream_family(false, false, depth()), part, 6)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -223,5 +223,5 @@ async fn library_matches_reference_streams_part_6() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_streams_without_session() {
-    assert_matches(stream_family(true, depth().min(1))).await;
+    assert_matches(stream_family(true, false, depth().min(1))).await;
 }
