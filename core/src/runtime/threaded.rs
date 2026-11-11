@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -105,7 +105,7 @@ struct Router {
     #[cfg(test)]
     diagnostics: Vec<Mutex<String>>,
     #[cfg(test)]
-    stopped: Vec<AtomicBool>,
+    stopped: Vec<std::sync::atomic::AtomicBool>,
 }
 
 struct Alive(Arc<AtomicUsize>);
@@ -401,7 +401,7 @@ impl RuntimeBuilder {
         }
         #[cfg(test)]
         let owners: Vec<_> = self.bodies.iter().filter_map(|body| body.as_ref().map(|(name, _)| *name)).collect();
-        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] stopped: owners.iter().map(|_| AtomicBool::new(false)).collect(), #[cfg(test)] owners });
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] stopped: owners.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect(), #[cfg(test)] owners });
         #[cfg(test)]
         ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(Arc::downgrade(&router));
         self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
