@@ -69,7 +69,7 @@ impl<'a> Run<'a> {
             .map(|(_, rule, _)| match rule { dblayer::schema::Membership::Contains(field) | dblayer::schema::Membership::Equals(field) => field.as_str() })
             .collect();
         for field in fields {
-            let Some(attribute) = model.attributes.iter().find(|attribute| attribute.name == field) else { continue };
+            let Some(attribute) = model.attributes.iter().find(|attribute| attribute.name == field && !attribute.local) else { continue };
             let Some(path) = self.path_of(model, attribute, field).map(|path| path.join(".")) else { continue };
             self.follow_inside(Spot { file: spot.file, at: spot.at, label: spot.label }, operation, &prefix, starts, &path);
         }
@@ -142,17 +142,18 @@ impl<'a> Run<'a> {
             Some(crate::decl::ResponseDecl::Read(read)) => read.from.as_ref(),
             _ => None,
         };
+        let lands = action.response != Some(crate::decl::ResponseDecl::Ignore) && action.name != "destroy";
         if let Some(found) = root {
-            if let Some(reached) = self.follow_operation(Spot { file: node.file, at: found.pos, label: "response from" }, operation, &found.item) {
+            if let Some(reached) = self.follow_operation(Spot { file: node.file, at: found.pos, label: "response from" }, operation, &found.item).filter(|_| lands) {
                 self.require_membership_fields(node, Spot { file: node.file, at: found.pos, label: "response field" }, operation, &found.item, &reached.selects);
             }
-        } else if action.response != Some(crate::decl::ResponseDecl::Ignore) && action.name != "destroy" {
+        } else if lands {
             if let Some((key, Some(Ok(reached)))) = declared.root.as_ref().map(|first| (first.key.as_str(), self.follow_quiet(operation, None, &[first.key.as_str()]))) {
                 self.require_membership_fields(node, Spot { file: node.file, at: mutation.pos, label: "response field" }, operation, key, &reached.selects);
             }
         }
         for landing in &action.upserts {
-            let Some(reached) = self.follow_operation(Spot { file: node.file, at: landing.from.pos, label: "upsert" }, operation, &landing.from.item) else { continue };
+            let Some(reached) = self.follow_operation(Spot { file: node.file, at: landing.from.pos, label: "upsert" }, operation, &landing.from.item).filter(|_| lands) else { continue };
             if let Some(model) = nodes.iter().find(|candidate| candidate.name == landing.model) {
                 self.require_membership_fields(model, Spot { file: node.file, at: landing.from.pos, label: "response field" }, operation, &landing.from.item, &reached.selects);
             }
