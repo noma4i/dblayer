@@ -339,7 +339,7 @@ pub(super) fn declared_membership(connection: &Connection, info: &ModelInfo, mod
         });
         let response = relation.joins_events && envelope.response_rows && bound;
         let joins = event || response || envelope.node_reread && relation.joins_node;
-        if !joins && !(old.is_some() && bound && !relation.row_rules.is_empty()) { continue; }
+        if !joins && !(old.is_some() && bound && (!relation.membership.is_empty() || !relation.row_rules.is_empty())) { continue; }
         if event || envelope.node_reread && relation.joins_node {
             for rule in relation.membership.values() {
                 let field = match rule { crate::schema::Membership::Contains(field) | crate::schema::Membership::Equals(field) => field };
