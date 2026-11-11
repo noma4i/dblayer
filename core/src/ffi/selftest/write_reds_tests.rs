@@ -296,44 +296,46 @@ async fn write_declared_id_variable_never_carries_the_temp_id() {
     assert_none_red(&failed);
 }
 
+async fn existing_message_rig() -> (Rig, u64, String) {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+    let epoch = rig.database.session_epoch();
+    let base = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":"old","at":1}).to_string(), "{}".into())).await.unwrap();
+    let existing = bound(rig.database.confirmed(base, false)).await.unwrap().value.unwrap().id;
+    (rig, epoch, existing)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn write_sends_a_value_that_only_starts_with_the_temp_prefix() {
     let mut failed = Vec::new();
     for value in ["temp-hello", "temp-"] {
-        let rig = message_rig().await;
-        rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "old", "at": 1})).await;
-        rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
-        let epoch = rig.database.session_epoch();
-        let create = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":value,"at":2}).to_string(), "{}".into())).await.unwrap();
-        let created = bound(rig.database.confirmed(create, false)).await;
-        let edit = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "edit".into(), json!({"text": value}).to_string(), "{}".into())).await.unwrap();
-        let edited = bound(rig.database.confirmed(edit, false)).await;
-        let run = bound(rig.database.run(epoch, "UnregisterDevice".into(), json!({"id": value}).to_string())).await;
-        let session = bound(rig.database.session_call("otp".into(), json!({"x": value}).to_string())).await;
-        let window = bound(rig.database.load(epoch, "Message".into(), "thread".into(), json!({"chatId":"c1","note":value}).to_string())).await;
-        let paths = [
-            ("create", "SendMessage", created.map(|_| ())),
-            ("update", "MessageEdit", edited.map(|_| ())),
-            ("run", "UnregisterDevice", run.map(|_| ())),
-            ("session call", "otp", session.map(|_| ())),
-            ("window read", "Thread", window.map(|_| ())),
-        ];
-        for (path, operation, ended) in paths {
-            if matches!(ended, Err(DbError::Invalid { .. })) {
-                failed.push(format!("{path} {value}: refused as Invalid: {ended:?}"));
+        for (path, operation) in [("create", "SendMessage"), ("update", "MessageEdit"), ("run", "UnregisterDevice"), ("session call", "otp"), ("window read", "Thread")] {
+            let (rig, epoch, existing) = existing_message_rig().await;
+            let before = rig.world.log().iter().filter(|entry| entry.operation == operation).count();
+            let ended = match path {
+                "create" => {
+                    let receipt = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":value,"at":2}).to_string(), "{}".into())).await.unwrap();
+                    bound(rig.database.confirmed(receipt, false)).await.map(|_| ())
+                }
+                "update" => {
+                    let receipt = bound(rig.database.act(epoch, "Message".into(), existing, "edit".into(), json!({"text": value}).to_string(), json!({"text": value}).to_string())).await.unwrap();
+                    bound(rig.database.confirmed(receipt, false)).await.map(|_| ())
+                }
+                "run" => bound(rig.database.run(epoch, "UnregisterDevice".into(), json!({"id": value}).to_string())).await.map(|_| ()),
+                "session call" => bound(rig.database.session_call("otp".into(), json!({"x": value}).to_string())).await.map(|_| ()),
+                _ => bound(rig.database.load(epoch, "Message".into(), "thread".into(), json!({"chatId":"c1","note":value}).to_string())).await.map(|_| ()),
+            };
+            let bodies: Vec<String> = rig.world.log().iter().filter(|entry| entry.operation == operation).skip(before).map(|entry| entry.body.clone()).collect();
+            let wrote = matches!(path, "create" | "update");
+            if (wrote && ended.is_err()) || matches!(ended, Err(DbError::Invalid { .. })) {
+                failed.push(format!("{path} {value}: the call did not take the value as it is: {ended:?}"));
             }
-            let sent = rig.world.log().iter().filter(|entry| entry.operation == operation).count();
-            if sent != 1 {
-                failed.push(format!("{path} {value}: {operation} went to the server {sent} times, expected 1"));
+            if bodies.len() != 1 || (path != "window read" && !bodies[0].contains(&format!("\"{value}\""))) {
+                failed.push(format!("{path} {value}: expected 1 request with the value, sent {bodies:?}"));
             }
+            rig.database.close_now();
         }
-        for (path, operation) in [("create", "SendMessage"), ("update", "MessageEdit"), ("run", "UnregisterDevice"), ("session call", "otp")] {
-            let carried = rig.world.log().iter().filter(|entry| entry.operation == operation).any(|entry| entry.body.contains(&format!("\"{value}\"")));
-            if !carried {
-                failed.push(format!("{path} {value}: the request does not carry the value as it is"));
-            }
-        }
-        rig.database.close_now();
     }
     assert_none_red(&failed);
 }
