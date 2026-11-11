@@ -1,3 +1,4 @@
+use super::window_fresh_tests::{opening_twin, LIFE};
 use super::*;
 
 // Rows of `window.md` for the preload interest, power saving and a call refused offline: the owner against the reference.
@@ -20,6 +21,22 @@ fn win_preload_existing() {
     stale.step(Input::InterestMinus { id: STREAM });
     stale.step(Input::Stale { in_keys: true });
     assert_eq!(requests(&stale.step(Input::InterestPlus { id: PRELOAD })), 1, "the preload on a window that is not fresh loads it");
+}
+
+#[test]
+fn win_preload_saved_fresh_asks_nothing() {
+    let rows = |landed_at: i64, stale: bool| w::SavedWindow { landed_at, fresh_until: landed_at + LIFE, stale, cursor: None, pages: 1, has_rows: true, generation: 0, marker: None, members: 0 };
+    for (saved_window, asked) in [(Some(rows(NOW - 10_000, false)), 0), (Some(rows(NOW - LIFE, false)), 1), (None, 1)] {
+        let mut twin = opening_twin();
+        twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
+        let mut got = requests(&twin.split(take(&twin.log)).0);
+        let pending = twin.held.lock().unwrap_or_else(PoisonError::into_inner).pop();
+        if let Some((key, read_id)) = pending {
+            twin.post(w::WindowsInput::WindowRead { key, read_id, result: Ok(saved_window.clone()) });
+            got += requests(&twin.split(take(&twin.log)).0);
+        }
+        assert_eq!(got, asked, "a preload key with the saved window {saved_window:?}");
+    }
 }
 
 #[test]
