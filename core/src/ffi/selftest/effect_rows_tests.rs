@@ -15,12 +15,12 @@ async fn out_outcome_discard_storage_error() {
     let row = receipt.optimistic_value.as_ref().unwrap().id.clone();
     let operation = receipt.operation.unwrap();
     assert!(matches!(bound(rig.database.confirmed(receipt.clone(), false)).await, Err(crate::ffi::DbError::Rejected { kept: true, .. })));
-    rig.database.db.lock().connection.execute_batch("CREATE TEMP TRIGGER reject_confirmed_discard BEFORE DELETE ON op BEGIN SELECT RAISE(ABORT, 'injected discard failure'); END").unwrap();
+    rig.database.db.lock().connection.execute_batch("PRAGMA query_only = ON").unwrap();
     let answer = bound(rig.database.confirmed(receipt, true)).await;
     assert!(matches!(&answer, Err(crate::ffi::DbError::Storage { detail }) if detail.contains("422")), "the storage refusal carries the original failure: {answer:?}");
     assert!(bound(rig.database.read_row(epoch, "Message".into(), row)).await.unwrap().is_some());
     assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().any(|entry| entry.id.0 == operation));
-    rig.database.db.lock().connection.execute_batch("DROP TRIGGER reject_confirmed_discard").unwrap();
+    rig.database.db.lock().connection.execute_batch("PRAGMA query_only = OFF").unwrap();
     rig.database.close_now();
 }
 
