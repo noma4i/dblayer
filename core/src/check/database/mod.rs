@@ -197,6 +197,15 @@ impl DatabaseSut {
     /// Every request that reached the mock, in arrival order: the id and the decrypted body of an encrypted exchange (`Null` for a subscription or a put).
     pub fn requests(&self) -> Vec<(String, Value)> { self.mock.sent() }
 
+    /// The protocol config of the shared tests. In symbolic mode the operation `social` is a `Login` one, so a second `login` meets `AlreadyAuthenticated` like the spec says.
+    fn encrypted_config(&self) -> crate::ffi::EncryptedConfig {
+        let mut config = crate::transport::encrypted::tests::protocol_tests::config();
+        if self.symbolic.is_some() {
+            if let Some(operation) = config.endpoints.session_operations.get_mut("social") { operation.class = crate::transport::EncryptedOperationClass::Login; }
+        }
+        config
+    }
+
     fn id_of(&self, name: &str) -> String {
         self.rows.get(name).cloned().unwrap_or_else(|| name.to_string())
     }
@@ -314,7 +323,7 @@ impl DatabaseSut {
         let config = Config { path, data_version: None };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
         let (encrypted, credentials, http): EncryptedParts = if encrypted {
-            (Some(crate::transport::encrypted::tests::protocol_tests::config()), Some(self.credentials.clone()), Some(self.mock.clone()))
+            (Some(self.encrypted_config()), Some(self.credentials.clone()), Some(self.mock.clone()))
         } else {
             (None, None, None)
         };
