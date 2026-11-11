@@ -8,8 +8,12 @@ use crate::check::value::{Observation, Step};
 /// Fresh-window lifetime of the stand schema (`stale_time` 5 minutes, the same for an empty page).
 const LIFETIME_MS: u64 = 300_000;
 
+/// window.md win_loading_temp_error: a retryable failure waits for `Retry` while the attempts are below the limit (network 3, server 2).
+const NETWORK_ATTEMPTS: u32 = 3;
+const SERVER_ATTEMPTS: u32 = 2;
+
 const LOADS: [(&str, &str); 6] = [("begin_load", "loaded"), ("refresh", "refreshed"), ("load_more", "more"), ("begin_load_all", "loaded_all"), ("node", "node"), ("nodes", "nodes")];
-const REFUSALS: [&str; 10] = ["no_request", "not_open", "unknown_stream", "unknown_target", "arguments", "online", "open", "operations", "frame", "file"];
+const REFUSALS: [&str; 11] = ["already_open", "no_request", "not_open", "unknown_stream", "unknown_target", "arguments", "online", "open", "operations", "frame", "file"];
 const READS: [&str; 5] = ["begin_load", "refresh", "load_more", "begin_load_all", "node"];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -48,6 +52,7 @@ struct Trace {
     ever_logged: bool,
     held: Vec<(String, String)>,
     pending: Vec<&'static str>,
+    streaks: HashMap<String, (u32, u32)>,
     windows: HashMap<String, Window>,
     streams: HashMap<String, Interest>,
 }
@@ -76,8 +81,17 @@ fn requests(observed: &[Observation]) -> Vec<Request> {
 fn operation_of(relation: &str) -> Option<&'static str> {
     match relation {
         "feed" => Some("MomentsFeed"),
-        "container_members" => Some("ContainerMembers"),
         _ => None,
+    }
+}
+
+/// The load outcomes a request of the operation can end.
+fn served_by(operation: &str) -> &'static [&'static str] {
+    match operation {
+        "MomentsFeed" | "ContainerMembers" => &["loaded", "refreshed", "more", "loaded_all"],
+        "MomentTranscodeStatus" => &["node"],
+        "ContainersByIds" => &["nodes"],
+        _ => &[],
     }
 }
 
@@ -100,7 +114,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         let fresh_now: HashMap<String, bool> = state.windows.iter().map(|(operation, window)| (operation.clone(), fresh(window, state.now))).collect();
         let refused = |kind: &str| has_error(observed, kind);
         if kinds(observed, "opened").next().is_some() {
-            (state.is_open, state.online) = (true, true);
+            (state.is_open, state.online, state.logged) = (true, true, false);
         }
         if let Some(online) = kinds(observed, "online").next() {
             state.online = online.value.as_bool().unwrap_or(false);
@@ -117,10 +131,21 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         let all_requests = kinds(observed, "request").count();
         let first_pages = |operation: &str| sent.iter().filter(|request| request.first_page && request.operation == operation).count();
 
+        let mut replied_operation: Option<String> = None;
         for replied in kinds(observed, "replied") {
             let id = replied.value["id"].as_str().unwrap_or("");
             let Some(position) = state.held.iter().position(|(held, _)| held == id) else { continue };
             let (_, operation) = state.held.remove(position);
+            replied_operation = Some(operation.clone());
+            let streak = state.streaks.entry(operation.clone()).or_default();
+            match replied.value["how"].as_str().unwrap_or("") {
+                "temporary" | "drop" => streak.0 += 1,
+                "server" => streak.1 += 1,
+                _ => *streak = (0, 0),
+            }
+            if state.streaks.get(&operation) == Some(&(0, 0)) {
+                state.streaks.remove(&operation);
+            }
             if replied.value["how"] == "page" && sent_first_page(steps, id) && !kinds(observed, "error").any(|item| !REFUSALS.contains(&error_kind(item))) {
                 state.windows.insert(operation, Window { landed: Some(state.now), failed: false, lost: false });
             } else if sent_first_page(steps, id) && replied.value["how"] != "page" {
@@ -174,6 +199,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             }
         }
 
+        let mut own_ended = false;
         let attributable = !matches!(input.name.as_str(), "login" | "open" | "session_reset" | "pull");
         for item in observed {
             if let Some((_, outcome)) = LOADS.iter().find(|(_, outcome)| *outcome == item.kind) {
@@ -183,12 +209,19 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                     None => {}
                 }
             } else if item.kind == "error" && attributable && !REFUSALS.contains(&error_kind(item)) && !state.pending.is_empty() {
-                state.pending.remove(0);
+                let own = accepted.filter(|_| !own_ended).and_then(|outcome| state.pending.iter().rposition(|pending| *pending == outcome));
+                own_ended |= own.is_some();
+                let of_request = replied_operation.as_deref().and_then(|operation| state.pending.iter().position(|pending| served_by(operation).contains(pending)));
+                state.pending.remove(own.or(of_request).unwrap_or(0));
+                if let Some(operation) = &replied_operation {
+                    state.streaks.remove(operation);
+                }
             }
         }
 
+        let waiting_retry = state.streaks.values().any(|(network, server)| (*network > 0 && *network < NETWORK_ATTEMPTS) || (*server > 0 && *server < SERVER_ATTEMPTS));
         match rule {
-            Rule::Outcomes if !state.pending.is_empty() && state.held.is_empty() => {
+            Rule::Outcomes if !state.pending.is_empty() && state.held.is_empty() && state.online && !waiting_retry => {
                 return Err(format!("{}: {} accepted load(s) have no outcome and the mock holds no request", describe(steps, index), state.pending.len()));
             }
             Rule::Quiet => {
@@ -220,8 +253,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 }
             }
             Rule::Fresh => {
-                let on_connect_return = !before_online && state.online;
-                for request in sent.iter().filter(|request| request.first_page) {
+                let connected = kinds(observed, "request").any(|item| item.value["kind"] == "subscription");
+                let on_connect_return = (!before_online && state.online) || connected;
+                for request in sent.iter().filter(|request| request.first_page && request.operation != "ContainersByIds") {
                     let Some(window) = state.windows.get(&request.operation) else { continue };
                     let was_fresh = before_fresh.get(&request.operation).copied().unwrap_or(false) && fresh_now.get(&request.operation).copied().unwrap_or(false) && !window.lost;
                     let declared = on_connect_return && state.streams.values().any(|interest| interest.operation == request.operation && interest.on_connect);
@@ -231,7 +265,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                     }
                 }
                 let ready = state.is_open && state.online && state.logged && before_logged && !refused("not_open");
-                if input.name == "refresh" && ready && input.text("relation") == Some("feed") && !was_held.iter().any(|held| held == "MomentsFeed") && !has_error(observed, "no_session") && state.windows.get("MomentsFeed").is_some_and(|window| !window.lost) {
+                if input.name == "refresh" && ready && input.text("relation") == Some("feed") && !was_held.iter().any(|held| held == "MomentsFeed") && !state.streaks.contains_key("MomentsFeed") && !has_error(observed, "no_session") && state.windows.get("MomentsFeed").is_some_and(|window| !window.lost) {
                     let got = first_pages("MomentsFeed");
                     if got != 1 && !has_error(observed, "in_flight") {
                         return Err(format!("{}: refresh sent {got} request(s) of MomentsFeed, expected exactly 1", describe(steps, index)));

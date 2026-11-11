@@ -19,6 +19,7 @@ pub struct LibrarySut {
     inner: DatabaseSut,
     held: Vec<Held>,
     known: usize,
+    live: bool,
 }
 
 fn operation_of(body: &Value) -> (String, Value) {
@@ -96,6 +97,9 @@ impl LibrarySut {
 #[async_trait::async_trait]
 impl Sut for LibrarySut {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
+        if input.name == "open" && self.live {
+            return vec![Observation::new("error", json!({ "kind": "already_open" }))];
+        }
         let observed = match input.name.as_str() {
             "login" => {
                 let started = self.inner.apply(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
@@ -117,11 +121,18 @@ impl Sut for LibrarySut {
             }
             "answer_error" => {
                 let kind = input.text("kind").unwrap_or("temporary").to_string();
-                return self.reply(if kind == "drop" { "drop" } else { "error" }, |held| if kind == "drop" { Input::new("drop").with("id", held.id.as_str()) } else { Input::new("error").with("id", held.id.as_str()).with("kind", kind.as_str()) }).await;
+                return self.reply(&kind.clone(), |held| if kind == "drop" { Input::new("drop").with("id", held.id.as_str()) } else { Input::new("error").with("id", held.id.as_str()).with("kind", kind.as_str()) }).await;
             }
             _ => self.inner.apply(input).await,
         };
         self.note_requests();
+        for item in &observed {
+            match item.kind.as_str() {
+                "opened" => self.live = true,
+                "closed" => self.live = false,
+                _ => {}
+            }
+        }
         let mut shown = self.with_sent(observed);
         if input.name == "close" && !self.held.is_empty() {
             shown.push(Observation::new("released", json!({ "ids": self.held.iter().map(|held| held.id.clone()).collect::<Vec<_>>() })));
