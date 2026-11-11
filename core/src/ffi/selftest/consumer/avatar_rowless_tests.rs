@@ -78,7 +78,7 @@ async fn consumer_upload_attempt_survives_death_after_mutate() {
         reopened.database.set_online(true).unwrap();
         reopened.receive_after(mark, "UserPhotoUpdate", None, 1).await;
         let after: i64 = rusqlite::Connection::open(&image).unwrap().query_row("SELECT attempts FROM op WHERE origin_kind = 'transfer'", [], |row| row.get(0)).unwrap();
-        assert_eq!(after, attempts + i64::from(pending > 0), "commit {index}, pending={pending}");
+        assert_eq!(after, attempts + i64::from(pending > 0), "commit {index}, pending={pending}, requests after the reopen {}", reopened.requests_after(mark, "UserPhotoUpdate", None));
         checked += 1;
         bound(reopened.database.close_database()).await.unwrap();
     }
