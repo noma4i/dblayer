@@ -126,10 +126,8 @@ impl Window {
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
         if self.unread && self.state == State::Idle && matches!(input, Input::InterestPlus { .. } | Input::InterestPassive { .. } | Input::Load { .. }) {
             self.unread = false;
-            if !matches!(input, Input::InterestPlus { id: PRELOAD }) {
-                self.state = State::Opening;
-                return self.hold(input, vec![Effect::ReadWindow]);
-            }
+            self.state = State::Opening;
+            return self.hold(input, vec![Effect::ReadWindow]);
         }
         if self.unread && self.state == State::Idle && input == Input::OfflineRefused {
             return Vec::new();
