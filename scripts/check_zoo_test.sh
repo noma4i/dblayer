@@ -221,4 +221,36 @@ at_red core/src/owners/write/outbox_types.rs 'pub enum OutboxInput {
 }'
 at_red core/src/runtime/owner.rs 'pub trait StateOwner { fn step(state: &mut Self::State, input: Self::Input, now: Time) -> Effects<Self>; fn tick(now: Time) -> Self::Input; }'
 at_green core/src/owners/read/feed/mod.rs 'fn debounce() -> FeedInput { FeedInput::Tick(Time(0)) }'
+at_green core/src/owners/read/deliveries/flow.rs 'pub enum DeliveryInput { WindowState { stream: StreamId, state: WindowState } }
+impl Delivery {
+    fn delivered(&self, window: &WindowState) -> WindowState { WindowState { phase, ..window.clone() } }
+    fn state_at(&mut self, revision: i64) -> WindowState { self.window = held; self.window.clone() }
+    fn window_state(&mut self, state: WindowState) { self.window = state; }
+}'
+at_red core/src/owners/read/deliveries/flow.rs 'impl Delivery { fn read_failed(&mut self) { self.window.error = None; } }'
+at_red core/src/owners/read/deliveries/flow.rs 'impl Delivery { fn read_failed(&mut self, state: WindowState) { self.window = state; } }'
+at_red core/src/owners/read/deliveries/flow.rs 'impl Delivery {
+    fn shown(&self) -> WindowState {
+        WindowState {
+            phase: WindowPhase::Failed,
+            ..self.window.clone()
+        }
+    }
+}'
+at_red core/src/owners/read/deliveries/flow.rs 'impl Delivery { fn shown(&self) -> WindowState { WindowState { ..self.window.clone() } } }'
+at_green core/src/owners/write/outbox.rs 'pub struct OutboxState {
+    pub(super) next_sequence: u64,
+}
+fn step(state: &mut OutboxState, now: Time) { state.next_sequence += 1; let at = now; }'
+at_red core/src/owners/write/outbox.rs 'pub struct OutboxState {
+    pub(super) seen: Time,
+}
+fn step(state: &mut OutboxState, now: Time) { state.seen = now; }'
+at_red core/src/owners/write/transfer_types.rs 'pub struct TransferState {
+    pub last_turn: u64,
+}
+impl TransferState { fn step(&mut self, now: Time) { self.last_turn = self.last_turn.max(now.0); } }'
+at_green core/src/store/intent_write.rs 'fn intent(writer: &RowWrite, (append, created_at): (bool, u64)) { let at = created_at; }'
+at_red core/src/store/intent_write.rs 'fn intent(writer: &RowWrite) { let created_at = writer.now; }'
+at_red core/src/store/intent_write.rs 'fn intent(connection: &Connection, now_ms: i64) { record(now_ms); }'
 echo "check_zoo_test: ok"

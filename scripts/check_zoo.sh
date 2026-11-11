@@ -638,15 +638,28 @@ for path in sorted(source.rglob("*.rs")):
     for number, line in enumerate(path.read_text().splitlines(), 1):
         if re.search(r"\bwindow_phase\b", line):
             findings.append(f"Z53 the stream keeps the window value as the window sent it, no second phase field: {path.relative_to(root)}:{number}")
+def owners_of_lines(text):
+    owner, owners = None, []
+    for line in text.splitlines():
+        found = re.search(r"\bfn (\w+)", line)
+        if found: owner = found.group(1)
+        owners.append(owner)
+    return owners
+
 for path in sorted((source / "owners" / "read" / "deliveries").rglob("*.rs")):
     if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
-    inside = False
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        if re.match(r"\s*pub\(super\) fn delivered\(", line): inside = True
-        elif inside and re.match(r"    \}$", line): inside = False
-        if not inside and re.search(r"\bWindowState \{ (phase|error|loaded|has_more|settled|total)\b", line):
+    text = path.read_text()
+    owners = owners_of_lines(text)
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.search(r"\bself\.window(\.\w+)?\s*=(?!=)", line) and owners[number - 1] not in ("window_state", "state_at", "rebind", "new"):
+            findings.append(f"Z53 the stream keeps the window value as the window sent it: only window_state, state_at, rebind and new write it: {path.relative_to(root)}:{number}")
+    for found in re.finditer(r"(?<![:\w])(?<!-> )WindowState\s*\{\s*(\.\.|\w+)", text):
+        if found.group(1) == "stream": continue
+        number = text.count("\n", 0, found.start()) + 1
+        if owners[number - 1] != "delivered":
             findings.append(f"Z53 the state of a stream value is built only in Delivery::delivered (P-DLV-32): {path.relative_to(root)}:{number}")
 
+state_times = set()
 for path in sorted((source / "owners" / "write").rglob("*.rs")):
     if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
     text = path.read_text()
@@ -657,15 +670,24 @@ for path in sorted((source / "owners" / "write").rglob("*.rs")):
         start = text.find(f"pub struct {name} {{")
         if start < 0: continue
         body = text[start:text.find("\n}\n", start)]
-        for found in re.finditer(r"^[ \t]*pub(\([a-z]+\))? now:", body, re.M):
-            number = text.count("\n", 0, start + found.start()) + 1
-            findings.append(f"Z54 the state keeps no copy of the time of the turn (R5): {path.relative_to(root)}:{number}")
-
-for path in sorted((source / "store").rglob("*.rs")):
+        for found in re.finditer(r"^[ \t]*pub(\([a-z]+\))? (\w+):\s*([^,\n]+)", body, re.M):
+            if found.group(2) == "now" or re.search(r"\b(Time|u64|i64)\b", found.group(3)):
+                state_times.add(found.group(2))
+            if found.group(2) == "now":
+                number = text.count("\n", 0, start + found.start()) + 1
+                findings.append(f"Z54 the state keeps no copy of the time of the turn (R5): {path.relative_to(root)}:{number}")
+for path in sorted((source / "owners" / "write").rglob("*.rs")):
     if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
     for number, line in enumerate(path.read_text().splitlines(), 1):
-        if re.search(r"\bcreated_at:\s*writer\.now\b", line):
-            findings.append(f"Z55 the created_at of an operation comes from the intent of its owner, the Store reads no clock for it (P-OUT-59): {path.relative_to(root)}:{number}")
+        for found in re.finditer(r"\b(?:self|state)\.(\w+)\s*=(?!=)([^;]*)", line):
+            if found.group(1) in state_times and re.search(r"\bnow\b", found.group(2)):
+                findings.append(f"Z54 a state field of Outbox or Transfer takes the time of the turn: the time stays the argument now of the step (R5): {path.relative_to(root)}:{number}")
+
+intent_write = source / "store" / "intent_write.rs"
+if intent_write.exists():
+    for number, line in enumerate(intent_write.read_text().splitlines(), 1):
+        if re.search(r"\b(writer|self)\.now\b|\bnow_ms\b", line):
+            findings.append(f"Z55 the created_at of an operation comes from the intent of its owner, the Store reads no clock for it (P-OUT-59): {intent_write.relative_to(root)}:{number}")
 
 for path in sorted(source.rglob("*.rs")):
     if "tests" in path.parts or "spec" in path.parts or path.name.endswith("_tests.rs"): continue
