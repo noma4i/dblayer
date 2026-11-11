@@ -187,6 +187,7 @@ pub fn minted_reply(s: &mut State, upload_id: &str, res: Result<u64, Reason>, e:
             row(e, "xfer_minted_write_interrupted");
             if let Some(m) = s.g.minted.get_mut(upload_id) { m.debt = false; }
         }
+        Err(Reason::Invalid) => row(e, "xfer_minted_write_invalid"),
         Err(_) => {
             row(e, "xfer_minted_write_other");
             let tid = s.g.minted.get(upload_id).map(|m| m.transfer_id).unwrap_or(0);

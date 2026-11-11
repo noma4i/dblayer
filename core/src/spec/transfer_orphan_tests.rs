@@ -422,20 +422,32 @@ fn xfer_orphan_restart_after_close() {
     assert!(reopened.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
 }
 
-/// xfer_minted_write_other: a refused write of the minted id with StaleGeneration or Invalid behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
+/// xfer_minted_write_other: a refused write of the minted id with StaleGeneration behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
 #[test]
 fn xfer_minted_write_other() {
-    for reason in [RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, RejectReason::Invalid] {
-        let mut twin = Twin::new();
-        let id = twin.uploading(KEY, 3);
-        twin.online(false);
-        let out = minted(&mut twin, id, "u1");
-        assert_eq!(out.writes(), 1, "{reason:?}");
-        let refused = twin.reject(reason.clone());
-        assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "{reason:?}: the debt is kept and scheduled, nothing is aborted: {refused:?}");
-        let again = minted_due(&mut twin, "u1");
-        assert_eq!(again.writes(), 1, "{reason:?}: the write goes again");
-    }
+    let reason = RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() };
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!(out.writes(), 1);
+    let refused = twin.reject(reason);
+    assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "the debt is kept and scheduled, nothing is aborted: {refused:?}");
+    let again = minted_due(&mut twin, "u1");
+    assert_eq!(again.writes(), 1, "the write goes again");
+}
+
+/// xfer_minted_write_invalid (P-DATA-97): the Store refuses the write of the minted id as invalid and would refuse the same batch again. Nothing is written or scheduled, the debt stays in memory and the end of the epoch writes it as an orphan.
+#[test]
+fn xfer_minted_write_invalid() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!(out.writes(), 1);
+    let refused = twin.reject(RejectReason::Invalid);
+    assert_eq!((refused.writes(), refused.timers, refused.orphan_aborts().len(), twin.t(id).upload_id.as_deref()), (0, 0, 0, Some("u1")), "nothing is written again or scheduled: {refused:?}");
+    assert_eq!(twin.end_epoch_by(crate::runtime::Cause::Close).orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt of the upload that is not complete is written when the epoch ends");
 }
 
 /// xfer_minted_write_other_no_abort (K1, D-192, transfer.md:201, 459): the minted upload_id of a LIVE transfer
@@ -446,7 +458,7 @@ fn xfer_minted_write_other() {
 /// that keeps uploading.
 #[test]
 fn xfer_minted_write_other_no_abort() {
-    for reason in [RejectReason::Invalid, RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }] {
+    for (reason, timers) in [(RejectReason::Invalid, 0), (RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, 1)] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = minted(&mut twin, id, "u1");
@@ -454,8 +466,8 @@ fn xfer_minted_write_other_no_abort() {
         let refused = twin.reject(reason.clone());
         assert_eq!(
             (refused.orphan_aborts(), refused.aborts(), refused.timers, twin.t(id).upload_id.as_deref()),
-            (Vec::<String>::new(), 0, 1, Some("u1")),
-            "{reason:?}: no abort leaves for the live upload, the debt is kept and scheduled: {refused:?}",
+            (Vec::<String>::new(), 0, timers, Some("u1")),
+            "{reason:?}: no abort leaves for the live upload, the debt is kept: {refused:?}",
         );
     }
 }
@@ -475,6 +487,35 @@ fn xfer_minted_write_retry() {
     assert_eq!(twin.state().minted_attempt("u1"), None, "Committed settles the debt");
     let (_, discarded) = twin.discard(KEY);
     assert_eq!(discarded.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the removal carries the orphan of the durable id");
+}
+
+/// xfer_minted_debt_ends_with_its_upload (P-XFER-49): the debt of a refused write of the minted id belongs to an upload that is not complete. After complete is confirmed the end of the epoch writes no orphan of that id and no abort leaves.
+#[test]
+fn xfer_minted_debt_ends_with_its_upload() {
+    for (case, confirmed, closing) in [("complete confirmed", false, false), ("complete confirmed, close", false, true), ("mutation confirmed", true, false)] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 1);
+        minted(&mut twin, id, "u1");
+        let refused = twin.reject(RejectReason::Storage("disk".into()));
+        assert_eq!((refused.timers, twin.t(id).upload_id.as_deref()), (1, Some("u1")), "{case}: the debt is kept and scheduled");
+        twin.step_ok(id, 1, None);
+        while twin.has_pending() {
+            twin.commit();
+        }
+        twin.completed(id);
+        while twin.has_pending() {
+            twin.commit();
+        }
+        assert_eq!(twin.stage(id), TransferStage::Mutating, "{case}");
+        if confirmed {
+            twin.mutation_outcome(KEY, crate::owners::write::outbox::OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None });
+            while twin.has_pending() {
+                twin.commit();
+            }
+        }
+        let ended = twin.end_epoch_by(if closing { crate::runtime::Cause::Close } else { crate::runtime::Cause::SessionReset });
+        assert_eq!((ended.orphans_written(), ended.orphan_aborts()), (Vec::new(), Vec::<String>::new()), "{case}: a complete upload leaves no orphan: {ended:?}");
+    }
 }
 
 /// xfer_minted_write_committed (P-XFER-41, D-192): the id of a removed transfer is aborted only after its orphan record is durable. A refused write is repeated, and the abort comes after Committed of the repeat.
