@@ -21,18 +21,18 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn local_write(&mut self, call: LocalCall, epoch: Epoch, reply: ReplyId, fx: &mut Effects<Outbox>) {
+    pub(super) fn local_write(&mut self, now: u64, call: LocalCall, epoch: Epoch, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if self.closing {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Closed));
         }
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
-        self.write_now(call, reply, fx);
+        self.write_now(now, call, reply, fx);
     }
 
-    pub(super) fn write_now(&mut self, call: LocalCall, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let now = Time(self.now);
+    pub(super) fn write_now(&mut self, now: u64, call: LocalCall, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        let now = Time(now);
         let expire = match call.kind {
             LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some(Time(now.0 + after)),
             _ => None,

@@ -13,10 +13,10 @@ use crate::runtime::{Effect, Effects, Outbound, ScheduleId};
 
 
 impl OutboxState {
-    pub(super) fn committed(&mut self, committed: Committed, fx: &mut Effects<Outbox>) {
+    pub(super) fn committed(&mut self, now: u64, committed: Committed, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
-            Batch::Member { op_id } => self.member_committed(op_id, fx),
+            Batch::Member { op_id } => self.member_committed(now, op_id, fx),
             Batch::Write { reply, call, expire } => {
                 Self::reply(fx, reply, OutboxAnswer::Written { revision: committed.revision, shown: committed.shown.into_iter().last().flatten(), files_removed: committed.files_removed });
                 if let Some(due) = expire {
@@ -28,17 +28,17 @@ impl OutboxState {
                 }
                 self.maybe_drained(fx);
             }
-            Batch::Operation { op_id, kind } => self.operation_committed(op_id, kind, (committed.revision, committed.shown), fx),
+            Batch::Operation { op_id, kind } => self.operation_committed(now, op_id, kind, (committed.revision, committed.shown), fx),
         }
     }
 
-    pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
+    pub(super) fn operation_committed(&mut self, now: u64, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.into_iter().last().flatten(); }
             if let Some(reply) = self.submit_replies.remove(&op_id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(op_id, revision))); }
-            self.finish_cancelled_commit(created, fx);
+            self.finish_cancelled_commit(now, created, fx);
             return;
         }
         if kind == CommitKind::Rollback && self.ops[&op_id].cancels == Some(op_id) && self.pending_cancelled_intents(op_id) {
@@ -49,7 +49,7 @@ impl OutboxState {
             self.removing.remove(&op_id);
             if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
             self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Discarded)), fx);
-            self.finish(op_id, OutboxOutcome::Discarded, true, fx);
+            self.finish(now, op_id, OutboxOutcome::Discarded, true, fx);
             return;
         }
         if self.removed.contains(&op_id) {
@@ -96,7 +96,7 @@ impl OutboxState {
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 let row_id = self.ops.get(&op_id).map(|operation| operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()));
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.last().cloned().flatten(); }
-                self.finish(op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
+                self.finish(now, op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
                 self.transfer_discards.remove(&op_id);
@@ -125,7 +125,7 @@ impl OutboxState {
                         if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
                         for reply in Self::take_waiters(&mut self.retry_waiters, id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
                         for reply in Self::take_waiters(&mut self.discard_waiters, id) { Self::reply(fx, reply, OutboxAnswer::Ok); }
-                        self.finish(id, OutboxOutcome::Discarded, true, fx);
+                        self.finish(now, id, OutboxOutcome::Discarded, true, fx);
                     }
                 }
                 let created = Self::created_temps(&self.ops[&op_id]);
@@ -138,10 +138,10 @@ impl OutboxState {
                     }
                     if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
                     let error = self.ops[&id].reject_error.clone().unwrap_or_else(super::failure::row_never_created);
-                    self.finish(id, OutboxOutcome::Rejected { error }, true, fx);
+                    self.finish(now, id, OutboxOutcome::Rejected { error }, true, fx);
                 }
-                self.finish(op_id, outcome, true, fx);
-                self.finish_destroy_of(op_id, revision, fx);
+                self.finish(now, op_id, outcome, true, fx);
+                self.finish_destroy_of(now, op_id, revision, fx);
             }
             (CommitKind::ErrorMark, Stage::MarkingFailed) => {
                 let error = self.ops[&op_id].error.clone().unwrap_or_else(|| "refused".into());
@@ -167,18 +167,18 @@ impl OutboxState {
             }
             _ => {}
         }
-        self.drain(fx);
+        self.drain(now, fx);
     }
 
     /// The `destroy` that cancelled an unsent `create` ends with the rollback of that `create`.
-    pub(super) fn finish_destroy_of(&mut self, created: OpId, revision: i64, fx: &mut Effects<Outbox>) {
+    pub(super) fn finish_destroy_of(&mut self, now: u64, created: OpId, revision: i64, fx: &mut Effects<Outbox>) {
         let destroys: Vec<OpId> = self.ops.values().filter(|operation| operation.cancels == Some(created) && operation.stage == Stage::Submitting).map(|operation| operation.op_id).collect();
         for op_id in destroys {
             if let Some(reply) = self.submit_replies.remove(&op_id) {
                 let receipt = self.receipt(op_id, revision);
                 Self::reply(fx, reply, OutboxAnswer::Receipt(receipt));
             }
-            self.finish(op_id, OutboxOutcome::Confirmed { revision, result: None, row_id: None }, false, fx);
+            self.finish(now, op_id, OutboxOutcome::Confirmed { revision, result: None, row_id: None }, false, fx);
         }
     }
 
@@ -217,13 +217,13 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn rejected(&mut self, rejected: Rejected, fx: &mut Effects<Outbox>) {
+    pub(super) fn rejected(&mut self, now: u64, rejected: Rejected, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&rejected.batch) else { return };
         if let RejectReason::StaleGeneration { generations, .. } = &rejected.reason {
             self.generation.extend(generations.clone());
         }
         match batch {
-            Batch::Member { op_id } => self.member_rejected(op_id, rejected.reason, fx),
+            Batch::Member { op_id } => self.member_rejected(now, op_id, rejected.reason, fx),
             Batch::Write { reply, call, expire } => {
                 if matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
                     let generation = self.generation_of(&call.model);
@@ -236,17 +236,17 @@ impl OutboxState {
                     self.maybe_drained(fx);
                 }
             }
-            Batch::Operation { op_id, kind } => self.operation_rejected(op_id, kind, rejected.reason, fx),
+            Batch::Operation { op_id, kind } => self.operation_rejected(now, op_id, kind, rejected.reason, fx),
         }
     }
 
-    pub(super) fn operation_rejected(&mut self, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
+    pub(super) fn operation_rejected(&mut self, now: u64, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             self.submit_refused(op_id, reason, fx);
             self.ops.remove(&op_id);
-            self.finish_cancelled_commit(created, fx);
+            self.finish_cancelled_commit(now, created, fx);
             return;
         }
         if self.removed.contains(&op_id) {
@@ -255,7 +255,7 @@ impl OutboxState {
                 RejectReason::NoSession | RejectReason::Closed => {
                     self.removed.remove(&op_id);
                     self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-                    self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+                    self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.retry_timer(op_id, fx),
                 _ => self.remove_row_operation(op_id, fx),
@@ -317,14 +317,14 @@ impl OutboxState {
                     let following: Vec<OpId> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage != Stage::Done).map(|other| other.op_id).collect();
                     for id in following {
                         self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-                        self.finish(id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+                        self.finish(now, id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                     }
                 }
-                self.end_dependents(op_id, &reason, fx);
+                self.end_dependents(now, op_id, &reason, fx);
                 let transfer_ids = self.take_retry_uploads(op_id);
                 if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-                self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+                self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
             RejectReason::Invalid => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
@@ -368,9 +368,9 @@ impl OutboxState {
         self.batches.values().any(|batch| matches!(batch, Batch::Operation { op_id, kind: CommitKind::Intent } if self.ops.get(op_id).is_some_and(|operation| operation.cancels == Some(created) && *op_id != created)))
     }
 
-    fn finish_cancelled_commit(&mut self, created: OpId, fx: &mut Effects<Outbox>) {
+    fn finish_cancelled_commit(&mut self, now: u64, created: OpId, fx: &mut Effects<Outbox>) {
         if !self.pending_cancelled_intents(created) {
-            if let Some(revision) = self.cancelled_commits.remove(&created) { self.operation_committed(created, CommitKind::Rollback, (revision, Vec::new()), fx); }
+            if let Some(revision) = self.cancelled_commits.remove(&created) { self.operation_committed(now, created, CommitKind::Rollback, (revision, Vec::new()), fx); }
         }
     }
 

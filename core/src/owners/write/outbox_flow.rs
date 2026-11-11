@@ -32,7 +32,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn on_response(&mut self, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+    pub(super) fn on_response(&mut self, now: u64, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
         let Answered { rows, swaps, stale, result, missing, missing_destroy } = answer;
         self.rows_arrived(op_id);
@@ -41,7 +41,7 @@ impl OutboxState {
         }
         if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         if let Some(temporary) = errors {
-            return self.transport_failed(op_id, temporary, None, fx);
+            return self.transport_failed(now, op_id, temporary, None, fx);
         }
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Landing;
@@ -54,11 +54,11 @@ impl OutboxState {
             operation.result = result;
         }
         self.store(op_id, CommitKind::Land, fx);
-        self.drain(fx);
+        self.drain(now, fx);
     }
 
     /// The outcome of an attempt that did not answer: its cause replaces the kept one in memory and, when it differs from the row, in a Store batch before the wait of the Backoff.
-    pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, cause: Option<crate::value::sync::FailureKind>, fx: &mut Effects<Outbox>) {
+    pub(super) fn transport_failed(&mut self, now: u64, op_id: OpId, temporary: bool, cause: Option<crate::value::sync::FailureKind>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -70,7 +70,7 @@ impl OutboxState {
         }
         if !temporary {
             self.reject_or_keep(op_id, fx);
-            return self.drain(fx);
+            return self.drain(now, fx);
         }
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
@@ -83,7 +83,7 @@ impl OutboxState {
         } else {
             self.requeue(op_id, fx);
         }
-        self.drain(fx);
+        self.drain(now, fx);
     }
 
     pub(super) fn retry_due(&mut self, op_id: OpId, cycle_id: u64, fx: &mut Effects<Outbox>) {
@@ -219,14 +219,14 @@ impl OutboxState {
     }
 
     /// The server removed the row: each of its open operations ends `Discarded`, a request on its way is released.
-    pub(super) fn rows_gone(&mut self, ops: Vec<OpId>, fx: &mut Effects<Outbox>) {
+    pub(super) fn rows_gone(&mut self, now: u64, ops: Vec<OpId>, fx: &mut Effects<Outbox>) {
         for op_id in ops {
             let Some(operation) = self.ops.get(&op_id) else { continue };
             if matches!(operation.stage, Stage::Done | Stage::Landing | Stage::RollingBack(_) | Stage::Submitting) { continue; }
             if operation.sent {
                 if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id: operation.request_id }))); }
             }
-            self.finish(op_id, OutboxOutcome::Discarded, false, fx);
+            self.finish(now, op_id, OutboxOutcome::Discarded, false, fx);
         }
     }
 
@@ -271,7 +271,7 @@ impl OutboxState {
         self.commit(batch, basis, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::TransferOutcome { transfer_id: member.transfer_id, cycle_id: member.cycle_id, outcome: OutboxOutcome::Discarded }], 0, fx);
     }
 
-    pub(super) fn member_committed(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+    pub(super) fn member_committed(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(pending) = self.member_removals.remove(&op_id) else { return };
         if let Some(operation) = self.ops.get_mut(&op_id) {
             if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
@@ -281,23 +281,23 @@ impl OutboxState {
             item.removed_rows.retain(|(_, row_id, _)| row_id != &pending.member.row_id);
         }
         if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: false }))); }
-        for input in pending.deferred { self.handle(input, fx); }
+        for input in pending.deferred { self.handle(now, input, fx); }
         if self.waiting.get(&op_id).is_some_and(|(item, _)| item.removed_rows.is_empty() && self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))) {
             if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {
                 self.ops.remove(&op_id);
-                self.classify(item, pending_lost, fx);
+                self.classify(now, item, pending_lost, fx);
             }
         }
     }
 
-    pub(super) fn member_rejected(&mut self, op_id: OpId, reason: crate::owners::contract::RejectReason, fx: &mut Effects<Outbox>) {
+    pub(super) fn member_rejected(&mut self, now: u64, op_id: OpId, reason: crate::owners::contract::RejectReason, fx: &mut Effects<Outbox>) {
         if matches!(reason, crate::owners::contract::RejectReason::StaleGeneration { .. }) {
             if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
             return self.store_member(op_id, fx);
         }
         if matches!(reason, crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) {
             self.member_removals.remove(&op_id);
-            return self.finish(op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
+            return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
         }
         if let Some(pending) = self.member_removals.get_mut(&op_id) {
             if matches!(reason, crate::owners::contract::RejectReason::Storage(_)) { pending.storage_failures = pending.storage_failures.saturating_add(1); }
@@ -308,7 +308,7 @@ impl OutboxState {
         }
         if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
         let deferred = self.member_removals.get_mut(&op_id).map(|pending| std::mem::take(&mut pending.deferred)).unwrap_or_default();
-        for input in deferred { self.handle(input, fx); }
+        for input in deferred { self.handle(now, input, fx); }
     }
 
     pub(super) fn remove_row_operation(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
@@ -340,7 +340,7 @@ impl OutboxState {
     }
 
     /// `(none) x Submit`: an unsent `create` that a `destroy` of the same row cancels ends with it, the network is not called.
-    pub(super) fn submit(&mut self, epoch: Epoch, mut op: NewOp, reply: ReplyId, fx: &mut Effects<Outbox>) {
+    pub(super) fn submit(&mut self, now: u64, epoch: Epoch, mut op: NewOp, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
@@ -353,7 +353,7 @@ impl OutboxState {
             .then(|| self.ops.values().find(|other| other.stage == Stage::Queued && !other.sent && other.op.action == "create" && other.op.model == op.model && other.op.row_id == row).map(|other| other.op_id))
             .flatten();
         let op_id = self.next_op;
-        self.add_operation(op_id, op, Stage::Submitting, self.now);
+        self.add_operation(op_id, op, Stage::Submitting, now);
         self.submit_replies.insert(op_id, reply);
         if let Some(created) = unsent_create {
             if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = Some(created); }
@@ -404,7 +404,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn finish_replacement(&mut self, target: ReserveTarget, committed: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn finish_replacement(&mut self, now: u64, target: ReserveTarget, committed: bool, fx: &mut Effects<Outbox>) {
         let ReserveTarget::Transfer(id) = target else { return };
         let Some(Some(old)) = self.replacements.remove(&id) else { return };
         if committed {
@@ -415,7 +415,7 @@ impl OutboxState {
                     if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: operation.request_id }))); }
                 }
             }
-            self.finish(old, OutboxOutcome::Discarded, true, fx);
+            self.finish(now, old, OutboxOutcome::Discarded, true, fx);
         } else if let Some(operation) = self.ops.get_mut(&old) {
             operation.stage = Stage::Failed;
         }
@@ -428,18 +428,18 @@ impl OutboxState {
     }
 
     /// `Submit` with the intent written by the batch of Transfer: the operation goes out as after `Submitting x Committed`, with no write and no receipt.
-    pub(super) fn submit_reserved(&mut self, epoch: Epoch, op_id: OpId, mut op: NewOp, fx: &mut Effects<Outbox>) {
+    pub(super) fn submit_reserved(&mut self, now: u64, epoch: Epoch, op_id: OpId, mut op: NewOp, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return;
         }
         Self::resolve_operation(&self.aliases, &mut op);
-        self.add_operation(op_id, op, Stage::Submitting, self.now);
-        self.operation_committed(op_id, CommitKind::Intent, (0, Vec::new()), fx);
+        self.add_operation(op_id, op, Stage::Submitting, now);
+        self.operation_committed(now, op_id, CommitKind::Intent, (0, Vec::new()), fx);
     }
 
-    pub(super) fn online_changed(&mut self, on: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {
         self.online = on;
-        self.drain(fx);
+        self.drain(now, fx);
     }
 
 }
@@ -454,7 +454,7 @@ impl OutboxState {
     }
 
     /// A `Mutate` of this owner got its answer. An answer of an operation that is not in flight (a late one) is dropped.
-    pub(super) fn answered(&mut self, req_id: RequestId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
+    pub(super) fn answered(&mut self, now: u64, req_id: RequestId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
         use crate::owners::contract::ErrorClass;
         use crate::owners::session::AuthorOutcome;
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
@@ -463,7 +463,7 @@ impl OutboxState {
         match outcome {
             AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. } } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }
-                self.transport_failed(op_id, true, None, fx);
+                self.transport_failed(now, op_id, true, None, fx);
             }
             AuthorOutcome::Response { body, .. } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
@@ -472,7 +472,7 @@ impl OutboxState {
                     operation.rows_pending = true;
                 }
                 self.decode_answer(op_id, body, fx);
-                self.drain(fx);
+                self.drain(now, fx);
             }
             AuthorOutcome::Error { class, error, pending_retained } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
@@ -480,11 +480,11 @@ impl OutboxState {
                     operation.reject_error = Some(super::failure::of_session(&error, class));
                 }
                 let cause = if let crate::owners::session::SessionError::ResponseTooLarge { limit } = &error { Some(crate::value::sync::FailureKind::ResponseTooLarge { limit: *limit }) } else { None };
-                self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), cause, fx);
+                self.transport_failed(now, op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), cause, fx);
             }
             AuthorOutcome::Dropped => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; }
-                self.transport_failed(op_id, true, None, fx);
+                self.transport_failed(now, op_id, true, None, fx);
             }
         }
     }

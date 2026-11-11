@@ -13,7 +13,7 @@ use crate::runtime::{Effect, Effects};
 
 impl OutboxState {
     /// The class of a restored intent: every intent goes to exactly one class.
-    pub(super) fn classify(&mut self, item: StoredOp, pending_lost: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn classify(&mut self, now: u64, item: StoredOp, pending_lost: bool, fx: &mut Effects<Outbox>) {
         let op_id = item.op_id;
         let (model, action) = (item.op.model.clone(), item.op.action.clone());
         if item.restore_failed.is_some() {
@@ -54,7 +54,7 @@ impl OutboxState {
                     }
                     self.decode_answer(op_id, body, fx)
                 }
-                Err(error) => self.answered(request_id, crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: false }, fx),
+                Err(error) => self.answered(now, request_id, crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: false }, fx),
             };
         }
         if error_mark {
@@ -71,7 +71,7 @@ impl OutboxState {
                 operation.pending_owned = true;
             }
         }
-        self.try_start(op_id, fx);
+        self.try_start(now, op_id, fx);
     }
 
     /// No operation owns these answers: one batch takes them out, nothing waits for its result.
@@ -94,12 +94,12 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn restored(&mut self, stored: Vec<StoredOp>, pending_lost: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn restored(&mut self, now: u64, stored: Vec<StoredOp>, pending_lost: bool, fx: &mut Effects<Outbox>) {
         let mut stored = stored;
         stored.sort_by_key(|item| item.op_id);
         for item in stored {
             if item.removed_rows.is_empty() || item.restore_failed.is_some() {
-                self.classify(item, pending_lost, fx);
+                self.classify(now, item, pending_lost, fx);
                 continue;
             }
             let op_id = item.op_id;
@@ -120,7 +120,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn register(&mut self, declarations: Vec<(String, String)>, fx: &mut Effects<Outbox>) {
+    pub(super) fn register(&mut self, now: u64, declarations: Vec<(String, String)>, fx: &mut Effects<Outbox>) {
         self.declarations.extend(declarations);
         if self.phase == Phase::Restoring {
             return;
@@ -129,13 +129,13 @@ impl OutboxState {
         for op_id in ready {
             if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {
                 self.ops.remove(&op_id);
-                self.classify(item, pending_lost, fx);
+                self.classify(now, item, pending_lost, fx);
             }
         }
     }
 
     /// `RestoreReady`: the network effects of the restored operations go out in the order of `seq`.
-    pub(super) fn restore_ready(&mut self, fx: &mut Effects<Outbox>) {
+    pub(super) fn restore_ready(&mut self, now: u64, fx: &mut Effects<Outbox>) {
         if self.phase != Phase::Classified {
             return;
         }
@@ -152,7 +152,7 @@ impl OutboxState {
                 self.store(op_id, CommitKind::Attempt, fx);
             }
         }
-        self.drain(fx);
+        self.drain(now, fx);
     }
 
     /// Every held call gets exactly one answer.
@@ -173,7 +173,7 @@ impl OutboxState {
     }
 
     /// `Restoring`: the owner holds the calls until `Restored`.
-    pub(super) fn restoring(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
+    pub(super) fn restoring(&mut self, now: u64, input: OutboxInput, fx: &mut Effects<Outbox>) {
         match input {
             OutboxInput::Submit { epoch, op, reply } => {
                 if epoch == self.epoch {
@@ -205,24 +205,24 @@ impl OutboxState {
             }
             OutboxInput::Restored { ops, pending_lost } if !self.ended => {
                 self.phase = Phase::Classified;
-                self.restored(ops, pending_lost, fx);
+                self.restored(now, ops, pending_lost, fx);
                 fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
-                self.replay_held(fx);
+                self.replay_held(now, fx);
             }
             OutboxInput::RestoreFailed { error } if !self.ended => {
                 self.queue_error = Some(error);
                 self.phase = Phase::Classified;
                 fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
-                self.replay_held(fx);
+                self.replay_held(now, fx);
             }
-            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
+            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(now, input, fx),
             _ => {}
         }
     }
 
-    pub(super) fn replay_held(&mut self, fx: &mut Effects<Outbox>) {
+    pub(super) fn replay_held(&mut self, now: u64, fx: &mut Effects<Outbox>) {
         for input in std::mem::take(&mut self.held) {
-            self.handle(input, fx);
+            self.handle(now, input, fx);
         }
     }
 

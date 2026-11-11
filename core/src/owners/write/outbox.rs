@@ -51,7 +51,6 @@ pub struct OutboxState {
     pub epoch: Epoch,
     pub online: bool,
     /// The clock in milliseconds as the last `Tick` or `Submit` told it.
-    pub(super) now: u64,
     pub generation: BTreeMap<String, u64>,
     /// The generation of the models without an entry in `generation`.
     pub(super) base_generation: u64,
@@ -109,7 +108,6 @@ impl OutboxState {
             peers,
             epoch,
             online: true,
-            now: 0,
             generation: BTreeMap::new(),
             base_generation: 0,
             ops: BTreeMap::new(),
@@ -246,11 +244,11 @@ impl OutboxState {
     }
 
     /// The epoch ended the rollback of `create`: its dependents end with it.
-    pub(super) fn end_dependents(&mut self, create: OpId, reason: &RejectReason, fx: &mut Effects<Outbox>) {
+    pub(super) fn end_dependents(&mut self, now: u64, create: OpId, reason: &RejectReason, fx: &mut Effects<Outbox>) {
         let dependents = self.ops.get_mut(&create).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
         for id in dependents {
             self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
-            self.finish(id, OutboxOutcome::Ended(end_cause(reason)), false, fx);
+            self.finish(now, id, OutboxOutcome::Ended(end_cause(reason)), false, fx);
         }
     }
 
@@ -261,19 +259,19 @@ impl OutboxState {
 
     pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
-    fn expired(&self, op_id: OpId) -> bool {
+    fn expired(&self, now: u64, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
-        operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.created_at)) > after.as_millis())
+        operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(now.saturating_sub(operation.created_at)) > after.as_millis())
     }
 
     /// The Queued operations in `seq` order: each one goes out while a slot is free or ends `Rejected{Expired}`.
-    pub(super) fn drain(&mut self, fx: &mut Effects<Outbox>) {
+    pub(super) fn drain(&mut self, now: u64, fx: &mut Effects<Outbox>) {
         if !self.online {
             return;
         }
         let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued && !self.removed.contains(&operation.op_id)).map(|operation| operation.op_id).collect();
         for op_id in queued {
-            self.try_start(op_id, fx);
+            self.try_start(now, op_id, fx);
         }
     }
 
@@ -545,7 +543,7 @@ impl OutboxState {
     }
 
     /// The operation ends: `outcome` goes to the waiters and, for a transfer, to the Transfer owner. The next operation of the row goes out when `next_goes`.
-    pub(super) fn finish(&mut self, op_id: OpId, outcome: OutboxOutcome, next_goes: bool, fx: &mut Effects<Outbox>) {
+    pub(super) fn finish(&mut self, now: u64, op_id: OpId, outcome: OutboxOutcome, next_goes: bool, fx: &mut Effects<Outbox>) {
         self.orphan_transfers.remove(&op_id);
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.stage = Stage::Done;
@@ -555,12 +553,12 @@ impl OutboxState {
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
         if !matches!(outcome, OutboxOutcome::Ended(_)) {
-            self.drain(fx);
+            self.drain(now, fx);
         }
     }
 
     /// A Queued operation on a free row ends `Rejected{Expired}` when its time is over, else goes to the network while a slot is free: the first `Mutate` of the cycle at once, a repeat after its attempt is written, the 41st attempt never.
-    pub(super) fn try_start(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+    pub(super) fn try_start(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
         if operation.stage != Stage::Queued || !self.online {
             return;
@@ -569,7 +567,7 @@ impl OutboxState {
         if !ended && self.row_busy(op_id) {
             return;
         }
-        if ended || self.expired(op_id) {
+        if ended || self.expired(now, op_id) {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
                 operation.reject_error = Some(if ended { super::failure::row_never_created() } else { super::failure::expired() });
@@ -763,7 +761,7 @@ impl OutboxState {
         self.waiting.clear();
     }
 
-    pub(super) fn handle(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
+    pub(super) fn handle(&mut self, now: u64, input: OutboxInput, fx: &mut Effects<Outbox>) {
         let answered = match &input {
             OutboxInput::Response { op_id, .. } | OutboxInput::MissingDestroy { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
             OutboxInput::Answered { req_id, .. } => self.ops.values().find(|operation| operation.request_id == *req_id).map(|operation| operation.op_id),
@@ -798,29 +796,29 @@ impl OutboxState {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
-            OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
+            OutboxInput::Submit { epoch, op, reply } => self.submit(now, epoch, op, reply, fx),
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id } => self.reserve_replacement(epoch, target, transfer_id, cycle_id, fx),
-            OutboxInput::FinishReplacement { target, committed } => self.finish_replacement(target, committed, fx),
-            OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
+            OutboxInput::FinishReplacement { target, committed } => self.finish_replacement(now, target, committed, fx),
+            OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(now, epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } | OutboxInput::AliasesRestored { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
-            OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(fx),
+            OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(now, fx),
             OutboxInput::RestoreReady { .. } => {}
-            OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),
-            OutboxInput::Committed(committed) => self.committed(committed, fx),
-            OutboxInput::Rejected(rejected) => self.rejected(rejected, fx),
-            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false }, errors, fx),
-            OutboxInput::MissingDestroy { op_id, stale } => self.on_response(op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true }, None, fx),
-            OutboxInput::TransportError { op_id, temporary } => self.transport_failed(op_id, temporary, None, fx),
-            OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, None, fx),
-            OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),
+            OutboxInput::RegisterOperations { declarations } => self.register(now, declarations, fx),
+            OutboxInput::Committed(committed) => self.committed(now, committed, fx),
+            OutboxInput::Rejected(rejected) => self.rejected(now, rejected, fx),
+            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(now, op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false }, errors, fx),
+            OutboxInput::MissingDestroy { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true }, None, fx),
+            OutboxInput::TransportError { op_id, temporary } => self.transport_failed(now, op_id, temporary, None, fx),
+            OutboxInput::Dropped { op_id } => self.transport_failed(now, op_id, true, None, fx),
+            OutboxInput::Answered { req_id, outcome } => self.answered(now, req_id, outcome, fx),
             OutboxInput::Refused { op_id, temporary, detail } => {
                 self.rows_arrived(op_id);
                 if self.stage_of(op_id) == Some(Stage::Sending) {
                     if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(detail); }
-                    self.transport_failed(op_id, temporary, None, fx);
+                    self.transport_failed(now, op_id, temporary, None, fx);
                 }
             }
             OutboxInput::Retry { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Retry, reply, fx),
@@ -840,7 +838,7 @@ impl OutboxState {
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
             OutboxInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
-            OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
+            OutboxInput::Online(Online(on)) => self.online_changed(now, on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
             OutboxInput::EpochEnded(ended) => self.interrupt_all(Fault::of_end(ended.cause), fx),
@@ -850,12 +848,12 @@ impl OutboxState {
                 self.maybe_drained(fx);
             }
             OutboxInput::RetryDue { op_id, cycle_id } => self.retry_due(op_id, cycle_id, fx),
-            OutboxInput::LocalWrite { model, epoch, write, row, values, reply } => self.local_write(LocalCall { model, kind: write, row, values }, epoch, reply, fx),
+            OutboxInput::LocalWrite { model, epoch, write, row, values, reply } => self.local_write(now, LocalCall { model, kind: write, row, values }, epoch, reply, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),
             OutboxInput::ArmExpiry { model, row, revision, deadline } => self.arm_expiry(model, row, revision, deadline, fx),
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
-            OutboxInput::RowsGone { ops } => self.rows_gone(ops, fx),
+            OutboxInput::RowsGone { ops } => self.rows_gone(now, ops, fx),
             OutboxInput::RowRemoved { model, row_id, revision } => self.row_removed(&model, &row_id, revision, fx),
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
@@ -880,11 +878,11 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput, now: crate::runtime::Time) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
-        state.now = state.now.max(now.0);
+        let now = now.0;
         if state.closing {
             match &input {
-                OutboxInput::Committed(committed) if matches!(state.batches.get(&committed.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
-                OutboxInput::Rejected(rejected) if matches!(state.batches.get(&rejected.batch), Some(Batch::Write { .. })) => { state.handle(input, &mut fx); return fx; }
+                OutboxInput::Committed(committed) if matches!(state.batches.get(&committed.batch), Some(Batch::Write { .. })) => { state.handle(now, input, &mut fx); return fx; }
+                OutboxInput::Rejected(rejected) if matches!(state.batches.get(&rejected.batch), Some(Batch::Write { .. })) => { state.handle(now, input, &mut fx); return fx; }
                 _ => {}
             }
             match &input {
@@ -916,9 +914,9 @@ impl StateOwner for Outbox {
         if let OutboxInput::WhenQuiet { reply } = input {
             state.quiet_waiters.push(reply);
         } else if state.phase == Phase::Restoring {
-            state.restoring(input, &mut fx);
+            state.restoring(now, input, &mut fx);
         } else {
-            state.handle(input, &mut fx);
+            state.handle(now, input, &mut fx);
         }
         state.release_quiet(&mut fx);
         fx
