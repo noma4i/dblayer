@@ -257,12 +257,13 @@ impl Delivery {
 
     fn sink_open(&self) -> bool { matches!(self.stage, Stage::Opening | Stage::Live) }
 
-    fn shown(&self, mut state: Ws) -> Ws {
-        if state.error && matches!(state.phase, Phase::Loaded | Phase::Failed) {
-            let has_rows = if self.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
-            state.phase = if has_rows { Phase::Loaded } else { Phase::Failed };
-        }
-        state
+    /// P-DLV-32: the state of a value is one function of the last window value, the read error and the rows of the stream.
+    fn delivered(&self, window: Ws) -> Ws {
+        let has_rows = if self.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
+        let by_rows = if has_rows { Phase::Loaded } else { Phase::Failed };
+        if self.read_error { return Ws { phase: by_rows, error: true, loaded: window.loaded }; }
+        if window.error && matches!(window.phase, Phase::Loaded | Phase::Failed) { return Ws { phase: by_rows, ..window }; }
+        window
     }
 
     fn evict_feed_prefix(&mut self) {
@@ -284,10 +285,10 @@ impl Delivery {
 
     fn append(&mut self, value: Val, fx: &mut Vec<Effect>) {
         let value = match value {
-            Val::Snapshot { revision, rows, state } => Val::Snapshot { revision, rows, state: self.shown(state) },
-            Val::Count { revision, count, state } => Val::Count { revision, count, state: self.shown(state) },
-            Val::State { revision, state } => Val::State { revision, state: self.shown(state) },
-            Val::Delta { base, revision, size, edits, state } => Val::Delta { base, revision, size, edits, state: self.shown(state) },
+            Val::Snapshot { revision, rows, state } => Val::Snapshot { revision, rows, state: self.delivered(state) },
+            Val::Count { revision, count, state } => Val::Count { revision, count, state: self.delivered(state) },
+            Val::State { revision, state } => Val::State { revision, state: self.delivered(state) },
+            Val::Delta { base, revision, size, edits, state } => Val::Delta { base, revision, size, edits, state: self.delivered(state) },
             other => other,
         };
         let was_empty = self.journal.is_empty();
@@ -452,8 +453,8 @@ impl Delivery {
             }
             (Stage::Opening | Stage::Live, Input::ReadStale { .. }) => {}
             (Stage::Opening, Input::ReadFailed { revision }) if self.kind.reads_rows() => {
-                let state = Ws { phase: Phase::Failed, error: true, loaded: None };
-                self.window = state.clone();
+                self.read_error = true;
+                let state = self.window.clone();
                 self.revision = revision;
                 self.stage = Stage::Live;
                 if self.kind == Kind::Count {
@@ -529,7 +530,11 @@ impl Delivery {
             (Stage::Live, Input::CountRelevant { revision, position, relevant, count }) if self.kind == Kind::Count => {
                 if (revision, position) < (self.read_seen, self.read_position) { return; }
                 (self.read_seen, self.read_position) = (revision, position);
-                if self.count == Some(count) { self.same_rows(revision, fx); return; }
+                let cleared = std::mem::take(&mut self.read_error);
+                if self.count == Some(count) {
+                    if cleared { let state = self.state_at(revision); self.append(Val::State { revision: self.revision, state }, fx); } else { self.same_rows(revision, fx); }
+                    return;
+                }
                 let state = self.state_at(revision);
                 let (shown, position) = relevant.expect("changed count has a relevant version");
                 self.value_position = position;
@@ -542,17 +547,15 @@ impl Delivery {
                 if self.resync_pending {
                     if self.resync_failed { self.end_now(Cause::Storage, fx); return; }
                     self.resync_failed = true;
-                    let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
                     self.read_error = true;
-                    self.append(Val::State { revision: self.revision, state: Ws { phase, error: true, loaded: self.window.loaded } }, fx);
+                    let state = self.window.clone();
+                    self.append(Val::State { revision: self.revision, state }, fx);
                     self.read_revision = self.read_revision.max(self.revision);
                     fx.push(Effect::Read(self.read_revision));
                     return;
                 }
-                let empty = if self.kind == Kind::Count { self.count.unwrap_or(0) == 0 } else { self.rows.is_empty() };
-                let phase = if empty { Phase::Failed } else { Phase::Loaded };
-                let state = Ws { phase, error: true, loaded: self.window.loaded };
                 self.read_error = true;
+                let state = self.window.clone();
                 self.append(Val::State { revision: self.revision, state }, fx);
             }
             (Stage::Live, Input::WindowState(state)) if self.kind.reads_rows() => {
@@ -564,9 +567,10 @@ impl Delivery {
                     self.held_state = Some(state);
                 }
                 else if state != self.window {
+                    let before = self.delivered(self.window.clone());
                     self.window = state.clone();
                     self.held_state = None;
-                    self.append(Val::State { revision: self.revision, state }, fx);
+                    if self.delivered(state.clone()) != before { self.append(Val::State { revision: self.revision, state }, fx); }
                 }
             }
             (Stage::Live, Input::Joined { position }) if self.kind == Kind::Events => {

@@ -120,7 +120,7 @@ fn win_loading_error() {
     let mut rows = fresh_watched();
     rows.step(Input::Stale { in_keys: true });
     rows.fail(Failure::Permanent);
-    assert_eq!(rows.phase(), Phase::Loaded, "rows stay when a later load fails");
+    assert_eq!(rows.phase(), Phase::Failed, "the window does not judge its rows when a later load fails");
 }
 
 #[test]

@@ -573,11 +573,17 @@ fn dlv_prop_stray_input_ignored() {
     assert!(twin.read_all().is_empty(), "no value reaches the reader");
 }
 
-/// P-DLV-32 (dlv_prop_phase_follows_window): clearing a read error returns the phase of the last `WindowState`, not `Loaded`.
+/// P-DLV-32 (dlv_prop_phase_follows_window): clearing a read error returns the value of the last `WindowState` with its own error, not `Loaded`.
 #[test]
 fn dlv_prop_phase_follows_window() {
-    let cases = [("loading window", Ws::loading_after(0), Vec::<&str>::new()), ("loaded window", Ws::loaded_at(1), vec!["r1"])];
-    for (name, window, ids) in cases {
+    let refused = Ws { phase: Phase::Failed, error: true, loaded: None };
+    let cases = [
+        ("loading window", Ws::loading_after(0), Vec::<&str>::new(), Phase::Loading),
+        ("loaded window", Ws::loaded_at(1), vec!["r1"], Phase::Loaded),
+        ("refused window without rows", refused.clone(), Vec::new(), Phase::Failed),
+        ("refused window with rows", refused, vec!["r1"], Phase::Loaded),
+    ];
+    for (name, window, ids, phase) in cases {
         let mut twin = open_rows();
         twin.step(Input::ReadDone { revision: 1, rows: rows(&ids) });
         twin.read_all();
@@ -589,6 +595,6 @@ fn dlv_prop_phase_follows_window() {
         assert!(matches!(failed.last(), Some(Val::State { state, .. }) if state.error), "{name}: the failed read shows the error: {failed:?}");
         twin.step(Input::Committed { revision: 3, touches: true });
         let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: rows(&ids) });
-        assert!(matches!(values.last(), Some(Val::State { state, .. }) if state.phase == window.phase && !state.error), "{name}: the recovery shows phase {:?} without error: {values:?}", window.phase);
+        assert!(matches!(values.last(), Some(Val::State { state, .. }) if state.phase == phase && state.error == window.error), "{name}: the recovery shows phase {phase:?} and the error of the window: {values:?}");
     }
 }

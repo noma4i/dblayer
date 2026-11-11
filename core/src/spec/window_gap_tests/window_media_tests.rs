@@ -119,11 +119,11 @@ fn win_media_next() {
 
 #[test]
 fn win_media_bad_cursor() {
-    for (case, mut twin, rows) in [("full", media_full(), false), ("tail", media_tail(), true)] {
+    for (case, mut twin) in [("full", media_full()), ("tail", media_tail())] {
         let (request, attempt) = twin.ref_request();
         let effects = twin.step(Input::MoreWithoutCursor { request, attempt });
         assert_eq!(commits(&effects), 0, "{case}: nothing lands");
-        assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), if rows { Phase::Loaded } else { Phase::Failed }), "{case}");
+        assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Failed), "{case}");
     }
     let mut repeated = media_full();
     repeated.respond(Some(2));

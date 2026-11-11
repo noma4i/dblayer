@@ -136,7 +136,7 @@ fn win_phase_fresh_entry() {
     same_value(&twin, "fresh entry");
 }
 
-/// A refusal shows Loaded with an error when the window has rows and Failed with an error when it has none; both are settled.
+/// A refusal shows Failed with an error with and without rows, both settled: the stream judges the rows (P-DLV-32).
 #[test]
 fn win_phase_failed_with_and_without_rows() {
     let mut empty = Twin::new();
@@ -151,7 +151,7 @@ fn win_phase_failed_with_and_without_rows() {
     rows.step(Input::Stale { in_keys: true });
     rows.fail(Failure::Permanent);
     let state = rows.load_state();
-    assert_eq!((state.phase, state.error.is_some(), state.settled), (OwnerPhase::Loaded, true, true));
+    assert_eq!((state.phase, state.error.is_some(), state.settled), (OwnerPhase::Failed, true, true));
     same_value(&rows, "failed with rows");
 }
 

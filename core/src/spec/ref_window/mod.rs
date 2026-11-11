@@ -100,13 +100,12 @@ impl Window {
         for id in std::mem::take(&mut self.waiters).into_keys() { self.outcomes.push((id, result)); }
     }
 
-    /// P-WIN-32: one function of the stage, `outcome` and the rows.
+    /// P-WIN-32: one function of the stage and `outcome`, the rows are judged by the stream (P-DLV-32).
     pub(super) fn phase(&self) -> Phase {
         match (self.state, self.outcome) {
             (State::Loading { .. } | State::Landing { .. }, _) => Phase::Loading,
             (_, Outcome::None) => Phase::Idle,
             (_, Outcome::Fresh | Outcome::Landed) => Phase::Loaded,
-            (_, Outcome::Failed) if self.has_rows => Phase::Loaded,
             (_, Outcome::Failed) => Phase::Failed,
         }
     }
