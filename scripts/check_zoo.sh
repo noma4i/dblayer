@@ -559,11 +559,13 @@ for path in files:
         if re.search(r"\bread_id: Option<", line):
             findings.append(f"Z45 every window machine opens by reading its saved window (ensure), none is made without the read: {path.relative_to(root)}:{number}")
 
-for target, pattern in ((source / "runtime" / "owner.rs", r"\bfn due\("), (source / "owners" / "read" / "feed" / "mod.rs", r"\bnow: Time\b")):
+feed_time = "Z46 Feed takes the time of its step, no input of Feed carries a time and no owner rewrites a due input"
+silent_refusal = "Z57 the verdict of a Feed batch names every refusal of the Store, no default arm swallows a new one"
+for target, pattern, rule in ((source / "runtime" / "owner.rs", r"\bfn due\(", feed_time), (source / "owners" / "read" / "feed" / "mod.rs", r"\bnow: Time\b", feed_time), (source / "owners" / "read" / "feed" / "state.rs", r"(?<!\w)_ => \{\},", silent_refusal)):
     if not target.exists(): continue
     for number, line in enumerate(target.read_text().splitlines(), 1):
         if re.search(pattern, line):
-            findings.append(f"Z46 Feed takes the time of its step, no input of Feed carries a time and no owner rewrites a due input: {target.relative_to(root)}:{number}")
+            findings.append(f"{rule}: {target.relative_to(root)}:{number}")
 
 deliveries = source / "owners" / "read" / "deliveries" / "mod.rs"
 if deliveries.exists():

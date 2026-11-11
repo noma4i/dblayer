@@ -271,7 +271,7 @@ impl TransferState {
             RejectReason::NoSession => Fault::SessionEnded,
             RejectReason::StaleGeneration { .. } => Fault::Ended(crate::ffi::EndCause::SessionEnded),
             RejectReason::Closed => Fault::Closed,
-            reason => Fault::Rejected(reason),
+            reason @ (RejectReason::Storage(_) | RejectReason::Invalid) => Fault::Rejected(reason),
         } };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

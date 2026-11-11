@@ -289,4 +289,6 @@ fn b(plan: &BatchPlan) { plan.validate(); }'
 at_green core/src/store/apply/plan.rs 'fn a(plan: &BatchPlan) { plan.validate(); }'
 at_red core/src/owners/read/deliveries/flow.rs 'struct Stream { window_phase: WindowPhase }'
 at_red core/src/owners/read/feed_codec.rs 'fn rows(event: &Value) { let joins = joins_of(event); }'
+at_red core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(RejectReason::Invalid) => stale(), _ => {}, } }'
+at_green core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(_) => stale(), None => {} } }'
 echo "check_zoo_test: ok"

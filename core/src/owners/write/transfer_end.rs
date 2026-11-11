@@ -315,7 +315,7 @@ impl TransferState {
         }
         for &id in ids {
             if let Some((_, error)) = self.confirmed_discards.get(&id).cloned() {
-                let detail = match &reason { RejectReason::Storage(detail) => format!("{detail}: {error}"), _ => error };
+                let detail = match &reason { RejectReason::Storage(detail) => format!("{detail}: {error}"), RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => error };
                 self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(detail))), fx);
             }
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

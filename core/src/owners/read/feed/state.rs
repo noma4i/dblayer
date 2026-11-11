@@ -298,7 +298,7 @@ impl FeedState {
                 Some(RejectReason::Invalid) => Self::stale_all(&models, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
                 None if !refused.is_empty() => Self::stale_all(&models, fx),
-                _ => {},
+                None => {}
             }
             return;
         }

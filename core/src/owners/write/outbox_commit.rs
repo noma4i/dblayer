@@ -262,7 +262,7 @@ impl OutboxState {
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.retry_timer(op_id, fx),
-                _ => self.remove_row_operation(op_id, fx),
+                RejectReason::Invalid | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
             }
             return;
         }

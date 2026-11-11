@@ -296,7 +296,7 @@ impl TransferState {
     pub(super) fn persist_failed(&mut self, now: crate::runtime::Time, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         let error = match reason {
             RejectReason::Storage(error) => error,
-            _ => "storage".into(),
+            RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => "storage".into(),
         };
         self.begin_failure(now, id, error, false, fx);
     }
