@@ -51,10 +51,11 @@ fn store_bad_event_rolls_back_alone() {
     let mut spec = ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional(), FieldSpec::list("lists", ScalarKind::Str).nullable().optional()]);
     spec.relations.push(list);
     let bad_events = [
-        ("an event without a row", serde_json::json!({"op":"upsert", "id":"x"})),
-        ("a row without its membership field", serde_json::json!({"op":"upsert", "id":"x", "row":{"id":"x", "text":"x"}})),
+        ("an event without a row", "x", serde_json::json!({"op":"upsert", "id":"x"})),
+        ("a row without its membership field", "x", serde_json::json!({"op":"upsert", "id":"x", "row":{"id":"x", "text":"x"}})),
+        ("a refused write of the row of the event before it", "a", serde_json::json!({"op":"upsert", "id":"a", "row":{"id":"a", "text":"z", "lists":null}})),
     ];
-    for (case, bad) in bad_events {
+    for (case, bad_id, bad) in bad_events {
         let database = Store::open_models(None, vec![spec.clone()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
         let good = |id: &str| ("docs".to_string(), serde_json::json!({"op":"upsert", "id":id, "row":{"id":id, "text":id, "lists":["a"]}, "observe":true}).to_string());
         let rows = vec![good("a"), ("docs".to_string(), bad.to_string()), good("b")];
@@ -63,8 +64,8 @@ fn store_bad_event_rolls_back_alone() {
         assert_eq!(written.refused, vec![1], "{case}: the bad event is refused alone");
         let after = |at: usize| serde_json::from_str::<serde_json::Value>(&written.observed[at]).unwrap()["after"]["text"].clone();
         assert_eq!((after(0), after(2)), (serde_json::json!("a"), serde_json::json!("b")), "{case}: the events around it are observed with their rows");
-        let stored = database.read(&["docs"], |reader| Ok([reader.point("docs", "a")?.is_some(), reader.point("docs", "x")?.is_some(), reader.point("docs", "b")?.is_some()])).unwrap();
-        assert_eq!(stored, [true, false, true], "{case}: only the rows of the good events are written");
+        let stored = database.read(&["docs"], |reader| Ok((reader.point("docs", "a")?.and_then(|row| row.get("text").cloned()), reader.point("docs", bad_id)?.is_some(), reader.point("docs", "b")?.is_some()))).unwrap();
+        assert_eq!(stored, (Some(serde_json::json!("a")), bad_id == "a", true), "{case}: only the rows of the good events are written");
     }
 }
 
