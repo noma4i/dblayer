@@ -33,7 +33,9 @@ pub enum StoreError {
 impl From<rusqlite::Error> for StoreError {
     fn from(error: rusqlite::Error) -> Self {
         match &error {
-            rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation => {
+            rusqlite::Error::SqliteFailure(failure, _)
+                if matches!(failure.code, rusqlite::ErrorCode::ConstraintViolation | rusqlite::ErrorCode::TypeMismatch | rusqlite::ErrorCode::TooBig | rusqlite::ErrorCode::ParameterOutOfRange) =>
+            {
                 StoreError::Constraint(error.to_string())
             }
             _ => StoreError::Sqlite(error),
