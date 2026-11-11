@@ -239,6 +239,7 @@ impl OutboxState {
             if let Some(other) = self.ops.get_mut(&id).filter(|other| other.stage == Stage::RollingBack(Why::Rejected)) {
                 other.stage = Stage::Queued;
                 other.reject_error = None;
+                other.row_never_created = false;
             }
         }
     }
@@ -308,6 +309,7 @@ impl OutboxState {
                 failed_errors: BTreeMap::new(),
                 retry_uploads: Vec::new(),
                 reject_error: None,
+                row_never_created: false,
                 ended_dependents: Vec::new(),
                 cause: None,
                 cause_stored: None,
@@ -442,6 +444,7 @@ impl OutboxState {
             if let Some(other) = self.ops.get_mut(id) {
                 other.stage = Stage::RollingBack(Why::Rejected);
                 other.reject_error = Some(super::failure::row_never_created());
+                other.row_never_created = true;
             }
         }
         if let Some(create) = self.ops.get_mut(&op_id) { create.ended_dependents = dependents; }
@@ -516,10 +519,11 @@ impl OutboxState {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let Some(transfer) = self.peers.transfer else { return };
         let outcomes = Self::transfer_outcomes(operation, outcome);
+        let row_never_created = matches!(outcome, OutboxOutcome::Rejected { .. }) && operation.row_never_created;
         match &operation.op.origin {
             OpSource::Api => {}
             OpSource::Transfer { .. } => if let Some((transfer_id, cycle_id, outcome)) = outcomes.into_iter().next() {
-                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed })));
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed, row_never_created })));
             },
             OpSource::TransferGroup { batch_id, .. } => {
                 fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcomes { batch_id: *batch_id, members: outcomes, intent_removed })));
@@ -572,6 +576,7 @@ impl OutboxState {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
                 operation.reject_error = Some(if ended { super::failure::row_never_created() } else { super::failure::expired() });
+                operation.row_never_created = ended;
             }
             return self.store(op_id, CommitKind::Rollback, fx);
         }

@@ -86,7 +86,7 @@ impl OutboxState {
             }
             (CommitKind::Land, Stage::Landing) => {
                 if let Some(pending) = self.member_removals.remove(&op_id) {
-                    if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: true }))); }
+                    if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: true, row_never_created: false }))); }
                 }
                 for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
                     self.swap_row(op_id, &temp, &real);
@@ -138,6 +138,7 @@ impl OutboxState {
                         if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&id].request_id }))); }
                     }
                     if let Some(reply) = self.submit_replies.remove(&id) { Self::reply(fx, reply, OutboxAnswer::Receipt(self.receipt(id, revision))); }
+                    if let Some(operation) = self.ops.get_mut(&id) { operation.row_never_created |= operation.reject_error.is_none(); }
                     let error = self.ops[&id].reject_error.clone().unwrap_or_else(super::failure::row_never_created);
                     self.finish(now, id, OutboxOutcome::Rejected { error }, true, fx);
                 }

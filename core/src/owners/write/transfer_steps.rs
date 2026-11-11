@@ -316,7 +316,7 @@ impl TransferState {
         self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Mutating || (transfer.stage == TransferStage::Failed && transfer.discard_sent))
     }
 
-    pub(super) fn mutation_outcome(&mut self, now: crate::runtime::Time, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
+    pub(super) fn mutation_outcome(&mut self, now: crate::runtime::Time, id: TransferId, (outcome, row_never_created): (OutboxOutcome, bool), fx: &mut Fx) {
         if !self.waits_for_discard(id) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
         let failed_waiting = waiting && self.stage_of(id) == Some(TransferStage::Failed);
@@ -332,7 +332,7 @@ impl TransferState {
                 self.remove_with_batch(id, Removal::Confirmed { revision, result, row_id }, fx)
             }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
-            OutboxOutcome::Rejected { error } if super::failure::is_row_never_created(&error) => {
+            OutboxOutcome::Rejected { error } if row_never_created => {
                 let cycle = self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id);
                 if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; transfer.has_operation = false; }
                 self.confirmed_discards.insert(id, (cycle, error));

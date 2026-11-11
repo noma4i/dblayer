@@ -354,6 +354,8 @@ pub struct QueuedOperation {
     pub failed_errors: BTreeMap<u64, String>,
     pub retry_uploads: Vec<crate::owners::store::UploadRow>,
     pub reject_error: Option<String>,
+    /// The `create` of the row of this operation ended without a real id: its `Rejected` tells Transfer so (D-325).
+    pub row_never_created: bool,
     pub ended_dependents: Vec<OpId>,
     /// The cause of the last failed attempt and the one the operation row keeps.
     pub cause: Option<crate::value::sync::FailureKind>,

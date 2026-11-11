@@ -280,7 +280,7 @@ impl OutboxState {
             if let OpSource::TransferGroup { members, .. } = &mut item.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); }
             item.removed_rows.retain(|(_, row_id, _)| row_id != &pending.member.row_id);
         }
-        if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: false }))); }
+        if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: false, row_never_created: false }))); }
         for input in pending.deferred { self.handle(now, input, fx); }
         if self.waiting.get(&op_id).is_some_and(|(item, _)| item.removed_rows.is_empty() && self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))) {
             if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {

@@ -716,11 +716,11 @@ impl TransferState {
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(now, transfer_id, attempt_id, (temporary, error), fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(now, transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary, error } => self.complete_error(now, transfer_id, attempt_id, (temporary, error), fx),
-            TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed: _ } => {
+            TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, intent_removed: _, row_never_created } => {
                 if let Some((row, outcomes)) = self.waiting.get_mut(&transfer_id) {
                     if row.cycle_id.max(1) == cycle_id { outcomes.entry(transfer_id).or_default().insert(cycle_id, outcome); }
                 } else if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.cycle_id == cycle_id) {
-                    self.mutation_outcome(now, transfer_id, outcome, fx);
+                    self.mutation_outcome(now, transfer_id, (outcome, row_never_created), fx);
                 }
             }
             TransferInput::MutationOutcomes { batch_id, members, intent_removed } => {
