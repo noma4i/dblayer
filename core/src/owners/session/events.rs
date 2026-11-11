@@ -86,7 +86,10 @@ impl SessionState {
         if let SessionInput::Rejected(rejected) = &input {
             if self.external_revoked.remove(&rejected.batch).is_some() {
                 self.phase = phase;
-                if matches!(rejected.reason, RejectReason::Storage(_) | RejectReason::Invalid | RejectReason::StaleGeneration { .. }) { fx.push(SessionEffect::ExecutorFailed); }
+                match rejected.reason {
+                    RejectReason::Storage(_) | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => fx.push(SessionEffect::ExecutorFailed),
+                    RejectReason::NoSession | RejectReason::Closed => {}
+                }
                 return;
             }
         }
