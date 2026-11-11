@@ -21,9 +21,15 @@ pub fn walk_strings(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut St
     }
 }
 
-/// Calls `visit` on every string of `value`, on any depth, that is a temporary id.
+/// A free value is a temporary id only in the form `RowId::generate_temp` issues: `temp-`, an optional model prefix, a UUID of 36 characters.
+pub fn is_issued_temp_id(text: &str) -> bool {
+    let Some(uuid) = text.strip_prefix(TEMP_ID_PREFIX).and_then(|rest| rest.len().checked_sub(36).and_then(|from| rest.get(from..))) else { return false };
+    uuid.bytes().enumerate().all(|(at, byte)| if matches!(at, 8 | 13 | 18 | 23) { byte == b'-' } else { byte.is_ascii_hexdigit() })
+}
+
+/// Calls `visit` on every string of `value`, on any depth, that is an issued temporary id.
 pub fn walk_temp_ids(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
-    walk_strings(value, &mut |text| if is_temp_id(text) { visit(text) });
+    walk_strings(value, &mut |text| if is_issued_temp_id(text) { visit(text) });
 }
 
 /// 0 for a temporary id: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.

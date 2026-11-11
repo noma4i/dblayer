@@ -113,21 +113,14 @@ impl Drop for LeaveLoad {
     }
 }
 
-fn holds_temp_id(value: &Value) -> bool {
-    match value {
-        Value::String(text) => crate::identity::is_temp_id(text),
-        Value::Array(items) => items.iter().any(holds_temp_id),
-        Value::Object(fields) => fields.values().any(holds_temp_id),
-        _ => false,
-    }
-}
-
 /// Swaps the temporary ids among the params for server ids with `resolve(model of the param, id)`, the model is the target of the `BelongsTo` or `References` association of the model whose foreign key the param names. Returns the temporary ids that have no server id yet. A temporary id that no association names, or one inside an array or object, is `Invalid`: no request carries it.
 pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut Map<String, Value>) -> Result<Vec<(String, String)>, DbError> {
     let spec = db.spec(model)?;
     let mut waiting = Vec::new();
     for (name, value) in params.iter_mut() {
-        if !holds_temp_id(value) { continue; }
+        let mut holds = false;
+        crate::identity::walk_temp_ids(value, &mut |_| holds = true);
+        if !holds { continue; }
         let target = value.is_string().then(|| spec.associations.iter().find(|association| matches!(association.kind, AssociationKind::BelongsTo | AssociationKind::References) && association.foreign_key == *name).map(|association| association.target.as_str())).flatten();
         let (Some(temp), Some(target)) = (value.as_str(), target) else { return Err(DbError::Invalid { detail: format!("the param {name} of {model} holds a temporary id") }) };
         let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
