@@ -2,7 +2,8 @@ use serde_json::{json, Value};
 
 use super::shapes::{self, BACKOFF_CEILINGS};
 use super::window::{Phase, Run};
-use super::{Ending, LibraryRef, Target};
+use super::window::Key;
+use super::{Ending, LibraryRef};
 use crate::check::value::Observation;
 
 fn not_open() -> Vec<Observation> {
@@ -29,7 +30,7 @@ impl LibraryRef {
             return not_open();
         }
         if !self.online || self.identity {
-            self.mark("login_outside_first_online");
+            self.mark("H3_login_outside_first_online");
             return Vec::new();
         }
         let id = format!("r{}", self.next_request);
@@ -78,10 +79,8 @@ impl LibraryRef {
         Vec::new()
     }
 
-    fn running(&self) -> Vec<Target> {
-        let windows = self.windows.iter().filter(|(_, window)| window.load.is_some()).map(|(key, _)| Target::Window(*key));
-        let nodes = self.calls.iter().filter(|call| call.run.is_some()).map(|call| Target::Nodes(call.id));
-        windows.chain(nodes).collect()
+    fn running(&self) -> Vec<Key> {
+        self.windows.iter().filter(|(_, window)| window.load.is_some()).map(|(key, _)| *key).collect()
     }
 
     /// `Online(false)`: running requests are cancelled and the loads wait. `Online(true)`: a waiting load starts.
@@ -91,17 +90,14 @@ impl LibraryRef {
         }
         let was = self.online;
         self.online = online;
-        for target in self.running() {
-            if matches!(target, Target::Nodes(_)) && was != online {
-                self.mark("nodes_across_network_change");
-            }
+        for key in self.running() {
             if was && !online {
-                let Some(run) = self.run_of(target).take() else { continue };
+                let Some(run) = self.run_of(key).take() else { continue };
                 self.kill(&run);
-                *self.run_of(target) = Some(Run { phase: Phase::Waiting, ..run });
+                *self.run_of(key) = Some(Run { phase: Phase::Waiting, ..run });
             }
-            if !was && online && matches!(self.run_of(target), Some(Run { phase: Phase::Waiting, .. })) {
-                self.send(target);
+            if !was && online && matches!(self.run_of(key), Some(Run { phase: Phase::Waiting, .. })) {
+                self.send(key);
             }
         }
         vec![Observation::new("online", json!(online))]
@@ -110,13 +106,17 @@ impl LibraryRef {
     /// The clock moves. A retry pause that reaches the ceiling of its delay sends the request again (docs/server-sync.md "Retries").
     pub(super) fn tick(&mut self, ms: u64) -> Vec<Observation> {
         self.now += ms as i64;
-        for target in self.running() {
-            let Some(run) = self.run_of(target) else { continue };
+        for key in self.running() {
+            let Some(run) = self.run_of(key) else { continue };
             let retries = (run.network + run.server).max(1) as usize;
             let Phase::Backoff(elapsed) = &mut run.phase else { continue };
             *elapsed += ms;
+            if ms < BACKOFF_CEILINGS[BACKOFF_CEILINGS.len() - 1] {
+                self.mark("H12_retry_delay_below_the_ceiling");
+                continue;
+            }
             if *elapsed >= BACKOFF_CEILINGS[(retries - 1).min(BACKOFF_CEILINGS.len() - 1)] {
-                self.send(target);
+                self.send(key);
             }
         }
         Vec::new()
@@ -134,7 +134,7 @@ impl LibraryRef {
         if self.calls.iter().any(|call| call.key == Some(key)) {
             return Vec::new();
         }
-        if let Some(run) = self.run_of(Target::Window(key)).take() {
+        if let Some(run) = self.run_of(key).take() {
             self.kill(&run);
             self.win(key).unfresh = true;
         }

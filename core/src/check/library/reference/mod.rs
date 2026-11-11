@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::super::model::RefModel;
 use super::super::value::{Input, Observation};
 use ops::{parse, Op};
-use window::{Key, Run, Window};
+use window::{Key, Window};
 
 mod env;
 mod landing;
@@ -30,15 +30,7 @@ enum Form {
 enum Ending {
     Done,
     More(&'static str),
-    Rows(u64),
     Failed(&'static str),
-}
-
-/// The owner of a load: a window or a `nodes` call.
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Target {
-    Window(Key),
-    Nodes(u64),
 }
 
 /// A call waiting for its outcome. `queued` is a `load_more` behind a running load, `target` the page it waits for.
@@ -49,14 +41,13 @@ struct Call {
     key: Option<Key>,
     target: Option<u32>,
     queued: bool,
-    run: Option<Run>,
 }
 
 /// A request the mock holds. A dead one was cancelled by the library: an answer to it reaches nobody.
 struct Held {
     id: String,
     live: bool,
-    target: Target,
+    key: Key,
 }
 
 struct Sent {

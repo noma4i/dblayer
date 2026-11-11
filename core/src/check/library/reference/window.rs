@@ -15,7 +15,7 @@ pub(super) enum Phase {
     Waiting,
 }
 
-/// One load of a window or of a `nodes` call: the page and the failures it met so far.
+/// One load of a window: the page and the failures it met so far.
 #[derive(Clone, Debug)]
 pub(super) struct Run {
     pub(super) page: u32,
