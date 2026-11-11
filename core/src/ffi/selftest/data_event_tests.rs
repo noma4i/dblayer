@@ -107,3 +107,25 @@ async fn data_event_delete_missing_row() {
     rig.database.close_now();
 }
 
+/// P-FEED-34: an event on a row with an open operation keeps the field of the operation local and takes the other fields from the event; a row hidden by a pending `destroy` does not come back.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_event_keeps_pending_fields() {
+    let (rig, rows) = thread_rig().await;
+    let epoch = rig.database.session_epoch();
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "base", "at": 1})).await;
+    rig.land("Message", json!({"id": "m2", "chatId": "c1", "text": "base", "at": 2})).await;
+    let edit = rig.world.hold_next("MessageEdit");
+    let delete = rig.world.hold_next("MessageDelete");
+    bound(rig.database.act(epoch, "Message".into(), "m1".into(), "update".into(), json!({"text": "local"}).to_string(), json!({"text": "local"}).to_string())).await.unwrap();
+    bound(rig.database.destroy(epoch, "Message".into(), "m2".into())).await.unwrap();
+    bound(edit.entered()).await;
+    rig.land_unsettled("Message", json!({"id": "m2", "chatId": "c1", "text": "server", "at": 8})).await;
+    rig.land_unsettled("Message", json!({"id": "m1", "chatId": "c1", "text": "server", "at": 7})).await;
+    settled(&rig, "the event reaches the row stream", || row_of(&rows, "m1").is_some_and(|row| cell(&rig, "Message", &row, "at") == int(7))).await;
+    let kept = row_of(&rows, "m1").unwrap();
+    assert_eq!((cell(&rig, "Message", &kept, "text"), cell(&rig, "Message", &kept, "at")), (text("local"), int(7)), "the field of the open operation stays local and the other field comes from the event");
+    assert!(row_of(&rows, "m2").is_none(), "the row hidden by the pending destroy does not come back");
+    edit.release();
+    delete.release();
+    rig.database.close_now();
+}
