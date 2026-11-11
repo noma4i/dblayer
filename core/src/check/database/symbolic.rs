@@ -3,7 +3,10 @@ use super::*;
 /// A request the mock holds: its operation and variables, read from the decrypted body.
 #[derive(Clone)]
 struct Held {
+    /// The id the observations show (`r1`, `r2`, ...), numbered in the canonical order of the requests of one input.
     id: String,
+    /// The id the mock knows: an answer input names it.
+    mock: String,
     operation: String,
     variables: Value,
 }
@@ -15,6 +18,7 @@ struct Held {
 pub(super) struct Symbolic {
     held: Vec<Held>,
     known: usize,
+    shown: std::collections::HashMap<String, String>,
     live: bool,
     dir: Option<std::path::PathBuf>,
 }
@@ -73,15 +77,43 @@ impl DatabaseSut {
         dir.join("library.db").to_string_lossy().into_owned()
     }
 
+    /// The requests that arrived since the last call get the shown ids in one canonical order: the ones with a body by (operation, variables as text), the others after them in arrival order.
+    /// The requests of one input are independent, the library does not order them (H16).
     fn note_requests(&mut self) {
         let sent = self.requests();
         let mode = self.mode();
-        for (id, body) in sent.iter().skip(mode.known) {
-            if body.is_null() { continue; }
-            let (operation, variables) = operation_of(body);
-            mode.held.push(Held { id: id.clone(), operation, variables });
-        }
+        let mut fresh: Vec<(bool, String, String, String, Value)> = sent
+            .iter()
+            .skip(mode.known)
+            .map(|(id, body)| {
+                let (operation, variables) = if body.is_null() { (String::new(), String::new()) } else { let (operation, variables) = operation_of(body); (operation, variables.to_string()) };
+                (body.is_null(), operation, variables, id.clone(), body.clone())
+            })
+            .collect();
+        fresh.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
         mode.known = sent.len();
+        for (_, _, _, mock, body) in fresh {
+            let shown = format!("r{}", mode.shown.len() + 1);
+            mode.shown.insert(mock.clone(), shown.clone());
+            if body.is_null() { continue; }
+            let (operation, variables) = operation_of(&body);
+            mode.held.push(Held { id: shown, mock, operation, variables });
+        }
+    }
+
+    /// The `request` observations of an input show the shown ids, in the order of those ids.
+    fn relabel(&mut self, observed: Vec<Observation>) -> Vec<Observation> {
+        let mode = self.mode();
+        let (mut requests, mut out) = (Vec::new(), Vec::new());
+        for mut item in observed {
+            if item.kind != "request" { out.push(item); continue; }
+            let mock = item.value["id"].as_str().unwrap_or("").to_string();
+            if let Some(shown) = mode.shown.get(&mock) { item.value["id"] = shown.clone().into(); }
+            requests.push(item);
+        }
+        requests.sort_by_key(|item| item.value["id"].as_str().unwrap_or("").trim_start_matches('r').parse::<u64>().unwrap_or(0));
+        out.extend(requests);
+        out
     }
 
     fn with_sent(&mut self, observed: Vec<Observation>) -> Vec<Observation> {
@@ -103,6 +135,7 @@ impl DatabaseSut {
             let held = self.mode().held.remove(0);
             let observed = self.play(&make(&held)).await;
             self.note_requests();
+            let observed = self.relabel(observed);
             if !is_error(&observed, "no_request") {
                 let mut shown = vec![Observation::new("replied", json!({ "id": held.id, "how": how }))];
                 shown.extend(self.with_sent(observed));
@@ -127,6 +160,7 @@ impl DatabaseSut {
             "login" => {
                 let started = self.play(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
                 self.note_requests();
+                let started = self.relabel(started);
                 let mut observed = self.with_sent(started);
                 if !is_error(&observed, "not_open") {
                     let mode = self.mode();
@@ -134,22 +168,23 @@ impl DatabaseSut {
                         let session = mode.held.remove(index);
                         mode.held.insert(0, session);
                     }
-                    let answered = self.reply("page", |held| Input::new("answer").with("id", held.id.as_str()).with("json", page_body(held, 0, false))).await;
+                    let answered = self.reply("page", |held| Input::new("answer").with("id", held.mock.as_str()).with("json", page_body(held, 0, false))).await;
                     observed.extend(answered);
                 }
                 return observed;
             }
             "answer_page" => {
                 let (rows, more) = (input.number("rows").unwrap_or(0), input.flag("more").unwrap_or(false));
-                return self.reply("page", |held| Input::new("answer").with("id", held.id.as_str()).with("json", page_body(held, rows, more))).await;
+                return self.reply("page", |held| Input::new("answer").with("id", held.mock.as_str()).with("json", page_body(held, rows, more))).await;
             }
             "answer_error" => {
                 let kind = input.text("kind").unwrap_or("temporary").to_string();
-                return self.reply(&kind.clone(), |held| if kind == "drop" { Input::new("drop").with("id", held.id.as_str()) } else { Input::new("error").with("id", held.id.as_str()).with("kind", kind.as_str()) }).await;
+                return self.reply(&kind.clone(), |held| if kind == "drop" { Input::new("drop").with("id", held.mock.as_str()) } else { Input::new("error").with("id", held.mock.as_str()).with("kind", kind.as_str()) }).await;
             }
             _ => self.play(input).await,
         };
         self.note_requests();
+        let observed = self.relabel(observed);
         for item in &observed {
             match item.kind.as_str() {
                 "opened" => self.mode().live = true,
