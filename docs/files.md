@@ -83,7 +83,7 @@ An upload sends a local file to storage and then runs one content mutation with 
 After the upload call returns, the library owns a copy of the source. The application can delete its temporary file.
 The upload reports the copied file size as `totalBytes` before transfer starts, including while its record awaits create confirmation.
 Source copying and SHA-256 calculation run before the SQLite write, on a blocking task, in 1 MiB chunks.
-For file databases, sources larger than 256 KiB stay beside the database. Smaller sources and in-memory databases use SQLite bytes.
+The copy of an upload is always a file in the file directory beside the database. An in-memory database keeps it in a temporary directory.
 Resumed transfers read the owned disk file directly. A rejected admission removes its prepared files.
 Uploads require server models. Local and memory models reject admission without creating records or files.
 A database reset rejects upload admission queued before that reset.
@@ -285,12 +285,12 @@ Absent headers are valid. Malformed header JSON or non-string header names and v
 | multipart (threshold or larger)     | `init` receives filename, contentType, byteSize and checksum, and returns `key` and `uploadId`. `presign` returns part URLs. PUT confirms parts. `complete` exchanges their ETags for `signedId` and `blobId` |
 | content mutation                    | runs once with the original variables plus `signedId` (and `blobId` when the steps name a variable for it, the typed `UploadRequest` sends only `signedId`)                                                   |
 
-The file is read in ranges: a single upload in one range up to the 10 MB threshold, a multipart upload in parts of 5 MB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
+The file is read in ranges: a single upload in one range up to the 10 MiB threshold, a multipart upload in parts of 5 MiB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
 
 | Setting                            | Default                                                                                   |
 | ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| multipart threshold                | 10 MB                                                                                     |
-| part size                          | 5 MB                                                                                      |
+| multipart threshold                | 10 MiB                                                                                    |
+| part size                          | 5 MiB                                                                                     |
 | files at a time                    | 1, the others wait as `queued`                                                            |
 | retry backoff                      | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
 | PUT timeout / GraphQL step timeout | 120 s / 45 s                                                                              |
@@ -306,7 +306,7 @@ The final content mutation does not hold a file permit.
 | Field                     | Meaning                                                                                                                                                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`, `cancelled`                                                                                                                      |
-| `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `offline`. A step that waits for the network or for power saving to end is `queued` |
+| `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `source_pending` (the upload was created without a file and waits for it). A step that waits for the network or for power saving to end is `queued` |
 | `stage`                   | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation`                                                                                                                       |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
 | `progress`                | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown                                                                                                                           |
