@@ -239,3 +239,18 @@ fn store_read_intents_distinguishes_local_and_server_tombstones() {
         assert_eq!(removed(2), vec![("moments".into(), "m2".into(), 123)], "{status}: server removal");
     }
 }
+
+fn docs_with_revision() -> Arc<Store> {
+    let spec = ModelSpec { server_revision: Some("rev".into()), ..ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("rev", ScalarKind::Int).optional(), FieldSpec::scalar("text", ScalarKind::Str).optional()]) };
+    Arc::new(Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
+}
+
+#[test]
+fn data_event_without_revision_applies() {
+    let db = docs_with_revision();
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "docs".into(), rows: vec![doc(9, "stored")] }]);
+    let event = json!({"op": "upsert", "id": "d1", "row": {"id": "d1", "text": "event"}}).to_string();
+    write(&db, BatchAuthor::Feed, vec![("docs".into(), event)], Vec::new());
+    assert_eq!(text(&db), json!("event"), "an event without a revision applies over a stored revision");
+}
+
