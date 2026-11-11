@@ -42,3 +42,20 @@ async fn consumer_events_of_chat_give_nothing_for_an_area_it_does_not_declare() 
     let event = bound(events.pull_next()).await;
     assert!(matches!(&event, Some(ReadValue::Event { position: 1, area, .. }) if area == "CHAT"), "{event:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_new_chat_joins_the_open_list_after_a_message_event() {
+    use crate::ffi::{QuerySpec, ReadRequest};
+    let stand = Stand::open().await;
+    let epoch = stand.database.session_epoch();
+    let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+    std::mem::forget(stand.database.watch(ReadRequest::List { query: QuerySpec::json(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#) }, rows.clone()));
+    stand.answer("chats", json!({"viewer": {"chats": {"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}, "totalCount": 0}}}));
+    bound(stand.database.refresh(epoch, "Chat".into(), Some("list".into()), r#"{"list":"PRIMARY"}"#.into())).await.unwrap();
+    stand.settle().await;
+    assert!(rows.0.lock().unwrap().is_empty());
+    let (_events, token) = stand.events("Chat").await;
+    stand.answer("ChatNode", json!({"node": chat("c1", "joined")}));
+    stand.push(&token, json!({"area": "MESSAGE", "kind": "CREATED", "entityId": "m1", "parentId": "c1", "chat": chat("c1", "joined"), "message": super::stand::message("m1", "c1", "hi")}));
+    settled(&stand, "the new chat joins the open list", || stand.text_of(&rows, "Chat", "c1", "name").as_deref() == Some("joined")).await;
+}

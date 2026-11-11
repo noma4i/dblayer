@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep a stream open when a row joins or leaves its open window.
+
 ## 6.26.0 - 2026-11-11
 
 ### Fixed

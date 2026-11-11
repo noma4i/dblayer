@@ -348,12 +348,19 @@ fn dlv_prop_commit_during_read_is_delivered() {
 }
 
 #[test]
-fn dlv_changed_read_without_current_relevant_version_ends() {
+fn dlv_changed_read_without_current_relevant_version_keeps_the_stream() {
     for relevant in [None, Some((0, 0))] {
         let mut twin = live_rows();
         twin.step(Input::Committed { revision: 2, touches: true });
         twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant, data: d::ReadData::Rows { rows: rows_of(&rows(&["r1", "r2"])), replaced: Vec::new(), total: None } });
-        assert!(matches!(twin.state().journal(STREAM).last(), Some(d::Value::Ended(d::EndCause::Internal { .. }))), "{relevant:?}");
+        let journal = twin.state().journal(STREAM);
+        assert!(!journal.iter().any(|value| matches!(value, d::Value::Ended(_))), "{relevant:?}: the stream stays open: {journal:?}");
+        let labelled = match journal.last() {
+            Some(d::Value::Snapshot { revision, .. }) => Some(*revision),
+            Some(d::Value::Delta(delta)) => Some(delta.revision),
+            _ => None,
+        };
+        assert_eq!(labelled, Some(2), "{relevant:?}: the changed rows carry the revision of their own read: {journal:?}");
     }
 }
 

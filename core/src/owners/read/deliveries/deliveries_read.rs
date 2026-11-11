@@ -252,15 +252,7 @@ impl Delivery {
         let value = if self.stage == DeliveryStage::Opening {
             (revision, version.position)
         } else if changed {
-            let Some(relevant) = version.relevant else {
-                self.finish(EndCause::Internal { detail: "a changed view has no relevant version".into() }, false, fx);
-                return;
-            };
-            if relevant < (self.revision, self.value_position) {
-                self.finish(EndCause::Internal { detail: "a changed view has an older relevant version".into() }, false, fx);
-                return;
-            }
-            relevant
+            version.relevant.filter(|relevant| *relevant >= (self.revision, self.value_position)).unwrap_or((revision, version.position))
         } else {
             (self.revision, self.value_position)
         };
