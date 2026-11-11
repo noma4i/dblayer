@@ -100,6 +100,7 @@ impl Delivery {
     }
 
     pub(super) fn window_state(&mut self, state: WindowState, fx: &mut Vec<Emit>) {
+        self.window_phase = state.phase;
         match self.stage {
             DeliveryStage::Opening => {
                 self.held_state = Some(state);

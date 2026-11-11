@@ -228,6 +228,7 @@ impl Delivery {
         self.deferred = None;
         self.view = view;
         self.window = WindowState::idle();
+        self.window_phase = self.window.phase;
         self.held_state = None;
         self.watch(fx);
         fx.push(self.new_read(self.read_revision));
@@ -260,7 +261,7 @@ impl Delivery {
         if self.stage == DeliveryStage::Live && self.read_error {
             self.read_error = false;
             self.window.error = None;
-            self.window.phase = WindowPhase::Loaded;
+            self.window.phase = self.window_phase;
             let unchanged = match &data {
                 Whole::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
                 Whole::Count(count) => self.count == Some(*count),

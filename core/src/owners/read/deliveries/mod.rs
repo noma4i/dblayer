@@ -353,6 +353,7 @@ struct Delivery {
     operations: Option<Vec<crate::ffi::OperationInfo>>,
     total: Option<u64>,
     window: WindowState,
+    window_phase: WindowPhase,
     held_state: Option<WindowState>,
     next_feed: Option<u64>,
     position: u64,

@@ -25,6 +25,7 @@ impl Delivery {
             count: None,
             operations: None,
             total: None,
+            window_phase: window.phase,
             window,
             held_state: None,
             next_feed: None,
