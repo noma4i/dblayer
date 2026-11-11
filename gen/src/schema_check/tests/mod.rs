@@ -14,3 +14,4 @@ mod edge_tests;
 mod paths_tests;
 mod total_alias_tests;
 mod edge_nodes_tests;
+mod response_membership_tests;
