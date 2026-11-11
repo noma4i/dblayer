@@ -156,7 +156,7 @@ impl Window {
         let mut effects = self.step_input(input);
         if self.state != State::Opening && !self.watched() { self.outcome = Outcome::None; }
         let read = self.interest.iter().any(|id| *id != PRELOAD);
-        if read && self.value() != before && !effects.contains(&Effect::WindowState) { effects.push(Effect::WindowState); }
+        if read && self.state != State::Ended && self.value() != before && !effects.contains(&Effect::WindowState) { effects.push(Effect::WindowState); }
         effects
     }
 
