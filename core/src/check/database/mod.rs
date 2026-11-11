@@ -168,6 +168,7 @@ pub struct DatabaseSut {
     loads: HashMap<String, Cancel>,
     streams: HashMap<String, Pulled>,
     calls: Vec<Call>,
+    symbolic: Option<symbolic::Symbolic>,
 }
 
 impl Default for DatabaseSut {
@@ -184,17 +185,12 @@ impl Default for DatabaseSut {
             loads: HashMap::new(),
             streams: HashMap::new(),
             calls: Vec::new(),
+            symbolic: None,
         }
     }
 }
 
 impl DatabaseSut {
-    /// Closes the database a trace left open, so the next trace can open its own.
-    pub async fn finish(&mut self) {
-        self.mock.release_all();
-        if let Some(database) = self.database.take() { let _ = database.close_database().await; }
-    }
-
     /// Every request that reached the mock, in arrival order: the id and the decrypted body of an encrypted exchange (`Null` for a subscription or a put).
     pub fn requests(&self) -> Vec<(String, Value)> { self.mock.sent() }
 
@@ -626,6 +622,7 @@ fn more_name(result: LoadMoreResult) -> &'static str {
 
 mod database_sut;
 mod fold;
+mod symbolic;
 
 #[cfg(test)]
 mod tests;

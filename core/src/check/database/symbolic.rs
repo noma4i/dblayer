@@ -1,8 +1,4 @@
-use serde_json::{json, Value};
-
-use crate::check::database::DatabaseSut;
-use crate::check::model::Sut;
-use crate::check::value::{Input, Observation};
+use super::*;
 
 /// A request the mock holds: its operation and variables, read from the decrypted body.
 #[derive(Clone)]
@@ -12,18 +8,18 @@ struct Held {
     variables: Value,
 }
 
-/// `DatabaseSut` with symbolic references: an answer or a refusal goes to the oldest request the mock still holds, `login` runs the session call and its answer.
-/// After every `request` of an encrypted exchange it adds the observation `sent` with the operation and the variables of that request.
+/// The symbolic mode of the stand: an answer or a refusal goes to the oldest request the mock still holds, `login` runs the session call and its answer,
+/// the database lives in a file of a temporary directory, so it survives `close` + `open`.
+/// After every `request` of an encrypted exchange the stand adds the observation `sent` with the operation and the variables of that request.
 #[derive(Default)]
-pub struct LibrarySut {
-    inner: DatabaseSut,
+pub(super) struct Symbolic {
     held: Vec<Held>,
     known: usize,
     live: bool,
     dir: Option<std::path::PathBuf>,
 }
 
-static DIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DIRS: AtomicU64 = AtomicU64::new(0);
 
 fn operation_of(body: &Value) -> (String, Value) {
     let payload = &body["body"];
@@ -54,37 +50,47 @@ fn page_body(held: &Held, rows: u64, more: bool) -> Value {
     }
 }
 
-impl LibrarySut {
-    pub async fn finish(&mut self) {
-        self.inner.finish().await;
-        if let Some(dir) = self.dir.take() {
+impl DatabaseSut {
+    /// The stand in symbolic mode.
+    pub fn symbolic() -> Self {
+        Self { symbolic: Some(Symbolic::default()), ..Self::default() }
+    }
+
+    /// Removes the temporary directory of the database file.
+    pub(super) fn remove_file_dir(&mut self) {
+        if let Some(dir) = self.symbolic.as_mut().and_then(|mode| mode.dir.take()) {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
 
-    /// The database file of this program in a temporary directory: it survives `close` + `open`, so saved windows are read back.
+    fn mode(&mut self) -> &mut Symbolic {
+        self.symbolic.as_mut().expect("the symbolic mode is on")
+    }
+
     fn file(&mut self) -> String {
-        let dir = self.dir.get_or_insert_with(|| std::env::temp_dir().join(format!("dbl_library_{}_{}", std::process::id(), DIRS.fetch_add(1, std::sync::atomic::Ordering::SeqCst))));
+        let dir = self.mode().dir.get_or_insert_with(|| std::env::temp_dir().join(format!("dbl_library_{}_{}", std::process::id(), DIRS.fetch_add(1, Ordering::SeqCst)))).clone();
         let _ = std::fs::create_dir_all(&dir);
         dir.join("library.db").to_string_lossy().into_owned()
     }
 
     fn note_requests(&mut self) {
-        let sent = self.inner.requests();
-        for (id, body) in sent.iter().skip(self.known) {
+        let sent = self.requests();
+        let mode = self.mode();
+        for (id, body) in sent.iter().skip(mode.known) {
             if body.is_null() { continue; }
             let (operation, variables) = operation_of(body);
-            self.held.push(Held { id: id.clone(), operation, variables });
+            mode.held.push(Held { id: id.clone(), operation, variables });
         }
-        self.known = sent.len();
+        mode.known = sent.len();
     }
 
-    fn with_sent(&self, observed: Vec<Observation>) -> Vec<Observation> {
+    fn with_sent(&mut self, observed: Vec<Observation>) -> Vec<Observation> {
+        let mode = self.mode();
         let mut out = Vec::new();
         for item in observed {
             let id = (item.kind == "request" && item.value["kind"] == "http").then(|| item.value["id"].as_str().unwrap_or("").to_string());
             out.push(item);
-            if let Some(held) = id.and_then(|id| self.held.iter().find(|held| held.id == id)) {
+            if let Some(held) = id.and_then(|id| mode.held.iter().find(|held| held.id == id)) {
                 out.push(Observation::new("sent", json!({ "id": held.id, "operation": held.operation, "variables": held.variables })));
             }
         }
@@ -93,9 +99,9 @@ impl LibrarySut {
 
     /// Sends the reply to the oldest held request the mock still knows. Returns what the core showed, or the refusal when none is left.
     async fn reply(&mut self, how: &str, make: impl Fn(&Held) -> Input) -> Vec<Observation> {
-        while !self.held.is_empty() {
-            let held = self.held.remove(0);
-            let observed = self.inner.apply(&make(&held)).await;
+        while !self.mode().held.is_empty() {
+            let held = self.mode().held.remove(0);
+            let observed = self.play(&make(&held)).await;
             self.note_requests();
             if !is_error(&observed, "no_request") {
                 let mut shown = vec![Observation::new("replied", json!({ "id": held.id, "how": how }))];
@@ -103,15 +109,12 @@ impl LibrarySut {
                 return shown;
             }
         }
-        vec![Observation::new("error", json!({ "kind": "no_request" }))]
+        error("no_request")
     }
-}
 
-#[async_trait::async_trait]
-impl Sut for LibrarySut {
-    async fn apply(&mut self, input: &Input) -> Vec<Observation> {
-        if input.name == "open" && self.live {
-            return vec![Observation::new("error", json!({ "kind": "already_open" }))];
+    pub(super) async fn apply_symbolic(&mut self, input: &Input) -> Vec<Observation> {
+        if input.name == "open" && self.mode().live {
+            return error("already_open");
         }
         let placed;
         let input = if input.name == "open" {
@@ -122,13 +125,14 @@ impl Sut for LibrarySut {
         };
         let observed = match input.name.as_str() {
             "login" => {
-                let started = self.inner.apply(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
+                let started = self.play(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
                 self.note_requests();
                 let mut observed = self.with_sent(started);
                 if !is_error(&observed, "not_open") {
-                    if let Some(index) = self.held.iter().rposition(|held| held.operation.starts_with("session")) {
-                        let session = self.held.remove(index);
-                        self.held.insert(0, session);
+                    let mode = self.mode();
+                    if let Some(index) = mode.held.iter().rposition(|held| held.operation.starts_with("session")) {
+                        let session = mode.held.remove(index);
+                        mode.held.insert(0, session);
                     }
                     let answered = self.reply("page", |held| Input::new("answer").with("id", held.id.as_str()).with("json", page_body(held, 0, false))).await;
                     observed.extend(answered);
@@ -143,20 +147,20 @@ impl Sut for LibrarySut {
                 let kind = input.text("kind").unwrap_or("temporary").to_string();
                 return self.reply(&kind.clone(), |held| if kind == "drop" { Input::new("drop").with("id", held.id.as_str()) } else { Input::new("error").with("id", held.id.as_str()).with("kind", kind.as_str()) }).await;
             }
-            _ => self.inner.apply(input).await,
+            _ => self.play(input).await,
         };
         self.note_requests();
         for item in &observed {
             match item.kind.as_str() {
-                "opened" => self.live = true,
-                "closed" => self.live = false,
+                "opened" => self.mode().live = true,
+                "closed" => self.mode().live = false,
                 _ => {}
             }
         }
         let mut shown = self.with_sent(observed);
-        if input.name == "close" && !self.held.is_empty() {
-            shown.push(Observation::new("released", json!({ "ids": self.held.iter().map(|held| held.id.clone()).collect::<Vec<_>>() })));
-            self.held.clear();
+        if input.name == "close" && !self.mode().held.is_empty() {
+            let ids: Vec<String> = self.mode().held.drain(..).map(|held| held.id).collect();
+            shown.push(Observation::new("released", json!({ "ids": ids })));
         }
         shown
     }

@@ -3,6 +3,20 @@ use super::*;
 #[async_trait]
 impl Sut for DatabaseSut {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
+        if self.symbolic.is_some() { self.apply_symbolic(input).await } else { self.play(input).await }
+    }
+
+    /// Closes the database a trace left open, so the next trace can open its own.
+    async fn finish(&mut self) {
+        self.mock.release_all();
+        if let Some(database) = self.database.take() { let _ = database.close_database().await; }
+        self.remove_file_dir();
+    }
+}
+
+impl DatabaseSut {
+    /// One input of the vocabulary on the plain stand.
+    async fn play(&mut self, input: &Input) -> Vec<Observation> {
         match input.name.as_str() {
             "open" => return self.open(input.text("models").unwrap_or(""), input.flag("encrypted").unwrap_or(false), input.text("path").map(str::to_string)).await,
             "clock_back" => {
