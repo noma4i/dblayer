@@ -29,6 +29,7 @@ mod transcode_event_tests;
 mod avatar_rowless_tests;
 mod thread_pages_tests;
 mod ordered_scope_tests;
+mod chat_list_page_tests;
 mod group_reopen_tests;
 mod id_reuse_tests;
 mod references_batch_tests;
