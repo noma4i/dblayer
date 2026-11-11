@@ -624,6 +624,16 @@ if window_facts.exists():
         number = text.count("\n", 0, start + found.start()) + 1
         findings.append(f"Z51 the window keeps no phase field: the value computes it: {window_facts.relative_to(root)}:{number}")
 
+validate_calls = []
+for path in sorted((source / "store").rglob("*.rs")):
+    if "tests" in path.parts or path.name.endswith("_tests.rs"): continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if re.search(r"\.validate\(", line):
+            validate_calls.append(f"{path.relative_to(root)}:{number}")
+if len(validate_calls) != 1:
+    for place in validate_calls:
+        findings.append(f"Z52 the batch plan has one check, in the one write entry of Store after the follow operations and the reduced repeats ({len(validate_calls)} calls): {place}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

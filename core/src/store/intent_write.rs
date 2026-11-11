@@ -88,7 +88,6 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     let reader = Reader::new(connection, models);
     let (mut envelope, _) = effects(&reader, writes, writer)?;
     envelope.writes_local = true;
-    envelope.validate(writer.generation)?;
     writer.apply(&envelope)
 }
 
@@ -137,6 +136,5 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, (model, row_id, acti
         dedupe_key: None,
         rollback: Some(prior),
     })));
-    envelope.validate(writer.generation)?;
     writer.apply(&envelope)
 }

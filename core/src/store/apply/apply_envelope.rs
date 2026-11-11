@@ -4,18 +4,17 @@ pub(crate) fn apply_envelope(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
     envelope: &BatchPlan,
-    now_ms: i64,
+    (now_ms, generation): (i64, Generation),
 ) -> Result<CommitResult, StoreError> {
     let revision = Reader::new(connection, models).revision_seq()? + 1;
-    apply_envelope_at(connection, models, envelope, now_ms, revision, None, None)
+    apply_envelope_at(connection, models, envelope, (now_ms, revision, generation), None, None)
 }
 
 pub(in super::super) fn apply_envelope_at(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
     planned: &BatchPlan,
-    now_ms: i64,
-    revision: i64,
+    (now_ms, revision, generation): (i64, i64, Generation),
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
     mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
 ) -> Result<CommitResult, StoreError> {
@@ -23,6 +22,8 @@ pub(in super::super) fn apply_envelope_at(
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
     super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _)| &mut **current))?;
+    followed.reduce_repeats();
+    followed.validate(generation)?;
     let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {
         let reader = Reader::new(connection, models);

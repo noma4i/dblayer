@@ -114,13 +114,8 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     } else {
         return Err(StoreError::Constraint(format!("unknown event operation: {op}")));
     }
-    let mut seen = BTreeSet::new();
-    envelope.entity_ops.reverse();
-    envelope.entity_ops.retain(|op| seen.insert(op.row_ref()));
-    envelope.entity_ops.reverse();
-    envelope.validate(writer.generation)?;
     let hidden = writer.feed_hidden.as_ref().cloned().unwrap_or_default();
-    let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals), Some((&mut writer.current, &hidden)))?;
+    let result = super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, (writer.now, writer.revision, writer.generation), Some(writer.originals), Some((&mut writer.current, &hidden)))?;
     if op == "delete" { writer.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), writer.revision); }
     if !envelope.operation_transitions.is_empty() {
         writer.feed_hidden = Some(super::apply::hidden_rows(writer.connection, &[])?);

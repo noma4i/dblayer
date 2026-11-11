@@ -260,6 +260,7 @@ impl BatchPlan {
         self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty()
     }
 
+    /// P-DATA-98: the one check of the final plan, after the follow operations and the reduced repeats.
     pub fn validate(&self, current: Generation) -> Result<(), PlanFault> {
         if self.generation != current {
             return Err(PlanFault::StaleGeneration);
@@ -288,6 +289,32 @@ impl BatchPlan {
             return Err(PlanFault::DuplicateScopeOps);
         }
         Ok(())
+    }
+
+    /// P-DATA-98: the repeats of a row fold before the check: the last write of a row stays, a touch gives way to a write or a removal of its row.
+    /// A write and a removal of one row stay both, the check refuses them.
+    pub(crate) fn reduce_repeats(&mut self) {
+        let mut kept: Vec<EntityOp> = Vec::with_capacity(self.entity_ops.len());
+        let mut at: std::collections::HashMap<RowRef, usize> = std::collections::HashMap::new();
+        for operation in std::mem::take(&mut self.entity_ops) {
+            let row = operation.row_ref();
+            let Some(&index) = at.get(&row) else {
+                at.insert(row, kept.len());
+                kept.push(operation);
+                continue;
+            };
+            match (&kept[index], &operation) {
+                (EntityOp::Upsert { .. }, EntityOp::Upsert { .. }) | (EntityOp::Destroy { .. }, EntityOp::Destroy { .. }) | (EntityOp::Touch { .. }, EntityOp::Upsert { .. } | EntityOp::Destroy { .. }) => kept[index] = operation,
+                (EntityOp::Upsert { .. } | EntityOp::Destroy { .. } | EntityOp::Touch { .. }, EntityOp::Touch { .. }) => {}
+                _ => kept.push(operation),
+            }
+        }
+        self.entity_ops = kept;
+        let mut scope_ops: Vec<ScopeOp> = Vec::with_capacity(self.scope_ops.len());
+        for operation in std::mem::take(&mut self.scope_ops) {
+            if !scope_ops.contains(&operation) { scope_ops.push(operation); }
+        }
+        self.scope_ops = scope_ops;
     }
 
     fn touched_row_keys(&self) -> Vec<(ModelKey, RowId)> {

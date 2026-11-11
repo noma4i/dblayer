@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::store::files::references_of_row;
-use crate::identity::{ModelKey, RowId};
+use crate::identity::{ModelKey, RowId, RowRef};
 use crate::store::{Reader, StoreError};
 
 use crate::store::plan::{OutboxOperation, Prior, PriorRow};
@@ -150,6 +150,8 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             }
         }
     }
+    let created: BTreeSet<RowRef> = plan.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { reason: DestroyReason::Expired, .. })).map(EntityOp::row_ref).collect();
+    plan.entity_ops.retain(|op| matches!(op, EntityOp::Destroy { .. }) || !created.contains(&op.row_ref()));
     plan.transitions.extend(chain.rewrites());
     Ok(plan)
 }

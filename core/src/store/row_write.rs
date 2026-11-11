@@ -68,7 +68,7 @@ impl RowWrite<'_> {
     pub fn apply(&mut self, envelope: &BatchPlan) -> Result<CommitResult, StoreError> {
         let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
         let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
-        let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, self.now, self.revision, Some(self.originals), Some((&mut self.current, &hidden)))?;
+        let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, (self.now, self.revision, self.generation), Some(self.originals), Some((&mut self.current, &hidden)))?;
         for operation in &envelope.entity_ops {
             if let EntityOp::Destroy { model, id, reason } = operation {
                 if reason.writes_tombstone() { self.feed_tombstones.entry(model.to_string()).or_default().insert(id.to_string(), self.revision); }
@@ -100,7 +100,6 @@ impl RowWrite<'_> {
         envelope.response_rows = response;
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-        envelope.validate(self.generation)?;
         self.apply(&envelope).map(Some)
     }
 
