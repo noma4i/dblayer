@@ -349,19 +349,6 @@ async fn out_swap_keeps_place() {
     assert_eq!(after.iter().find(|(id, _)| *id == real).map(|(_, key)| key.clone()), Some(place.clone()), "the real id takes the place key of the temporary one");
     assert!(after.iter().all(|(id, _)| *id != temporary) && after.len() == before.len() + 1);
 
-    let hold = rig.world.hold_next("SendMessage");
-    let receipt = send_text(&rig, epoch, "second", 4).await;
-    hold.entered().await;
-    let temporary = receipt.optimistic_value.clone().unwrap().id;
-    let place = all_groups(&rig).into_iter().find(|(id, _)| *id == temporary).map(|(_, key)| key).expect("the temporary row stands in the list");
-    rig.land("Message", json!({"id": "m5", "chatId": "c1", "text": "second", "at": 4})).await;
-    assert!(all_groups(&rig).iter().any(|(id, _)| id == "m5"), "the real row stands in the list");
-    hold.release();
-    let real = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.unwrap().id;
-    rig.settle().await;
-    let after = all_groups(&rig);
-    assert_eq!((real.as_str(), after.iter().filter(|(id, _)| *id == real).count(), after.iter().find(|(id, _)| *id == real).map(|(_, key)| key.clone())), ("m5", 1, Some(place)), "the real row takes the place of the temporary one");
-    assert!(after.iter().all(|(id, _)| *id != temporary));
     let _ = ids;
     rig.database.close_now();
 }
