@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Keep an upload group going when the database refuses the removal of its removed member.
 - End an operation on a server-removed row when the Store refuses its removal.
 - Show the load error of a window again after a failed read of the stream recovers.
 - Keep the `insert_on: [:node]` entry for an event that arrives while a `node` read lands.

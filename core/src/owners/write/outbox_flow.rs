@@ -291,7 +291,7 @@ impl OutboxState {
     }
 
     pub(super) fn member_rejected(&mut self, now: u64, op_id: OpId, reason: RejectReason, fx: &mut Effects<Outbox>) {
-        let storage = match &reason {
+        match &reason {
             RejectReason::StaleGeneration { .. } => {
                 if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
                 return self.store_member(op_id, fx);
@@ -300,11 +300,11 @@ impl OutboxState {
                 self.member_removals.remove(&op_id);
                 return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
-            RejectReason::Storage(_) => true,
-            RejectReason::Invalid => false,
-        };
+            RejectReason::Invalid => return self.member_committed(now, op_id, fx),
+            RejectReason::Storage(_) => {}
+        }
         if let Some(pending) = self.member_removals.get_mut(&op_id) {
-            if storage { pending.storage_failures = pending.storage_failures.saturating_add(1); }
+            pending.storage_failures = pending.storage_failures.saturating_add(1);
             if pending.storage_failures >= 2 && !pending.deferred.is_empty() {
                 pending.land_after_storage = true;
                 if let Some(operation) = self.ops.get_mut(&op_id) { if let OpSource::TransferGroup { members, .. } = &mut operation.op.origin { members.retain(|member| member.transfer_id != pending.member.transfer_id); } }
