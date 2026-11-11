@@ -627,3 +627,29 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     assert!(!blocking.inner.texts().iter().any(|text| text.contains("third")));
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_prop_temp_id_never_asked() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("SendMessage");
+    let receipt = bound(rig.database.send(message(epoch, "temporary", 1))).await.unwrap();
+    let temporary = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    gate.entered().await;
+    assert!(temporary.starts_with("temp-"));
+    rig.world.answer_with("Thread", json!({"data":{"thread":[]}}));
+    let cases = [
+        ("a text param that is no foreign key", json!({"chatId":"c1", "note":temporary})),
+        ("an array holding a temporary id", json!({"chatId":"c1", "ids":[temporary]})),
+        ("an object holding a temporary id", json!({"chatId":"c1", "filter":{"id":temporary}})),
+    ];
+    for (name, params) in cases {
+        let before = rig.world.count("Thread");
+        let result = bound(rig.database.load(epoch, "Message".into(), "thread".into(), params.to_string())).await;
+        assert!(matches!(result, Err(DbError::Invalid { .. })), "{name}: {result:?}");
+        assert_eq!(rig.world.count("Thread"), before, "{name}: no request leaves");
+    }
+    gate.release();
+    rig.database.close_now();
+}
