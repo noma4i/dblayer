@@ -254,3 +254,19 @@ fn data_event_without_revision_applies() {
     assert_eq!(text(&db), json!("event"), "an event without a revision applies over a stored revision");
 }
 
+#[test]
+fn data_event_delete_missing_row() {
+    let db = docs_with_revision();
+    let base = db.revision_seq().unwrap();
+    let event = json!({"op": "delete", "id": "d1", "observe": true}).to_string();
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("docs".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    assert_eq!(written.observed.len(), 1);
+    let observed: Value = serde_json::from_str(&written.observed[0]).unwrap();
+    assert_eq!((&observed["before"], &observed["after"]), (&Value::Null, &Value::Null), "the event of a missing row carries no before and no after");
+    let key = WindowKey::nodes("docs", &["d1"]);
+    let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![doc(1, "late page")], related: Vec::new(), total: None, base_revision: base };
+    write(&db, BatchAuthor::Window, Vec::new(), vec![page]);
+    assert_eq!(text(&db), Value::Null, "the tombstone keeps a late page from bringing the row back");
+}
+
