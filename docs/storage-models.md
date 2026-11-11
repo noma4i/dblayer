@@ -49,7 +49,7 @@ DBlayer.open(context, modelsJson = modelsJson, path = path, uploadNotification =
 Local rows notify readers and survive reopening. Create, update and destroy generate no network request and write no outbox entry.
 Their sync state is `synced`, meaning that no server operation is pending.
 
-A disk model without remote or mutation declarations is valid. Its writes queue until matching mutation declarations bind them.
+A disk model without remote or mutation declarations is valid. An action without a `mutation` writes its values at once and sends nothing.
 Use local storage when a model must never send its values.
 
 `local: true` on a field has a different purpose. It keeps one field local inside a synced model.
