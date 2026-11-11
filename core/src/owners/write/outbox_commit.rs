@@ -185,12 +185,16 @@ impl OutboxState {
         let resolve = |model: &str, row: &mut String| {
             if let Some(real) = aliases.get(&(model.to_string(), row.clone())) { *row = real.clone(); }
         };
-        let before = op.row_id.clone();
         resolve(&op.model, &mut op.row_id);
-        if before != op.row_id {
-            let old = serde_json::Value::String(before).to_string();
-            let new = serde_json::Value::String(op.row_id.clone()).to_string();
-            op.body = op.body.replace(&old, &new);
+        if op.body.contains(crate::identity::TEMP_ID_PREFIX) {
+            if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&op.body) {
+                let mut changed = false;
+                walk_strings(&mut body, &mut |text| match aliases.iter().find(|((_, temp), _)| temp == text) {
+                    Some((_, real)) => { text.clone_from(real); changed = true; }
+                    None => {}
+                });
+                if changed { op.body = body.to_string(); }
+            }
         }
         for row in &mut op.effects.rows { resolve(&row.model, &mut row.row_id); }
         for member in &mut op.effects.members { resolve(&member.model, &mut member.row_id); }
@@ -379,4 +383,13 @@ impl OutboxState {
         self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect()).unwrap_or_default()
     }
 
+}
+
+pub(super) fn walk_strings(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
+    match value {
+        serde_json::Value::String(text) if crate::identity::is_temp_id(text) => visit(text),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| walk_strings(item, visit)),
+        serde_json::Value::Object(members) => members.values_mut().for_each(|member| walk_strings(member, visit)),
+        _ => {}
+    }
 }

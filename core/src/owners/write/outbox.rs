@@ -172,7 +172,19 @@ impl OutboxState {
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation))
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.awaits_create(operation)
+    }
+
+    /// The body carries a temp id that has no alias yet and the `create` of that row is not Done.
+    fn awaits_create(&self, operation: &QueuedOperation) -> bool {
+        if !operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) { return false; }
+        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&operation.op.body) else { return false };
+        let mut waits = false;
+        super::outbox_commit::walk_strings(&mut body, &mut |temp| {
+            waits |= !self.aliases.keys().any(|(_, aliased)| aliased == temp)
+                && self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && other.op.action == "create" && other.op.row_id == *temp);
+        });
+        waits
     }
 
     /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
@@ -243,6 +255,7 @@ impl OutboxState {
 
     pub(super) fn emit_send(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
+        Self::resolve_operation(&self.aliases, &mut operation.op);
         operation.sends += 1;
         operation.sent = true;
         operation.pair_in_flight = true;

@@ -1,6 +1,5 @@
 use crate::store::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
 use crate::identity::{ModelKey, RowId};
-use crate::owners::write::operation_status::Operation;
 use crate::store::Reader;
 use crate::value::read_id;
 
@@ -17,16 +16,7 @@ pub(crate) struct Swap<'a> {
 
 pub(crate) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Option<OperationTransition>, crate::store::StoreError> {
     let Swap { model, temp, real, references } = *swap;
-    let owner = Operation::split_action_key(&entry.operation.action_key).map(|(owner, _)| owner).unwrap_or_default();
-    let mut input = entry.input.clone();
     let mut changed = false;
-    if let Some(object) = input.as_object_mut() {
-        let own_id = (owner == model).then_some("id");
-        let fields = references.iter().filter(|(child, _)| *child == owner).map(|(_, field)| field.as_str());
-        for field in own_id.into_iter().chain(fields) {
-            changed |= object.get_mut(field).is_some_and(|value| swap_id(value, temp, real));
-        }
-    }
     let row_ids: Vec<RowId> = entry.operation.row_ids.iter().map(|id| if id == temp { real.clone() } else { id.clone() }).collect();
     changed |= row_ids != entry.operation.row_ids;
     let mut rollback = entry.rollback.clone();
@@ -36,7 +26,7 @@ pub(crate) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Optio
             changed = true;
         }
     }
-    Ok(changed.then(|| entry.rewritten(row_ids, input, rollback)))
+    Ok(changed.then(|| entry.rewritten(row_ids, entry.input.clone(), rollback)))
 }
 
 pub(crate) struct TempReplacement<'a> {
