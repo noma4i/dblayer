@@ -59,6 +59,15 @@ impl Default for EpochGate {
     fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), #[cfg(test)] recorder: recorder::Recorder::default() } }
 }
 
+pub fn carries_temp_id(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => crate::identity::is_temp_id(text),
+        serde_json::Value::Array(items) => items.iter().any(carries_temp_id),
+        serde_json::Value::Object(members) => members.values().any(carries_temp_id),
+        _ => false,
+    }
+}
+
 fn epoch_of(state: u64) -> u64 { state >> EPOCH_SHIFT }
 
 fn cut_of(state: u64) -> u64 { (state >> CUT_SHIFT) & CUT_BITS }
@@ -77,9 +86,12 @@ impl EpochGate {
 
     pub fn has_transport(&self) -> bool { self.transport.get().is_some() }
 
-    fn lend(&self, epoch: Option<Epoch>) -> Result<Arc<dyn Upstream>, TransportError> {
+    fn lend(&self, epoch: Option<Epoch>, variables: Option<&serde_json::Value>) -> Result<Arc<dyn Upstream>, TransportError> {
         if epoch.is_some_and(|epoch| !self.admits(epoch)) {
             return Err(TransportError::Interrupted("the epoch ended before the request was sent".into()));
+        }
+        if variables.is_some_and(carries_temp_id) {
+            return Err(TransportError::Decode("the request carries a temporary id".into()));
         }
         #[cfg(test)]
         self.recorder.sent("lend");
@@ -87,9 +99,9 @@ impl EpochGate {
     }
 
     /// A request to the network of `epoch` (`None` belongs to no epoch): the epoch check, the borrow of the transport, the call and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without a transport to call. The borrow lasts as long as the call.
-    pub async fn query(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch)?.query(request).await).await }
+    pub async fn query(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch, Some(&request.variables))?.query(request).await).await }
 
-    pub async fn mutate(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch)?.mutate(request).await).await }
+    pub async fn mutate(&self, epoch: Option<Epoch>, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch, Some(&request.variables))?.mutate(request).await).await }
 
     async fn answer(&self, epoch: Option<Epoch>, result: Result<Response, TransportError>) -> Result<Response, TransportError> {
         match (epoch, result) {
@@ -101,7 +113,7 @@ impl EpochGate {
         }
     }
 
-    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.lend(epoch)?.put(request).await }
+    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.lend(epoch, None)?.put(request).await }
 
     pub fn open(&self, epoch: Epoch) { self.update(|state| pack(epoch, cut_of(state), false)); }
 

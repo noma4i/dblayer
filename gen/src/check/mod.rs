@@ -183,6 +183,10 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
     if let Some(variables) = &operation.variables {
         for binding in variables {
             let VariableValue::Parameter(source) = &binding.value else { continue };
+            if source == "id" && operation.kind == OperationKind::Create {
+                report(binding.pos, format!("variable `{}` of `create` names `id`: the row has a temporary id until the server answers", binding.name));
+                continue;
+            }
             let known = source == "id" || attributes.contains(source.as_str()) || operation.parameters.iter().any(|parameter| &parameter.name == source);
             if !known {
                 report(binding.pos, format!("variable `{}` names unknown attribute or parameter `{source}`", binding.name));
