@@ -702,7 +702,7 @@ A model removes its own rows when a row of another model lands with `removed_by 
 Declare `changes` once across the input files. Every `changed_by` declaration uses that subscription.
 Missing declarations, duplicate subscriptions and empty paths produce generator errors.
 
-A node read uses the declared change ID. The `via` scope declared with `node: :one` has 1 parameter.
+A node read uses the declared change ID. The `via` scope declared with `node: :one` has 1 parameter. The parameter name `nodeId` belongs to the node read: another scope that declares it fails generation.
 A singleton read needs no parameter: `changed_by "TOTALS", via: :current`.
 `via: :observed` rereads every observed read of the model, parameterized ones included, with the same reread that follows a reconnect. It takes no parameter and no `removes_on`, and the model needs a remote read. A read that nobody observes is not requested.
 

@@ -17,6 +17,9 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
         if !names.insert(parameter.name.as_str()) {
             report(parameter.pos, format!("scope `{name}`: parameter `{}` is declared twice", parameter.name));
         }
+        if scope.node.is_none() && parameter.name == dblayer::schema::NODE_PARAM {
+            report(parameter.pos, format!("scope `{name}`: parameter `{}` is reserved for the `node` read", parameter.name));
+        }
     }
     let linked: Vec<&str> = scope.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(_, parameter)| parameter.item.as_str())).collect();
     if let Some(clause) = &scope.where_ {
