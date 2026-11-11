@@ -227,13 +227,16 @@ enum Turn {
     Load,
     LoadRefused,
     Commit,
+    Reject(crate::owners::contract::RejectReason),
 }
 
 /// P-WIN-34: the sources of the landing batches that the owner of the windows hands to the Store, in the order of the inputs.
 #[test]
 fn win_change_after_commit_marks_the_next_load() {
     use crate::schema::RowSource::{NodeReread, Page};
-    use Turn::{Commit, Load, LoadRefused, Stale};
+    use crate::owners::contract::RejectReason::{Invalid, StaleGeneration, Storage};
+    use Turn::{Commit, Load, LoadRefused, Reject, Stale};
+    let moved = || StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".to_string(), 7)].into_iter().collect() };
     let node = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), json!("n1"))].into_iter().collect());
     let cases: Vec<(&str, WindowKey, Vec<Turn>, Vec<crate::schema::RowSource>)> = vec![
         ("a: a load without Stale(Change)", node.clone(), vec![Load], vec![Page]),
@@ -241,6 +244,10 @@ fn win_change_after_commit_marks_the_next_load() {
         ("c: Stale(Change) after the landing batch, before Committed", node.clone(), vec![Load, Stale, Commit, Load], vec![Page, NodeReread]),
         ("d: Stale(Change), a refused load, a new load", node.clone(), vec![Stale, LoadRefused, Load], vec![NodeReread]),
         ("e: Stale(Change) of a list window", key(), vec![Stale, Load], vec![Page]),
+        ("f: the marked batch meets a moved generation, the window reads again", node.clone(), vec![Stale, Load, Reject(moved())], vec![NodeReread, NodeReread]),
+        ("g: the Store fails the marked batch, a new load", node.clone(), vec![Stale, Load, Reject(Storage("disk".into())), Load], vec![NodeReread, NodeReread]),
+        ("h: the Store refuses the data of the marked batch, a new load", node.clone(), vec![Stale, Load, Reject(Invalid), Load], vec![NodeReread, NodeReread]),
+        ("i: a batch without the mark meets a moved generation", node.clone(), vec![Load, Reject(moved())], vec![Page, Page]),
     ];
     let mut wrong = Vec::new();
     for (case, window, turns, want) in cases {
@@ -259,6 +266,16 @@ fn win_change_after_commit_marks_the_next_load() {
                     let (batches, rest) = (rig.batches.clone(), rig.rest.clone());
                     let refused = matches!(turn, LoadRefused);
                     pump(&mut rig.det, |_| if refused { rest.lock().unwrap().iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. })) } else { batches.all().len() > landed });
+                }
+                Reject(reason) => {
+                    let batch = rig.batches.all().last().expect("a landing batch").id;
+                    let reads_again = matches!(reason, StaleGeneration { .. });
+                    if reads_again {
+                        rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })));
+                    }
+                    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Rejected(crate::owners::contract::Rejected { batch, reason }));
+                    let batches = rig.batches.clone();
+                    pump(&mut rig.det, |_| !reads_again || batches.all().len() > landed);
                 }
                 Commit => {
                     let batch = rig.batches.all().last().expect("a landing batch").id;
