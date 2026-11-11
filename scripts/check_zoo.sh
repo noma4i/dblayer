@@ -515,6 +515,28 @@ for path in files:
     if re.search(r'SessionCode::(?:from_wire|of|named)\(|get\("error"\)|\["error"\]\.as_str', contents[path]) and f"z41:{relative}" not in allowed:
         findings.append(f"Z41 the code of a server answer is read by transport/answer_kind.rs (refusal, classify), not by a second parser: {path.relative_to(root)}")
 
+clock_inputs = {"OutboxInput": "Tick", "TransferInput": "Clock", "RoundsInput": "Clock", "WindowsInput": "Tick", "DeliveryInput": "Tick"}
+clock_used = re.compile(r"\b(?:" + "|".join(f"{name}::{variant}" for name, variant in clock_inputs.items()) + r")\b")
+
+def enum_body(text, name):
+    found = re.search(rf"\benum {name}\b[^{{]*{{", text)
+    if not found: return ""
+    depth, start = 1, found.end()
+    for index in range(start, len(text)):
+        depth += {"{": 1, "}": -1}.get(text[index], 0)
+        if depth == 0: return text[start:index]
+    return text[start:]
+
+owner_trait = source / "runtime" / "owner.rs"
+if owner_trait.exists() and re.search(r"\bfn tick\(", enum_body(owner_trait.read_text().replace("pub trait StateOwner", "enum StateOwner"), "StateOwner")):
+    findings.append(f"Z42 the time of an owner is the argument of its step, not an input or a trait function: {owner_trait.relative_to(root)}")
+for path in files:
+    relative = str(path.relative_to(source))
+    text = contents[path]
+    declared = any(re.search(rf"(?:^|[,{{}}])\s*{variant}\s*[(,{{}}]", enum_body(text, name)) for name, variant in clock_inputs.items())
+    if (declared or clock_used.search(text)) and f"z42:{relative}" not in allowed:
+        findings.append(f"Z42 the time of an owner is the argument of its step, not an input or a trait function: {path.relative_to(root)}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

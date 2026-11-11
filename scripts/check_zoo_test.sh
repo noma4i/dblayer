@@ -215,4 +215,10 @@ for wrapper in 'swift/Sources/DBlayer/Probe.swift|func again() { sleep(1) }' 'ko
   at_red "${wrapper%%|*}" "${wrapper#*|}"
 done
 at_green swift/Sources/DBlayer/Probe.swift 'func fine() -> Int { 1 }'
+at_red core/src/owners/write/outbox_types.rs 'pub enum OutboxInput {
+    Closing,
+    Tick(Time),
+}'
+at_red core/src/runtime/owner.rs 'pub trait StateOwner { fn step(state: &mut Self::State, input: Self::Input, now: Time) -> Effects<Self>; fn tick(now: Time) -> Self::Input; }'
+at_green core/src/owners/read/feed/mod.rs 'fn debounce() -> FeedInput { FeedInput::Tick(Time(0)) }'
 echo "check_zoo_test: ok"
