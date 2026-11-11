@@ -13,7 +13,7 @@ fn pending(twin: &mut Twin) -> (u64, u64) {
     request.steps = None;
     request.mutation.body = r#"{"variables":{"signedId":"__dblayer_signed_id__"}}"#.into();
     let reply = twin.reply();
-    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(request), reply, now: Time(0) });
+    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(request), reply });
     let id = twin.state().open_id(KEY).unwrap();
     twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
     (id, reply)
@@ -34,7 +34,7 @@ fn xfer_pending_accepted() {
     second.source = None;
     first.steps = None;
     second.steps = None;
-    batch.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply: 8, now: Time(0) });
+    batch.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply: 8 });
     let ids = [batch.state().open_id(KEY).unwrap(), batch.state().open_id("Moment:r2:upload").unwrap()];
     batch.reserve_batch(&ids);
     let accepted = batch.commit();
@@ -277,7 +277,8 @@ fn xfer_pending_never_expires() {
     let (id, _) = pending(&mut twin);
     twin.commit();
     for now in [7 * DAY, 7 * DAY + 1, 60 * DAY] {
-        let out = twin.post(TransferInput::Tick { now: Time(now), kind: crate::owners::write::transfer::TransferTick::Expire });
+        twin.det.tick(Time(now));
+        let out = twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire });
         assert_eq!((twin.stage(id), out.writes()), (TransferStage::AwaitingSource, 0), "a waiting source has no expiry (owner decision)");
     }
 }
@@ -288,7 +289,7 @@ fn xfer_pending_batch_mixed() {
     let mut waiting = item("Moment:r2:upload", 1);
     waiting.source = None;
     waiting.steps = None;
-    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), waiting], joint: Box::new(joint()), reply: 9, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), waiting], joint: Box::new(joint()), reply: 9 });
     let ids = [twin.state().open_id(KEY).unwrap(), twin.state().open_id("Moment:r2:upload").unwrap()];
     twin.reserve_batch(&ids);
     let out = twin.commit();
@@ -375,7 +376,7 @@ fn pending_batch(twin: &mut Twin) -> [u64; 2] {
     second.source = None;
     first.steps = None;
     second.steps = None;
-    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply: 8, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply: 8 });
     let ids = [twin.state().open_id(KEY).unwrap(), twin.state().open_id("Moment:r2:upload").unwrap()];
     twin.reserve_batch(&ids);
     twin.commit();

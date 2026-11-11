@@ -7,7 +7,6 @@ use crate::owners::contract::{EpochStarted, Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
-use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 
@@ -137,7 +136,7 @@ fn xfer_completing_power_saving_urgent() {
     let reply = twin.reply();
     let mut urgent = item(KEY, 1);
     urgent.urgent = true;
-    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(urgent), reply, now: Time(0) });
+    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(urgent), reply });
     let id = twin.state().open_id(KEY).expect("an urgent transfer");
     twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
     twin.commit();

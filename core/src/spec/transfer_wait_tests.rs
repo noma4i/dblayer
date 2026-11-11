@@ -3,7 +3,6 @@
 use super::transfer_harness::*;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::owners::write::transfer::{TransferAnswer, TransferInput, TransferStage};
-use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
@@ -25,14 +24,14 @@ fn xfer_wait_accept() {
     closing.commit();
     assert_eq!(closing.close().replies(reply), ended_answers(Fault::Ended(crate::ffi::EndCause::Closed)), "Closing");
     let mut refused = Twin::new();
-    let out = refused.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9, now: Time(0) });
+    let out = refused.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9 });
     assert_eq!(out.replies(9), vec![TransferAnswer::Err(Fault::NoSession)], "refusal");
 }
 
 #[test]
 fn xfer_wait_accept_batch() {
     let batch = |twin: &mut Twin| {
-        twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
+        twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5 });
     };
     let mut ok = Twin::offline();
     batch(&mut ok);

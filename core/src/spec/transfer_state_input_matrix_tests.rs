@@ -82,10 +82,11 @@ fn xfer_completing_stray() {
     twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Completing);
     let attempt_id = twin.attempt(id) + 1;
+    twin.det.tick(Time(1));
     twin.ignores(id, vec![
         TransferInput::Completed { transfer_id: id, attempt_id, signed_id: Some("signed".into()) },
         TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true, error: "error".into() },
-        TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } },
+        TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } },
     ]);
 }
 
@@ -94,7 +95,6 @@ fn xfer_accepting_rejected_interrupted() {
     use super::transfer_harness::{item, joint, EPOCH};
     use crate::owners::contract::RejectReason;
     use crate::owners::write::transfer::{TransferInput, TransferStage};
-    use crate::runtime::Time;
     let mut stale = Twin::new();
     let (id, reply, _) = stale.accepting(KEY, 2);
     let out = stale.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() });
@@ -110,7 +110,7 @@ fn xfer_accepting_rejected_interrupted() {
 
         let mut twin = Twin::new();
         let keys = [KEY, "Moment:r2:upload"];
-        twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), joint: Box::new(joint()), reply: 50, now: Time(0) });
+        twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), joint: Box::new(joint()), reply: 50 });
         let ids: Vec<_> = keys.iter().map(|key| twin.state().open_id(key).unwrap()).collect();
         twin.reserve_batch(&ids);
         let out = twin.reject(reason);
@@ -130,15 +130,16 @@ fn xfer_awaiting_source_expires() {
     let mut pending = item(KEY, 1);
     pending.source = None;
     pending.steps = None;
-    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 30, now: Time(0) });
+    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 30 });
     let id = twin.state().open_id(KEY).unwrap();
     twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
     twin.commit();
     assert_eq!(twin.stage(id), TransferStage::AwaitingSource);
+    twin.det.tick(Time(60 * DAY));
     for input in [
         TransferInput::Online(Online(true)),
         TransferInput::RestoreReady { epoch: EPOCH },
-        TransferInput::Tick { now: Time(60 * DAY), kind: TransferTick::Expire },
+        TransferInput::Tick { kind: TransferTick::Expire },
     ] {
         let out = twin.post(input);
         assert_eq!(twin.stage(id), TransferStage::AwaitingSource);
@@ -151,12 +152,11 @@ fn xfer_accept_after_closing() {
     use super::transfer_harness::{item, joint, EPOCH};
     use crate::owners::write::outbox::Fault;
     use crate::owners::write::transfer::{TransferAnswer, TransferInput};
-    use crate::runtime::Time;
     let mut twin = Twin::new();
     twin.close();
     for input in [
-        TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 1)), reply: 30, now: Time(0) },
-        TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), item("Moment:r2:upload", 1)], joint: Box::new(joint()), reply: 30, now: Time(0) },
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 1)), reply: 30 },
+        TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), item("Moment:r2:upload", 1)], joint: Box::new(joint()), reply: 30 },
     ] {
         let out = twin.post(input);
         assert_eq!((out.replies(30), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::Closed)], 1, 0));
@@ -299,7 +299,6 @@ fn failure() -> Failure { Failure { kind: ErrKind::InternalInvalid, message: "re
 #[test]
 fn xfer_accept_rowless() {
     use crate::owners::write::transfer::{TransferInput, TransferStage};
-    use crate::runtime::Time;
     for pending in [false, true] {
         let mut reference = RefRun::new();
         let source = if pending { RefSource::Pending } else { RefSource::File { path: format!("/src/{KEY}") } };
@@ -309,7 +308,7 @@ fn xfer_accept_rowless() {
         let mut item = super::transfer_harness::item(KEY, 1);
         item.mutation.effects = Default::default();
         if pending { item.source = None; item.steps = None; }
-        let out = owner.post(TransferInput::Accept { epoch: 1, now: Time(0), item: Box::new(item), reply: 7 });
+        let out = owner.post(TransferInput::Accept { epoch: 1, item: Box::new(item), reply: 7 });
         let id = owner.state().open_id(KEY).expect("rowless upload is accepted");
         assert!(matches!(reference.state.transfers.get(&id).map(|transfer| &transfer.st), Some(St::Reserving)));
         assert_eq!(owner.stage(id), TransferStage::Reserving);
@@ -321,7 +320,6 @@ fn xfer_accept_rowless() {
 #[test]
 fn xfer_ref_rowless_accept_batch() {
     use crate::owners::write::transfer::{TransferInput, TransferStage};
-    use crate::runtime::Time;
     let keys = ["Moment:r1:upload", "Moment:r2:upload"];
     let mut reference = RefRun::new();
     let items = keys.iter().enumerate().map(|(index, name)| Item {
@@ -336,7 +334,7 @@ fn xfer_ref_rowless_accept_batch() {
         item.mutation.effects = Default::default();
         item
     }).collect();
-    let out = owner.post(TransferInput::AcceptBatch { epoch: 1, now: Time(0), joint: Box::new(super::transfer_harness::joint()), items, reply: 7 });
+    let out = owner.post(TransferInput::AcceptBatch { epoch: 1, joint: Box::new(super::transfer_harness::joint()), items, reply: 7 });
     assert_eq!(out.outbox.len(), 3);
     for name in keys {
         let id = owner.state().open_id(name).expect("rowless batch item is accepted");

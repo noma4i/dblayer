@@ -16,28 +16,27 @@ enum Turn {
     Expire,
 }
 
-fn input_of(turn: Turn, stamp: u64, reply: u64) -> TransferInput {
-    let now = Time(stamp);
+fn input_of(turn: Turn, reply: u64) -> TransferInput {
     match turn {
-        Turn::Accept => TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now },
-        Turn::AcceptBatch => TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], joint: Box::new(joint()), reply, now },
-        Turn::Expire => TransferInput::Tick { now, kind: TransferTick::Expire },
+        Turn::Accept => TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply },
+        Turn::AcceptBatch => TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], joint: Box::new(joint()), reply },
+        Turn::Expire => TransferInput::Tick { kind: TransferTick::Expire },
     }
 }
 
-/// A call of the platform at the step `at`: the owner runs on the clock of the step, the input carries `stamp`.
-fn created(turn: Turn, at: u64, stamp: u64) -> Vec<Time> {
+/// A call of the platform at the step `at`: the owner runs on the clock of the step.
+fn created(turn: Turn, at: u64) -> Vec<Time> {
     let mut twin = Twin::new();
     twin.det.tick(Time(at));
     let reply = twin.reply();
-    twin.post(input_of(turn, stamp, reply));
+    twin.post(input_of(turn, reply));
     [KEY, OTHER].into_iter().filter_map(|key| twin.state().open_id(key)).map(|id| twin.t(id).created_at).collect()
 }
 
-/// The check of the term at the step `at`, the input carries `stamp`. It does not move the clock to the stamp as `post` does for a `Tick`.
-fn expire_at(twin: &mut Twin, at: u64, stamp: u64) -> Vec<String> {
+/// The check of the term at the step `at`.
+fn expire_at(twin: &mut Twin, at: u64) -> Vec<String> {
     twin.det.tick(Time(at));
-    twin.det.post(crate::runtime::Address::<crate::owners::write::transfer::Transfers>::new(TRANSFER_AT), crate::runtime::EpochStamp::Epoch(EPOCH), input_of(Turn::Expire, stamp, 0));
+    twin.det.post(crate::runtime::Address::<crate::owners::write::transfer::Transfers>::new(TRANSFER_AT), crate::runtime::EpochStamp::Epoch(EPOCH), input_of(Turn::Expire, 0));
     twin.det.run_until_quiet(10_000).expect("the owner is quiet");
     twin.at(Time(at)).removed()
 }
@@ -66,10 +65,9 @@ fn seeded(seed: u64, failures: &mut Vec<String>) {
     let mut at = DAY + roll(1_000_000);
     for round in 0..3 {
         let turn = [Turn::Accept, Turn::AcceptBatch][roll(2) as usize];
-        let stamp = roll(100 * DAY);
-        let found = created(turn, at, stamp);
+        let found = created(turn, at);
         if found.iter().any(|time| time.0 != at) || found.is_empty() {
-            failures.push(format!("seed {seed} round {round}: {turn:?} at {at}, the stamp of the input {stamp}: created_at {found:?}, the time of the step is {at}"));
+            failures.push(format!("seed {seed} round {round}: {turn:?} at {at}: created_at {found:?}, the time of the step is {at}"));
         }
         at += 1 + roll(DAY);
         let wait = WAITS[roll(WAITS.len() as u64) as usize];
@@ -77,7 +75,7 @@ fn seeded(seed: u64, failures: &mut Vec<String>) {
         if failed != Some(at) {
             failures.push(format!("seed {seed} round {round}: failed at {at}: failed_at {failed:?}"));
         }
-        let removed = expire_at(&mut twin, at + wait, roll(100 * DAY));
+        let removed = expire_at(&mut twin, at + wait);
         let want: Vec<String> = if wait > WEEK { vec![KEY.to_string()] } else { Vec::new() };
         if removed != want {
             failures.push(format!("seed {seed} round {round}: failed at {at}, checked after {wait} ms: removed {removed:?}, the time of the step gives {want:?}"));
@@ -90,13 +88,8 @@ fn seeded(seed: u64, failures: &mut Vec<String>) {
 fn xfer_prop_timeouts_for_any_accept_times() {
     let mut failures = Vec::new();
     let at = 10 * DAY;
-    for (name, turn, stamp) in [
-        ("Accept, the stamp of the input is early", Turn::Accept, 0),
-        ("Accept, the stamp of the input is late", Turn::Accept, 40 * DAY),
-        ("AcceptBatch, the stamp of the input is early", Turn::AcceptBatch, 0),
-        ("AcceptBatch, the stamp of the input is late", Turn::AcceptBatch, 40 * DAY),
-    ] {
-        let found = created(turn, at, stamp);
+    for (name, turn) in [("Accept", Turn::Accept), ("AcceptBatch", Turn::AcceptBatch)] {
+        let found = created(turn, at);
         let want = if matches!(turn, Turn::Accept) { 1 } else { 2 };
         if found != vec![Time(at); want] {
             failures.push(format!("{name}: accepted at {at}: created_at {found:?}, the time of the step gives {:?}", vec![Time(at); want]));
@@ -107,14 +100,9 @@ fn xfer_prop_timeouts_for_any_accept_times() {
     if written != Some(failed) {
         failures.push(format!("failed at the step {failed}: failed_at {written:?}"));
     }
-    for (name, wait, stamp) in [
-        ("one ms over the week, the stamp of the input is early", WEEK + 1, 0),
-        ("exactly the week, the stamp of the input is late", WEEK, failed + 30 * DAY),
-        ("one ms before the week, the stamp of the input is late", WEEK - 1, failed + 30 * DAY),
-        ("one ms over the week, the stamp of the input is the step", WEEK + 1, failed + WEEK + 1),
-    ] {
+    for (name, wait) in [("1 ms over the week", WEEK + 1), ("exactly the week", WEEK), ("1 ms before the week", WEEK - 1)] {
         let (mut twin, id, _) = failed_at(failed);
-        let removed = expire_at(&mut twin, failed + wait, stamp);
+        let removed = expire_at(&mut twin, failed + wait);
         let want: Vec<String> = if wait > WEEK { vec![KEY.to_string()] } else { Vec::new() };
         let stage = if wait > WEEK { TransferStage::Removing } else { TransferStage::Failed };
         if removed != want || twin.stage(id) != stage {

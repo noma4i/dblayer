@@ -5,12 +5,11 @@ use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
-use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn batch_input(keys: &[&str], reply: u64) -> TransferInput { TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply, now: Time(0) } }
+fn batch_input(keys: &[&str], reply: u64) -> TransferInput { TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply } }
 
 fn accepting_batch(twin: &mut Twin, keys: &[&str]) -> (Vec<TransferId>, u64, Out) {
     let reply = twin.reply();
@@ -37,7 +36,7 @@ fn refuses_calls(twin: &mut Twin, key: &str) {
 fn xfer_accept_while_restoring() {
     let mut twin = Twin::bare(1);
     let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply });
     assert!(Twin::quiet(&out), "the call waits for the rows of the base: {out:?}");
     let out = twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     assert_eq!((out.writes(), out.classified(), out.all_replies()), (0, 1, 0));
@@ -49,7 +48,7 @@ fn xfer_held_accept_end_cause() {
     for (closing, expected) in [(false, Fault::SessionEnded), (true, Fault::Closed)] {
         let mut twin = Twin::bare(1);
         let reply = twin.reply();
-        let pending = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
+        let pending = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply });
         assert!(pending.replies(reply).is_empty());
         let ended = if closing { twin.close() } else { twin.end_epoch() };
         assert_eq!(Twin::fault(&ended, reply), Some(expected));
@@ -60,7 +59,7 @@ fn xfer_held_accept_end_cause() {
 fn xfer_accept() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 3)), reply, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 3)), reply });
     let id = twin.state().open_id(KEY).unwrap();
     assert_eq!(twin.stage(id), TransferStage::Reserving);
     assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id));
@@ -71,7 +70,7 @@ fn xfer_accept() {
 #[test]
 fn xfer_accept_stale() {
     let mut twin = Twin::new();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9 });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::NoSession));
     assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
 }
@@ -81,9 +80,9 @@ fn xfer_accept_invalid() {
     let mut twin = Twin::new();
     let mut empty = item(KEY, 2);
     empty.source.as_mut().unwrap().path.clear();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(empty), reply: 9, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(empty), reply: 9 });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 0)), reply: 10, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 0)), reply: 10 });
     assert_eq!(Twin::fault(&out, 10), Some(Fault::Invalid), "a source without parts");
     assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
 }
@@ -114,7 +113,7 @@ fn xfer_accept_failed_batch_member_stays_inflight() {
     let original = outcome.replies(reply);
     assert!(matches!(original.as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, _)]));
     let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply });
     assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
     assert_eq!((out.writes(), out.copies(), out.deletes(), out.outbox.len()), (0, 0, 0, 0));
     for (index, id) in ids.iter().enumerate() {
@@ -131,10 +130,10 @@ fn xfer_accept_batch_invalid() {
     let mut twin = Twin::new();
     let mut broken = item(OTHER, 2);
     broken.source.as_mut().unwrap().parts = 0;
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9 });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
     assert_eq!((out.writes(), twin.state().open_id(KEY), twin.state().open_id(OTHER)), (0, None, None), "no element is accepted");
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10 });
     assert_eq!(Twin::fault(&out, 10), Some(Fault::NoSession));
 }
 
@@ -148,7 +147,7 @@ fn xfer_accept_batch_size_domain() {
         assert_eq!(crate::owners::write::transfer::batch_size_admitted((joint.minimum, joint.maximum), count), inside, "{count} items");
         let mut twin = Twin::new();
         let items: Vec<_> = keys.iter().take(count).map(|key| item(key, 2)).collect();
-        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(super::transfer_harness::joint()), epoch: EPOCH, items, reply: 9, now: Time(0) });
+        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(super::transfer_harness::joint()), epoch: EPOCH, items, reply: 9 });
         match inside {
             true => assert_eq!(Twin::fault(&out, 9), None, "{count} items are accepted"),
             false => assert_eq!((Twin::fault(&out, 9), out.writes()), (Some(Fault::Invalid), 0), "{count} items are refused without a write"),

@@ -76,7 +76,8 @@ fn xfer_batch_intent_retry_storage() {
     let rejected = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!(rejected.timers, 1);
     let attempt_id = twin.attempt(ids[0]) + 1000;
-    let stale = twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: ids[0], attempt_id } });
+    twin.det.tick(Time(1));
+    let stale = twin.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: ids[0], attempt_id } });
     assert!(Twin::quiet(&stale), "{stale:?}");
     let out = twin.tick_retry(ids[0]);
     assert_eq!((out.writes(), out.submits()), (1, 0));

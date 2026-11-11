@@ -261,7 +261,7 @@ impl Twin {
             TransferInput::StepError { transfer_id: id, attempt_id, temporary: true, error: refusal() },
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
             TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true, error: refusal() },
-            TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } },
+            TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } },
         ]
     }
 
@@ -350,9 +350,6 @@ impl Twin {
 
     fn post_held(&mut self, input: TransferInput) -> Out {
         self.follow(&input);
-        if let TransferInput::Tick { now, .. } = &input {
-            self.det.tick(*now);
-        }
         let stamp = if self.ended { EpochStamp::Control } else { EpochStamp::Epoch(EPOCH) };
         self.det.post(Address::<Transfers>::new(TRANSFER_AT), stamp, input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
@@ -401,7 +398,7 @@ impl Twin {
 
     pub fn accepting(&mut self, key: &str, parts: u32) -> (TransferId, ReplyId, Out) {
         let reply = self.reply();
-        let initial = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
+        let initial = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply });
         let id = self.state().open_id(key).expect("an accepting transfer");
         assert!(matches!(initial.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id));
         let out = self.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
@@ -461,11 +458,13 @@ impl Twin {
 
     pub fn tick_retry(&mut self, id: TransferId) -> Out {
         let attempt_id = self.attempt(id);
-        self.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } })
+        self.det.tick(Time(1));
+        self.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } })
     }
 
     pub fn put_timeout(&mut self, id: TransferId, attempt_id: u64) -> Out {
-        self.post(TransferInput::Tick { now: Time(1), kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } })
+        self.det.tick(Time(1));
+        self.post(TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } })
     }
 
     pub fn online(&mut self, on: bool) -> Out { self.post(TransferInput::Online(Online(on))) }
@@ -575,7 +574,7 @@ impl Twin {
     pub fn accepted_items(&mut self, items: Vec<BatchItem>, joint: Joint) -> Vec<TransferId> {
         let reply = self.reply();
         let keys: Vec<String> = items.iter().map(|item| item.key.clone()).collect();
-        self.post(TransferInput::AcceptBatch { joint: Box::new(joint), epoch: EPOCH, items, reply, now: Time(0) });
+        self.post(TransferInput::AcceptBatch { joint: Box::new(joint), epoch: EPOCH, items, reply });
         let ids: Vec<TransferId> = keys.iter().map(|key| self.state().open_id(key).expect("an element")).collect();
         self.reserve_batch(&ids);
         self.commit();

@@ -236,7 +236,7 @@ fn xfer_orders_idle() {
                 Offline => twin.online(false),
                 Slot => twin.post(TransferInput::SlotFreed),
                 Power => twin.post(TransferInput::PowerSaving(true)),
-                Expire => twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Expire }),
+                Expire => { twin.det.tick(Time(1)); twin.post(TransferInput::Tick { kind: TransferTick::Expire }) },
                 Retry => twin.tick_retry(id),
             };
             assert!(Twin::quiet(&out), "{order:?} at {event:?}: no network, no request, no timer: {out:?}");
@@ -254,7 +254,7 @@ fn xfer_orders_idle() {
             let out = match event {
                 Done::Slot => twin.post(TransferInput::SlotFreed),
                 Done::Online => twin.online(true),
-                Done::Expire => twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Expire }),
+                Done::Expire => { twin.det.tick(Time(1)); twin.post(TransferInput::Tick { kind: TransferTick::Expire }) },
             };
             assert!(Twin::quiet(&out), "{order:?} at {event:?}: nothing to do: {out:?}");
         }

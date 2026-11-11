@@ -5,7 +5,6 @@ use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::{EffectRow, IntentEffects, StoreOp};
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{TransferAnswer, TransferId, TransferInput, TransferStage};
-use crate::runtime::Time;
 
 const KEY: &str = "Message:m1:send";
 const OP_ID: u64 = 7;
@@ -15,7 +14,7 @@ fn effects() -> IntentEffects { IntentEffects { rows: vec![EffectRow { model: "M
 fn accept_input(key: &str, reply: u64) -> TransferInput {
     let mut item = item(key, 2);
     item.mutation.effects = effects();
-    TransferInput::Accept { epoch: EPOCH, item: Box::new(item), reply, now: Time(0) }
+    TransferInput::Accept { epoch: EPOCH, item: Box::new(item), reply }
 }
 
 fn reserving(twin: &mut Twin) -> (TransferId, u64, Out) {
@@ -75,7 +74,7 @@ fn xfer_reserving_batch_wait() {
     let mut second = item("Message:m2:send", 2);
     second.mutation.effects = effects();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply });
     let first = twin.state().open_id(KEY).unwrap();
     let second = twin.state().open_id("Message:m2:send").unwrap();
     let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(first), result: Ok(7) });
@@ -139,7 +138,7 @@ fn xfer_accept_key_open() {
             TransferStage::Accepting => reserved(&mut twin).0,
             TransferStage::Copying => twin.copying(KEY, 2),
             TransferStage::CopyReady => {
-                twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 80, now: Time(0) });
+                twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 80 });
                 let ids = [twin.state().open_id(KEY).unwrap(), twin.state().open_id("Message:m2:send").unwrap()];
                 twin.reserve_batch(&ids);
                 twin.commit();
@@ -160,7 +159,7 @@ fn xfer_accept_key_open() {
                 let mut pending = item(KEY, 1);
                 pending.source = None;
                 pending.steps = None;
-                twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 80, now: Time(0) });
+                twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(pending), reply: 80 });
                 let id = twin.state().open_id(KEY).unwrap();
                 twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
                 twin.commit();
@@ -176,7 +175,7 @@ fn xfer_accept_key_open() {
         assert_eq!((out.writes(), out.outbox.len(), twin.state().transfers.len()), (0, 0, count), "{stage:?}");
         assert_eq!(format!("{:?}", twin.t(id)), before, "{stage:?}");
         if stage != TransferStage::CopyReady {
-            let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
+            let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91 });
             assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "{stage:?}");
             assert_eq!((out.writes(), twin.state().open_id("Message:m2:send")), (0, None));
         }
@@ -287,7 +286,7 @@ fn xfer_accept_batch_replaces_failed_single() {
     let old = ready(&mut twin);
     twin.step_error(old, false);
     twin.commit();
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 91, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item("Message:m2:send", 2)], reply: 91 });
     assert!(out.replies(91).is_empty(), "the failed key must not reject the batch: {:?}", out.replies(91));
     let ids: Vec<_> = out.outbox.iter().filter_map(|input| match input {
         OutboxInput::ReserveOp { target: ReserveTarget::Transfer(id), .. } | OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } => Some(*id),

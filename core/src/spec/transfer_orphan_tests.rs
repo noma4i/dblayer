@@ -368,7 +368,8 @@ fn xfer_singleton_row_upload() {
 
 fn minted_due(twin: &mut Twin, upload_id: &str) -> Out {
     let attempt_id = twin.state().minted_attempt(upload_id).expect("the write of the minted id is owed");
-    twin.post(TransferInput::Tick { now: crate::runtime::Time(1), kind: crate::owners::write::transfer::TransferTick::Minted { upload_id: upload_id.into(), attempt_id } })
+    twin.det.tick(crate::runtime::Time(1));
+    twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Minted { upload_id: upload_id.into(), attempt_id } })
 }
 
 /// xfer_minted_write_storage (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays and nothing is aborted.

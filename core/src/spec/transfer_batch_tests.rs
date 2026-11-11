@@ -7,7 +7,6 @@ use crate::owners::contract::Online;
 use crate::owners::store::{EffectRow, IntentEffects};
 use crate::owners::write::outbox::{Fault, OpSource, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Shown, TransferAnswer, TransferId, TransferInput, TransferStage, SIGNED_ID_SENTINEL};
-use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
@@ -44,7 +43,7 @@ fn xfer_accept_failed_batch_member_remains_in_flight() {
     twin.commit();
     assert_eq!(twin.stage(ids[0]), TransferStage::Failed);
     let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(fielded(KEY)), reply, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(fielded(KEY)), reply });
     assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
     assert_eq!(out.writes(), 0);
     assert_eq!(twin.state().open_id(KEY), Some(ids[0]));
@@ -233,7 +232,7 @@ fn xfer_batch_member_discard() {
     let effects = |row: &str| IntentEffects { rows: vec![EffectRow { model: "Moment".into(), row_id: row.into(), values: "{}".into() }], ..Default::default() };
     let items: Vec<BatchItem> = [(KEY, "r1"), (OTHER, "r2")].iter().map(|(key, row)| BatchItem { mutation: crate::owners::write::outbox::NewOp { effects: effects(row), ..fielded(key).mutation }, ..fielded(key) }).collect();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { joint: Box::new(rules(2, false)), epoch: EPOCH, items, reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(rules(2, false)), epoch: EPOCH, items, reply });
     let ids: Vec<TransferId> = [KEY, OTHER].iter().map(|key| twin.state().open_id(key).unwrap()).collect();
     for (op, id) in [(11, ids[0]), (12, ids[1])] {
         twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(op) });
@@ -379,7 +378,7 @@ fn xfer_accept_batch_length() {
     for keys in [vec![KEY], vec![KEY; 1].into_iter().chain((0..10).map(|_| "Moment:x:upload")).collect::<Vec<_>>()] {
         let items = keys.iter().enumerate().map(|(index, _)| item(&format!("Moment:r{index}:upload"), 1)).collect();
         let reply = twin.reply();
-        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items, reply, now: Time(0) });
+        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items, reply });
         assert_eq!((Twin::fault(&out, reply), out.writes(), out.all_replies()), (Some(Fault::Invalid), 0, 1), "{} elements", keys.len());
     }
     assert!(twin.state().transfers.is_empty());

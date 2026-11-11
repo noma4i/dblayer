@@ -98,7 +98,8 @@ fn xfer_prop_abort_rule() {
     expired.step_ok(id, 1, Some("u1"));
     expired.reject(RejectReason::Storage("disk".into()));
     expired.commit();
-    let out = expired.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    expired.det.tick(Time(8 * DAY));
+    let out = expired.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!(out.orphans_written().len(), 1, "the expiry of a failed upload");
     assert_eq!(expired.commit().orphan_aborts(), vec!["u1".to_string()]);
 }
@@ -129,7 +130,7 @@ fn xfer_prop_epoch() {
     twin.end_epoch();
     let mut outs = vec![twin.online(false), twin.online(true), twin.post(TransferInput::SlotFreed), twin.post(TransferInput::PowerSaving(false))];
     outs.push(twin.tick_retry(id));
-    outs.push(twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(OTHER, 2)), reply: 7, now: Time(0) }));
+    outs.push(twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(OTHER, 2)), reply: 7 }));
     for out in outs {
         assert_eq!((out.steps().len(), out.completes(), out.aborts(), out.copies(), out.writes()), (0, 0, 0, 0, 0), "no request after EpochEnded: {out:?}");
     }
@@ -229,7 +230,8 @@ fn xfer_prop_idle() {
     done.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None });
     done.commit();
     assert_eq!(done.stage(id), TransferStage::Done);
-    for out in [done.post(TransferInput::SlotFreed), done.online(true), done.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Expire })] {
+    done.det.tick(Time(1));
+    for out in [done.post(TransferInput::SlotFreed), done.online(true), done.post(TransferInput::Tick { kind: TransferTick::Expire })] {
         assert!(Twin::quiet(&out), "no transfer, nothing to do: {out:?}");
     }
 }
@@ -261,13 +263,13 @@ fn xfer_prop_batch_all_or_none() {
     let ids = ok.accepted_batch(&keys, 2);
     assert_eq!((count(&ok), ids.iter().all(|id| ok.stage(*id) == TransferStage::Ready)), (3, true));
     let mut rejected = Twin::new();
-    rejected.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    rejected.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5 });
     let ids: Vec<_> = keys.iter().map(|key| rejected.state().open_id(key).unwrap()).collect();
     rejected.reserve_batch(&ids);
     rejected.reject(RejectReason::Storage("disk".into()));
     assert_eq!(count(&rejected), 0);
     let mut failed = Twin::new();
-    failed.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    failed.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5 });
     let ids: Vec<_> = keys.iter().map(|key| failed.state().open_id(key).unwrap()).collect();
     failed.reserve_batch(&ids);
     failed.commit();
@@ -363,7 +365,7 @@ fn xfer_prop_provenance() {
 fn xfer_prop_batch_after_all_copies() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply });
     let ids = [twin.state().open_id(KEY).expect("first"), twin.state().open_id(OTHER).expect("second")];
     twin.reserve_batch(&ids);
     twin.commit();
@@ -375,7 +377,7 @@ fn xfer_prop_batch_after_all_copies() {
     assert_eq!((out.all_replies(), out.steps().len()), (1, 0));
     assert_eq!(twin.commit().steps().len(), 1);
     let mut failing = Twin::new();
-    failing.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9, now: Time(0) });
+    failing.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9 });
     let ids = [failing.state().open_id(KEY).unwrap(), failing.state().open_id(OTHER).unwrap()];
     failing.reserve_batch(&ids);
     failing.commit();

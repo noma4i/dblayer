@@ -20,7 +20,7 @@ use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, Tran
 use super::wire::Wire;
 use crate::store::files::FileDirectories;
 use crate::owners::contract::{Online, ReplyId};
-use crate::runtime::{Address, DetScheduler, EpochStamp, Time};
+use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutFile, PutRequest, Response, TransferIdentity, TransferStep, TransportError};
 
 const EPOCH: u64 = 1;
@@ -123,7 +123,7 @@ impl World {
     }
 
     fn accept_input(&self, key: &str, path: PathBuf, parts: u32) -> TransferInput {
-        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: String::new() }) }), reply: 1, now: Time(0) }
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: String::new() }) }), reply: 1 }
     }
 
     fn post(&mut self, input: TransferInput) {
@@ -149,7 +149,7 @@ impl World {
 
     fn settle(&mut self) {
         let transfers = self.transfers;
-        settle(&mut self.det, &self.spawn, |det| det.post(transfers, EpochStamp::Control, TransferInput::Tick { now: Time(0), kind: TransferTick::Retry { transfer_id: u64::MAX, attempt_id: 0 } }));
+        settle(&mut self.det, &self.spawn, |det| det.post(transfers, EpochStamp::Control, TransferInput::Tick { kind: TransferTick::Retry { transfer_id: u64::MAX, attempt_id: 0 } }));
     }
 
     fn late(&self, prefixes: &[&str]) -> usize {

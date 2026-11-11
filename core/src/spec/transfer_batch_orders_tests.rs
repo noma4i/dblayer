@@ -7,7 +7,6 @@ use super::transfer_harness::*;
 use super::transfer_orders_tests::drain;
 use crate::owners::write::transfer::{BatchItem, Joint, Renumber, TransferAnswer, TransferId, TransferInput, TransferStage, SIGNED_ID_SENTINEL};
 use crate::owners::contract::ReplyId;
-use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
@@ -17,7 +16,7 @@ const FOURTH: &str = "Moment:r4:upload";
 fn batch_twin(keys: &[&str]) -> (Twin, ReplyId, Vec<TransferId>) {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply });
     let ids: Vec<TransferId> = keys.iter().map(|key| twin.state().open_id(key).expect("an element")).collect();
     twin.reserve_batch(&ids);
     twin.commit();

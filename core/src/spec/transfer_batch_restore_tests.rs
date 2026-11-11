@@ -4,7 +4,6 @@ use super::transfer_harness::*;
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::OpSource;
 use crate::owners::write::transfer::{Joint, TransferInput, TransferStage};
-use crate::runtime::Time;
 
 const FIRST: &str = "Moment:r1:upload";
 const SECOND: &str = "Moment:r2:upload";
@@ -25,7 +24,7 @@ fn element(id: u64, key: &str, completed: bool) -> crate::owners::write::transfe
 fn xfer_batch_rule_is_written_with_the_acceptance() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply });
     let ids = [twin.state().open_id(FIRST).unwrap(), twin.state().open_id(SECOND).unwrap()];
     let out = twin.reserve_batch(&ids);
     let rules: Vec<(u64, String)> = out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadBatch { batch_id, joint, .. } = op { Some((*batch_id, joint.clone())) } else { None }).collect();

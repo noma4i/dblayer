@@ -288,11 +288,13 @@ fn xfer_expired() {
     row.created_at = Time(0);
     row.failed_at = Some(Time(2 * DAY));
     let (mut restored, _) = Twin::opened(vec![row], Default::default());
-    let expired = restored.post(TransferInput::Tick { now: Time(9 * DAY + 1), kind: TransferTick::Expire });
+    restored.det.tick(Time(9 * DAY + 1));
+    let expired = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!((restored.stage(2), expired.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
-    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(8 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!((twin.stage(id), out.removed(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], 0));
     twin.commit();
     let (reply, out) = twin.outcome(id, 1);
@@ -303,7 +305,8 @@ fn xfer_expired() {
 fn xfer_not_expired() {
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
-    let out = twin.post(TransferInput::Tick { now: Time(6 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(6 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert!(Twin::quiet(&out), "{out:?}");
     assert_eq!(twin.stage(id), TransferStage::Failed);
 }
@@ -315,15 +318,18 @@ fn xfer_expiry_exact_week_keeps() {
     row.created_at = Time(0);
     row.failed_at = Some(Time(2 * DAY));
     let (mut restored, _) = Twin::opened(vec![row], Default::default());
-    let kept = restored.post(TransferInput::Tick { now: Time(9 * DAY), kind: TransferTick::Expire });
+    restored.det.tick(Time(9 * DAY));
+    let kept = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert!(Twin::quiet(&kept));
     assert_eq!(restored.stage(2), TransferStage::Failed);
     let mut twin = Twin::new();
     let id = twin.failed(KEY);
-    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(7 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert!(Twin::quiet(&out), "{out:?}");
     assert_eq!(twin.stage(id), TransferStage::Failed);
-    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY + 1), kind: TransferTick::Expire });
+    twin.det.tick(Time(7 * DAY + 1));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "one millisecond over the week expires");
 }
 
@@ -335,7 +341,8 @@ fn xfer_failed_no_failed_at_never_expires() {
     row.created_at = Time(0);
     let (mut twin, _) = Twin::opened(vec![row], Default::default());
     assert_eq!(twin.stage(1), TransferStage::Failed);
-    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(8 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert!(Twin::quiet(&out), "a Failed row that never recorded a failure time does not expire from created_at: {out:?}");
     assert_eq!(twin.stage(1), TransferStage::Failed);
 }
@@ -394,7 +401,7 @@ fn xfer_closing_copying() {
     assert_eq!((twin.stage(id), out.copy_cancels(), out.deletes(), out.drained()), (TransferStage::Done, 1, 1, 1));
     assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
     let mut batch = Twin::new();
-    batch.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
+    batch.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5 });
     let ids = [batch.state().open_id(KEY).expect("first"), batch.state().open_id(OTHER).expect("second")];
     batch.reserve_batch(&ids);
     batch.commit();
@@ -589,9 +596,11 @@ fn xfer_expiry_counts_from_failed_at() {
     twin.det.tick(Time(6 * DAY));
     twin.step_error(id, false);
     twin.commit();
-    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(8 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert!(Twin::quiet(&out) && twin.stage(id) == TransferStage::Failed, "two days after the failure the transfer is kept: {out:?}");
-    let out = twin.post(TransferInput::Tick { now: Time(13 * DAY + 1), kind: TransferTick::Expire });
+    twin.det.tick(Time(13 * DAY + 1));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "a week and a millisecond after the failure it expires");
 }
 

@@ -230,8 +230,7 @@ fn xfer_put_timeout() {
     twin.online(true);
     let attempt = twin.attempt(id);
     let armed = twin.commit();
-    let now = twin.state().now;
-    let expected = TransferInput::Tick { now, kind: TransferTick::PutTimeout { transfer_id: id, attempt_id: attempt } };
+    let expected = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id: attempt } };
     assert_eq!(armed.schedules, vec![(UploadConfig::default().put_timeout, format!("{expected:?}"))], "the step arms one timeout of its attempt");
     let out = twin.put_timeout(id, attempt);
     assert_eq!((twin.stage(id), twin.t(id).attempts, twin.t(id).waiting_retry, out.timers, out.cancel_steps()), (TransferStage::Uploading, 1, true, 1, 1));
@@ -261,7 +260,8 @@ fn xfer_put_timeout_other() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     let attempt = twin.attempt(id);
-    let wrong = |transfer_id, attempt_id| TransferInput::Tick { now: Time(1), kind: TransferTick::PutTimeout { transfer_id, attempt_id } };
+    let wrong = |transfer_id, attempt_id| TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id, attempt_id } };
+    twin.det.tick(Time(1));
     twin.ignores(id, vec![wrong(id, attempt + 1), wrong(id + 77, attempt)]);
     let mut completing = Twin::new();
     let id = completing_multipart(&mut completing, OTHER);
@@ -348,10 +348,12 @@ fn xfer_step_tick() {
 fn xfer_step_tick_other() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    twin.ignores(id, vec![TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) } }]);
+    twin.det.tick(Time(1));
+    twin.ignores(id, vec![TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) } }]);
     twin.step_error(id, true);
-    let wrong = TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1 } };
-    twin.ignores(id, vec![wrong, TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id + 77, attempt_id: twin.attempt(id) } }]);
+    twin.det.tick(Time(1));
+    let wrong = TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1 } };
+    twin.ignores(id, vec![wrong, TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id + 77, attempt_id: twin.attempt(id) } }]);
 }
 
 #[test]
@@ -568,7 +570,8 @@ fn xfer_complete_tick() {
     assert_eq!(out.completes(), 0);
     assert_eq!(twin.commit().completes(), 1);
     assert_ne!(twin.attempt(id), first);
-    twin.ignores(id, vec![TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) } }]);
+    twin.det.tick(Time(1));
+    twin.ignores(id, vec![TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) } }]);
 }
 
 #[test]

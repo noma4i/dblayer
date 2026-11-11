@@ -19,7 +19,7 @@ fn item(key: &str, parts: u32) -> crate::owners::write::transfer::BatchItem {
 
 fn accept(twin: &mut Twin, key: &str, parts: u32) -> (TransferId, u64, Out) {
     let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply });
     let id = twin.state().open_id(key).expect("a transfer with no target row is accepted");
     (id, reply, out)
 }
@@ -115,12 +115,12 @@ fn xfer_accept_check_order_without_row() {
     let invalid = || { let mut broken = item(KEY, 2); broken.source.as_mut().unwrap().path.clear(); Box::new(broken) };
     let mut closing = Twin::new();
     closing.close();
-    let out = closing.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 7, now: Time(0) });
+    let out = closing.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 7 });
     assert_eq!(Twin::fault(&out, 7), Some(Fault::Closed), "Closed first among Closed, NoSession and Invalid");
     let mut twin = Twin::new();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 8, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 8 });
     assert_eq!(Twin::fault(&out, 8), Some(Fault::NoSession), "NoSession before Invalid");
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: invalid(), reply: 9, now: Time(0) });
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: invalid(), reply: 9 });
     assert_eq!((Twin::fault(&out, 9), out.writes(), twin.state().open_id(KEY)), (Some(Fault::Invalid), 0, None), "Invalid, never a missing row");
 }
 
@@ -208,7 +208,8 @@ fn xfer_rowless_orphan() {
 fn xfer_rowless_failed_expiry() {
     let mut twin = Twin::new();
     let id = failed(&mut twin, KEY);
-    let out = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
+    twin.det.tick(Time(8 * DAY));
+    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.deletes()), (TransferStage::Done, 1), "the copy goes with the transfer");
@@ -219,7 +220,7 @@ fn xfer_rowless_group() {
     let mut twin = Twin::new();
     let reply = twin.reply();
     let keys = ["Moment:r1:upload", OTHER];
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply });
     assert_eq!(Twin::fault(&out, reply), None, "a group whose targets do not exist is accepted");
     let ids: Vec<TransferId> = keys.iter().map(|key| twin.state().open_id(key).expect("an element")).collect();
     assert_ne!(ids[0], ids[1], "separate transfers");

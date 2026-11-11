@@ -439,8 +439,9 @@ fn xfer_waiting_declaration_other() {
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
         TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None } },
-        TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
+        TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
+    twin.det.tick(Time(1));
     twin.ignores(1, inputs);
 }
 
@@ -667,7 +668,8 @@ fn xfer_expired_failed_reopen_in_every_order() {
             aborts.extend(out.orphan_aborts());
             removed += out.removed().len();
             if out.timers > 0 {
-                let expiry = twin.post(TransferInput::Tick { now: Time(8 * DAY), kind: crate::owners::write::transfer::TransferTick::Expire });
+                twin.det.tick(Time(8 * DAY));
+                let expiry = twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire });
                 removed += expiry.removed().len();
                 aborts.extend(expiry.orphan_aborts());
             }
@@ -730,7 +732,7 @@ fn xfer_prop_restored_failed_keeps_failed_at() {
                     Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: BTreeMap::from([(1, BTreeMap::from([(1, outcome.clone())]))]), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                     Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
                     Online => twin.online(true),
-                    Expire => twin.post(TransferInput::Tick { now: Time(NOW), kind: crate::owners::write::transfer::TransferTick::Expire }),
+                    Expire => { twin.det.tick(Time(NOW)); twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire }) },
                 };
                 for (written, _) in out.rows() {
                     assert_eq!(written.failed_at, Some(FAILED_AT), "{order:?} {kind:?} {event:?}: stored failure time changed");
