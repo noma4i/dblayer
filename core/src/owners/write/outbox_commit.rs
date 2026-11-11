@@ -59,7 +59,7 @@ impl OutboxState {
         match (kind, stage) {
             (CommitKind::Intent, Stage::Submitting) => {
                 let shown = shown.into_iter().last().flatten();
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown.clone_from(&shown); }
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown.clone_from(&shown); operation.attempt_unsent = true; }
                 let receipt = OutboxAnswer::Receipt(Receipt { optimistic: shown, ..self.receipt(op_id, revision) });
                 if let Some(reply) = self.submit_replies.remove(&op_id) {
                     Self::reply(fx, reply, receipt.clone());
@@ -77,6 +77,7 @@ impl OutboxState {
             (CommitKind::Attempt, Stage::PersistingAttempt) => {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.attempts += 1;
+                    operation.attempt_unsent = true;
                 }
                 if self.online && !self.row_busy(op_id) {
                     self.start_sending(op_id, fx);
@@ -153,6 +154,7 @@ impl OutboxState {
                 let mut transfer_ids = Vec::new();
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.error = None;
+                    operation.attempt_unsent = true;
                     if !operation.pending_owned { operation.request_id = crate::owners::contract::next_request_id(); }
                     transfer_ids = std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect();
                 }

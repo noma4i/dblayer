@@ -328,6 +328,8 @@ pub struct QueuedOperation {
     pub sends: u32,
     /// A `Mutate` of this operation left in this cycle.
     pub sent: bool,
+    /// The recorded attempt has not sent its `Mutate` yet: a start sends it without a new attempt batch (P-OUT-61).
+    pub attempt_unsent: bool,
     /// An unresolved `encrypted_pending` of `request_id` exists: `Restored.pending` and `pending_retained = true` set it, `pending_retained = false` clears it.
     pub pending_owned: bool,
     pub pair_in_flight: bool,

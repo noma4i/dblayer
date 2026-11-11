@@ -36,6 +36,7 @@ impl OutboxState {
             operation.cause_stored = cause;
             operation.cycle_id = cycle_id.max(1);
             operation.sent = pending.is_some() || attempts == 0;
+            operation.attempt_unsent = pending.is_none() && attempts >= 1;
         }
         if pending_lost {
             return self.restored_failed(op_id, "StateLost".into());

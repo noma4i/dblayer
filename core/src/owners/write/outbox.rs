@@ -293,6 +293,7 @@ impl OutboxState {
                 sequence,
                 sends: 0,
                 sent: false,
+                attempt_unsent: false,
                 pending_owned: false,
                 pair_in_flight: false,
                 waiting_retry: false,
@@ -327,6 +328,7 @@ impl OutboxState {
         Self::resolve_operation(&self.aliases, &mut operation.op);
         operation.sends += 1;
         operation.sent = true;
+        operation.attempt_unsent = false;
         operation.pair_in_flight = true;
         operation.waiting_retry = false;
         let purpose = if matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
@@ -583,12 +585,12 @@ impl OutboxState {
         if self.slots_taken() >= DRAIN_LIMIT {
             return;
         }
-        if !operation.sent && operation.attempts >= 1 {
-            if self.phase == Phase::Ready { self.start_sending(op_id, fx); }
-        } else if operation.attempts < ATTEMPT_LIMIT {
-            self.begin_attempt(op_id, fx);
-        } else {
+        if operation.attempts >= ATTEMPT_LIMIT {
             self.fail_exhausted(op_id, fx);
+        } else if operation.attempt_unsent {
+            if self.phase == Phase::Ready { self.start_sending(op_id, fx); }
+        } else {
+            self.begin_attempt(op_id, fx);
         }
     }
 
