@@ -85,3 +85,4 @@ mod scope_channel_tests;
 mod typing_channel_tests;
 
 mod two_ops_tests;
+mod write_reds_tests;
