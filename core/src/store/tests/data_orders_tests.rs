@@ -228,7 +228,7 @@ fn data_orders_removed_member_and_a_reused_order_key() {
         let first = crate::value::fractional_between(None, None).unwrap();
         let second = crate::value::fractional_between(Some(&first), None).unwrap();
         let append = |id: &str, key: &str| {
-            let mut envelope = BatchPlan::from_server(db.generation());
+            let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::fixtures::id(id), order_key: key.into() });
             db.commit(envelope).unwrap();
         };
@@ -270,7 +270,7 @@ fn data_orders_children_of_a_pointer_in_every_path() {
                     "event" => write_chat(&db, BatchAuthor::Feed, vec![("messages".into(), json!({"op": "upsert", "id": id, "row": {"id": id, "chatId": "c1", "body": id, "createdAt": at}}).to_string())], Vec::new()),
                     "page" => {
                         let key = WindowKey::nodes("messages", &[id]);
-                        write_chat(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message(id, *at)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+                        write_chat(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message(id, *at)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
                     }
                     _ => write_chat(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message(id, *at)] }]),
                 }

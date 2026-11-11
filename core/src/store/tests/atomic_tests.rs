@@ -16,7 +16,7 @@ fn store_prop_expiry_any_author() {
     let mut previous = None;
     for author in [BatchAuthor::Window, BatchAuthor::Feed, BatchAuthor::Outbox, BatchAuthor::LocalWrites] {
         let (rows, ops) = match author {
-            BatchAuthor::Window => (Vec::new(), vec![StoreOp::Window { landed_at: 0, key: crate::owners::read::windows::WindowKey::nodes("presence", &["p1"]).name, model: "presence".into(), page: 1, replace_all: false, cursor: None, roots: vec![row.clone()], related: Vec::new(), total: None, base_revision: 0 }]),
+            BatchAuthor::Window => (Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: crate::owners::read::windows::WindowKey::nodes("presence", &["p1"]).name, model: "presence".into(), page: 1, replace_all: false, cursor: None, roots: vec![row.clone()], related: Vec::new(), total: None, base_revision: 0 }]),
             BatchAuthor::Feed => (vec![("presence".into(), serde_json::json!({"op":"upsert", "id":"p1", "row":{"id":"p1","room":"r1"}}).to_string())], Vec::new()),
             BatchAuthor::Outbox => (Vec::new(), vec![StoreOp::Rows { model: "presence".into(), rows: vec![row.clone()] }]),
             BatchAuthor::LocalWrites => (Vec::new(), vec![StoreOp::LocalRows { model: "presence".into(), rows: vec![row.clone()] }]),

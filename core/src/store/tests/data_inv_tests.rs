@@ -363,7 +363,7 @@ pub(super) fn server_row(path: &str, db: &Store, row: Value) {
         "event" => write(db, BatchAuthor::Feed, vec![("moments".into(), json!({"op": "upsert", "id": "m1", "row": row}).to_string())], Vec::new()),
         _ => {
             let key = crate::owners::read::windows::WindowKey::nodes("moments", &["m1"]);
-            let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: row.to_string() }], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+            let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: row.to_string() }], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
             write(db, BatchAuthor::Window, Vec::new(), vec![page]);
         }
     }
@@ -458,7 +458,7 @@ fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &row(j
 fn mine_page(db: &Store, user: &str, ids: &[&str], cursor: Option<&str>, replace_all: bool) -> StoreOp {
     let key = mine(user);
     let roots = ids.iter().map(|id| crate::owners::store::RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": user, "text": id}).to_string() }).collect();
-    StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+    StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn members(db: &Store, user: &str) -> Vec<String> {
@@ -549,7 +549,7 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let first = crate::value::fractional_between(None, None).unwrap();
     let second = crate::value::fractional_between(Some(&first), None).unwrap();
     let append = |db: &Store, id: &str, key: &str| {
-        let mut envelope = BatchPlan::from_server(db.generation());
+        let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::fixtures::id(id), order_key: key.into() });
         db.commit(envelope).unwrap();
     };

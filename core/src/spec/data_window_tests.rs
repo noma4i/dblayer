@@ -267,7 +267,7 @@ fn created_window_membership_uses_the_committed_window() {
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     };
-    commit(BatchAuthor::Window, vec![StoreOp::Window { landed_at: 0,
+    commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
         key: key.name, model: key.model, page: 1, replace_all: false, cursor: None,
         roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
     }]);
@@ -306,7 +306,7 @@ fn data_matches_window() {
     };
     for minimum in [5, 10] {
         let key = WindowKey::relation("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap());
-        commit(BatchAuthor::Window, vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+        commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
     }
     let ids = |minimum| {
         let query = db.remote_relation_query("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap()).unwrap().unwrap();
@@ -351,7 +351,7 @@ fn data_membership_window_leave() {
     for (shelf, held) in [("A", [json!(["m1"]), json!([])]), ("B", [json!([]), json!(["m1"])])] {
         let key = WindowKey::relation("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap());
         let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
-        let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
         db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
         assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
@@ -401,7 +401,7 @@ mod by_source {
         pub(super) fn page(&self, name: &str, params: &serde_json::Map<String, Value>, roots: Vec<Value>) {
             let key = WindowKey::relation("Moment", name, params);
             let roots = roots.into_iter().map(|row| RowValue { row_id: row["id"].as_str().unwrap().into(), values: row.to_string() }).collect();
-            let op = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: self.db.revision_seq().unwrap() };
+            let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: self.db.revision_seq().unwrap() };
             self.commit(BatchAuthor::Window, Vec::new(), vec![op]);
         }
 
@@ -425,7 +425,7 @@ mod by_source {
                 "create" => {
                     let planned = self.db.plan_create("Moment", json!({"text":"t", "groupId":"g"}).as_object().unwrap().clone(), Default::default()).unwrap();
                     let id = planned.row_id.to_string();
-                    let op = StoreOp::Intent { attempts: 1, cycle_id: 1, op_id: self.batch.get() + 1, model: "Moment".into(), row_id: id.clone(), action: "create".into(), payload: "{}".into(), effects: planned.effects, origin: IntentOrigin::Api };
+                    let op = StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: self.batch.get() + 1, model: "Moment".into(), row_id: id.clone(), action: "create".into(), payload: "{}".into(), effects: planned.effects, origin: IntentOrigin::Api };
                     self.commit(BatchAuthor::Outbox, Vec::new(), vec![op]);
                     return id;
                 }

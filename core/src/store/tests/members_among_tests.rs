@@ -13,7 +13,7 @@ fn steps_to_find_stored_members(size: usize) -> i32 {
     let query = db.remote_relation_query("messages", "thread", json!({"chatId": CHAT}).as_object().unwrap()).unwrap().unwrap();
     let key = query.scope.clone().unwrap();
     let scope = ScopeRef::new(ModelKey::new("messages"), key.clone());
-    let mut envelope = BatchPlan::from_server(db.generation());
+    let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
     for index in 0..size {
         let id = RowId::new(&format!("m{index:05}")).unwrap();
         let row = json!({"id": id.as_str(), "chatId": CHAT, "sequenceNumber": index, "createdAt": "2026-01-01T00:00:00.000Z"}).as_object().unwrap().clone();

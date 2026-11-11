@@ -26,7 +26,7 @@ fn nodes_batch(store: &Store, roots: &[(&str, &str)]) -> StoreBatch {
     let ids: Vec<&str> = roots.iter().map(|(id, _)| *id).collect();
     let key = WindowKey::nodes("moments", &ids);
     let roots = roots.iter().map(|(id, text)| RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": text}).to_string() }).collect();
-    let page = StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: store.revision_seq().unwrap() };
+    let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: store.revision_seq().unwrap() };
     StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] }
 }
 

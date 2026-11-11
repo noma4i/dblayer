@@ -321,7 +321,7 @@ fn win_orders_nodes_answers() {
         }
         for index in order.iter().copied() {
             let roots = answers[index].iter().map(|id| RowValue { row_id: (*id).into(), values: serde_json::json!({"id": id, "userId": "u1", "text": format!("served {id}")}).to_string() }).collect();
-            let page = StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+            let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
             let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
             db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
         }

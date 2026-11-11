@@ -38,7 +38,7 @@ fn data_sets_every_write() {
     write(&db, BatchAuthor::Feed, vec![("messages".into(), event)], Vec::new());
     assert_eq!(chat(&db), json!(["m2", 2]), "an event");
     let key = WindowKey::nodes("messages", &["m3"]);
-    write(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m3", 3)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m3", 3)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
     assert_eq!(chat(&db), json!(["m3", 3]), "a page");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m4", 4)] }]);
     assert_eq!(chat(&db), json!(["m4", 4]), "the answer of a mutation");

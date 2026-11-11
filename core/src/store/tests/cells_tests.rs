@@ -94,7 +94,7 @@ fn store_url_small_file_cached() {
 fn page(db: &Store, relation: &str, rows: &[(&str, Value)], replace_all: bool) -> StoreOp {
     let key = WindowKey::relation("moments", relation, &row(json!({})));
     let roots = rows.iter().map(|(id, edge)| RowValue { row_id: (*id).into(), values: json!({"id": id, "text": "same", "@edge": edge}).to_string() }).collect();
-    StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+    StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn edges(db: &Store, ids: &[&str]) -> Value {

@@ -35,7 +35,7 @@ fn data_server_revision_drops_older() {
     write(&db, BatchAuthor::Feed, vec![event(&doc(4, "older event"))], Vec::new());
     assert_eq!(text(&db), json!("first"), "an event below it is dropped");
     let key = WindowKey::nodes("docs", &["d1"]);
-    let page = |row: RowValue, base: i64| vec![StoreOp::Window { landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: base }];
+    let page = |row: RowValue, base: i64| vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: base }];
     write(&db, BatchAuthor::Window, Vec::new(), page(doc(2, "older page"), db.revision_seq().unwrap()));
     assert_eq!(text(&db), json!("first"), "a page below it is dropped");
     write(&db, BatchAuthor::Outbox, Vec::new(), rows(doc(5, "equal")));
@@ -56,7 +56,7 @@ fn open_moments() -> Arc<Store> {
 fn moment_page(db: &Store, text: &str) -> StoreOp {
     let key = WindowKey::nodes("moments", &["m1"]);
     let root = RowValue { row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": text}).to_string() };
-    StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![root], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+    StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![root], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn moment_text(db: &Store) -> Value {

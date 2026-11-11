@@ -14,7 +14,7 @@ fn win_store_landed_at_uses_response_time() {
     let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, clock.clone()).unwrap();
     let params = serde_json::json!({"chatId":"c1"}).as_object().unwrap().clone();
     let key = WindowKey::relation("messages", "thread", &params);
-    let page = StoreOp::Window { landed_at: 100, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+    let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 100, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
     clock.advance(Duration::from_millis(500));
     db.write_queue_ops(&[page]).unwrap();
     let read = || db.lock().connection.query_row("SELECT landed_at FROM query_window", [], |row| row.get::<_, i64>(0)).unwrap();
@@ -43,7 +43,7 @@ fn win_page_cover_to_end_server_order_only() {
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
-        let page = |page, ids: &[(&str, i64)], cursor: Option<&str>| StoreOp::Window { landed_at: 0,
+        let page = |page, ids: &[(&str, i64)], cursor: Option<&str>| StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
             key: key.name.clone(), model: key.model.clone(), page, replace_all: false, cursor: cursor.map(str::to_string),
             roots: ids.iter().map(|(id, seq)| RowValue { row_id: (*id).into(), values: json!({"id": id, "chatId":"c1", "sequenceNumber":seq}).to_string() }).collect(),
             related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
@@ -72,7 +72,7 @@ fn store_ordered_page_open_interval() {
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
-        let page = |rows: &[(&str, i64)], page, cursor: Option<&str>| StoreOp::Window { landed_at: 0,
+        let page = |rows: &[(&str, i64)], page, cursor: Option<&str>| StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
             key: key.name.clone(), model: key.model.clone(), page, replace_all: false, cursor: cursor.map(str::to_string),
             roots: rows.iter().map(|(id, seq)| RowValue { row_id: (*id).into(), values: json!({"id": id, "chatId":"c1", "sequenceNumber":seq}).to_string() }).collect(),
             related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
@@ -234,7 +234,7 @@ fn win_page_admission_query_work() {
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();
-        let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         PAGE_ADMISSION_QUERIES.with(|count| count.set(0));
         db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_page_admission));
         db.write_queue_ops(&[page]).unwrap();
@@ -264,7 +264,7 @@ fn win_page_tombstone_query_work() {
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();
-        let page = StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         PAGE_TOMBSTONE_QUERIES.with(|count| count.set(0));
         db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_page_tombstones));
         db.write_queue_ops(&[page]).unwrap();

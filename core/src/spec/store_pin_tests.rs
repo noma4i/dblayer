@@ -110,7 +110,7 @@ fn store_prop_tombstone_flight() {
     db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "cover".into(), bytes: b"other".to_vec(), name: "other.txt".into(), mime: "text/plain".into() }], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
     let key = WindowKey::nodes("moments", &["m1"]);
-    db.write_queue_ops_with_pin(&[StoreOp::Window { landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
+    db.write_queue_ops_with_pin(&[StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_none());
     step(&mut owner, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(WriteDone { revision: u64::try_from(db.revision_seq().unwrap()).unwrap(), ..WriteDone::default() }) });
     step(&mut owner, StoreInput::Unpin { request_id: 7 });

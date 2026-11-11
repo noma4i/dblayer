@@ -18,7 +18,7 @@ fn scope_of(db: &Store) -> (ScopeRef, ListKey) {
 }
 
 fn land(db: &Store, scope: &ScopeRef, rows: &[(&str, serde_json::Value)], append: &[&str]) {
-    let mut envelope = BatchPlan::from_server(db.generation());
+    let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
     for (id, sequence) in rows {
         let row = json!({"id": id, "chatId": CHAT, "sequenceNumber": sequence, "createdAt": "2026-01-01T00:00:00.000Z"}).as_object().unwrap().clone();
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: RowId::new(id).unwrap(), row });

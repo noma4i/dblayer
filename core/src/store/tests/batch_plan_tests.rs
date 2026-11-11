@@ -28,7 +28,7 @@ fn touch(id: &str) -> EntityOp {
 }
 
 fn envelope() -> BatchPlan {
-    BatchPlan::from_server(Generation::INITIAL)
+    BatchPlan::from_source(Generation::INITIAL, crate::schema::RowSource::Event)
 }
 
 #[test]
