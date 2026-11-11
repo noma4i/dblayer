@@ -2,7 +2,7 @@ use crate::store::Store;
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{AuthorOutcome, Credential, OperationClass, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionOperation, SessionPhase, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
+use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 fn send(det: &mut DetScheduler, address: Address<SessionCalls>, log: &Log<SessionEffect>, input: SessionInput) -> Vec<SessionEffect> {
     det.post(address, EpochStamp::Control, input);
@@ -66,7 +66,7 @@ fn sess_generating_other() {
         let before = det.state(address).unwrap().phase().clone();
         assert!(matches!(before, SessionPhase::Generating { .. } | SessionPhase::Storing { .. }));
         let inputs = [
-            SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick(Time(0)),
+            SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick,
             SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None, kind: crate::transport::AnswerKind::Answered { sequence: None } },
             SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into(), author_ref: None, epoch: 0 },
             SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None },

@@ -5,7 +5,7 @@ use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Publish
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
 use crate::owners::session::Landed;
 use crate::spec::support::{new_log, take, Log, Recorder};
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
+use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 use crate::transport::SessionCode;
 
 const EPOCH: u64 = 3;
@@ -269,7 +269,7 @@ impl Twin {
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0 }),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: resolve(batch), reason: reject(reason) }),
-            Input::Tick => SessionInput::Tick(Time(0)),
+            Input::Tick => SessionInput::Tick,
             Input::Online(online) => SessionInput::Online(Online(online)),
             Input::Snapshot { epoch, online } => SessionInput::Snapshot { epoch, online },
             Input::Published { epoch, identity, state } => SessionInput::Published(Published { epoch, identity, generation: 0, state: published_state(state), closed: false }),
