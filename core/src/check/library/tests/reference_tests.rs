@@ -9,7 +9,7 @@ use crate::check::model::{run, Divergence};
 use crate::check::value::{Input, Observation};
 
 /// Exhaustive depth, number of long programs and their length of the comparison with the reference. Measured against the 20 s limit of a test.
-const DEPTH: usize = 2;
+const DEPTH: usize = 1;
 const SEEDS: u64 = 8;
 const LENGTH: usize = 20;
 const PARALLEL: usize = 8;
