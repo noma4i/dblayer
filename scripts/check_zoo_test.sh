@@ -291,4 +291,7 @@ at_red core/src/owners/read/deliveries/flow.rs 'struct Stream { window_phase: Wi
 at_red core/src/owners/read/feed_codec.rs 'fn rows(event: &Value) { let joins = joins_of(event); }'
 at_red core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(RejectReason::Invalid) => stale(), _ => {}, } }'
 at_green core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(_) => stale(), None => {} } }'
+at_red core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(RejectReason::Invalid) => stale(), _ => {} } }'
+at_red core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(RejectReason::Invalid) => stale(), _ => () } }'
+at_green core/src/owners/read/feed/state.rs 'fn verdict(rejected: Option<RejectReason>) { match rejected { Some(_) => stale(), None => {} } } fn ready(mode: Mode) { match mode { Mode::Live => go(), _ => {} } }'
 echo "check_zoo_test: ok"

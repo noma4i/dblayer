@@ -560,12 +560,19 @@ for path in files:
             findings.append(f"Z45 every window machine opens by reading its saved window (ensure), none is made without the read: {path.relative_to(root)}:{number}")
 
 feed_time = "Z46 Feed takes the time of its step, no input of Feed carries a time and no owner rewrites a due input"
-silent_refusal = "Z57 the verdict of a Feed batch names every refusal of the Store, no default arm swallows a new one"
-for target, pattern, rule in ((source / "runtime" / "owner.rs", r"\bfn due\(", feed_time), (source / "owners" / "read" / "feed" / "mod.rs", r"\bnow: Time\b", feed_time), (source / "owners" / "read" / "feed" / "state.rs", r"(?<!\w)_ => \{\},", silent_refusal)):
+for target, pattern, rule in ((source / "runtime" / "owner.rs", r"\bfn due\(", feed_time), (source / "owners" / "read" / "feed" / "mod.rs", r"\bnow: Time\b", feed_time)):
     if not target.exists(): continue
     for number, line in enumerate(target.read_text().splitlines(), 1):
         if re.search(pattern, line):
             findings.append(f"{rule}: {target.relative_to(root)}:{number}")
+feed_state = source / "owners" / "read" / "feed" / "state.rs"
+if feed_state.exists():
+    text = feed_state.read_text().replace("fn verdict(", "enum verdict(")
+    body = enum_body(text, "verdict")
+    start = text.find(body) if body else -1
+    for found in re.finditer(r"(?<!\w)_\s*=>", body):
+        number = text.count("\n", 0, start + found.start()) + 1
+        findings.append(f"Z57 the verdict of a Feed batch names every refusal of the Store, no default arm swallows a new one: {feed_state.relative_to(root)}:{number}")
 
 deliveries = source / "owners" / "read" / "deliveries" / "mod.rs"
 if deliveries.exists():
