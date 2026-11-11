@@ -275,4 +275,18 @@ at_red core/src/store/apply/apply_rows.rs 'pub(super) fn declared_membership(con
 at_red core/src/store/apply/apply_rows.rs 'pub(super) fn membership_moves(info: &ModelInfo, plan: &crate::store::BatchPlan, moves: &mut Vec<ScopeOp>) {
     if plan.from_page { return; }
 }'
+at_red core/src/owners/read/deliveries/open.rs 'fn open(opened_at: i64) {}'
+at_red core/src/owners/read/windows/windows_types.rs 'pub enum WindowsInput { Load { key: WindowKey, now: i64 } }'
+at_green core/src/owners/read/windows/windows_types.rs "pub(super) struct Ctx<'a> { pub(super) now: i64, }"
+at_red core/src/runtime/owner.rs 'pub trait StateOwner { fn due(input: &Self::Input) -> bool; }'
+at_red core/src/owners/read/feed/mod.rs 'pub enum FeedInput { Event { now: Time } }'
+at_red core/src/owners/read/deliveries/mod.rs 'pub enum DeliveryInput { Load { stream: StreamId, now: Time } }'
+at_red core/src/ffi/write.rs 'fn write(life: &Life) { let at = life.now(); }'
+at_red core/src/owners/life/read.rs 'fn make(wiring: &Wiring) { let at = wiring.now(); }'
+at_red core/src/owners/read/windows/flow.rs 'fn go(window: &mut Window) { window.set_phase(Phase::Loaded); }'
+at_red core/src/store/apply/plan.rs 'fn a(plan: &BatchPlan) { plan.validate(); }
+fn b(plan: &BatchPlan) { plan.validate(); }'
+at_green core/src/store/apply/plan.rs 'fn a(plan: &BatchPlan) { plan.validate(); }'
+at_red core/src/owners/read/deliveries/flow.rs 'struct Stream { window_phase: WindowPhase }'
+at_red core/src/owners/read/feed_codec.rs 'fn rows(event: &Value) { let joins = joins_of(event); }'
 echo "check_zoo_test: ok"
