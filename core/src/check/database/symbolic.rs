@@ -70,7 +70,12 @@ fn page_body(held: &Held, rows: u64, more: bool) -> Value {
 impl DatabaseSut {
     /// The stand in symbolic mode.
     pub fn symbolic() -> Self {
-        Self { symbolic: Some(Symbolic { hidden: vec!["subscription"], ..Symbolic::default() }), ..Self::default() }
+        Self::symbolic_hiding(vec!["subscription"])
+    }
+
+    /// The stand in symbolic mode that does not show and does not number the requests of the given kinds (the slice L-feed shows them).
+    pub fn symbolic_hiding(hidden: Vec<&'static str>) -> Self {
+        Self { symbolic: Some(Symbolic { hidden, ..Symbolic::default() }), ..Self::default() }
     }
 
     /// Removes the temporary directory of the database file.
