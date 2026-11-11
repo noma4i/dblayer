@@ -6,30 +6,40 @@ use crate::check::model::Property;
 use crate::check::value::{Observation, Step};
 
 /// Fresh-window lifetime of the stand schema (`stale_time` 5 minutes, the same for an empty page).
-const LIFETIME_MS: u64 = 300_000;
+const LIFETIME_MS: i64 = 300_000;
 
 /// window.md win_loading_temp_error: a retryable failure waits for `Retry` while the attempts are below the limit (network 3, server 2).
 const NETWORK_ATTEMPTS: u32 = 3;
 const SERVER_ATTEMPTS: u32 = 2;
 
-const LOADS: [(&str, &str); 6] = [("begin_load", "loaded"), ("refresh", "refreshed"), ("load_more", "more"), ("begin_load_all", "loaded_all"), ("node", "node"), ("nodes", "nodes")];
+const LOADS: [&str; 6] = ["begin_load", "refresh", "load_more", "begin_load_all", "node", "nodes"];
 const REFUSALS: [&str; 11] = ["already_open", "no_request", "not_open", "unknown_stream", "unknown_target", "arguments", "online", "open", "operations", "frame", "file"];
 const READS: [&str; 5] = ["begin_load", "refresh", "load_more", "begin_load_all", "node"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Rule {
+    /// I2: a fresh window without a Stale sign is not requested again.
     Fresh,
+    /// I2b: a Stale sign allows 1 more first-page load.
+    FreshStale,
+    /// I7: a load has exactly one outcome.
     Outcomes,
+    /// I9: inputs that ask for nothing send nothing.
     Quiet,
+    /// I12: no identity, no request, NoSession at once.
     NoSession,
+    /// I13: no network, no request; the return rereads the windows the rule names.
     Network,
 }
 
 #[derive(Default, Clone)]
 struct Window {
-    landed: Option<u64>,
+    landed: Option<i64>,
     failed: bool,
     lost: bool,
+    /// Stale signs seen, and the extra first-page loads they still allow.
+    signs: u32,
+    allowance: u32,
 }
 
 struct Interest {
@@ -42,16 +52,17 @@ struct Request {
     first_page: bool,
 }
 
-/// The state a reader of the trace can know: the clock moved by the ticks, the network flag, the session, the requests the mock holds, the landed windows and the open streams.
+/// The state a reader of the trace can know: the clock moved by the ticks and `clock_back`, the network flag, the session, the requests the mock holds, the landed windows and the open streams.
 #[derive(Default)]
-struct Trace {
-    now: u64,
+struct Walk {
+    now: i64,
+    back: i64,
     online: bool,
     is_open: bool,
     logged: bool,
-    ever_logged: bool,
+    subscriptions: u32,
     held: Vec<(String, String)>,
-    pending: Vec<&'static str>,
+    pending: Vec<String>,
     streaks: HashMap<String, (u32, u32)>,
     windows: HashMap<String, Window>,
     streams: HashMap<String, Interest>,
@@ -85,200 +96,11 @@ fn operation_of(relation: &str) -> Option<&'static str> {
     }
 }
 
-/// The load outcomes a request of the operation can end.
-fn served_by(operation: &str) -> &'static [&'static str] {
-    match operation {
-        "MomentsFeed" | "ContainerMembers" => &["loaded", "refreshed", "more", "loaded_all"],
-        "MomentTranscodeStatus" => &["node"],
-        "ContainersByIds" => &["nodes"],
-        _ => &[],
-    }
-}
-
 fn describe(steps: &[Step], index: usize) -> String {
     format!("step {} {}", index + 1, steps[index].input)
 }
 
-/// Folds the trace and checks the rule after every step.
-fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
-    let mut state = Trace::default();
-    for (index, step) in steps.iter().enumerate() {
-        let (input, observed) = (&step.input, &step.observed);
-        let before_online = state.online;
-        let before_fresh: HashMap<String, bool> = state.windows.iter().map(|(operation, window)| (operation.clone(), fresh(window, state.now))).collect();
-        let before_logged = state.logged;
-        let was_held: Vec<String> = state.held.iter().map(|(_, operation)| operation.clone()).collect();
-        if input.name == "tick" {
-            state.now += input.number("ms").unwrap_or(0);
-        }
-        let fresh_now: HashMap<String, bool> = state.windows.iter().map(|(operation, window)| (operation.clone(), fresh(window, state.now))).collect();
-        let refused = |kind: &str| has_error(observed, kind);
-        if kinds(observed, "opened").next().is_some() {
-            (state.is_open, state.online, state.logged) = (true, true, false);
-        }
-        if let Some(online) = kinds(observed, "online").next() {
-            state.online = online.value.as_bool().unwrap_or(false);
-        }
-        if input.name == "set_online" && refused("not_open") {
-            state.online = before_online;
-        }
-        let load = LOADS.iter().find(|(name, _)| *name == input.name).map(|(_, outcome)| *outcome);
-        let accepted = load.filter(|_| !refused("not_open") && !refused("arguments"));
-        if let Some(outcome) = accepted {
-            state.pending.push(outcome);
-        }
-        let sent = requests(observed);
-        let all_requests = kinds(observed, "request").count();
-        let first_pages = |operation: &str| sent.iter().filter(|request| request.first_page && request.operation == operation).count();
-
-        let mut replied_operation: Option<String> = None;
-        for replied in kinds(observed, "replied") {
-            let id = replied.value["id"].as_str().unwrap_or("");
-            let Some(position) = state.held.iter().position(|(held, _)| held == id) else { continue };
-            let (_, operation) = state.held.remove(position);
-            replied_operation = Some(operation.clone());
-            let streak = state.streaks.entry(operation.clone()).or_default();
-            match replied.value["how"].as_str().unwrap_or("") {
-                "temporary" | "drop" => streak.0 += 1,
-                "server" => streak.1 += 1,
-                _ => *streak = (0, 0),
-            }
-            if state.streaks.get(&operation) == Some(&(0, 0)) {
-                state.streaks.remove(&operation);
-            }
-            if replied.value["how"] == "page" && sent_first_page(steps, id) && !kinds(observed, "error").any(|item| !REFUSALS.contains(&error_kind(item))) {
-                state.windows.insert(operation, Window { landed: Some(state.now), failed: false, lost: false });
-            } else if sent_first_page(steps, id) && replied.value["how"] != "page" {
-                state.windows.entry(operation).or_default().failed = true;
-            }
-        }
-        for item in kinds(observed, "sent") {
-            let operation = item.value["operation"].as_str().unwrap_or("");
-            if !operation.starts_with("session") {
-                state.held.push((item.value["id"].as_str().unwrap_or("").to_string(), operation.to_string()));
-            }
-        }
-        for released in kinds(observed, "released") {
-            let ids: Vec<&str> = released.value["ids"].as_array().map(|ids| ids.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-            state.held.retain(|(held, _)| !ids.contains(&held.as_str()));
-            state.windows.values_mut().for_each(|window| window.lost = true);
-            state.streams.clear();
-        }
-        if input.name == "close" || kinds(observed, "closed").next().is_some() {
-            state.is_open = false;
-            state.streams.clear();
-            state.windows.values_mut().for_each(|window| window.lost = true);
-        }
-        if kinds(observed, "reset").next().is_some() {
-            state.logged = false;
-            state.windows.values_mut().for_each(|window| window.lost = true);
-        }
-        if kinds(observed, "session").next().is_some() {
-            (state.logged, state.ever_logged) = (true, true);
-        }
-        if load.is_some() && input.name != "node" {
-            if let (Some(operation), true) = (input.text("relation").and_then(operation_of), refused("offline")) {
-                state.windows.entry(operation.to_string()).or_default().failed = true;
-            }
-        }
-        if input.name == "open_list" || input.name == "open_count" {
-            if let (Some(name), Some(operation)) = (input.text("as"), input.text("relation").and_then(operation_of)) {
-                if !refused("not_open") && !refused("arguments") {
-                    state.streams.insert(name.to_string(), Interest { operation, on_connect: input.flag("refresh_on_connect").unwrap_or(false) });
-                }
-            }
-        }
-        if input.name == "cancel" {
-            if let Some(target) = input.text("target") {
-                state.streams.remove(target);
-            }
-        }
-        for ended in kinds(observed, "ended") {
-            if let Some(name) = ended.value["stream"].as_str() {
-                state.streams.remove(name);
-            }
-        }
-
-        let mut own_ended = false;
-        let attributable = !matches!(input.name.as_str(), "login" | "open" | "session_reset" | "pull");
-        for item in observed {
-            if let Some((_, outcome)) = LOADS.iter().find(|(_, outcome)| *outcome == item.kind) {
-                match state.pending.iter().position(|pending| pending == outcome) {
-                    Some(position) => { state.pending.remove(position); }
-                    None if rule == Rule::Outcomes => return Err(format!("{}: outcome `{}` of a load that was not accepted or already ended", describe(steps, index), item.kind)),
-                    None => {}
-                }
-            } else if item.kind == "error" && attributable && !REFUSALS.contains(&error_kind(item)) && !state.pending.is_empty() {
-                let own = accepted.filter(|_| !own_ended).and_then(|outcome| state.pending.iter().rposition(|pending| *pending == outcome));
-                own_ended |= own.is_some();
-                let of_request = replied_operation.as_deref().and_then(|operation| state.pending.iter().position(|pending| served_by(operation).contains(pending)));
-                state.pending.remove(own.or(of_request).unwrap_or(0));
-                if let Some(operation) = &replied_operation {
-                    state.streaks.remove(operation);
-                }
-            }
-        }
-
-        let waiting_retry = state.streaks.values().any(|(network, server)| (*network > 0 && *network < NETWORK_ATTEMPTS) || (*server > 0 && *server < SERVER_ATTEMPTS));
-        match rule {
-            Rule::Outcomes if !state.pending.is_empty() && state.held.is_empty() && state.online && !waiting_retry => {
-                return Err(format!("{}: {} accepted load(s) have no outcome and the mock holds no request", describe(steps, index), state.pending.len()));
-            }
-            Rule::Quiet => {
-                let quiet = matches!(input.name.as_str(), "pull" | "cancel" | "close") || (input.name == "set_online" && input.flag("online") == Some(false));
-                if quiet && all_requests > 0 {
-                    return Err(format!("{}: {} request(s) after an input that asks for none", describe(steps, index), all_requests));
-                }
-            }
-            Rule::NoSession if !state.ever_logged => {
-                if !sent.is_empty() {
-                    return Err(format!("{}: {} request(s) reached the mock before any session", describe(steps, index), sent.len()));
-                }
-                if READS.contains(&input.name.as_str()) && state.is_open && state.online && !refused("not_open") && !refused("arguments") && !has_error(observed, "no_session") {
-                    return Err(format!("{}: a server read without a session did not end with NoSession", describe(steps, index)));
-                }
-            }
-            Rule::Network => {
-                if !state.online && all_requests > 0 {
-                    return Err(format!("{}: {} request(s) while the network is off", describe(steps, index), all_requests));
-                }
-                let returned = !before_online && state.online && input.name == "set_online";
-                if returned && before_logged && state.ever_logged && state.logged {
-                    for (operation, expected) in reread_after_return(&state, &fresh_now) {
-                        let got = first_pages(operation);
-                        if got != expected && !was_held.iter().any(|held| held == operation) {
-                            return Err(format!("{}: network return sent {got} request(s) of {operation}, expected {expected}", describe(steps, index)));
-                        }
-                    }
-                }
-            }
-            Rule::Fresh => {
-                let connected = kinds(observed, "request").any(|item| item.value["kind"] == "subscription");
-                let on_connect_return = (!before_online && state.online) || connected;
-                for request in sent.iter().filter(|request| request.first_page && request.operation != "ContainersByIds") {
-                    let Some(window) = state.windows.get(&request.operation) else { continue };
-                    let was_fresh = before_fresh.get(&request.operation).copied().unwrap_or(false) && fresh_now.get(&request.operation).copied().unwrap_or(false) && !window.lost;
-                    let declared = on_connect_return && state.streams.values().any(|interest| interest.operation == request.operation && interest.on_connect);
-                    let forced = input.name == "refresh";
-                    if was_fresh && !forced && !declared {
-                        return Err(format!("{}: a fresh window of {} was requested again", describe(steps, index), request.operation));
-                    }
-                }
-                let ready = state.is_open && state.online && state.logged && before_logged && !refused("not_open");
-                if input.name == "refresh" && ready && input.text("relation") == Some("feed") && !was_held.iter().any(|held| held == "MomentsFeed") && !state.streaks.contains_key("MomentsFeed") && !has_error(observed, "no_session") && state.windows.get("MomentsFeed").is_some_and(|window| !window.lost) {
-                    let got = first_pages("MomentsFeed");
-                    if got != 1 && !has_error(observed, "in_flight") {
-                        return Err(format!("{}: refresh sent {got} request(s) of MomentsFeed, expected exactly 1", describe(steps, index)));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn fresh(window: &Window, now: u64) -> bool {
+fn fresh(window: &Window, now: i64) -> bool {
     let Some(landed) = window.landed else { return false };
     !window.failed && !window.lost && now >= landed && now - landed < LIFETIME_MS
 }
@@ -288,23 +110,236 @@ fn sent_first_page(steps: &[Step], id: &str) -> bool {
 }
 
 /// After a network return: per watched window the number of first-page requests the rule asks for. A window is reread once when it is not fresh or a stream of it is declared to reload on connect.
-fn reread_after_return<'a>(state: &'a Trace, fresh_now: &HashMap<String, bool>) -> Vec<(&'a str, usize)> {
-    let mut watched: Vec<&'static str> = state.streams.values().map(|interest| interest.operation).collect();
+fn reread_after_return(walk: &Walk, fresh_now: &HashMap<String, bool>) -> Vec<(&'static str, usize)> {
+    let mut watched: Vec<&'static str> = walk.streams.values().map(|interest| interest.operation).collect();
     watched.sort_unstable();
     watched.dedup();
     watched
         .into_iter()
-        .filter(|operation| !state.windows.get(*operation).is_some_and(|window| window.lost))
+        .filter(|operation| !walk.windows.get(*operation).is_some_and(|window| window.lost))
         .map(|operation| {
-            let declared = state.streams.values().any(|interest| interest.operation == operation && interest.on_connect);
-            let fresh = fresh_now.get(operation).copied().unwrap_or(false);
-            (operation, usize::from(declared || !fresh))
+            let declared = walk.streams.values().any(|interest| interest.operation == operation && interest.on_connect);
+            let is_fresh = fresh_now.get(operation).copied().unwrap_or(false);
+            (operation, usize::from(declared || !is_fresh))
         })
         .collect()
 }
 
+/// Folds the trace and checks the rule after every step.
+fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
+    let mut walk = Walk::default();
+    for (index, step) in steps.iter().enumerate() {
+        let (input, observed) = (&step.input, &step.observed);
+        let before_online = walk.online;
+        let before_logged = walk.logged;
+        let landed_before: HashMap<String, bool> = walk.windows.iter().map(|(operation, window)| (operation.clone(), window.landed.is_some())).collect();
+        let was_held: Vec<String> = walk.held.iter().map(|(_, operation)| operation.clone()).collect();
+        match input.name.as_str() {
+            "tick" => walk.now += input.number("ms").unwrap_or(0) as i64,
+            "clock_back" => walk.back += input.number("ms").unwrap_or(0) as i64,
+            _ => {}
+        }
+        let refused = |kind: &str| has_error(observed, kind);
+        if kinds(observed, "opened").next().is_some() {
+            (walk.is_open, walk.online, walk.logged, walk.subscriptions) = (true, true, false, 0);
+            (walk.now, walk.back) = (walk.now - walk.back, 0);
+        }
+        if let Some(online) = kinds(observed, "online").next() {
+            walk.online = online.value.as_bool().unwrap_or(false);
+        }
+        let fresh_now: HashMap<String, bool> = walk.windows.iter().map(|(operation, window)| (operation.clone(), fresh(window, walk.now))).collect();
+
+        let untagged_refusal = kinds(observed, "error").any(|item| item.value.get("call").is_none() && (error_kind(item) == "not_open" || error_kind(item) == "arguments"));
+        if LOADS.contains(&input.name.as_str()) && input.flag("named") == Some(true) && !untagged_refusal {
+            walk.pending.push(input.text("as").unwrap_or("").to_string());
+        }
+        let sent = requests(observed);
+        let all_requests = kinds(observed, "request").count();
+        let first_pages = |operation: &str| sent.iter().filter(|request| request.first_page && request.operation == operation).count();
+
+        for _ in kinds(observed, "request").filter(|item| item.value["kind"] == "subscription") {
+            walk.subscriptions += 1;
+            if walk.subscriptions > 1 {
+                for window in walk.windows.values_mut() {
+                    window.signs += 1;
+                    window.allowance += 1;
+                }
+            }
+        }
+
+        let mut replied_operation: Option<String> = None;
+        for replied in kinds(observed, "replied") {
+            let id = replied.value["id"].as_str().unwrap_or("");
+            let Some(position) = walk.held.iter().position(|(held, _)| held == id) else { continue };
+            let (_, operation) = walk.held.remove(position);
+            replied_operation = Some(operation.clone());
+            let first_page = sent_first_page(steps, id);
+            let how = replied.value["how"].as_str().unwrap_or("");
+            let streak = walk.streaks.entry(operation.clone()).or_default();
+            match how {
+                "temporary" | "drop" => streak.0 += 1,
+                "server" => streak.1 += 1,
+                _ => *streak = (0, 0),
+            }
+            if walk.streaks.get(&operation) == Some(&(0, 0)) {
+                walk.streaks.remove(&operation);
+            }
+            let landed_ok = how == "page" && first_page && !kinds(observed, "error").any(|item| !REFUSALS.contains(&error_kind(item)));
+            if landed_ok {
+                let window = walk.windows.entry(operation).or_default();
+                (window.landed, window.failed, window.lost) = (Some(walk.now), false, false);
+            } else if first_page && how != "page" {
+                walk.windows.entry(operation).or_default().failed = true;
+            }
+        }
+        for item in kinds(observed, "sent") {
+            let operation = item.value["operation"].as_str().unwrap_or("");
+            if !operation.starts_with("session") {
+                walk.held.push((item.value["id"].as_str().unwrap_or("").to_string(), operation.to_string()));
+            }
+        }
+        for released in kinds(observed, "released") {
+            let ids: Vec<&str> = released.value["ids"].as_array().map(|ids| ids.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            walk.held.retain(|(held, _)| !ids.contains(&held.as_str()));
+        }
+        if kinds(observed, "closed").next().is_some() {
+            walk.is_open = false;
+            walk.streams.clear();
+        }
+        if kinds(observed, "reset").next().is_some() {
+            walk.logged = false;
+            walk.streams.clear();
+            walk.windows.values_mut().for_each(|window| window.lost = true);
+        }
+        if kinds(observed, "session").next().is_some() {
+            walk.logged = true;
+        }
+        if LOADS.contains(&input.name.as_str()) && input.name != "node" && input.name != "nodes" && refused("offline") {
+            if let Some(operation) = input.text("relation").and_then(operation_of) {
+                walk.windows.entry(operation.to_string()).or_default().failed = true;
+            }
+        }
+        if input.name == "open_list" || input.name == "open_count" {
+            if let (Some(name), Some(operation)) = (input.text("as"), input.text("relation").and_then(operation_of)) {
+                if !refused("not_open") && !refused("arguments") {
+                    walk.streams.insert(name.to_string(), Interest { operation, on_connect: input.flag("refresh_on_connect").unwrap_or(false) });
+                }
+            }
+        }
+        if input.name == "cancel" {
+            if let Some(target) = input.text("target") {
+                walk.streams.remove(target);
+            }
+        }
+        for ended in kinds(observed, "ended") {
+            if let Some(name) = ended.value["stream"].as_str() {
+                walk.streams.remove(name);
+            }
+        }
+
+        for item in observed {
+            let Some(call) = item.value.get("call").and_then(Value::as_str) else { continue };
+            match walk.pending.iter().position(|pending| pending == call) {
+                Some(position) => {
+                    walk.pending.remove(position);
+                    if item.kind == "error" {
+                        if let Some(operation) = &replied_operation {
+                            walk.streaks.remove(operation);
+                        }
+                    }
+                }
+                None if rule == Rule::Outcomes => return Err(format!("{}: a second outcome `{}` of the load `{call}`", describe(steps, index), item.kind)),
+                None => {}
+            }
+        }
+        let waiting_retry = walk.streaks.values().any(|(network, server)| (*network > 0 && *network < NETWORK_ATTEMPTS) || (*server > 0 && *server < SERVER_ATTEMPTS));
+
+        match rule {
+            Rule::Outcomes if !walk.pending.is_empty() && walk.held.is_empty() && walk.online && !waiting_retry => {
+                return Err(format!("{}: the load(s) {:?} have no outcome, the mock holds no request, the network is on and no retry pause runs", describe(steps, index), walk.pending));
+            }
+            Rule::Quiet => {
+                let quiet = matches!(input.name.as_str(), "pull" | "cancel" | "close")
+                    || (input.name == "set_online" && input.flag("online") == Some(false))
+                    || (input.name == "answer_error" && matches!(input.text("kind"), Some("permanent" | "auth")));
+                if quiet && all_requests > 0 {
+                    return Err(format!("{}: {} request(s) after an input that asks for none", describe(steps, index), all_requests));
+                }
+            }
+            Rule::NoSession if walk.is_open && !walk.logged => {
+                if !sent.is_empty() {
+                    return Err(format!("{}: {} request(s) reached the mock without an identity", describe(steps, index), sent.len()));
+                }
+                if READS.contains(&input.name.as_str()) && walk.online && !refused("not_open") && !refused("arguments") && !has_error(observed, "no_session") {
+                    return Err(format!("{}: a server read without an identity did not end with NoSession", describe(steps, index)));
+                }
+            }
+            Rule::Network => {
+                if !walk.online && all_requests > 0 {
+                    return Err(format!("{}: {} request(s) while the network is off", describe(steps, index), all_requests));
+                }
+                let returned = !before_online && walk.online && input.name == "set_online";
+                if returned && before_logged && walk.logged {
+                    for (operation, expected) in reread_after_return(&walk, &fresh_now) {
+                        let got = first_pages(operation);
+                        if got != expected && !was_held.iter().any(|held| held == operation) {
+                            return Err(format!("{}: network return sent {got} request(s) of {operation}, expected {expected}", describe(steps, index)));
+                        }
+                    }
+                }
+            }
+            Rule::Fresh | Rule::FreshStale => {
+                let connected = kinds(observed, "request").any(|item| item.value["kind"] == "subscription");
+                let on_connect_return = (!before_online && walk.online) || connected;
+                let streams_declared = |operation: &str| walk.streams.values().any(|interest| interest.operation == operation && interest.on_connect);
+                let mut failure = None;
+                for request in sent.iter().filter(|request| request.first_page && request.operation != "ContainersByIds") {
+                    let was_fresh = fresh_now.get(&request.operation).copied().unwrap_or(false) && landed_before.get(&request.operation).copied().unwrap_or(false);
+                    let forced = input.name == "refresh" || (input.name == "node" && input.flag("force") == Some(true)) || (input.name == "open_entity" && input.text("fetch") == Some("force"));
+                    if !was_fresh || forced || (on_connect_return && streams_declared(&request.operation)) {
+                        continue;
+                    }
+                    let Some(window) = walk.windows.get_mut(&request.operation) else { continue };
+                    if window.allowance > 0 {
+                        window.allowance -= 1;
+                        continue;
+                    }
+                    let message = format!("{}: a fresh window of {} was requested again", describe(steps, index), request.operation);
+                    match (rule, window.signs == 0) {
+                        (Rule::Fresh, true) => failure = Some(message),
+                        (Rule::FreshStale, false) => failure = Some(format!("{message} beyond the loads its {} Stale sign(s) allow", window.signs)),
+                        _ => {}
+                    }
+                }
+                if let Some(message) = failure {
+                    return Err(message);
+                }
+                let ready = walk.is_open && walk.online && walk.logged && before_logged && !refused("not_open") && !refused("no_session") && walk.streaks.is_empty();
+                let exact = |operation: &str| ready && !was_held.iter().any(|held| held == operation) && walk.windows.get(operation).is_some_and(|window| !window.lost && window.landed.is_some());
+                let forced_load = match (input.name.as_str(), input.text("relation"), input.flag("force")) {
+                    ("refresh", Some("feed"), _) => Some("MomentsFeed"),
+                    ("node", Some("transcode_status"), Some(true)) => Some("MomentTranscodeStatus"),
+                    _ => None,
+                };
+                if let Some(operation) = forced_load.filter(|operation| rule == Rule::Fresh && exact(operation)) {
+                    let got = first_pages(operation);
+                    if got != 1 && !has_error(observed, "in_flight") {
+                        return Err(format!("{}: {} sent {got} request(s) of {operation}, expected exactly 1", describe(steps, index), input.name));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn i2(steps: &[Step]) -> Result<(), String> {
     analyze(steps, Rule::Fresh)
+}
+
+pub fn i2b(steps: &[Step]) -> Result<(), String> {
+    analyze(steps, Rule::FreshStale)
 }
 
 pub fn i7(steps: &[Step]) -> Result<(), String> {
@@ -323,9 +358,15 @@ pub fn i13(steps: &[Step]) -> Result<(), String> {
     analyze(steps, Rule::Network)
 }
 
-/// I2, I9, I12, I13: the rules over the requests in the mock log.
+/// I2, I2b, I9, I12, I13: the rules over the requests in the mock log.
 pub fn request_rules() -> Vec<Property> {
-    vec![Property { name: "I2", check: i2 }, Property { name: "I9", check: i9 }, Property { name: "I12", check: i12 }, Property { name: "I13", check: i13 }]
+    vec![
+        Property { name: "I2", check: i2 },
+        Property { name: "I2b", check: i2b },
+        Property { name: "I9", check: i9 },
+        Property { name: "I12", check: i12 },
+        Property { name: "I13", check: i13 },
+    ]
 }
 
 /// I7: every accepted load ends with exactly one outcome.

@@ -24,6 +24,11 @@ fn on_feed(input: Input) -> Input {
     input.with("relation", "feed")
 }
 
+/// A load call that names itself, so its outcome (success or error) carries the name.
+fn load(kind: &str, name: &str) -> Input {
+    Input::new(kind).with("as", name).with("named", true)
+}
+
 fn page(rows: u64, more: bool) -> Input {
     Input::new("answer_page").with("rows", rows).with("more", more)
 }
@@ -59,14 +64,17 @@ pub fn alphabet() -> Vec<Input> {
         on_feed(stream("open_count", "c1")),
         stream("open_list", "u1").with("model", "User").with("relation", "container_members").with("params", members),
         pull("s1"),
-        pull("c1"),
-        pull("u1"),
-        on_feed(stream("begin_load", "l1")),
-        on_feed(Input::new("refresh")),
-        on_feed(Input::new("load_more")),
-        on_feed(stream("begin_load_all", "la")),
-        Input::new("node").with("relation", "transcode_status").with("row", "m1"),
-        Input::new("nodes").with("model", "Container").with("relation", "nodes").with("rows", json!(["m1"])),
+        stream("open_entity", "e1").with("row", "m1").with("fetch", "never"),
+        stream("open_entity", "e2").with("row", "m1").with("fetch", "if_missing"),
+        stream("open_entity", "e3").with("row", "m1").with("fetch", "force"),
+        Input::new("clock_back").with("ms", 400_000u64),
+        on_feed(load("begin_load", "l1")),
+        on_feed(load("refresh", "rf")),
+        on_feed(load("load_more", "lm")),
+        on_feed(load("begin_load_all", "la")),
+        load("node", "nd").with("relation", "transcode_status").with("row", "m1"),
+        load("node", "nf").with("relation", "transcode_status").with("row", "m1").with("force", true),
+        load("nodes", "ns").with("model", "Container").with("relation", "nodes").with("rows", json!(["m1"])),
         cancel("l1"),
         cancel("s1"),
         page(PAGE_EMPTY, false),

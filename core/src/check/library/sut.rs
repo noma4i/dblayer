@@ -20,7 +20,10 @@ pub struct LibrarySut {
     held: Vec<Held>,
     known: usize,
     live: bool,
+    dir: Option<std::path::PathBuf>,
 }
+
+static DIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn operation_of(body: &Value) -> (String, Value) {
     let payload = &body["body"];
@@ -54,6 +57,16 @@ fn page_body(held: &Held, rows: u64, more: bool) -> Value {
 impl LibrarySut {
     pub async fn finish(&mut self) {
         self.inner.finish().await;
+        if let Some(dir) = self.dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// The database file of this program in a temporary directory: it survives `close` + `open`, so saved windows are read back.
+    fn file(&mut self) -> String {
+        let dir = self.dir.get_or_insert_with(|| std::env::temp_dir().join(format!("dbl_library_{}_{}", std::process::id(), DIRS.fetch_add(1, std::sync::atomic::Ordering::SeqCst))));
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("library.db").to_string_lossy().into_owned()
     }
 
     fn note_requests(&mut self) {
@@ -100,6 +113,13 @@ impl Sut for LibrarySut {
         if input.name == "open" && self.live {
             return vec![Observation::new("error", json!({ "kind": "already_open" }))];
         }
+        let placed;
+        let input = if input.name == "open" {
+            placed = input.clone().with("path", self.file());
+            &placed
+        } else {
+            input
+        };
         let observed = match input.name.as_str() {
             "login" => {
                 let started = self.inner.apply(&Input::new("session_call").with("operation", "social").with("body", json!({ "token": "t" }))).await;
