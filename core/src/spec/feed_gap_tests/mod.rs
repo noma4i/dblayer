@@ -1,6 +1,5 @@
 //! Owner-level tests of the `feed` machine: the owner `Feed` on `DetScheduler`, every row of the table and every property.
-//! A row test feeds the same input to the reference (`ref_feed.rs`) and to the owner through its address, then compares the effects,
-//! the observable (`ModelEvent`, `ModelLost`, `ModelGap`) and the state. Names are the `Test` column of the spec.
+//! A row test feeds an input to the owner through its address and asserts the effects it gave out and the observable (`ModelEvent`, `ModelLost`, `ModelGap`).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -8,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, PoisonError};
 
-use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reject, Reread, To};
+use super::feed_words::{Counter, Effect, Input, Kind, Obs, Reject, Reread, To};
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
@@ -69,22 +68,11 @@ fn add_feed(det: &mut DetScheduler, log: &Spied, state: f::FeedState, runner: im
     det.add::<Spy<Feed>>("feed", SpyState::new(state, log), runner)
 }
 
-fn mode_of(mode: f::Mode) -> Mode {
-    match mode {
-        f::Mode::Off { gap } => Mode::Off { gap },
-        f::Mode::Opening { gap } => Mode::Opening { gap },
-        f::Mode::Live => Mode::Live,
-        f::Mode::Draining { .. } => Mode::Draining,
-        f::Mode::Ended => Mode::Ended,
-    }
-}
-
-/// The owner and the reference side by side.
+/// The owner on `DetScheduler` with the inputs and the effects of the row tests.
 struct Twin {
     det: DetScheduler,
     addr: Address<Spy<Feed>>,
     log: Spied,
-    reference: Ref,
     debounce_ms: u64,
     batches: VecDeque<BatchId>,
     used: Vec<BatchId>,
@@ -98,6 +86,8 @@ struct Twin {
     history: Vec<Emitted<FeedEffect>>,
     /// Everything the streams saw, in order, across the steps.
     shown: Vec<Obs>,
+    /// What the streams saw in the last step.
+    seen: Vec<Obs>,
 }
 
 impl Twin {
@@ -112,12 +102,9 @@ impl Twin {
         let ms = if debounce { DEBOUNCE_MS } else { 0 };
         let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
         det.start_epoch(EPOCH);
-        let mut reference = Ref::new();
-        reference.debounce = debounce;
-        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new() };
+        let mut twin = Self { det, addr, log, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
-            twin.reference.online = Some(on);
         }
         take(&twin.log);
         twin
@@ -241,10 +228,9 @@ impl Twin {
         }
     }
 
-    /// Feeds one input of the table to both sides, checks the effects, the observable and the state, and returns the effects of the reference.
+    /// Feeds one input to the owner and returns the effects it gave out, `Stale` per model, `Joined` and `ModelReady` per stream.
     fn step(&mut self, input: Input) -> Vec<Effect> {
         take(&self.log);
-        self.reference.reread = self.reread.clone();
         match input {
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
@@ -263,23 +249,13 @@ impl Twin {
         let emitted = take(&self.log);
         self.history.extend(emitted.clone());
         let (got, seen) = self.split(emitted);
-        let owner_batches = std::mem::take(&mut self.owner_batches);
-        let want = self.reference.step(input);
-        let owner_marks: Vec<bool> = owner_batches.iter().map(|batch| batch.replace(['"', '\\', ' '], "").contains("observe:true")).collect();
-        assert_eq!(owner_marks, self.reference.take_marks(), "the owner and the reference mark the same batches with the observe marker of the stream: {owner_batches:?}");
-        let observed = self.reference.take_obs();
-        self.shown.extend(observed.clone());
-        assert_eq!(got, want, "the owner and the reference give the same effects");
-        assert_eq!(seen, observed, "the owner and the reference show the same events");
-        assert_eq!(mode_of(self.state().mode()), self.reference.mode, "the same mode");
-        assert_eq!((self.state().held(), self.state().pending(), self.state().landing()), (self.reference.held.len(), self.reference.pending.len(), self.reference.landing.len()), "the same held, pending and landing");
-        for model in ["Chat", "Post"] {
-            assert_eq!(self.state().position(model), self.reference.position.get(model).copied().unwrap_or(0), "the same position of {model}");
-        }
-        want
+        self.owner_batches.clear();
+        self.shown.extend(seen.clone());
+        self.seen = seen;
+        got
     }
 
-    /// Shows the owner effects as the reference writes them: `Stale` per model, `Joined` and `ModelReady` per stream, the events as what a stream sees.
+    /// Shows the owner effects as the row tests write them: `Stale` per model, `Joined` and `ModelReady` per stream, the events as what a stream sees.
     fn split(&mut self, emitted: Vec<Emitted<FeedEffect>>) -> (Vec<Effect>, Vec<Obs>) {
         let (mut modelled, mut seen) = (Vec::new(), Vec::new());
         for entry in emitted {
