@@ -8,12 +8,6 @@ fn post(twin: &mut Twin, input: SessionInput) -> Vec<SessionEffect> {
     take(&twin.log)
 }
 
-fn timers_set(twin: &mut Twin, input: Input) -> (usize, Vec<RefEffect>) {
-    let before = twin.det.trace().len();
-    let effects = twin.feed(input);
-    (twin.det.trace()[before..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count(), effects)
-}
-
 fn last_batch(twin: &Twin) -> u64 {
     twin.history.iter().rev().find_map(|effect| match effect { RefEffect::CommitPending { batch, .. } | RefEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).expect("the owner wrote a batch")
 }
@@ -31,8 +25,7 @@ fn sess_persisting_storage_retried() {
         let mut twin = mutate_persisting();
         let (pair, batch) = (twin.rid(), last_batch(&twin));
         for _ in 0..refusals {
-            let (timers, effects) = timers_set(&mut twin, rejected(Reason::Storage));
-            assert_eq!((timers, effects.is_empty()), (1, true), "refusals={refusals}: one timer, no Answer");
+            assert_eq!(twin.feed(rejected(Reason::Storage)), vec![RefEffect::ScheduleTick], "refusals={refusals}: one timer, no Answer");
             let again = twin.feed(Input::Tick);
             assert!(matches!(&again[..], [RefEffect::CommitPending { batch: again_batch, pending, .. }] if *again_batch == batch && pending.request_id == pair), "the same batch of the same pair is written again: {again:?}");
         }
@@ -47,8 +40,7 @@ fn sess_landing_storage_retried() {
         let mut twin = super::session_owner_release_tests::rejected_landing(1);
         for _ in 0..refusals {
             let before = last_batch(&twin);
-            let (timers, effects) = timers_set(&mut twin, rejected(Reason::Storage));
-            assert_eq!((timers, effects.is_empty()), (1, true), "refusals={refusals}: one timer, no Answer");
+            assert_eq!(twin.feed(rejected(Reason::Storage)), vec![RefEffect::ScheduleTick], "refusals={refusals}: one timer, no Answer");
             let again = twin.feed(Input::Tick);
             assert!(matches!(&again[..], [RefEffect::CommitLanding { batch, .. }] if *batch != before), "the landing goes again with a new batch: {again:?}");
         }

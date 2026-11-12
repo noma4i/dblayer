@@ -13,7 +13,6 @@ pub(super) fn outbox_owner() -> crate::transport::RequestOwner { crate::transpor
 
 pub(super) fn transfer_init_owner() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Transfer { operation_id: 1, item_id: "item".into(), step: crate::owners::write::upload::UploadStage::Init } }
 
-fn detached_owner() -> Option<crate::transport::RequestOwner> { Some(crate::transport::RequestOwner::Detached) }
 
 pub(super) fn gate_closed(twin: &Twin, delta: u64) -> Input { Input::GateClosed { request_id: twin.rid() + delta, attempt_id: twin.aid() } }
 

@@ -1,7 +1,7 @@
 //! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler`, read through its effects and replies.
 
 mod vocab;
-pub use vocab::{author_of, Answer, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Reason, Secret, OUTBOX_AUTHOR, TRANSFER_AUTHOR};
+pub use vocab::{author_of, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Reason, Secret, OUTBOX_AUTHOR, TRANSFER_AUTHOR};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
