@@ -2,9 +2,11 @@
 
 use std::path::Path;
 
-use super::crash_image_support::{copy_tree, files_of, reopen};
+use super::crash_image_support::{files_of, over_images, reopen, Capture};
+use super::upload_prepare_tests::{probed_image, shrink, upload_of, PREPARED, SOURCE};
 use super::rig_tests::bound;
-use super::upload_stand::{request, Stand, CREATE_MOMENT};
+use super::upload_stand::{request, ScriptedPreparer, Stand, CREATE_MOMENT};
+use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
 use crate::ffi::{Database, ReadRequest, ReadValue};
 use crate::owners::write::upload::MEBIBYTE;
 
@@ -58,13 +60,6 @@ async fn xfer_stage_accept() {
         if let Some(ReadValue::Status { state, progress, .. }) = bound(status.pull_next()).await { last = Some((state, progress)); if progress >= 0.99 { break; } }
     }
     assert_eq!(last, Some(("uploading".to_string(), 0.99)));
-    stand.script.data("CompleteMultipart", COMPLETE);
-    stand.script.data("CreateMoment", LANDED);
-    let committed = bound(database.commit_staged(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into(), r#"{"text":"hi"}"#.into(), "{}".into())).await.unwrap();
-    assert_eq!(committed.optimistic_value.as_ref().map(|row| row.id.clone()), Some(staged.row_id.clone()), "the receipt shows the new row");
-    bound(database.confirmed(committed, false)).await.unwrap();
-    assert_eq!(stand.script.names(), ["InitMultipart", "PresignParts", "CompleteMultipart", "CreateMoment"]);
-    assert!(stand.script.variables("CreateMoment")[0].to_string().contains("signed"), "the mutation carries the signed id of the file");
     database.close_now();
 }
 
@@ -95,28 +90,81 @@ async fn xfer_stage_matches_send() {
     database.close_now();
 }
 
-/// A process killed while a staged file waits for its commit leaves a base that the next opening cleans: the row of the transfer is gone, no file of the transfer is left, and the upload it minted is aborted.
+/// `commit_staged` in any stage of the file gives the row its values at once and sends the final mutation once, after every part is on the server: while the file is prepared, while its parts go and while it waits in `Held`.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_stage_commit_early() {
+    for case in ["preparing", "parts", "held"] {
+        let directory = tempfile::tempdir().unwrap();
+        let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+        let stand = if case == "preparing" { Stand::new().with_preparer(preparer.clone()) } else { Stand::new() };
+        let database = stand.open(None, &OPERATIONS).await;
+        answers(&stand);
+        stand.script.data("CompleteMultipart", COMPLETE);
+        stand.script.data("CreateMoment", LANDED);
+        let (source, parts) = match case {
+            "preparing" => { let path = directory.path().join("clip"); std::fs::write(&path, SOURCE).unwrap(); (path, 1) }
+            _ => (file_of(directory.path(), 11 * MEBIBYTE), 3),
+        };
+        let (run_hold, put_hold) = (preparer.hold_next(), stand.puts.hold_next());
+        let staged = if case == "preparing" {
+            let request = WireUploadRequest { source: WireSource::File { path: source.to_str().unwrap().into(), name: None, mime: None, prepare: Some(shrink()) }, variables_json: "{}".into() };
+            bound(database.stage(database.session_epoch(), "Moment".into(), "upload_clip".into(), request)).await.unwrap()
+        } else { staged(&database, &source).await };
+        match case {
+            "preparing" => run_hold.entered().await,
+            "parts" => put_hold.entered().await,
+            _ => { put_hold.release(); held(&stand, &database, parts).await; }
+        }
+        assert_eq!(stand.script.count("CompleteMultipart") + stand.script.count("CreateMoment"), 0, "{case}: nothing is completed before the commit");
+        let committed = bound(database.commit_staged(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into(), r#"{"text":"hi"}"#.into(), "{}".into())).await.unwrap();
+        let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).unwrap().expect("the row is shown at once");
+        assert_eq!(committed.optimistic_value.as_ref().map(|row| row.id.clone()), Some(staged.row_id.clone()), "{case}");
+        assert!(format!("{:?}", shown.cells).contains("hi"), "{case}: the row shows the values of the commit");
+        assert!(upload_of(&database, &staged.row_id).is_some(), "{case}: the row shows its upload");
+        run_hold.release();
+        put_hold.release();
+        bound(database.confirmed(committed, false)).await.unwrap();
+        let names = stand.script.names();
+        assert_eq!(names.iter().filter(|name| *name == "CreateMoment").count(), 1, "{case}: the mutation goes once");
+        assert_eq!(names.iter().filter(|name| *name == "CompleteMultipart").count(), 1, "{case}");
+        assert!(names.iter().rposition(|name| name == "PresignParts") < names.iter().position(|name| name == "CompleteMultipart") && names.last().map(String::as_str) == Some("CreateMoment"), "{case}: {names:?}");
+        assert_eq!(stand.puts.seen.lock().unwrap().len(), parts, "{case}: every part was sent");
+        database.close_now();
+    }
+}
+
+/// A process killed at any commit of `stage` -> parts -> `Held` leaves a base that the next opening cleans: no held row, no file of a transfer, no optimistic row, one abort for the multipart the image knew and no other request.
 #[tokio::test(flavor = "multi_thread")]
 async fn crash_image_held() {
     let directory = tempfile::tempdir().unwrap();
-    let (live, image) = (directory.path().join("live.sqlite"), directory.path().join("image.sqlite"));
-    let source = directory.path().join("clip");
-    std::fs::write(&source, b"data").unwrap();
+    let live = directory.path().join("live.sqlite");
+    let source = file_of(directory.path(), 11 * MEBIBYTE);
     let stand = Stand::new();
     let database = stand.open(Some(&live), &OPERATIONS).await;
-    answers(&stand);
-    staged(&database, &source).await;
-    held(&stand, &database, 1).await;
-    crate::test_wait::settled(&database, "the last part is written", || rusqlite::Connection::open(&live).unwrap().query_row("SELECT count(*) FROM sync_upload WHERE held = 1 AND sent = total", [], |row| row.get::<_, i64>(0)).unwrap() == 1).await;
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
-    std::fs::copy(&live, &image).unwrap();
-    copy_tree(&files_of(&live), &files_of(&image));
+    let base = Capture::begin(&live);
+    answers(&stand);
+    let staged = staged(&database, &source).await;
+    held(&stand, &database, 3).await;
+    crate::test_wait::settled(&database, "the last part is written", || rusqlite::Connection::open(&live).unwrap().query_row("SELECT count(*) FROM sync_upload WHERE held = 1 AND sent = total", [], |row| row.get::<_, i64>(0)).unwrap() == 1).await;
+    let (capture, kept_files) = base.end(&live);
     let secret = stand.rig.credentials.inner.value().unwrap();
+    let id = staged.row_id.clone();
+    let cuts = over_images(&capture, &kept_files, |index, image: std::path::PathBuf| {
+        let (secret, id) = (secret.clone(), id.clone());
+        async move {
+            let known = rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM (SELECT upload_id FROM sync_upload WHERE upload_id IS NOT NULL UNION SELECT upload_id FROM upload_orphan)", [], |row| row.get::<_, i64>(0)).unwrap();
+            let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS, |fresh| fresh.script.data("AbortMultipart", ABORTED)).await;
+            let rows = || rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap();
+            let files = || std::fs::read_dir(files_of(&image).join("transfers")).map_or(0, |found| found.count());
+            let aborts = usize::try_from(known).unwrap();
+            crate::test_wait::settled(&reopened, "the held transfer is gone", || rows() == 0 && files() == 0 && fresh.script.count("AbortMultipart") == aborts).await;
+            assert!(reopened.peek_row(reopened.session_epoch(), "Moment".into(), id).unwrap().is_none(), "cut {index}: no optimistic row");
+            assert!(fresh.script.names().iter().all(|name| name == "AbortMultipart"), "cut {index}: {:?}", fresh.script.names());
+            bound(reopened.close_database()).await.unwrap();
+            aborts
+        }
+    }).await;
+    assert!(cuts.contains(&0) && cuts.contains(&1), "the cuts hold images before and after the multipart exists: {cuts:?}");
     database.close_now();
-    let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS, |fresh| fresh.script.data("AbortMultipart", ABORTED)).await;
-    let rows = || rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap();
-    let files = || std::fs::read_dir(files_of(&image).join("transfers")).map_or(0, |found| found.count());
-    crate::test_wait::settled(&reopened, "the held transfer is gone", || rows() == 0 && files() == 0 && fresh.script.count("AbortMultipart") == 1).await;
-    assert_eq!(fresh.script.count("CompleteMultipart") + fresh.script.count("CreateMoment"), 0);
-    reopened.close_now();
 }

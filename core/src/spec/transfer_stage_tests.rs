@@ -1,7 +1,6 @@
 //! Owner-level tests of a file accepted before its row (D-372): the stage `Held`, `Commit`, the ends without `Commit`.
 
 use super::transfer_harness::*;
-use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::Fault;
 use crate::owners::write::transfer::{CommitRequest, Shown, TransferAnswer, TransferId, TransferInput, TransferStage, TransferTick};
 
@@ -78,43 +77,6 @@ fn xfer_stage_holds_complete() {
     assert_eq!(out.completes(), 0);
     assert!(out.submit_ops().is_empty());
     assert_eq!(twin.t(id).last_shown, Some(Shown::Uploading { progress: 99 }));
-}
-
-#[test]
-fn xfer_stage_commit_held() {
-    let mut twin = Twin::new();
-    let id = held_at(&mut twin, KEY);
-    let (reply, out) = commit_input(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingCommit);
-    assert!(out.batches.iter().flat_map(|batch| batch.ops.iter()).any(|op| matches!(op, StoreOp::Effects { .. })), "the row is written with the commit");
-    assert!(out.rows().last().is_some_and(|(row, _)| !row.held), "the row is no longer held");
-    let out = twin.commit();
-    assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(_)]));
-    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
-    let out = twin.commit();
-    assert_eq!(out.completes(), 1);
-    assert_eq!(twin.stage(id), TransferStage::Completing);
-}
-
-#[test]
-fn xfer_stage_commit_early() {
-    for stage in ["ready", "uploading", "persisting_part"] {
-        let mut twin = if stage == "ready" { Twin::offline() } else { Twin::new() };
-        let id = staged(&mut twin, KEY, 2);
-        if stage == "persisting_part" {
-            twin.step_ok(id, 1, Some("u1"));
-            assert_eq!(twin.stage(id), TransferStage::PersistingPart);
-        }
-        let before = twin.stage(id);
-        let (reply, out) = commit_input(&mut twin, KEY);
-        assert_eq!(twin.stage(id), before, "{stage}: the transfer does not stop");
-        assert_eq!(out.cancel_steps(), 0, "{stage}: the step in flight goes on");
-        let mut answered = Vec::new();
-        for _ in 0..2 { if twin.has_pending() { answered.extend(twin.commit().replies(reply)); } }
-        assert!(matches!(answered.as_slice(), [TransferAnswer::Receipt(_)]), "{stage}: one receipt");
-        assert!(!twin.t(id).held, "{stage}: the commit took hold");
-        assert_ne!(twin.stage(id), TransferStage::Held, "{stage}");
-    }
 }
 
 #[test]
