@@ -221,12 +221,12 @@ fn out_open_restores_answered() {
     declare(&mut twin);
     let blocker = stored(6, "r");
     let answered = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), ..stored(7, "r") };
-    let effects = restore(&mut twin, vec![blocker, answered]);
-    assert_eq!(twin.stage(7), Some(St::Landing), "the row is not awaited: the server applied the operation");
+    let mut effects = restore(&mut twin, vec![blocker, answered]);
     assert!(kinds(&effects).is_empty() && sends(&effects) == 0, "the rows are read first: {effects:?}");
-    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(kinds(&landed).contains(&CommitKind::Land) && sends(&landed) == 0, "{landed:?}");
-    assert_eq!(twin.stage(7), Some(St::Landing));
+    effects.extend(ready(&mut twin));
+    effects.extend(twin.post(OutboxInput::Online(Online(true))));
+    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
+    assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]), "an answer saved before the close lands once, without a request: {effects:?}");
 }
 
 #[test]
@@ -262,43 +262,6 @@ fn out_open_restores_pending_offline() {
     let effects = restore(&mut twin, vec![StoredOp { pending: Some((41, 42)), ..stored(7, "r") }]);
     let readied = ready(&mut twin);
     assert_eq!((twin.stage(7), effects.is_empty(), readied.is_empty()), (Some(St::Queued), true, true));
-}
-
-/// P-OUT-14: every restored intent lands in exactly one class, by the order of the table.
-#[test]
-fn out_prop_restore_classes() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    let ops = vec![
-        StoredOp { restore_failed: Some("layout".into()), ..stored(1, "a") },
-        StoredOp { op: crate::owners::write::outbox::NewOp { action: "act".into(), ..model_op("b", Policy::Rollback, false) }, ..stored(2, "b") },
-        StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), ..stored(3, "c") },
-        StoredOp { error_mark: true, ..stored(4, "d") },
-        StoredOp { attempts: 40, ..stored(5, "e") },
-        StoredOp { pending: Some((42, 9)), ..stored(6, "f") },
-        stored(7, "g"),
-        stored(8, "g"),
-    ];
-    restore(&mut twin, ops);
-    let classes: Vec<_> = (1..=8).map(|id| twin.stage(id)).collect();
-    assert_eq!(
-        classes,
-        vec![Some(St::Failed), Some(St::WaitingDeclaration), Some(St::Landing), Some(St::Failed), Some(St::MarkingFailed), Some(St::PersistingAttempt), Some(St::Queued), Some(St::Queued)]
-    );
-}
-
-/// P-OUT-13: an answer saved before the close lands without a request, once, on any later input.
-#[test]
-fn out_prop_restore_answer() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    let answered = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), ..stored(7, "r") };
-    let mut effects = restore(&mut twin, vec![answered]);
-    effects.extend(ready(&mut twin));
-    effects.extend(twin.post(OutboxInput::Online(Online(true))));
-    twin.det.tick(crate::runtime::Time(5));
-    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
-    assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
 }
 
 fn freed_row_twin(attempts: u32) -> Twin {

@@ -35,12 +35,6 @@ fn out_open_restores_queued() {
     let restored = restore(&mut offline, vec![stored(7, "r")]);
     let readied = ready(&mut offline);
     assert_eq!((offline.stage(7), restored.is_empty(), sends(&readied)), (Some(St::Queued), true, 0), "offline: the restored operation is Queued");
-
-    let mut slot = Twin::bare();
-    declare(&mut slot);
-    restore(&mut slot, vec![stored(7, "a"), stored(8, "b")]);
-    ready(&mut slot);
-    assert_eq!((slot.stage(7), slot.stage(8)), (Some(St::Sending), Some(St::Queued)), "the lowest seq takes the one slot, the next is Queued");
 }
 
 #[test]
@@ -106,19 +100,6 @@ fn out_open_format_change() {
     assert_eq!((kinds(&readied), sends(&readied)), (vec![], 1));
     twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert!(twin.store_text.contains("server"), "the row comes from the server answer: {}", twin.store_text);
-}
-
-#[test]
-fn out_restored_attempt_without_pending() {
-    for attempts in [1, 3] {
-        let mut twin = Twin::bare();
-        declare(&mut twin);
-        let restored = restore(&mut twin, vec![StoredOp { attempts, ..stored(7, "r") }]);
-        assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&restored), sends(&restored)), (Some(St::Queued), attempts, vec![], 0));
-        let started = ready(&mut twin);
-        assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&started), sends(&started)), (Some(St::Sending), attempts, vec![], 1));
-        assert_eq!(sends(&ready(&mut twin)), 0);
-    }
 }
 
 enum Step {

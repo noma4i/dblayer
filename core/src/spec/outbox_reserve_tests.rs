@@ -264,27 +264,13 @@ fn out_selector_group_member_swapped() {
 }
 
 #[test]
-fn out_group_member_removed() {
-    use super::outbox_harness::St;
-    let mut twin = Twin::new();
-    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
-    group_sending(&mut twin, group);
-    let removed = twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
-    assert_eq!((twin.stage(group), twin.session_text.contains("Cancel"), twin.stores.len(), twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 1, outcome: Discarded"), twin.store_text.contains("TransferOutcome { transfer_id: 11")), (Some(St::Sending), false, 1, true, false), "the removed member b gets Discarded in one batch, the shared pair goes on: {}", twin.store_text);
-    let batch = twin.stores[0].0;
-    twin.commit_batch(batch);
-    let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"member\":\"{row}\"}}") }).collect())];
-    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!((twin.store_text.contains("\\\"member\\\":\\\"a\\\""), twin.store_text.contains("\\\"member\\\":\\\"b\\\""), twin.store_text.contains("TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: Confirmed"), twin.store_text.contains("TransferOutcome { transfer_id: 12")), (true, true, true, false), "the answer of the pair lands with every received row, the tombstone of the removed member is kept by Store (D-258d): {} {removed:?}", twin.store_text);
-}
-
-#[test]
 fn out_group_member_removed_keeps_group() {
     use super::outbox_harness::St;
     let mut twin = Twin::new();
     let group = group_on_rows(&mut twin, "b", Policy::Rollback);
     group_sending(&mut twin, group);
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
+    assert!(!twin.session_text.contains("Cancel"), "the request of the group goes on: {}", twin.session_text);
     let membership = format!("IntentOrigin {{ op_id: {group}, origin: TransferGroup {{ batch_id: 9, transfer_ids: [11] }} }}");
     assert_eq!(
         (twin.stores.len(), twin.store_text.contains(&membership), twin.store_text.contains("RemoveUploadByTransferId { transfer_id: 12 }"), twin.store_text.contains("TransferOutcome { transfer_id: 12, cycle_id: 1, outcome: Discarded"), twin.store_text.contains("TransferOutcome { transfer_id: 11"), twin.session_text.contains("Cancel"), twin.session_text.contains("Release"), twin.stage(group)),
