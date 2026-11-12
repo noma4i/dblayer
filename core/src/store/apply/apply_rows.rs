@@ -163,6 +163,14 @@ pub(super) fn apply_upsert(
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(info, row);
     canonicalize(info, &mut next);
+    if envelope.source != crate::schema::RowSource::Derived {
+        for field in info.spec.fields.iter().filter(|field| field.derived) {
+            match old_row.and_then(|old| old.get(&field.name)) {
+                Some(kept) => next.insert(field.name.clone(), kept.clone()),
+                None => next.remove(&field.name),
+            };
+        }
+    }
     if envelope.source != crate::schema::RowSource::Local && info.spec.has_local() {
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
@@ -190,13 +198,11 @@ pub(super) fn apply_upsert(
         }
         None => (revision, BTreeMap::new(), row.keys().cloned().collect(), RowChangeKind::Inserted),
     };
-    let quiet = existing.as_ref().filter(|_| changed.iter().all(|field| info.spec.server_values().any(|(_, hidden)| hidden == field))).map(|stored| stored.revision);
-    let row_revision = quiet.unwrap_or(revision);
     for field in &changed {
         field_rev.insert(field.clone(), revision);
     }
     field_rev.retain(|field, _| row.contains_key(field));
-    write_row(connection, info, &id, row, RowRevisions { exists: existing.is_some(), changed: &changed, field_rev: &field_rev, revision: row_revision, born_rev })?;
+    write_row(connection, info, &id, row, RowRevisions { exists: existing.is_some(), changed: &changed, field_rev: &field_rev, revision, born_rev })?;
     if !info.search.is_empty() && (existing.is_none() || touches_search(info, &changed)) {
         reindex(connection, info, &id, row)?;
     }
@@ -204,8 +210,8 @@ pub(super) fn apply_upsert(
         membership_moves(info, model, &id, old, row, moves, heads);
     }
     let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-    prefetched.insert((model.to_string(), id.clone()), Some(StoredRow { id: row_id, revision: row_revision, born_rev, field_rev, row: row.clone() }));
-    if quiet.is_none() { result.push(model, &id, kind, changed.into_iter().filter(|field| !info.spec.server_values().any(|(_, hidden)| hidden == field)).collect()); }
+    prefetched.insert((model.to_string(), id.clone()), Some(StoredRow { id: row_id, revision, born_rev, field_rev, row: row.clone() }));
+    result.push(model, &id, kind, changed);
     Ok(())
 }
 

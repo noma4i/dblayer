@@ -90,7 +90,6 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
                 }
             }
             data.extend(free.remove(&id).unwrap_or_default());
-            if !with_revisions { for (_, hidden) in info.spec.server_values() { data.remove(hidden); } }
             let row_id = RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
             found.insert(id, StoredRow { id: row_id, revision, born_rev, field_rev, row: data });
         }

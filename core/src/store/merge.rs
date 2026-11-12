@@ -53,27 +53,12 @@ pub(crate) enum RowKind {
     Server,
 }
 
-pub(crate) fn own_values(spec: &ModelSpec, stored: Option<&Map<String, Value>>, row: &mut Map<String, Value>) {
-    for (declared, hidden) in spec.server_values() {
-        match row.get(declared).filter(|value| !value.is_null()) {
-            Some(value) if stored.and_then(|stored| stored.get(declared)) != Some(value) => { let value = value.clone(); row.insert(hidden.to_string(), value); }
-            _ => if let Some(kept) = stored.and_then(|stored| stored.get(hidden)) { row.entry(hidden.to_string()).or_insert_with(|| kept.clone()); },
-        }
-    }
-}
-
 pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local {
-        let stored = match stored { Some(rows) => rows.get(id.as_str()).cloned(), None => reader.stored_row(model, id.as_str())? };
-        let mut row = patch.clone();
-        own_values(spec, stored.as_ref().map(|stored| &stored.row), &mut row);
-        return Ok(Some(row));
+        return Ok(Some(patch.clone()));
     }
-    let mut decoded = decode_nested(spec, patch)?;
-    for (declared, hidden) in spec.server_values() {
-        if let Some(value) = decoded.get(declared).cloned() { decoded.insert(hidden.to_string(), value); }
-    }
+    let decoded = decode_nested(spec, patch)?;
     let patch = &decoded;
     let stored = match stored { Some(rows) => rows.get(id.as_str()).cloned(), None => reader.stored_row(model, id.as_str())? };
     let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
@@ -94,12 +79,6 @@ pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission
             None => row.remove(field),
         };
     }
-    let Some(mut row) = spec.merged(stored.as_ref().map(|stored| &stored.row), &row) else { return Ok(None) };
-    for (declared, _) in spec.server_values() {
-        match stored.as_ref().and_then(|stored| stored.row.get(declared)) {
-            Some(value) => row.insert(declared.to_string(), value.clone()),
-            None => row.remove(declared),
-        };
-    }
+    let Some(row) = spec.merged(stored.as_ref().map(|stored| &stored.row), &row) else { return Ok(None) };
     Ok(Some(row))
 }

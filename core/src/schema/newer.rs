@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
+use super::AssociationSpec;
 use crate::identity::is_temp_id;
 
 pub(crate) struct Order<'a> {
@@ -56,11 +56,11 @@ impl AssociationSpec {
         children.into_iter().reduce(|best, child| if is_newer(&self.child_order(child), &self.child_order(best)) { child } else { best })
     }
 
-    /// The fields `sets:` from the server value of the parent and its newest child, a temporary winner keeps the newer values of the newest confirmed child.
-    pub fn derived(&self, server: &Map<String, Value>, newest: Option<&Map<String, Value>>, confirmed: Option<&Map<String, Value>>) -> Map<String, Value> {
-        let mut values = self.chosen(server, newest);
+    /// The fields `sets:` from the newest child, a temporary winner keeps the newer values of the newest confirmed child.
+    pub fn derived(&self, newest: Option<&Map<String, Value>>, confirmed: Option<&Map<String, Value>>) -> Map<String, Value> {
+        let mut values = self.from_child(newest);
         if newest.and_then(|child| child.get("id")).and_then(Value::as_str).is_some_and(is_temp_id) {
-            let behind = self.chosen(server, confirmed);
+            let behind = self.from_child(confirmed);
             for parent in self.compared_parents() {
                 let Some(held) = behind.get(parent) else { continue };
                 if values.get(parent).is_none_or(|value| compare_values(held, value) == Ordering::Greater) { values.insert(parent.to_string(), held.clone()); }
@@ -69,48 +69,8 @@ impl AssociationSpec {
         values
     }
 
-    fn chosen(&self, server: &Map<String, Value>, child: Option<&Map<String, Value>>) -> Map<String, Value> {
-        let server: Map<String, Value> = self.sets.keys().filter_map(|field| present(server.get(field)).map(|value| (field.clone(), value.clone()))).collect();
-        let Some(child) = child else { return server };
-        let from_child: Map<String, Value> = self.sets.iter().filter_map(|(parent, field)| present(child.get(field)).map(|value| (parent.clone(), value.clone()))).collect();
-        let id = child.get("id").and_then(Value::as_str);
-        let pointed = self.pointer_field().and_then(|field| server.get(field)).and_then(Value::as_str).is_some_and(|pointer| Some(pointer) == id);
-        let beats = self.compared_parents().find_map(|parent| Some((from_child.get(parent)?, server.get(parent)?))).is_some_and(|(child, server)| compare_values(child, server) == Ordering::Greater);
-        let server_wins = !server.is_empty() && (pointed || (!id.is_some_and(is_temp_id) && !beats));
-        let (mut values, winner) = if server_wins { (from_child, server) } else { (server, from_child) };
-        values.extend(winner);
-        values
-    }
-}
-
-pub(crate) const SERVER_VALUE: &str = "server__";
-
-impl ModelSpec {
-    pub fn with_server_values(models: &[ModelSpec]) -> Vec<ModelSpec> {
-        let set: std::collections::BTreeSet<(&str, &str)> = models
-            .iter()
-            .flat_map(|model| model.associations.iter())
-            .filter(|association| association.kind == AssociationKind::BelongsTo)
-            .flat_map(|association| association.sets.keys().map(move |field| (association.target.as_str(), field.as_str())))
-            .collect();
-        models
-            .iter()
-            .map(|model| {
-                let mut model = model.clone();
-                let shadows: Vec<FieldSpec> = model
-                    .fields
-                    .iter()
-                    .filter(|field| set.contains(&(model.key.as_str(), field.name.as_str())))
-                    .map(|field| FieldSpec { name: format!("{SERVER_VALUE}{}", field.name), nullable: true, default: None, indexed: false, from: None, merge: None, searchable: false, derived: false, ..field.clone() })
-                    .filter(|shadow| !model.fields.iter().any(|field| field.name == shadow.name))
-                    .collect();
-                model.fields.extend(shadows);
-                model
-            })
-            .collect()
-    }
-
-    pub fn server_values(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.fields.iter().filter_map(|field| field.name.strip_prefix(SERVER_VALUE).map(|declared| (declared, field.name.as_str())))
+    fn from_child(&self, child: Option<&Map<String, Value>>) -> Map<String, Value> {
+        let Some(child) = child else { return Map::new() };
+        self.sets.iter().filter_map(|(parent, field)| present(child.get(field)).map(|value| (parent.clone(), value.clone()))).collect()
     }
 }

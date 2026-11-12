@@ -22,7 +22,7 @@ pub(super) fn affected_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mo
     for operation in operations {
         let row = operation.row_ref();
         let spec = &models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.to_string()))?.spec;
-        if matches!(operation, EntityOp::Upsert { .. }) && spec.server_values().next().is_some() { parents.insert(row.clone()); }
+        if matches!(operation, EntityOp::Upsert { .. }) && spec.fields.iter().any(|field| field.derived) { parents.insert(row.clone()); }
         let stored = match rows.get(&(row.model.to_string(), row.id.to_string())) { Some(stored) => stored.as_ref().map(|stored| stored.row.clone()), None => reader.point(row.model.as_str(), row.id.as_str())? };
         if let Some(stored) = stored { parents_of(spec, &stored, parents)?; }
     }
@@ -37,11 +37,31 @@ pub(crate) fn parents_of(spec: &ModelSpec, row: &Row, parents: &mut BTreeSet<Row
     Ok(())
 }
 
+/// The parent models whose stored pointer named the destroyed child: its confirmed delete turns their windows stale (P-DATA-122).
+pub(crate) fn named_parents(reader: &Reader<'_>, spec: &ModelSpec, before: &Row) -> Result<Vec<String>, StoreError> {
+    let mut named = Vec::new();
+    for association in setting(spec) {
+        let Some(parent) = before.get(&association.foreign_key).and_then(read_id) else { continue };
+        let Some(pointer) = association.pointer_field() else { continue };
+        let Some(stored) = reader.point(association.target.as_str(), parent.as_str())? else { continue };
+        let was_named = match stored.get(pointer).and_then(read_id) {
+            None => true,
+            Some(id) => match reader.point(spec.key.as_str(), id.as_str())? {
+                Some(current) => association.newest([before, &current]).is_some_and(|newest| std::ptr::eq(newest, before)),
+                None => true,
+            },
+        };
+        if was_named { named.push(association.target.to_string()); }
+    }
+    Ok(named)
+}
+
 /// The one entry of the derived parent fields for the parents a write touched, the derived rows go through `apply` in the same transaction.
 pub(super) fn settle_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, results: &[super::CommitResult], apply: impl FnOnce(super::BatchPlan) -> Result<super::CommitResult, StoreError>, generation: crate::identity::Generation) -> Result<(Option<super::CommitResult>, usize, BTreeSet<String>), StoreError> {
     let parents: BTreeSet<RowRef> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
-    let (derived, read, stale) = derived_parents(reader, models, &parents)?;
-    let written = if derived.is_empty() { None } else { Some(apply(super::BatchPlan { entity_ops: derived, ..super::BatchPlan::new(generation) })?) };
+    let (derived, read, mut stale) = derived_parents(reader, models, &parents)?;
+    stale.extend(results.iter().flat_map(|result| result.stale.iter().cloned()));
+    let written = if derived.is_empty() { None } else { Some(apply(super::BatchPlan { entity_ops: derived, ..super::BatchPlan::from_source(generation, crate::schema::RowSource::Derived) })?) };
     Ok((written, read, stale))
 }
 
@@ -52,25 +72,14 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
     let mut hidden: Option<super::apply::HiddenRows> = None;
     for parent in parents {
         let Some(stored) = reader.stored_row(parent.model.as_str(), parent.id.as_str())?.map(|stored| stored.row) else { continue };
-        let info = models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?;
-        let server: Row = info.spec.server_values().filter_map(|(declared, hidden)| stored.get(hidden).map(|value| (declared.to_string(), value.clone()))).collect();
         let mut next = stored.clone();
         for child in models.values() {
             for association in setting(&child.spec).filter(|association| association.target == parent.model) {
-                let named = association.pointer_field().and_then(|field| server.get(field)).and_then(read_id);
-                let removed = match named {
-                    Some(id) if reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?.is_some() && reader.stored_row(child.spec.key.as_str(), id.as_str())?.is_none() => {
+                let named = association.pointer_field().and_then(|field| stored.get(field)).and_then(read_id);
+                if let Some(id) = named {
+                    if reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?.is_some() && reader.stored_row(child.spec.key.as_str(), id.as_str())?.is_none() {
                         let open = match &hidden { Some(open) => open, None => hidden.insert(super::apply::hidden_rows(reader.connection(), &[])?) };
-                        Some(!open.contains(&(child.spec.key.to_string(), id.to_string())))
-                    }
-                    _ => None,
-                };
-                let mut server = server.clone();
-                if let Some(closed) = removed {
-                    if closed { stale.insert(parent.model.to_string()); }
-                    for (declared, hidden) in info.spec.server_values().filter(|(declared, _)| association.sets.contains_key(*declared)) {
-                        server.remove(declared);
-                        if closed { next.remove(hidden); }
+                        if !open.contains(&(child.spec.key.to_string(), id.to_string())) { stale.insert(parent.model.to_string()); }
                     }
                 }
                 let mut newest = |permanent: bool| -> Result<Option<Row>, StoreError> {
@@ -81,7 +90,7 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
                 let first = newest(false)?;
                 let predicted = first.as_ref().and_then(|row| row.get("id")).and_then(Value::as_str).is_some_and(crate::identity::is_temp_id);
                 let confirmed = if predicted { newest(true)? } else { None };
-                let values = association.derived(&server, first.as_ref(), confirmed.as_ref());
+                let values = association.derived(first.as_ref(), confirmed.as_ref());
                 for field in association.sets.keys() {
                     match values.get(field) {
                         Some(value) => next.insert(field.clone(), value.clone()),

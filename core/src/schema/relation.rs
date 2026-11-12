@@ -215,6 +215,8 @@ pub enum RowSource {
     Response,
     Create,
     Local,
+    /// The pass that writes the derived fields of the parents a batch touched (P-DATA-56).
+    Derived,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -338,7 +340,7 @@ impl RelationSpec {
     /// P-DATA-100: whether a row written by a batch of `source` may enter a loaded window of this selection.
     pub fn admits(&self, source: RowSource) -> bool {
         match source {
-            RowSource::Page | RowSource::Local => false,
+            RowSource::Page | RowSource::Local | RowSource::Derived => false,
             RowSource::NodeReread => self.joins_node,
             RowSource::Event | RowSource::Response => self.joins_events,
             RowSource::Create => (self.joins_created && self.by_columns.is_empty() && self.text_params.is_empty()) || self.lists_every_row_of_its_params(),

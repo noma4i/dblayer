@@ -24,7 +24,6 @@ pub struct BootReport {
 
 impl Store {
     pub fn boot(&self, models: &[ModelSpec], data_version: Option<&str>) -> Result<BootReport, StoreError> {
-        let models = &ModelSpec::with_server_values(models);
         let mut reading_models = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.ready = false;

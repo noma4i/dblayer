@@ -29,7 +29,7 @@ pub(super) fn apply_transitions(
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
-                destroyed_parents(connection, models, *seq, parents)?;
+                destroyed_parents(connection, models, *seq, parents, result)?;
                 delete_operation(connection, *seq)?;
                 result.operations.insert(*seq);
                 wrote = true;
@@ -103,11 +103,14 @@ pub(super) fn apply_transitions(
     Ok(wrote)
 }
 
-fn destroyed_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
+fn destroyed_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, parents: &mut BTreeSet<RowRef>, result: &mut CommitResult) -> Result<(), StoreError> {
     let Some(prior) = crate::store::plan::op_effect::read_prior(connection, seq)? else { return Ok(()) };
     for row in crate::store::plan::Prior::decode(prior)?.rows {
         if let crate::store::plan::PriorRow::Destroyed { model, before, .. } = row {
-            if let Some(info) = models.get(&model) { crate::store::follow_pointer::parents_of(&info.spec, &before, parents)?; }
+            if let Some(info) = models.get(&model) {
+                crate::store::follow_pointer::parents_of(&info.spec, &before, parents)?;
+                result.stale.extend(crate::store::follow_pointer::named_parents(&Reader::new(connection, models), &info.spec, &before)?);
+            }
         }
     }
     Ok(())

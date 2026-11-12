@@ -360,6 +360,8 @@ pub struct CommitResult {
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,
     pub parents: std::collections::BTreeSet<RowRef>,
+    /// The parent models whose windows are stale: a confirmed delete closed the child the parent named.
+    pub stale: BTreeSet<String>,
 }
 
 impl CommitResult {
@@ -381,6 +383,7 @@ impl CommitResult {
             item_snapshots: Vec::new(),
             position: 0,
             parents: Default::default(),
+            stale: BTreeSet::new(),
         }
     }
 

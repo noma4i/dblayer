@@ -27,12 +27,11 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
     for (model, ids) in wanted { writer.prefetch(&model, &ids, writer.closing)?; }
     for EffectRow { model, row_id, values: text } in &writes.rows {
         let fields = values(text)?;
-        let spec = &writer.models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+        writer.models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
         let next = match writer.stored(model, row_id)?.map(|stored| stored.row) {
             Some(current) => {
                 let mut merged = current.clone();
                 merged.extend(fields);
-                super::merge::own_values(spec, Some(&current), &mut merged);
                 let mut entry = PriorRow::edited(reader, model, row_id, &current, &merged)?;
                 if let PriorRow::Edited { owned, .. } = &mut entry { for revision in owned.values_mut() { *revision = writer.revision; } }
                 prior.rows.push(entry);
@@ -40,8 +39,6 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
             }
             None => {
                 prior.rows.push(PriorRow::Created { model: model.clone(), id: row_id.clone() });
-                let mut fields = fields;
-                super::merge::own_values(spec, None, &mut fields);
                 fields
             }
         };

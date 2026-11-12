@@ -75,6 +75,9 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
+            if let Some(related_id) = patch.get("id").and_then(read_id) {
+                if reader.tombstone_seq(related_model, related_id.as_str())?.is_some() && writer.stored(related_model, related_id.as_str())?.is_none() { continue; }
+            }
             let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
