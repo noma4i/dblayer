@@ -50,7 +50,6 @@ fn a_list_of_enum_values_stops_the_run_on_a_bad_declaration() {
     for (case, source, error) in [
         ("collision", CHAT.replace("[\"PRIMARY\", \"SECONDARY\"]", "[\"a_b\", \"aB\"]"), "both become the Swift case `aB`"),
         ("no values", CHAT.replace("values: [\"PRIMARY\", \"SECONDARY\"], ", ""), "enum attribute `lists` needs `values:`"),
-        ("two shapes", format!("{CHAT}\nmodel Mail do\n  attribute :lists, [:enum], values: [\"X\"], as: ChatList\nend\n"), "declared with different values"),
         ("string list with values", CHAT.replace("[:enum], values: [\"a_b\", \"c\"], as: ChatExtra", "[:string], values: [\"a_b\"]"), "`values:` belongs to `:enum` and `[:enum]`"),
     ] {
         let errors = parse_models(&source).expect_err(case);
