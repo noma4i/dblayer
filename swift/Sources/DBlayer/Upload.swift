@@ -3,7 +3,7 @@ import Foundation
 public struct Prepare: Sendable {
   let wire: WirePrepare
 
-  public static func video(limits: VideoLimits? = nil, mirror: Bool = false) -> Self { Self(wire: .video(limits: limits, mirror: mirror)) }
+  public static func video(limits: VideoLimits? = nil, mirror: Bool = false, onCannotDecode: CannotDecode = .fail) -> Self { Self(wire: .video(limits: limits, mirror: mirror, onCannotDecode: onCannotDecode)) }
   public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format)) }
 }
 
@@ -56,13 +56,14 @@ public struct UploadSource: Sendable {
   public var mime: String?
   public var values: [String: JSONValue]
   public var variables: [String: JSONValue]
+  public var prepare: Prepare?
 
-  public init(path: String, name: String? = nil, mime: String? = nil, values: [String: JSONValue] = [:], variables: [String: JSONValue] = [:]) {
-    (self.path, self.name, self.mime, self.values, self.variables) = (path, name, mime, values, variables)
+  public init(path: String, name: String? = nil, mime: String? = nil, values: [String: JSONValue] = [:], variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
+    (self.path, self.name, self.mime, self.values, self.variables, self.prepare) = (path, name, mime, values, variables, prepare)
   }
 
   var wire: WireUploadSource {
-    get throws { WireUploadSource(path: path, name: name, mime: mime, valuesJson: try JSONValue.object(values).text, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadSource(path: path, name: name, mime: mime, valuesJson: try JSONValue.object(values).text, variablesJson: try JSONValue.object(variables).text, prepare: prepare?.wire) }
   }
 }
 

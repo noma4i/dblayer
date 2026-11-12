@@ -4,7 +4,7 @@ import kotlinx.serialization.json.JsonObject
 
 class Prepare internal constructor(internal val wire: WirePrepare) {
     companion object {
-        fun video(limits: VideoLimits? = null, mirror: Boolean = false) = Prepare(WirePrepare.Video(limits, mirror))
+        fun video(limits: VideoLimits? = null, mirror: Boolean = false, onCannotDecode: CannotDecode = CannotDecode.FAIL) = Prepare(WirePrepare.Video(limits, mirror, onCannotDecode))
         fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG) = Prepare(WirePrepare.Image(edit, quality, format))
     }
 }
@@ -42,8 +42,9 @@ data class UploadSource(
     val mime: String? = null,
     val values: JsonObject = JsonObject(emptyMap()),
     val variables: JsonObject = JsonObject(emptyMap()),
+    val prepare: Prepare? = null,
 ) {
-    internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText())
+    internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText(), prepare?.wire)
 }
 
 suspend fun DBModel.supplySource(action: String, source: UploadSource, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
