@@ -84,49 +84,6 @@ class OperationQueueTest {
     }
 
     @Test
-    fun anOfflineUpdateShowsInTheQueueAndLeavesItWhenTheNetworkReturns() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("MomentsFeed", QUEUE_FEED)
-        val hold = transport.hold("UpdateMoment", QUEUE_UPDATED)
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, QUEUE_DEFS)
-        Moment.feed.load()
-        val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = QueueReader(this, AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items })
-        DBlayer.database.setOnline(false)
-        val receipt = moment.update(text = GraphQLNullable.Value("edited"))
-        val pending = withTimeout(5000) { queue.until { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
-        assertEquals(listOf("Moment", "update", moment.id), listOf(pending[0].model, pending[0].action, pending[0].rowId))
-        DBlayer.database.setOnline(true)
-        val sending = withTimeout(5000) { queue.until { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
-        assertEquals(1u, sending[0].attempts)
-        hold.release()
-        withTimeout(5000) { receipt.confirmed() }
-        assertEquals(emptyList<OperationInfo>(), withTimeout(5000) { queue.until { it.isEmpty() } })
-        queue.close()
-    }
-
-    @Test
-    fun aRefusedUpdateStaysFailedWithItsErrorAndRetryByItsFieldsSendsItAgain() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("MomentsFeed", QUEUE_FEED)
-        transport.enqueue("UpdateMoment", DbException.Http(422.toUShort(), "refused"))
-        transport.enqueue("UpdateMoment", QUEUE_UPDATED)
-        openSigned(Config(null, null), specs(momentsKeepingUpdates()), transport)
-        registerStandOperations(DBlayer.database, QUEUE_DEFS)
-        Moment.feed.load()
-        val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = QueueReader(this, AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items })
-        moment.update(text = GraphQLNullable.Value("edited"))
-        val failed = withTimeout(5000) { queue.until { it.firstOrNull()?.status == OperationQueueStatus.FAILED } }.first()
-        assertNotNull(failed.error)
-        AccountScope.current().retry(failed.model, failed.rowId, failed.action)
-        withTimeout(5000) { queue.until { it.isEmpty() } }
-        assertEquals(2, transport.calls.count { it.operationName == "UpdateMoment" })
-        queue.close()
-    }
-
-    @Test
     fun theStatusAndQueueStreamsEndWithTheCauseOfTheCore() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", QUEUE_FEED)

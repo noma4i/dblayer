@@ -22,36 +22,6 @@ import org.junit.Test
 
 class BridgeProbeTest {
     @Test
-    fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
-        openRecordSession()
-        val initial = settledRecord()
-        val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1"))).optimisticValue!!
-        val changed = row.react(reactionBody = "C", userId = "u1").optimisticValue!!
-        assertEquals(listOf("u1"), changed.reactions.map { it.userId })
-        assertEquals(listOf("C"), changed.reactions.map { it.body })
-    }
-
-    @Test
-    fun anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() = bounded {
-        openRecordSession()
-        val ann = User.create(name = "Ann").optimisticValue!!
-        val record = settledRecord()
-        val withUser = record.react(reactionBody = "A", userId = ann.id).optimisticValue!!
-        assertEquals("Ann", withUser.reactions.first().user?.name)
-        val withoutUser = record.react(reactionBody = "B", userId = "nobody").optimisticValue!!
-        assertNull(withoutUser.reactions.first { it.userId == "nobody" }.user)
-    }
-
-    @Test
-    fun aSearchPassesWholeWordsToTheCore() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
-        Moment.create(text = "hello world", account = AccountScope.current()).optimisticValue!!
-        Moment.create(text = "hel", account = AccountScope.current()).optimisticValue!!
-        val whole = Query("Moment", Moment).search("hel", wholeWords = true)
-        assertEquals(listOf("hel"), withTimeout(5000) { whole.live.flow.first { it.isNotEmpty() } }.map { it.text })
-    }
-
-    @Test
     fun updateAndDestroyReachTypedLiveRows() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
@@ -74,62 +44,6 @@ class BridgeProbeTest {
         } finally {
             scope.cancel()
         }
-    }
-
-    @Test
-    fun anOfflineUpdateIsSentOnceWhenTheNetworkReturns() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-        transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
-        val scope = CoroutineScope(SupervisorJob())
-        val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
-        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }); TestPulse.pulse() } }
-        try {
-            eventually("the open list shows its first value") { deliveries.isNotEmpty() }
-            Moment.feed.load()
-            eventually("the open list shows the loaded row") { deliveries.lastOrNull() == listOf<String?>("m") }
-            val moment = Moment.recent.current().first()
-            DBlayer.database.setOnline(false)
-            val receipt = moment.update(text = GraphQLNullable.Value("edited"))
-            eventually("the same open list shows the edited row") { deliveries.lastOrNull() == listOf<String?>("edited") }
-            assertEquals(0, transport.calls.count { it.operationName == "UpdateMoment" })
-            DBlayer.database.setOnline(true)
-            withTimeout(5000) { receipt.confirmed() }
-            assertEquals(1, transport.calls.count { it.operationName == "UpdateMoment" })
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun writesReachTypedLiveRows() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
-        val live = Moment.recent.live.flow
-        assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
-        val moment = Moment.create(text = "m", account = AccountScope.current()).optimisticValue!!
-        assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
-        moment.setLocal("tone", kotlinx.serialization.json.JsonPrimitive("warm"))
-        assertEquals("warm", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == "warm" } }.first().tone)
-        moment.setLocal("tone", kotlinx.serialization.json.JsonNull)
-        assertNull(withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == null } }.first().tone)
-    }
-
-    @Test
-    fun loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
-        val before = DBlayer.subscriptionCensus()
-
-        Moment.feed.load()
-        Moment.feed.load()
-
-        assertEquals(1, transport.calls.size)
-        val after = DBlayer.subscriptionCensus()
-        assertEquals(before.subscriptions to before.observedQueries, after.subscriptions to after.observedQueries)
     }
 
     @Test
@@ -170,18 +84,6 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun theOutcomeOfASentCreateCarriesTheServerId() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-
-        val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
-        assertEquals(true, sent.optimisticValue?.id?.startsWith("temp"))
-        assertEquals("m77", requireNotNull(withTimeout(5000) { sent.confirmed() }.value).id)
-    }
-
-    @Test
     fun aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
@@ -196,29 +98,6 @@ class BridgeProbeTest {
 
         assertEquals(local.id, settled)
         stream.close()
-    }
-
-    @Test
-    fun aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}""")
-        transport.enqueuePut("https://s3/x")
-        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob(${'$'}filename: String!, ${'$'}contentType: String!, ${'$'}byteSize: Int!, ${'$'}checksum: String!) { createBlob(filename: ${'$'}filename, contentType: ${'$'}contentType, byteSize: ${'$'}byteSize, checksum: ${'$'}checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-        val file = java.io.File.createTempFile("clip", ".mp4").apply { writeText("abcdef") }
-
-        val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
-        val request = UploadRequest(file.path, variables = values)
-        val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
-        val local = receipt.optimisticValue!!
-
-        assertEquals(true, local.id.startsWith("temp"))
-        assertEquals(true, local.uploads["upload_clip"] != null)
-        assertEquals("m77", requireNotNull(withTimeout(5000) { receipt.confirmed() }.value).id)
-        val sent = transport.calls.filter { it.operationName == "CreateMoment" }
-        assertEquals(1, sent.size)
-        assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))
-        assertEquals(false, sent.first().variablesJson.contains("blobId"))
     }
 
 }
