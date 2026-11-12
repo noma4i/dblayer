@@ -6,6 +6,7 @@
 
 - A call with a sent pair answers `dropped`, not `network`, on a network failure.
 - A child hidden by an open destroy no longer shows in the fields its parent derives.
+- Return the server outcome of a call when the database closes before its answer is saved.
 
 ## 6.27.1 - 2026-11-12
 

@@ -1,6 +1,6 @@
 //! Owner `Calls`: the arbitrary operation `run`, one transport request per call, no cache and no Store write.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::contract::{Drained, Online, RequestId};
@@ -67,7 +67,8 @@ impl CallKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallPhase {
-    Sending { request_id: RequestId, kind: CallKind, generation: u64 },
+    /// `releasing`: a mutation whose `Deadline` found no answer of Session yet, `Release` is out and the verdict comes from the answer to it.
+    Sending { request_id: RequestId, kind: CallKind, generation: u64, releasing: bool },
     Done,
 }
 
@@ -115,8 +116,6 @@ pub struct CallsState {
     /// `Run` calls that came before the addressed snapshot of the epoch.
     awaiting: BTreeMap<ReplyId, (CallId, String, String, CallDefinition, u64)>,
     awaiting_by_id: BTreeMap<CallId, ReplyId>,
-    /// Mutate calls whose `Deadline` found no answer of Session yet: `Release` is out and the verdict comes from the answer to it.
-    releasing: BTreeSet<CallId>,
     next: u64,
     drained: bool,
 }
@@ -144,17 +143,18 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
 
 impl CallsState {
     pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), CallDefinition { kind: *kind, document: String::new(), root: String::new() })).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), releasing: BTreeSet::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), CallDefinition { kind: *kind, document: String::new(), root: String::new() })).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
 
     fn sending(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { .. })) }
 
+    fn releasing(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { releasing: true, .. })) }
+
     fn finish(&mut self, call_id: CallId, answer: CallAnswer, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
         if let Some((phase, reply)) = self.calls.get_mut(&call_id) {
             *phase = CallPhase::Done;
-            self.releasing.remove(&call_id);
             self.by_reply.remove(reply);
             self.attempts.remove(&call_id);
             finished.push(call_id);
@@ -175,7 +175,7 @@ impl CallsState {
         };
         let id = held.map(|(id, _, _)| id).unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
         let kind = definition.kind;
-        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation }, reply));
+        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation, releasing: false }, reply));
         self.by_reply.insert(reply, id);
         self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
         fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, definition, epoch: self.epoch });
@@ -214,11 +214,11 @@ impl CallsState {
     }
 
     fn send_again(&mut self, call_id: CallId, fx: &mut Vec<CallsEffect>) {
-        let Some(CallPhase::Sending { mut request_id, kind, generation }) = self.phase(call_id) else { return };
+        let Some(CallPhase::Sending { mut request_id, kind, generation, releasing }) = self.phase(call_id) else { return };
         if kind == CallKind::Query {
             request_id = self.next;
             self.next += 1;
-            if let Some((phase, _)) = self.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind, generation }; }
+            if let Some((phase, _)) = self.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind, generation, releasing }; }
         }
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
         attempt.waiting_retry = false;
@@ -263,12 +263,12 @@ impl StateOwner for Calls {
                 if let (Some(policy), Err(error)) = (retry, &answer) { state.retry(call_id, error.clone(), policy, &mut fx, &mut scheduled, &mut finished); }
                 else { state.finish(call_id, answer, &mut fx, &mut finished); }
             }
-            CallsInput::TransportError { call_id, error } if state.sending(call_id) && state.releasing.contains(&call_id) => {
+            CallsInput::TransportError { call_id, error } if state.releasing(call_id) => {
                 let answer = if error == CallError::NotSent { CallError::Network } else { CallError::Dropped };
                 state.finish(call_id, Err(answer), &mut fx, &mut finished);
             }
-            CallsInput::Dropped { call_id } if state.sending(call_id) && state.releasing.contains(&call_id) => state.finish(call_id, Err(CallError::Dropped), &mut fx, &mut finished),
-            CallsInput::TransportError { call_id, error } if state.sending(call_id) => {
+            CallsInput::Dropped { call_id } if state.releasing(call_id) => state.finish(call_id, Err(CallError::Dropped), &mut fx, &mut finished),
+            CallsInput::TransportError { call_id, error } if state.sending(call_id) && error != CallError::NotSent => {
                 let policy = match state.phase(call_id) { Some(CallPhase::Sending { kind, .. }) => retry_policy(&error, kind), _ => None };
                 if let Some(policy) = policy {
                     state.retry(call_id, error, policy, &mut fx, &mut scheduled, &mut finished);
@@ -278,14 +278,14 @@ impl StateOwner for Calls {
                 let policy = if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) { crate::runtime::RetryPolicy::Http } else { crate::runtime::RetryPolicy::QueryNetwork };
                 state.retry(call_id, CallError::Dropped, policy, &mut fx, &mut scheduled, &mut finished);
             }
-            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing.contains(&call_id) && matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) => {
-                let Some(CallPhase::Sending { request_id, .. }) = state.phase(call_id) else { return Vec::new() };
+            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing(call_id) && matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) => {
+                let Some(CallPhase::Sending { request_id, generation, .. }) = state.phase(call_id) else { return Vec::new() };
                 if state.attempts.get(&call_id).is_some_and(|attempt| attempt.attempt > 1) {
                     state.finish(call_id, Err(CallError::Dropped), &mut fx, &mut finished);
-                } else { state.releasing.insert(call_id); }
+                } else if let Some((phase, _)) = state.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind: CallKind::Mutate, generation, releasing: true }; }
                 fx.push(CallsEffect::Release { request_id });
             }
-            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing.contains(&call_id) => {
+            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing(call_id) => {
                 let phase = state.phase(call_id);
                 let error = state.attempts.get(&call_id).and_then(|attempt| attempt.last.clone()).filter(|error| *error != CallError::Dropped).unwrap_or(CallError::Network);
                 state.finish(call_id, Err(error), &mut fx, &mut finished);
