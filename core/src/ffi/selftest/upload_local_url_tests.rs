@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use super::rig_tests::bound;
 use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
@@ -6,6 +7,7 @@ use super::upload_stage_tests::{answers, COMPLETE, LANDED, OPERATIONS as STAGE_O
 use super::upload_batch_shift_tests::{blob, OPERATIONS};
 use super::upload_stand::{request, ScriptedPreparer, Stand, BLOB};
 use crate::ffi::upload_wire::{WireSource, WireUploadBatch, WireUploadItem, WireUploadRequest};
+use crate::ffi::tape::Rows;
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{Database, ReadRequest, ReadValue};
 
@@ -84,30 +86,43 @@ async fn xfer_prop_local_url() {
             let sources = source_files(directory.path(), if matches!(entry, Entry::Batch) { 3 } else { 1 });
             let (run_hold, put_hold) = (preparer.hold_next(), stand.puts.hold_next());
             let mut mutation = None;
-            let (ids, mut receipts, commit): (Vec<String>, Vec<_>, Option<String>) = match entry {
+            let frames = Arc::new(Rows::default());
+            let _watch = database.watch_query(&format!(r#"{{"model":"{}"}}"#, if matches!(entry, Entry::Batch) { "Asset" } else { "Moment" }), frames.clone());
+            bound(_watch.wait_for_initial_load()).await.unwrap();
+            let call: tokio::task::JoinHandle<(Vec<String>, Vec<_>, Option<String>)> = match entry {
                 Entry::Upload => {
                     stand.script.data("CreateBlob", BLOB);
                     mutation = Some(stand.script.hold("CreateMoment", LANDED));
-                    let receipt = bound(database.send(if prepared { send(epoch, &sources[0], shrink()) } else { super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &sources[0], epoch) })).await.unwrap();
-                    (vec![receipt.optimistic_value.as_ref().unwrap().id.clone()], vec![receipt], None)
+                    let (database, source) = (database.clone(), sources[0].clone());
+                    tokio::spawn(async move {
+                        let receipt = bound(database.send(if prepared { send(epoch, &source, shrink()) } else { super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &source, epoch) })).await.unwrap();
+                        (vec![receipt.optimistic_value.as_ref().unwrap().id.clone()], vec![receipt], None)
+                    })
                 }
                 Entry::Batch => {
                     for index in 0..3 { stand.script.data("CreateBlob", &blob(index)); }
                     mutation = Some(stand.script.hold("CreateAssets", ASSETS));
                     let items: Vec<WireUploadItem> = sources.iter().enumerate().map(|(index, path)| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: file_source(path, prepared), variables_json: "{}".into() }).collect();
-                    let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
-                    (batch.items.iter().map(|item| item.optimistic_value.id.clone()).collect(), batch.items.into_iter().map(|item| item.receipt).collect(), None)
+                    let database = database.clone();
+                    tokio::spawn(async move {
+                        let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+                        (batch.items.iter().map(|item| item.optimistic_value.id.clone()).collect(), batch.items.into_iter().map(|item| item.receipt).collect(), None)
+                    })
                 }
                 Entry::Stage => {
                     answers(&stand);
                     stand.script.data("CompleteMultipart", COMPLETE);
                     let upload = if prepared { WireUploadRequest { source: file_source(&sources[0], true), variables_json: "{}".into() } } else { request(&sources[0]) };
-                    let staged = bound(database.stage(epoch, "Moment".into(), "upload_clip".into(), upload)).await.unwrap();
-                    (vec![staged.row_id.clone()], vec![staged.receipt], Some(staged.row_id))
+                    let database = database.clone();
+                    tokio::spawn(async move {
+                        let staged = bound(database.stage(epoch, "Moment".into(), "upload_clip".into(), upload)).await.unwrap();
+                        (vec![staged.row_id.clone()], vec![staged.receipt], Some(staged.row_id))
+                    })
                 }
             };
-            remove_all(&sources);
             let places = Places { entry };
+            let (ids, mut receipts, commit) = call.await.unwrap();
+            remove_all(&sources);
             assert_url(&database, &places, &ids, "the call returned", prepared).await;
             if prepared {
                 run_hold.entered().await;
@@ -129,6 +144,11 @@ async fn xfer_prop_local_url() {
             for receipt in receipts { bound(database.confirmed(receipt, false)).await.unwrap(); }
             places.wait(&database, &ids, "the transfers end", |shown| shown.iter().all(|(url, _)| url.is_none())).await;
             assert!(kept.iter().all(|url| !Path::new(url.strip_prefix("file://").unwrap()).exists()), "{entry:?} prepared={prepared}: the file is removed with the transfer");
+            let frames_seen = frames.1.lock().unwrap();
+            let shown: Vec<_> = frames_seen.iter().flat_map(|frame| frame.rows.iter()).flat_map(|row| row.uploads.iter()).collect();
+            assert!(!shown.is_empty(), "{entry:?} prepared={prepared}: the frames show the upload");
+            for upload in shown { assert!(upload.upload.local_url.is_some(), "{entry:?} prepared={prepared}: a frame shows the upload {:?} without localUrl", upload.upload.status); }
+            drop(frames_seen);
             database.close_now();
         }
     }

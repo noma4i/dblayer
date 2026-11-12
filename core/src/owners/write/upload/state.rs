@@ -136,6 +136,20 @@ pub struct UploadProcessing {
 /// The progress is a finite number read from JSON, so equality is total.
 impl Eq for UploadProcessing {}
 
+/// The file of a transfer: the copy of the library once it is durable, the file of the caller before (D-376).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferFile {
+    Copy(String),
+    Caller(String),
+}
+
+impl TransferFile {
+    /// The one rule of the file of a transfer: a durable copy is `size > 0`, before it the source of the row.
+    pub fn of(size: u64, copy_id: String, source: Option<String>) -> Option<Self> {
+        if size > 0 { Some(Self::Copy(copy_id)) } else { source.map(Self::Caller) }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UploadInfo {
     pub status: UploadStatus,
@@ -150,9 +164,9 @@ pub struct UploadInfo {
     pub local_url: Option<String>,
     #[serde(default)]
     pub processing: Option<UploadProcessing>,
-    /// The id of the copy in the file directory while the transfer holds one: `local_url` is made from it at the read.
+    /// The file the transfer reads now: `local_url` is made from it at the read.
     #[serde(skip)]
-    pub copy_file: Option<String>,
+    pub copy_file: Option<TransferFile>,
     /// The share shown last in hundredths.
     #[serde(default)]
     pub share: u32,

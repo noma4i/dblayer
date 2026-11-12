@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Give `localUrl` of an upload from the first frame of its row, not from the return of the call.
 - Fix upload attempts burning while a step waits for the session queue.
 - Fail a saved write whose operation is not declared with `refused` instead of waiting.
 - Fail a stored upload step with the state of the session instead of leaving it queued.

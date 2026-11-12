@@ -9,6 +9,7 @@ use crate::identity::touches::touch;
 use crate::identity::RowId;
 use crate::store::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
 use crate::schema::Sort;
+use crate::owners::write::upload::TransferFile;
 use crate::store::sync_state::read_sync;
 
 use super::db_error::CoreError;
@@ -81,8 +82,12 @@ impl Store {
     fn finish_uploads(&self, spec: &crate::schema::ModelSpec, data: &Map<String, Value>, sync: &mut crate::value::sync::SyncInfo) {
         let files = self.files();
         for info in sync.uploads.values_mut() {
-            if let Some(id) = info.copy_file.take() {
-                info.local_url = files.path(&id).filter(|path| path.exists()).or_else(|| Some(files.cache_target(&id, "source")).filter(|path| path.exists())).map(|path| format!("file://{}", path.display()));
+            if let Some(file) = info.copy_file.take() {
+                let path = match file {
+                    TransferFile::Copy(id) => files.path(&id).filter(|path| path.exists()).or_else(|| Some(files.cache_target(&id, "source")).filter(|path| path.exists())),
+                    TransferFile::Caller(path) => Some(std::path::PathBuf::from(path)).filter(|path| path.exists()),
+                };
+                info.local_url = path.map(|path| format!("file://{}", path.display()));
             }
         }
         for action in spec.actions.iter().filter(|action| action.upload) {
