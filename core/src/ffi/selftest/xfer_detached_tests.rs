@@ -299,7 +299,7 @@ async fn xfer_detached_prop_one_put_through_restart() {
                 let detached = Arc::new(Detached::default());
                 if !lost { detached.finishing_listed(); }
                 let (fresh, reopened) = reopen_with(&image, &secret, &[CREATE_MOMENT], detached.clone(), script).await;
-                drained(&reopened).await;
+                crate::test_wait::settled(&reopened, "the writes are quiet", || true).await;
                 let listed: usize = detached.resumed().iter().map(Vec::len).sum();
                 let new_starts = detached.started().len();
                 match (listed, lost) {
