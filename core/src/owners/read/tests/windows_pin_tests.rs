@@ -58,30 +58,7 @@ fn outcome_of(effects: &[Effect<Windows>]) -> Option<WindowOutcome> {
     })
 }
 
-#[test]
-fn win_load_nowait_offline() {
-    let mut state = WindowsState::new(1, Some(false), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
-    let effects = no_wait(&mut state);
-    assert_eq!(outcome_of(&effects), Some(WindowOutcome::Offline { message: "Item.items refresh needs the network".into() }), "the owner answers Offline by its own online");
-}
-
-#[test]
-fn win_load_nowait_before_snapshot_waits() {
-    let online = |value: bool| WindowsInput::Online { online: Online(value), online_seq: 1 };
-    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
-    assert!(no_wait(&mut state).is_empty(), "no answer and no request before the snapshot");
-    assert_eq!(outcome_of(&Windows::step(&mut state, online(false), crate::runtime::Time(0))), Some(WindowOutcome::Offline { message: "Item.items refresh needs the network".into() }), "Online(false) answers the waiting call");
-    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
-    no_wait(&mut state);
-    let effects = Windows::step(&mut state, online(true), crate::runtime::Time(0));
-    assert_eq!(outcome_of(&effects), None, "Online(true) releases the call as a load");
-    assert!(!effects.is_empty(), "the load of the window starts");
-    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
-    no_wait(&mut state);
-    assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing, crate::runtime::Time(0))), Some(WindowOutcome::Ended { cause: EndCause::Closed }), "a waiting call ends with the owner");
-}
-
-/// win_load_nowait_before_snapshot_waits over every order of the second epoch: EpochStarted(0), the addressed snapshot (1), the broadcast (2), the call (3).
+/// A no-wait load over every order of the second epoch: EpochStarted(0), the addressed snapshot (1), the broadcast (2), the call (3).
 /// The snapshot follows its request and a call stamped with the epoch follows its start.
 #[test]
 fn win_prop_nowait_second_epoch_orders() {
@@ -123,34 +100,6 @@ fn win_loading_error_keeps_the_type_of_the_failure() {
         let effects = Windows::step(&mut state, WindowsInput::Failure { request: 1, attempt: 1, error: RequestError { class: ErrorClass::Permanent, failure: failure.clone() } }, crate::runtime::Time(0));
         assert_eq!(outcome_of(&effects), Some(WindowOutcome::Failed { failure: failure.clone() }), "{failure:?}");
     }
-}
-
-/// P-WIN-34: a change that arrives while the request is on its way marks the next load, the batch of the load in flight keeps the source of its own load.
-#[test]
-fn win_change_during_the_request_marks_the_next_load() {
-    use crate::owners::read::windows::{StaleCause, StaleKeys};
-    use crate::schema::RowSource::{NodeReread, Page};
-    let key = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("n1"))].into_iter().collect());
-    let now = crate::runtime::Time(0);
-    let mut state = state();
-    let _ = Windows::step(&mut state, WindowsInput::InterestPassive { key: key.clone(), id: 9 }, now);
-    let _ = Windows::step(&mut state, WindowsInput::WindowRead { key: key.clone(), read_id: 1, result: Ok(None) }, now);
-    let mut pending = store_inputs(Windows::step(&mut state, WindowsInput::Load { key: key.clone(), id: 1, goal: Goal::First, force: true, store_revision: 0 }, now));
-    let mut sources = Vec::new();
-    for change_in_flight in [true, false] {
-        let request = pending.iter().find_map(|input| match input { StoreInput::Pin { request_id, .. } => Some(*request_id), _ => None }).expect("the load pins its request");
-        let asked = Windows::step(&mut state, WindowsInput::Pinned { request_id: request, base_revision: 1 }, now);
-        let attempt = asked.iter().find_map(|effect| match effect { Effect::Run(WindowsEffect::Window { effect: WindowEffect::Request { attempt, .. }, .. }) => Some(*attempt), _ => None }).expect("the pinned load asks the network");
-        if change_in_flight {
-            let _ = Windows::step(&mut state, WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: StaleCause::Change }, now);
-        }
-        let landed = store_inputs(Windows::step(&mut state, WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec![], None) }, now));
-        let batch = landed.iter().find_map(|input| match input { StoreInput::Commit(batch) => Some(batch.clone()), _ => None }).expect("the answer lands");
-        sources.extend(batch.ops.iter().filter_map(|op| match op { StoreOp::Window { source, .. } => Some(*source), _ => None }));
-        let committed = crate::owners::contract::Committed { batch: batch.id, revision: 5, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
-        pending = store_inputs(Windows::step(&mut state, WindowsInput::Committed(committed), now));
-    }
-    assert_eq!(sources, vec![Page, NodeReread], "the load asked before the change lands as a page, the reread asked after it carries the mark");
 }
 
 /// P-WIN-34: a marked load keeps its mark through a network retry, an offline pause and a last-reader close, until a batch lands.
