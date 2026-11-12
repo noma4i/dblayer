@@ -920,7 +920,7 @@ fn call_deadline_expired_mutate_sent() {
 
 #[test]
 fn call_releasing_verdict() {
-    let ok = || CallsInput::Response { call_id: 1, body: Some("{}".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Final };
+    let ok = || CallsInput::Response { call_id: 1, body: Some("{}".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } };
     for (verdict, want) in [(CallsInput::Dropped { call_id: 1 }, Err(CallError::Dropped)), (CallsInput::TransportError { call_id: 1, error: CallError::Http { status: 500, detail: String::new() } }, Err(CallError::Dropped)), (ok(), Ok("{}".to_string()))] {
         let mut state = change_run();
         step(&mut state, CallsInput::Deadline { call_id: 1 });

@@ -160,7 +160,8 @@ fn sess_release_queued() {
 fn sess_release_sealing() {
     let mut twin = Twin::new();
     twin.feed(mutate(7, 11));
-    let SessionPhase::Sealing { seal_id, .. } = phase(&twin).clone() else { panic!("sealing") };
+    let SessionPhase::Sealing { seal_id, .. } = phase(&twin) else { panic!("sealing") };
+    let seal_id = *seal_id;
     let text = post(&mut twin, SessionInput::Release { req_id: 11 });
     assert!(text.contains("NotSent") && text.matches("Answer { author: 7, req_id: 11").count() == 1, "no pair was created: {text}");
     assert_eq!(kind(&twin), "Idle");
