@@ -153,3 +153,55 @@ async fn xfer_prop_local_url() {
         }
     }
 }
+
+fn readable_url(database: &Database, model: &str, id: &str, action: &str) -> Option<Vec<u8>> {
+    let row = database.peek_row(database.session_epoch(), model.into(), id.into()).unwrap()?;
+    let url = row.uploads.into_iter().find(|upload| upload.action == action)?.upload.local_url?;
+    std::fs::read(url.strip_prefix("file://").unwrap()).ok()
+}
+
+/// P-XFER-23 (D-386): a supplied source and a retry with a new source show the file of the library from the return of their call, with the file of the caller already deleted; a row that waits for its source shows none.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_local_url_after_supply_source_and_retry_with_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = |name: &str, bytes: &[u8]| { let path = directory.path().join(name); std::fs::write(&path, bytes).unwrap(); path };
+    let source_of = |path: &Path| crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
+
+    let stand = Stand::new();
+    let database = stand.open(Some(&directory.path().join("supply.sqlite")), &OPERATIONS).await;
+    let epoch = database.session_epoch();
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: WireSource::Pending, variables_json: "{}".into() }).collect();
+    let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let ids: Vec<String> = batch.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
+    assert_eq!(readable_url(&database, "Asset", &ids[0], "create_files"), None, "a row that waits for its source shows no file");
+    stand.script.data("CreateBlob", &blob(0));
+    let put = stand.puts.hold_next();
+    let supplied = file("supplied", b"supplied bytes");
+    bound(database.supply_source(epoch, "Asset".into(), ids[0].clone(), "create_files".into(), source_of(&supplied))).await.unwrap();
+    std::fs::remove_file(&supplied).unwrap();
+    assert_eq!(readable_url(&database, "Asset", &ids[0], "create_files"), Some(b"supplied bytes".to_vec()), "the call returned");
+    put.entered().await;
+    assert_eq!(readable_url(&database, "Asset", &ids[0], "create_files"), Some(b"supplied bytes".to_vec()), "the PUT is held");
+    assert_eq!(readable_url(&database, "Asset", &ids[1], "create_files"), None, "the other item still waits");
+    put.release();
+    database.close_now();
+
+    let stand = Stand::new();
+    let database = stand.open(Some(&directory.path().join("retry.sqlite")), &STAGE_OPERATIONS).await;
+    let epoch = database.session_epoch();
+    stand.script.enqueue("CreateBlob", super::upload_stand::Answer::Status(422));
+    let first = file("first", b"first bytes");
+    let id = bound(database.send(super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &first, epoch))).await.unwrap().optimistic_value.unwrap().id;
+    let rows = super::upload_stand::watched(&database, "Moment", &id);
+    crate::test_wait::settled(&database, "the upload failed", || super::upload_stand::shows(&rows, crate::ffi::wire::WireSyncState::Failed)).await;
+    stand.script.data("CreateBlob", BLOB);
+    let put = stand.puts.hold_next();
+    let second = file("second", b"second bytes");
+    bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), Some(source_of(&second)))).await.unwrap();
+    std::fs::remove_file(&second).unwrap();
+    assert_eq!(readable_url(&database, "Moment", &id, "upload_clip"), Some(b"second bytes".to_vec()), "the retry returned");
+    put.entered().await;
+    assert_eq!(readable_url(&database, "Moment", &id, "upload_clip"), Some(b"second bytes".to_vec()), "the PUT of the new file is held");
+    put.release();
+    database.close_now();
+}
