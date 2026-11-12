@@ -235,3 +235,113 @@ fn xfer_stage_prop_closed_lifecycle() {
         assert_eq!((removed, written), (1, usize::from(minted)), "seed {seed}: one removal and an abort for the minted upload");
     }
 }
+
+fn replies_of(outs: &[Out], reply: u64) -> Vec<TransferAnswer> { outs.iter().flat_map(|out| out.replies(reply)).collect() }
+
+fn drive(twin: &mut Twin, id: TransferId, outs: &mut Vec<Out>) {
+    for _ in 0..40 {
+        if twin.has_pending() { outs.push(twin.commit()); }
+        else if twin.state().stage_of(id) == Some(TransferStage::Uploading) && twin.t(id).confirmed_parts < 2 { let part = twin.t(id).confirmed_parts + 1; outs.push(twin.step_ok(id, part, Some("u1"))); }
+        else { break; }
+    }
+}
+
+/// `Cancel` and `Discard` after `Commit`, before the Store answers its batch (D-394): no answer until `Committed`, then the removal runs by the row of the stage it leaves to; `Rejected` leaves the transfer held and the removal runs as in `Held`.
+/// Observable: the answers, the batches of the removal, the debts of the abort. Catches: `InFlight` for the window of the write, a command lost at the exit, an answer twice.
+#[test]
+fn xfer_removal_waits_for_the_commit_batch() {
+    for case in ["held", "uploading", "rejected"] {
+        for cancel in [true, false] {
+            let mut twin = Twin::with_slots(4);
+            let id = if case == "uploading" {
+                let id = staged(&mut twin, KEY, 2);
+                twin.step_ok(id, 1, Some("u1"));
+                twin.commit();
+                if twin.stage(id) == TransferStage::PersistingAttempt { twin.commit(); }
+                assert_eq!(twin.stage(id), TransferStage::Uploading);
+                id
+            } else { held_at(&mut twin, KEY) };
+            let (commit, first) = commit_input(&mut twin, KEY);
+            let (command, second) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+            let mut outs = vec![first, second];
+            assert!(replies_of(&outs, command).is_empty() && replies_of(&outs, commit).is_empty(), "{case} cancel {cancel}: the command waits for the batch");
+            if case == "rejected" {
+                outs.push(twin.reject(storage()));
+                assert_eq!(replies_of(&outs, commit), vec![TransferAnswer::Err(Fault::of_reject(storage()))]);
+                assert!(twin.t(id).held, "the transfer stays held");
+            }
+            while twin.has_pending() { outs.push(twin.commit()); }
+            let answer = if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
+            assert_eq!(replies_of(&outs, command), vec![answer], "{case} cancel {cancel}");
+            assert!(twin.state().stage_of(id).is_none_or(|stage| stage == TransferStage::Done), "{case} cancel {cancel}");
+            assert_eq!(outs.iter().map(|out| out.removed().len()).sum::<usize>(), 1, "{case} cancel {cancel}: one batch removes the row");
+            assert_eq!(outs.iter().map(|out| out.orphans_written().len()).sum::<usize>(), 1, "{case} cancel {cancel}: 1 debt of the multipart");
+            if case != "rejected" { assert!(matches!(replies_of(&outs, commit).as_slice(), [TransferAnswer::Receipt(_)]), "{case}: the commit is answered once"); }
+        }
+    }
+}
+
+/// `Commit` in a stage of an internal step (D-394) waits for the stage it leaves to: the receipt once it is open, `NotFound` once a removal ahead of it ended the transfer.
+/// Observable: the answers to `Commit`. Catches: `InFlight` for a window of the library, a lost command.
+#[test]
+fn xfer_commit_waits_for_the_stage() {
+    for stage in [TransferStage::PersistingRetry, TransferStage::PersistingFailure] {
+        for removed in [false, true] {
+            let mut twin = Twin::with_slots(4);
+            let id = staged(&mut twin, KEY, 2);
+            twin.step_error(id, false);
+            if stage == TransferStage::PersistingRetry {
+                twin.commit();
+                twin.retry(KEY, None);
+            }
+            assert_eq!(twin.stage(id), stage);
+            let removal = removed.then(|| twin.cancel(KEY));
+            let (commit, first) = commit_input(&mut twin, KEY);
+            let (second_commit, second) = commit_input(&mut twin, KEY);
+            let mut outs = vec![first, second];
+            assert!(replies_of(&outs, commit).is_empty() && removal.as_ref().is_none_or(|(reply, _)| replies_of(&outs, *reply).is_empty()), "{stage:?}: the command waits");
+            assert_eq!(replies_of(&outs, second_commit), vec![TransferAnswer::Err(Fault::Invalid)], "{stage:?}: a second commit is refused");
+            drive(&mut twin, id, &mut outs);
+            if removed {
+                assert_eq!(replies_of(&outs, commit), vec![TransferAnswer::Err(Fault::NotFound)], "{stage:?}");
+                assert_eq!(replies_of(&outs, removal.unwrap().0), vec![TransferAnswer::Cancelled(true)], "{stage:?}");
+            } else {
+                assert!(matches!(replies_of(&outs, commit).as_slice(), [TransferAnswer::Receipt(_)]), "{stage:?}");
+                assert!(!twin.t(id).held, "{stage:?}: the row is committed");
+            }
+        }
+    }
+}
+
+/// P-XFER-78 (D-394): `Commit` and a removal in any order and at any point of the trace of a staged transfer (parts, errors, writes of the Store): `Commit` gets a receipt when it came first and `NotFound` when the removal did, the removal gets `true` / `Ok`, every call exactly one answer, never `InFlight`.
+#[test]
+fn xfer_prop_commit_and_removal_in_any_order() {
+    for seed in 0..120u64 {
+        let mut random = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut next = move |bound: u64| { random = random.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (random >> 33) % bound };
+        let cancel = next(2) == 0;
+        let mut twin = Twin::with_slots(4);
+        let id = staged(&mut twin, KEY, 2);
+        let mut outs: Vec<Out> = Vec::new();
+        let (mut commit, mut removal, mut order) = (None, None, Vec::new());
+        for _ in 0..16 {
+            match next(5) {
+                0 if twin.has_pending() => outs.push(twin.commit()),
+                1 if twin.stage(id) == TransferStage::Uploading && twin.t(id).confirmed_parts < 2 => { let part = twin.t(id).confirmed_parts + 1; outs.push(twin.step_ok(id, part, Some("u1"))); }
+                2 if twin.stage(id) == TransferStage::Uploading && commit.is_none() => outs.push(twin.step_error(id, next(2) == 0)),
+                3 if commit.is_none() => { let (reply, out) = commit_input(&mut twin, KEY); commit = Some(reply); order.push('c'); outs.push(out); }
+                4 if removal.is_none() => { let (reply, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) }; removal = Some(reply); order.push('r'); outs.push(out); }
+                _ => {}
+            }
+        }
+        if commit.is_none() { let (reply, out) = commit_input(&mut twin, KEY); commit = Some(reply); order.push('c'); outs.push(out); }
+        if removal.is_none() { let (reply, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) }; removal = Some(reply); order.push('r'); outs.push(out); }
+        drive(&mut twin, id, &mut outs);
+        let (commit, removal) = (commit.unwrap(), removal.unwrap());
+        let answer = if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
+        assert_eq!(replies_of(&outs, removal), vec![answer], "seed {seed} {order:?}");
+        let commit_answers = replies_of(&outs, commit);
+        if order[0] == 'r' { assert_eq!(commit_answers, vec![TransferAnswer::Err(Fault::NotFound)], "seed {seed} {order:?}"); }
+        else { assert!(matches!(commit_answers.as_slice(), [TransferAnswer::Receipt(_)]), "seed {seed} {order:?}: {commit_answers:?}"); }
+    }
+}

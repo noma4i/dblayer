@@ -25,11 +25,11 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (stage, batched, committing) = (transfer.stage, transfer.batch_id.is_some(), transfer.commit_reply.is_some());
         let supplying = transfer.supply_back.is_some();
-        if !Self::defers_removal(stage, batched, supplying) && (self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) || committing) {
+        if !Self::defers_removal(stage, batched, supplying, committing) && self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) {
             return Self::refuse(fx, rep, Fault::InFlight);
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if Self::defers_removal(stage, batched, supplying) {
+        if Self::defers_removal(stage, batched, supplying, committing) {
             transfer.removal_waiting.push((rep, cancel));
             self.removal_pending.insert(id);
             return;
@@ -74,7 +74,8 @@ impl TransferState {
     }
 
     /// The stages of the internal steps of the library: a removal command waits in them for the stage it leaves to (D-392).
-    fn defers_removal(stage: TransferStage, batched: bool, supply: bool) -> bool {
+    pub(super) fn defers_removal(stage: TransferStage, batched: bool, supply: bool, committing: bool) -> bool {
+        if committing { return true; }
         match stage {
             TransferStage::Copying => batched || supply,
             TransferStage::Reserving | TransferStage::Accepting | TransferStage::CopyReady | TransferStage::PersistingPrepared | TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingFailure | TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingBatchIntent => true,
@@ -86,12 +87,16 @@ impl TransferState {
     pub(super) fn run_waiting_removals(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
         for id in std::mem::take(&mut self.removal_pending) {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
-            if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some()) {
+            if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), transfer.commit_reply.is_some()) {
                 self.removal_pending.insert(id);
                 continue;
             }
             let (key, waiting) = (transfer.key.clone(), std::mem::take(&mut transfer.removal_waiting));
+            let (commit, commit_first) = (transfer.commit_waiting.take(), std::mem::take(&mut transfer.commit_first));
+            let (before, after) = if commit_first { (commit, None) } else { (None, commit) };
+            if let Some((epoch, request, rep)) = before { self.commit(epoch, &key, request, rep, fx); }
             for (rep, cancel) in waiting { self.cancel(now, &key, rep, cancel, fx); }
+            if let Some((epoch, request, rep)) = after { self.commit(epoch, &key, request, rep, fx); }
         }
     }
 

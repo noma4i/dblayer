@@ -610,6 +610,7 @@ impl TransferState {
         replies.extend(transfer.retry_reply.take());
         replies.extend(transfer.supply_reply.take());
         replies.extend(transfer.commit_reply.take());
+        replies.extend(transfer.commit_waiting.take().map(|(_, _, rep)| rep));
         replies.extend(transfer.staged_failed.take().and_then(|(rep, _)| rep));
         replies.append(&mut transfer.discard_waiters);
         let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;

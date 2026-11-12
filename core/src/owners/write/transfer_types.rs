@@ -521,6 +521,8 @@ pub struct Transfer {
     /// The file was staged: it goes multipart whatever its size, also after `Commit` (D-372).
     pub multipart_forced: bool,
     pub commit_reply: Option<ReplyId>,
+    pub commit_waiting: Option<(Epoch, CommitRequest, ReplyId)>,
+    pub commit_first: bool,
     pub commit: Option<CommitPlan>,
     pub prep: Option<PrepareRun>,
     pub transfer_id: TransferId,

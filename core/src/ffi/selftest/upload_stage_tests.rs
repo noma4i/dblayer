@@ -235,3 +235,35 @@ async fn xfer_stage_commit_twice() {
     crate::test_wait::settled(&database, "the final mutation went", || stand.script.count("CreateMoment") == 1).await;
     assert_eq!(stand.script.count("CreateMoment"), 1);
 }
+
+/// `commit_staged` and `cancel_upload` of a staged multipart upload in the order of the consumer, the second given without the answer of the first: `cancel_upload` answers `true`, `commit_staged` a receipt or `NotFound` (the cancel reached the owner first), no `sync_upload` row and no optimistic row stay, 1 `AbortMultipart` goes and the final mutation does not.
+/// Observable: the answers, the calls to the server, the base, the row. Catches: `InFlight` for the window of the write of the commit, an abort that never goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_stage_cancel_right_after_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let live = directory.path().join("live.sqlite");
+    let source = file_of(directory.path(), 11 * MEBIBYTE);
+    let stand = Stand::new();
+    let database = stand.open(Some(&live), &OPERATIONS).await;
+    answers(&stand);
+    stand.script.data("AbortMultipart", ABORTED);
+    stand.script.data("CompleteMultipart", COMPLETE);
+    stand.script.data("CreateMoment", LANDED);
+    let put_hold = stand.puts.hold_next();
+    let staged = staged(&database, &source).await;
+    put_hold.entered().await;
+    let epoch = database.session_epoch();
+    let (committed, cancelled) = bound(async {
+        tokio::join!(
+            database.commit_staged(epoch, "Moment".into(), staged.row_id.clone(), "upload_clip".into(), r#"{"text":"hi"}"#.into(), "{}".into()),
+            database.cancel_upload(epoch, "Moment".into(), staged.row_id.clone(), "upload_clip".into()),
+        )
+    }).await;
+    assert!(committed.is_ok() || matches!(committed, Err(crate::ffi::DbError::NotFound { .. })), "{committed:?}");
+    assert!(matches!(cancelled, Ok(true)), "{cancelled:?}");
+    put_hold.release();
+    crate::test_wait::settled(&database, &format!("the abort went (calls {:?})", stand.script.names()), || stand.script.count("AbortMultipart") == 1).await;
+    let rows = rusqlite::Connection::open(&live).unwrap().query_row("SELECT count(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap();
+    assert_eq!((rows, row_exists(&database, &staged.row_id), stand.script.count("AbortMultipart"), stand.script.count("CompleteMultipart") + stand.script.count("CreateMoment")), (0, false, 1, 0));
+    database.close_now();
+}

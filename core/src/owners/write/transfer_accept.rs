@@ -62,6 +62,8 @@ impl TransferState {
             held,
             multipart_forced: held,
             commit_reply: None,
+            commit_waiting: None,
+            commit_first: false,
             commit: None,
             prep: None,
             transfer_id,

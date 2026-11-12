@@ -13,8 +13,15 @@ impl TransferState {
         if epoch != self.epoch { return reply(fx, rep, TransferAnswer::Err(Fault::NoSession)); }
         let Some(id) = self.open_id(key) else { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if !transfer.held || transfer.commit_reply.is_some() { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+        if transfer.stage == TransferStage::Removing { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)); }
+        if !transfer.held || transfer.commit_reply.is_some() || transfer.commit_waiting.is_some() { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         let open = matches!(transfer.stage, TransferStage::Preparing | TransferStage::Measuring | TransferStage::PersistingPrepared | TransferStage::Ready | TransferStage::PersistingAttempt | TransferStage::Uploading | TransferStage::PersistingPart | TransferStage::Held | TransferStage::Failed);
+        if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), false) {
+            transfer.commit_first = transfer.removal_waiting.is_empty();
+            transfer.commit_waiting = Some((epoch, request, rep));
+            self.removal_pending.insert(id);
+            return;
+        }
         if !open { return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)); }
         if request.refused { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         let Some(body) = merged_body(&transfer.mutation.body, &request.variables, request.wrap.as_deref()) else { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)) };
