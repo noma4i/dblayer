@@ -128,7 +128,7 @@ fn child(id: &str, chat: &str, at: i64, seq: Option<i64>) -> RowValue {
     RowValue { row_id: id.into(), values: json!({"id": id, "chatId": chat, "body": id, "createdAt": at, "sequenceNumber": seq}).to_string() }
 }
 
-fn land_children(db: &Arc<Store>, rows: Vec<RowValue>) {
+pub(super) fn land_children(db: &Arc<Store>, rows: Vec<RowValue>) {
     write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows }]);
 }
 

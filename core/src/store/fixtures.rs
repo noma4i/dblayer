@@ -154,13 +154,6 @@ pub fn chats_spec() -> ModelSpec {
     spec
 }
 
-pub fn revisioned_chats_spec() -> ModelSpec {
-    let mut spec = chats_spec();
-    spec.server_revision = Some("rev".into());
-    spec.fields.push(FieldSpec::scalar("rev", ScalarKind::Int).optional());
-    spec
-}
-
 pub fn chat_messages_spec() -> ModelSpec {
     let mut spec = ModelSpec::new(
         "messages",

@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::owners::contract::BatchAuthor;
-use crate::owners::store::{RowValue, StoreOp};
+use crate::owners::store::RowValue;
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 

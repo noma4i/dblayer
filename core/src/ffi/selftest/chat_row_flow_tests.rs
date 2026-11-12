@@ -12,7 +12,7 @@ use crate::ffi::{WireOperationReceipt};
 use crate::test_wait::settled;
 
 const ALL: &str = r#"{"model":"Chat","relation":"all","params":{}}"#;
-const BY_ACTIVITY: &str = r#"{"model":"Chat","relation":"all","params":{},"order":[{"field":"lastActivityAt","direction":"desc"}]}"#;
+const BY_ACTIVITY: &str = r#"{"model":"Chat","relation":"all","params":{},"order":[{"field":"lastMessageAt","direction":"desc"}]}"#;
 
 async fn rig_with_chats(chats: &[Value]) -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, events(add_chat)).await;
@@ -106,6 +106,8 @@ async fn flow_chat_unread_counters() {
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_list_order() {
     let rig = rig_with_chats(&[chat_row("c1", 10), chat_row("c2", 20)]).await;
+    rig.land("Message", json!({"id": "e1", "chatId": "c1", "text": "first", "at": 10})).await;
+    rig.land("Message", json!({"id": "e2", "chatId": "c2", "text": "second", "at": 20})).await;
     let rows = watch(&rig, BY_ACTIVITY, 2).await;
     assert_eq!(order(&rows), ["c2", "c1"]);
     let hold = rig.world.hold_next("SendMessage");
