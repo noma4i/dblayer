@@ -1,23 +1,31 @@
 import Foundation
 
+public struct Prepare: Sendable {
+  let wire: WirePrepare
+
+  public static func video(limits: VideoLimits? = nil, mirror: Bool = false) -> Self { Self(wire: .video(limits: limits, mirror: mirror)) }
+  public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format)) }
+}
+
 public struct UploadRequest: Sendable {
   public var path: String?
   public var name: String?
   public var mime: String?
   public var variables: [String: JSONValue]
+  public var prepare: Prepare?
 
-  public init(path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:]) {
-    (self.path, self.name, self.mime, self.variables) = (path, name, mime, variables)
+  public init(path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
+    (self.path, self.name, self.mime, self.variables, self.prepare) = (path, name, mime, variables, prepare)
   }
 
   private init(variables: [String: JSONValue]) {
-    (path, name, mime, self.variables) = (nil, nil, nil, variables)
+    (path, name, mime, self.variables, prepare) = (nil, nil, nil, variables, nil)
   }
 
   public static func pending(variables: [String: JSONValue] = [:]) -> Self { Self(variables: variables) }
 
   var wire: WireUploadRequest {
-    get throws { WireUploadRequest(source: path.map { .file(path: $0, name: name, mime: mime) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadRequest(source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 
@@ -27,17 +35,18 @@ public struct UploadItem: Sendable {
   public var name: String?
   public var mime: String?
   public var variables: [String: JSONValue]
+  public var prepare: Prepare?
 
-  public init(values: [String: JSONValue], path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:]) {
-    (self.values, self.path, self.name, self.mime, self.variables) = (values, path, name, mime, variables)
+  public init(values: [String: JSONValue], path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
+    (self.values, self.path, self.name, self.mime, self.variables, self.prepare) = (values, path, name, mime, variables, prepare)
   }
 
   public init(values: [String: JSONValue], request: UploadRequest) {
-    (self.values, path, name, mime, variables) = (values, request.path, request.name, request.mime, request.variables)
+    (self.values, path, name, mime, variables, prepare) = (values, request.path, request.name, request.mime, request.variables, request.prepare)
   }
 
   var wire: WireUploadItem {
-    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, source: path.map { .file(path: $0, name: name, mime: mime) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 

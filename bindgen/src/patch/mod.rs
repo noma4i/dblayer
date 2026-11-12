@@ -108,10 +108,10 @@ pub fn kotlin(source: &str) -> Result<String, String> {
 fn scalar_completions(source: &str) -> Result<String, String> {
     let pattern = "`uniffiFutureCallback`: UniffiForeignFutureComplete";
     let alloc = "    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, ";
-    if source.matches(pattern).count() != 8 { return Err("expected exactly 8 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed".into()); }
+    if source.matches(pattern).count() != 12 { return Err("expected exactly 12 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed".into()); }
     let buffer = "`uniffiFutureCallback`: UniffiForeignFutureCompleteRustBuffer,";
     let unit = "`uniffiFutureCallback`: UniffiForeignFutureCompleteVoid,";
-    if source.matches(buffer).count() + source.matches(unit).count() != 8 { return Err("dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future/mod.rs".into()); }
+    if source.matches(buffer).count() + source.matches(unit).count() != 12 { return Err("dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future/mod.rs".into()); }
     expect_lines(source, alloc, 1)?;
     let pointer = "`uniffiFuturePointer`: Pointer?,";
     let mut output = String::new();
@@ -132,8 +132,8 @@ fn scalar_completions(source: &str) -> Result<String, String> {
         if !line.contains("uniffiFuturePointer") { kind = ""; }
     }
     output.push_str(ANSWERS);
-    if output.matches(pointer).count() != 8 { return Err("8 uniffiFuturePointer parameters were not written to dblayer.kt".into()); }
-    if output.lines().filter(|line| line.starts_with("            val uniffiFutureCallback = UniffiForeignFutureAnswer")).count() != 4 { return Err("4 UniffiForeignFutureAnswer values were not inserted into dblayer.kt".into()); }
+    if output.matches(pointer).count() != 12 { return Err("12 uniffiFuturePointer parameters were not written to dblayer.kt".into()); }
+    if output.lines().filter(|line| line.starts_with("            val uniffiFutureCallback = UniffiForeignFutureAnswer")).count() != 6 { return Err("6 UniffiForeignFutureAnswer values were not inserted into dblayer.kt".into()); }
     if output.matches("external fun dblayer_complete_foreign_future_").count() != 2 { return Err("the scalar completion declarations were not inserted into dblayer.kt".into()); }
     Ok(output)
 }

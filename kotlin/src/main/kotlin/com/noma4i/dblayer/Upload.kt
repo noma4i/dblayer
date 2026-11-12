@@ -2,13 +2,21 @@ package com.noma4i.dblayer
 
 import kotlinx.serialization.json.JsonObject
 
+class Prepare internal constructor(internal val wire: WirePrepare) {
+    companion object {
+        fun video(limits: VideoLimits? = null, mirror: Boolean = false) = Prepare(WirePrepare.Video(limits, mirror))
+        fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG) = Prepare(WirePrepare.Image(edit, quality, format))
+    }
+}
+
 data class UploadRequest(
     val path: String?,
     val name: String? = null,
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
+    val prepare: Prepare? = null,
 ) {
-    internal fun wire() = WireUploadRequest(path?.let { WireSource.File(it, name, mime) } ?: WireSource.Pending, variables.jsonText())
+    internal fun wire() = WireUploadRequest(path?.let { WireSource.File(it, name, mime, prepare?.wire) } ?: WireSource.Pending, variables.jsonText())
     companion object {
         fun pending(variables: JsonObject = JsonObject(emptyMap())) = UploadRequest(null, variables = variables)
     }
@@ -22,9 +30,10 @@ data class UploadItem(
     val name: String? = null,
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
+    val prepare: Prepare? = null,
 ) {
-    constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables)
-    internal fun wire() = WireUploadItem(values.jsonText(), path?.let { WireSource.File(it, name, mime) } ?: WireSource.Pending, variables.jsonText())
+    constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables, request.prepare)
+    internal fun wire() = WireUploadItem(values.jsonText(), path?.let { WireSource.File(it, name, mime, prepare?.wire) } ?: WireSource.Pending, variables.jsonText())
 }
 
 data class UploadSource(
