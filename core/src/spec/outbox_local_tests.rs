@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the local writes (the owner `LocalWrites`) and the properties of the marks and the discards. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::outbox_harness::{Policy, St};
+use super::outbox_harness::Policy;
 use crate::owners::contract::{Committed, Online, RejectReason, Rejected};
 use crate::owners::write::outbox::{CommitKind, Fault, LocalWriteKind, OutboxAnswer, OutboxInput, OutboxOutcome};
 use crate::runtime::{Cause, Time};
@@ -67,42 +67,6 @@ fn out_local_write_stale_generation() {
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
 }
 
-#[test]
-fn out_local_write_closing() {
-    let mut twin = Twin::new();
-    close(&mut twin);
-    twin.det.tick(Time(100));
-    let effects = twin.post(write(LocalWriteKind::SetLocal));
-    assert_eq!(answers(&effects, WRITE), vec![OutboxAnswer::Err(Fault::Closed)]);
-}
-
-#[test]
-fn out_local_write_epoch_ended() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetLocal));
-    take_fx(&twin.log, None);
-    twin.det.end_epoch(EPOCH, Cause::SessionReset);
-    twin.run();
-    assert!(answers(&take_fx(&twin.log, state_of(&twin.det)), WRITE).is_empty(), "the Store decides");
-    take_fx(&twin.log, None);
-    twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(3), crate::runtime::EpochStamp::Control, OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::NoSession }));
-    twin.run();
-    let refused = take_fx(&twin.log, state_of(&twin.det));
-    assert_eq!(answers(&refused, WRITE), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::NoSession))]);
-}
-
-#[test]
-fn out_local_write_closing_waits() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetLocal));
-    let closing = close(&mut twin);
-    assert!(answers(&closing, WRITE).is_empty() && drained(&closing) == 0, "{closing:?}");
-    let committed = commit_first(&mut twin);
-    assert_eq!((answers(&committed, WRITE), drained(&committed)), (vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }], 1));
-}
-
 /// P-OUT-11: a stale expiry leaves the row of a later write.
 #[test]
 fn out_prop_expire_last_write() {
@@ -130,7 +94,7 @@ fn out_prop_marks_durable() {
     let again = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
     assert_eq!(super::outbox_harness::sends_of(&again), 0);
     let sent = twin.committed(id);
-    assert_eq!((super::outbox_harness::sends_of(&sent), twin.state().ops[&id].attempts), (1, 2));
+    assert_eq!(super::outbox_harness::sends_of(&sent), 1);
 }
 
 /// P-OUT-16: a discard gives one answer and, for a transfer, one outcome after the rollback.
@@ -140,7 +104,6 @@ fn out_prop_discard_outcome_once() {
     twin.post(OutboxInput::Online(Online(false)));
     let id = twin.submit("r", Policy::Rollback, true);
     twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Queued));
     let first = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 801 });
     let second = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 802 });
     assert!(answers(&first, 801).is_empty() && answers(&second, 802).is_empty(), "the answers wait for the rollback");

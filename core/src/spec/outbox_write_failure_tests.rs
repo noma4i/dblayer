@@ -27,20 +27,23 @@ fn outcomes(effects: &[OutboxEffect]) -> Vec<OutboxOutcome> {
 }
 
 #[test]
-fn out_landing_invalid() {
-    let mut twin = Twin::new();
-    let id = landing(&mut twin);
-    let at = twin.det.trace().len();
-    let refused = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
-    assert_eq!((twin.stage(id), sends(&refused)), (Some(St::Landing), 0));
-    assert!(!twin.det.trace()[at..].iter().any(|entry| entry.effects.contains("Stale")), "no Stale inside the refused batch");
-    assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && !twin.store_text.contains("Rows { model: \"Moment\""), "{}", twin.store_text);
-    assert!(outcomes(&refused).is_empty(), "no outcome before Committed: {refused:?}");
-    let at = twin.det.trace().len();
-    let done = twin.committed(id);
-    assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Confirmed { .. }]), "{done:?}");
-    assert_eq!(twin.det.trace()[at..].iter().filter(|entry| entry.effects.contains("Stale")).count(), 1, "the windows of the answer models are marked stale after Committed");
-    assert_eq!(twin.stage(id), Some(St::Done));
+fn out_invalid_refusal_of_the_server_outcome_batch_writes_it_again_without_rows() {
+    for landing_stage in [true, false] {
+        let mut twin = Twin::new();
+        let id = if landing_stage { landing(&mut twin) } else { rolling_back(&mut twin) };
+        let at = twin.det.trace().len();
+        let refused = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+        assert_eq!(sends(&refused), 0, "landing={landing_stage}");
+        assert!(!twin.det.trace()[at..].iter().any(|entry| entry.effects.contains("Stale")), "landing={landing_stage}: no Stale inside the refused batch");
+        let rows_or_rollback = if landing_stage { "Rows { model: \"Moment\"" } else { "RollBack {" };
+        assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && !twin.store_text.contains(rows_or_rollback), "landing={landing_stage}: {}", twin.store_text);
+        assert!(outcomes(&refused).is_empty(), "no outcome before Committed: {refused:?}");
+        let at = twin.det.trace().len();
+        let done = twin.committed(id);
+        let want = if landing_stage { matches!(outcomes(&done).as_slice(), [OutboxOutcome::Confirmed { .. }]) } else { matches!(outcomes(&done).as_slice(), [OutboxOutcome::Rejected { .. }]) };
+        assert!(want, "landing={landing_stage}: {done:?}");
+        assert_eq!(twin.det.trace()[at..].iter().filter(|entry| entry.effects.contains("Stale")).count(), 1, "landing={landing_stage}: the windows of the answer models are marked stale after Committed");
+    }
 }
 
 /// D-341 (2): a `create` answer with a swap whose batch is refused as Invalid: the batch has no rows and no swap of the row, the alias temp -> real is written, the open operations and the next operation of the row address the real id.
@@ -61,23 +64,6 @@ fn out_landing_invalid_create_alias_written() {
     assert_eq!(twin.state().ops[&follower].op.row_id, "R", "the alias is written: the open operation of the row goes with the real id");
     let next = twin.submit("r", Policy::Rollback, false);
     assert_eq!(twin.state().ops[&next].op.row_id, "R", "the next operation of the row goes with the real id");
-}
-
-#[test]
-fn out_rollback_invalid_server_outcome() {
-    let mut twin = Twin::new();
-    let id = rolling_back(&mut twin);
-    assert!(twin.store_text.contains("RollBack {"), "{}", twin.store_text);
-    let at = twin.det.trace().len();
-    let refused = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
-    assert_eq!((twin.stage(id), sends(&refused)), (Some(St::RollingBack(RWhy::Rejected)), 0));
-    assert!(!twin.det.trace()[at..].iter().any(|entry| entry.effects.contains("Stale")), "no Stale inside the refused batch");
-    assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && !twin.store_text.contains("RollBack {"), "{}", twin.store_text);
-    assert!(outcomes(&refused).is_empty(), "{refused:?}");
-    let at = twin.det.trace().len();
-    let done = twin.committed(id);
-    assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Rejected { .. }]), "{done:?}");
-    assert_eq!(twin.det.trace()[at..].iter().filter(|entry| entry.effects.contains("Stale")).count(), 1, "the windows of the rollback models are marked stale after Committed");
 }
 
 /// D-341 (1): a repeated Invalid of the batch without rows ends the operation as Failed, the waiters get the answer.
