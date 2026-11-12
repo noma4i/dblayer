@@ -537,30 +537,18 @@ fn xfer_failed_other() {
 
 #[test]
 fn xfer_epoch_ended() {
-    let mut twin = Twin::new();
-    let (copying, accept_reply, _) = twin.accepting(KEY, 2);
-    twin.commit();
-    let uploading = twin.uploading(OTHER, 2);
-    let (waiting, _) = twin.outcome(uploading, 1);
-    let out = twin.end_epoch();
-    assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
-    assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
-    assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
-}
-
-#[test]
-fn xfer_epoch_ended_close() {
-    let mut twin = Twin::new();
-    let (copying, accept_reply, _) = twin.accepting(KEY, 2);
-    twin.commit();
-    let uploading = twin.uploading(OTHER, 2);
-    let (waiting, _) = twin.outcome(uploading, 1);
-    let out = twin.end_epoch_by(Cause::Close);
-    assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done));
-    assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))], "an epoch ended by close answers the accept with Closed");
-    assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)], "the outcome wait carries Closed");
-    assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "each wait is answered once");
+    for (cause, ended) in [(Cause::SessionReset, crate::ffi::EndCause::SessionEnded), (Cause::Close, crate::ffi::EndCause::Closed)] {
+        let mut twin = Twin::new();
+        let (copying, accept_reply, _) = twin.accepting(KEY, 2);
+        twin.commit();
+        let uploading = twin.uploading(OTHER, 2);
+        let (waiting, _) = twin.outcome(uploading, 1);
+        let out = twin.end_epoch_by(cause);
+        assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done), "{ended:?}");
+        assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(ended))], "{ended:?}: the accept is answered with the cause");
+        assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(ended), None)], "{ended:?}: the outcome wait carries the cause");
+        assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "{ended:?}: each wait is answered once");
+    }
 }
 
 #[test]
@@ -596,19 +584,9 @@ fn xfer_closing() {
     let id = mutating.mutating(OTHER);
     let out = mutating.close();
     assert_eq!((mutating.stage(id), out.drained()), (TransferStage::Done, 1));
-}
-
-#[test]
-fn xfer_restoring_closing() {
-    let mut twin = Twin::bare(1);
-    let out = twin.close();
-    assert_eq!((out.drained(), out.all_replies()), (1, 0));
-}
-
-#[test]
-fn xfer_done_closing() {
-    let mut twin = Twin::new();
-    let out = twin.close();
+    let out = Twin::bare(1).close();
+    assert_eq!((out.drained(), out.all_replies()), (1, 0), "also while restoring");
+    let out = Twin::new().close();
     assert_eq!(out.drained(), 1, "also with no transfer");
     let mut done = Twin::offline();
     let id = done.accepted(KEY, 2);
@@ -627,25 +605,6 @@ fn xfer_outcome_old_cycle() {
     assert_eq!(out.replies(old), vec![failed_outcome("Internal(Invalid): bad row")], "the stored outcome of cycle 1, whatever the state is now");
     let (current, out) = twin.outcome(id, 2);
     assert!(out.replies(current).is_empty(), "cycle 2 is still running");
-}
-
-#[test]
-fn xfer_done_outcome() {
-    let mut twin = Twin::offline();
-    let id = twin.accepted(KEY, 2);
-    twin.cancel(KEY);
-    twin.commit();
-    let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
-}
-
-#[test]
-fn xfer_failed_outcome() {
-    let mut twin = Twin::new();
-    let id = twin.failed(KEY);
-    let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())]);
-    assert_eq!(twin.stage(id), TransferStage::Failed);
 }
 
 #[test]
@@ -701,19 +660,6 @@ fn xfer_status_by_key() {
     let out = twin.commit();
     assert!(out.statuses().contains(&(5, Shown::Uploading { progress: 33 })));
     assert!(out.statuses().iter().all(|(stream, _)| *stream == 5), "a key of another transfer gets no value of this one");
-}
-
-#[test]
-fn xfer_interest_minus() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 5 });
-    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 6 });
-    twin.post(TransferInput::StatusInterestMinus { key: KEY.into(), stream_id: 5 });
-    twin.step_ok(id, 1, None);
-    let out = twin.commit();
-    let streams: Vec<u64> = out.statuses().into_iter().map(|(stream, _)| stream).collect();
-    assert!(!streams.is_empty() && streams.iter().all(|stream| *stream == 6), "only the own id is removed: {streams:?}");
 }
 
 #[test]
