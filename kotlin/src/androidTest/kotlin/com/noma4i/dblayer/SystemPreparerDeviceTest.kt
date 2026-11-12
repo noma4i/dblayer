@@ -65,13 +65,14 @@ class SystemPreparerDeviceTest {
         }
     }
 
-    private fun videoRow(width: Int, height: Int, mime: String = "video/avc", audio: Boolean = true, keys: Boolean = false): (File) -> String = { file ->
+    private fun videoRow(width: Int, height: Int, mime: String? = "video/avc", audio: Boolean? = true, keys: Boolean = false, frames: IntRange = 1..40): (File) -> String = { file ->
         val result = read(file)
-        assertEquals("codec", mime, result.mime)
+        if (mime != null) assertEquals("codec", mime, result.mime)
         assertEquals("size", "${width}x$height", "${result.width}x${result.height}")
-        assertEquals("audio", audio, result.hasAudio)
-        assertTrue("frames ${result.frames}", result.frames in 1..40)
-        assertFalse("location kept", readMetadataKeys(context, file).any { it == "location" || it == "creation_time" })
+        if (audio != null) assertEquals("audio", audio, result.hasAudio)
+        assertTrue("frames ${result.frames}", result.frames in frames)
+        val found = readMetadataKeys(context, file)
+        assertFalse("location kept: $found", found.any { it == "location" || it == "creation_time" })
         "${result.mime} ${result.width}x${result.height} frames=${result.frames} audio=${result.hasAudio}" + if (keys) " no-location" else ""
     }
 
@@ -99,6 +100,10 @@ class SystemPreparerDeviceTest {
         Cell("no audio track", "h264-silent.mp4", video(true, 320, 180), check = videoRow(320, 180, audio = false)),
         Cell("mirror", "h264-fit-location.mp4", video(true, 640, 360, mirror = true), check = videoRow(640, 360)),
         Cell("4K source", "h264-4k.mp4", video(true, 1920, 1080), mayFail = true, check = videoRow(1920, 1080)),
+        Cell("4K SDR device clip", "arg:clip4kSdr", video(true, 1920, 1080), mayFail = true, check = videoRow(1920, 1080, frames = 1..100000)),
+        Cell("4K HDR10 device clip", "arg:clip4kHdr", video(true, 1920, 1080), mayFail = true, check = videoRow(1920, 1080, frames = 1..100000)),
+        Cell("4K SDR device clip repack", "arg:clip4kSdr", video(false, 3840, 2160, strip = listOf("location")), check = videoRow(3840, 2160, mime = null, audio = null, frames = 1..100000)),
+        Cell("1080p device clip", "arg:clip1080", video(true, 1920, 1080), check = videoRow(1920, 1080, audio = null, frames = 1..100000)),
         Cell("JPEG", "photo.jpg", image(800, 600, 0, ImageFormat.JPEG), check = imageRow(800, 600, "image/jpeg")),
         Cell("HEIC to JPEG", "photo.heic", image(800, 600, 0, ImageFormat.JPEG), mayFail = true, check = imageRow(800, 600, "image/jpeg")),
         Cell("PNG with alpha", "alpha.png", image(200, 100, 0, ImageFormat.PNG), check = imageRow(200, 100, "image/png", alpha = true)),
@@ -113,8 +118,15 @@ class SystemPreparerDeviceTest {
     fun theSourceMatrixGivesAFileByThePlanOrAFailureWithAReason() = runBlocking<Unit> {
         val rows = mutableListOf<String>()
         val broken = mutableListOf<String>()
+        val arguments = InstrumentationRegistry.getArguments()
         cells.forEachIndexed { index, cell ->
-            val source = copyAsset(cell.asset)
+            val external = cell.asset.startsWith("arg:")
+            val clip = if (external) arguments.getString(cell.asset.removePrefix("arg:")) else null
+            if (external && clip == null) {
+                Log.i("DBL_MATRIX", "${cell.name} -> SKIPPED no runner argument")
+                return@forEachIndexed
+            }
+            val source = if (clip != null) File(clip) else copyAsset(cell.asset)
             val destination = File(context.cacheDir, "prepared-$index")
             val outcome = preparer.run(PrepareJob(index.toULong(), source.path, destination.path, cell.plan), Quiet())
             val row = when (outcome) {
@@ -131,7 +143,7 @@ class SystemPreparerDeviceTest {
             Log.i("DBL_MATRIX", row)
             rows += row
             destination.delete()
-            source.delete()
+            if (!external) source.delete()
         }
         assertTrue("cells outside the expectation: $broken\n${rows.joinToString("\n")}", broken.isEmpty())
     }

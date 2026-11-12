@@ -203,7 +203,7 @@ internal suspend fun exportWithTransformer(request: VideoExport) = withContext(D
 
                 override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                     handler.removeCallbacks(reader)
-                    if (continuation.isActive) continuation.resumeWithException(IOException("the video cannot be encoded", exportException))
+                    if (continuation.isActive) continuation.resumeWithException(IOException("the video cannot be encoded: ${exportException.errorCodeName} ${exportException.cause?.message.orEmpty()}".trim(), exportException))
                 }
             }).build()
         reader = Runnable {
