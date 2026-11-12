@@ -1,0 +1,11 @@
+{"trace":"i13_stale_debt_survives_close_and_open"}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"login","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r1","operation":"session/api/auth/social","variables":null}},{"o":"replied","v":{"how":"page","id":"r1"}},{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"open_list","args":{"as":"s1","refresh_on_connect":true,"relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r2","operation":"MomentsFeed","variables":{"first":20}}},{"o":"request","v":{"id":"r3","kind":"subscription","purpose":"standard"}}]}
+{"in":"answer_page","args":{"more":false,"rows":1},"out":[{"o":"replied","v":{"how":"page","id":"r2"}}]}
+{"in":"set_online","args":{"online":false},"out":[{"o":"online","v":false}]}
+{"in":"close","args":{},"out":[{"o":"closed"}]}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"begin_load","args":{"as":"l2","named":true,"relation":"feed"},"out":[]}

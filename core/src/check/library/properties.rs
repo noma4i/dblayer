@@ -77,6 +77,8 @@ struct Walk {
     streams: HashMap<String, Interest>,
     /// The names of the open entity streams: they subscribe the model of the moment like the feed streams.
     entities: HashSet<String>,
+    /// The break of a live connection with streams open wrote the models as not fresh: the windows are marked at the network return.
+    gap_due: bool,
     /// Login calls not finished yet: the second one queues behind the first (library.md section 7 `login`) and sends its own request after a refusal of the first.
     logins: u32,
     /// Entity streams opened with `fetch: force` without a network: the force request goes out at the network return (`load: Waiting{page, force}`).
@@ -169,10 +171,12 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             let was_online = walk.online;
             walk.online = online.value.as_bool().unwrap_or(false);
             if was_online && !walk.online && walk.logged {
-                if !walk.streams.is_empty() || !walk.entities.is_empty() {
-                    for operation in [ENTITY_OPERATION, "MomentsFeed"] {
-                        walk.windows.entry(operation.to_string()).or_default().gap = true;
-                    }
+                walk.gap_due |= !walk.streams.is_empty() || !walk.entities.is_empty();
+            }
+            if !was_online && walk.online && walk.gap_due {
+                walk.gap_due = false;
+                for operation in [ENTITY_OPERATION, "MomentsFeed"] {
+                    walk.windows.entry(operation.to_string()).or_default().gap = true;
                 }
             }
         }
@@ -270,6 +274,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         }
         if kinds(observed, "reset").next().is_some() {
             walk.logged = false;
+            walk.gap_due = false;
             walk.streams.clear();
             walk.entities.clear();
             walk.waiting_force.clear();

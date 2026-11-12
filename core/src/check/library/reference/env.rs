@@ -148,19 +148,26 @@ impl LibraryRef {
         self.end_calls("no_session");
         self.windows.clear();
         self.row = false;
+        self.stale_models.clear();
         self.identity = false;
         self.outcomes.push((u64::MAX, Observation::bare("reset")));
         Vec::new()
     }
 
-    /// Section 11.4 `set_online(false)` with a live connection: the windows of every model that a live stream subscribes are not fresh, so the network return rereads the ones that are watched.
-    fn mark_subscribed_models_unfresh(&mut self) {
+    /// Section 11.4 `set_online(false)` with a live connection: the base keeps the models of the live streams as not fresh. The windows in memory stay fresh until the network return.
+    fn remember_subscribed_models(&mut self) {
         if !self.identity {
             return;
         }
         let subscribed: Vec<u8> = self.streams.values().filter(|stream| stream.live).filter_map(|stream| stream.reads.key()).map(Key::model).collect();
+        self.stale_models.extend(subscribed);
+    }
+
+    /// The network return after such a break: the windows of the remembered models are not fresh, so the watched ones are reread.
+    fn mark_remembered_models_unfresh(&mut self) {
+        let stale = std::mem::take(&mut self.stale_models);
         for key in [Key::Feed, Key::Node, Key::Nodes, Key::Members] {
-            if subscribed.contains(&key.model()) {
+            if stale.contains(&key.model()) {
                 self.win(key).unfresh = true;
             }
         }
@@ -188,9 +195,10 @@ impl LibraryRef {
                 self.kill(&run);
                 *self.run_of(key) = Some(Run { phase: Phase::Waiting, ..run });
             }
-            self.mark_subscribed_models_unfresh();
+            self.remember_subscribed_models();
         }
         if !was_on && online {
+            self.mark_remembered_models_unfresh();
             let mut starting = usize::from(matches!(self.login_call, Some(Login { sent: false, .. })));
             if starting == 1 {
                 self.send_session();

@@ -128,6 +128,8 @@ pub struct LibraryRef {
     windows: BTreeMap<Key, Window>,
     streams: BTreeMap<String, Stream>,
     row: bool,
+    /// The models that the break of a live connection wrote as not fresh in the base: the windows of them are reread at the network return.
+    stale_models: Vec<u8>,
     calls: Vec<Call>,
     outcomes: Vec<(u64, Observation)>,
     requests: Vec<Sent>,
@@ -151,6 +153,7 @@ impl Default for LibraryRef {
             windows: BTreeMap::new(),
             streams: BTreeMap::new(),
             row: false,
+            stale_models: Vec::new(),
             calls: Vec::new(),
             outcomes: Vec::new(),
             requests: Vec::new(),

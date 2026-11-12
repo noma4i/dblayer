@@ -276,6 +276,6 @@ async fn library_matches_reference_after_reopen() {
 async fn library_matches_reference_on_saved_session_and_network_programs() {
     let traces = crate::check::corpus::read_dir(&crate::check::corpus::shared_dir().join("library")).unwrap();
     let programs: Vec<_> = traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect();
-    assert_eq!(programs.len(), 5, "the corpus programs of the rules I12, I13 and the join of a load");
+    assert_eq!(programs.len(), 7, "the corpus programs of the rules I12, I13 and the join of a load");
     assert_matches(programs).await;
 }
