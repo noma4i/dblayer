@@ -76,7 +76,6 @@ struct Twin {
     debounce_ms: u64,
     batches: VecDeque<BatchId>,
     used: Vec<BatchId>,
-    owner_batches: Vec<String>,
     /// `(connection, counter)` of every `Seal` the owner gave out.
     sealed: Vec<(ConnectionId, u64)>,
     /// The `SnapshotRequest` effects the owner gave out.
@@ -102,7 +101,7 @@ impl Twin {
         let ms = if debounce { DEBOUNCE_MS } else { 0 };
         let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
         det.start_epoch(EPOCH);
-        let mut twin = Self { det, addr, log, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
+        let mut twin = Self { det, addr, log, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
         }
@@ -249,7 +248,6 @@ impl Twin {
         let emitted = take(&self.log);
         self.history.extend(emitted.clone());
         let (got, seen) = self.split(emitted);
-        self.owner_batches.clear();
         self.shown.extend(seen.clone());
         self.seen = seen;
         got
@@ -290,7 +288,6 @@ impl Twin {
                 Emitted::Schedule { input, .. } if input.starts_with("Resubscribe") => modelled.push(Effect::ScheduleResubscribe),
                 Emitted::Send { to: STORE, input } => {
                     assert!(input.contains("author: Feed"), "a batch of Feed names its author: {input}");
-                    self.owner_batches.push(input.clone());
                     self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
                     modelled.push(Effect::Commit);
                 }

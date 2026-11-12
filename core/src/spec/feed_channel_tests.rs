@@ -109,7 +109,7 @@ impl Rig {
     fn want_window(&mut self, id: u64, slug: &str, channel: &str) -> Vec<String> {
         let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!(slug))]);
         let input = FeedInput::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![ScopedChannel { subscription: "S".into(), variables }] };
-        self.post_row(input, Some(In::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![channel.to_string()] }))
+        self.post(input)
     }
 
     fn unwant(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantMinus { model: model.into(), id }) }
