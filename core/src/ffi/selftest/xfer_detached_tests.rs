@@ -206,11 +206,10 @@ async fn xfer_detached_old_multipart() {
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
     let file = source(directory.path(), 11 * MEBIBYTE);
-    let presign = |number: u32| format!(r#"{{"data":{{"presignParts":{{"parts":[{{"partNumber":{number},"url":"https://storage/{number}"}}]}}}}}}"#);
+    let presign = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#;
     let earlier = Stand::new();
     earlier.script.data("InitMultipart", INIT);
-    earlier.script.data("PresignParts", &presign(1));
-    earlier.script.data("PresignParts", &presign(2));
+    for _ in 0..3 { earlier.script.data("PresignParts", presign); }
     let (first_part, second_part) = (earlier.puts.hold_next(), earlier.puts.hold_next());
     let database = earlier.open(Some(&live), &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
@@ -222,10 +221,10 @@ async fn xfer_detached_old_multipart() {
     let secret = earlier.rig.credentials.inner.value().unwrap();
     let detached = Arc::new(Detached::default());
     let (later, reopened) = reopen_with(&live, &secret, &[CREATE_MOMENT], detached.clone(), |stand| {
-        stand.script.data("PresignParts", &presign(2));
-        stand.script.data("PresignParts", &presign(3));
+        for _ in 0..3 { stand.script.data("PresignParts", presign); }
         stand.script.data("CompleteMultipart", COMPLETE);
         stand.script.data("CreateMoment", LANDED);
+        stand.script.data("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     }).await;
     crate::test_wait::settled(&reopened, "the row landed", || landed(&reopened)).await;
     let ranges: Vec<(u64, u64)> = later.puts.seen.lock().unwrap().iter().map(|put| (put.offset, put.length)).collect();
@@ -320,6 +319,7 @@ async fn xfer_detached_prop_one_put_through_restart() {
     run.database.close_now();
     let running = started(MEBIBYTE).await;
     running.database.close_now();
+    let secret = running.stand.rig.credentials.inner.value().unwrap();
     let (again, database) = reopen_with(&running.live, &secret, &[CREATE_MOMENT], running.detached.clone(), script).await;
     crate::test_wait::settled(&database, "the task is listed", || running.detached.resumed().len() == 2).await;
     running.detached.finish(0, Detached::ok());
@@ -373,7 +373,8 @@ async fn xfer_detached_prop_ended_once() {
     bound(ended.database.session_reset()).await.unwrap();
     crate::test_wait::settled(&ended.database, "the end of the session cancelled the task", || ended.detached.cancelled() == [task]).await;
     ended.database.put_ended(task, Detached::ok());
-    crate::test_wait::settled(&ended.database, "the outcome of the past session was answered", || ended.detached.cancelled().len() == 2).await;
+    crate::test_wait::settled(&ended.database, "the outcome of the past session was dropped", || true).await;
+    assert_eq!(ended.detached.cancelled(), [task], "the task was cancelled when the session ended");
     assert_eq!((ended.stand.script.count("CompleteMultipart"), ended.stand.script.count("CreateMoment")), (0, 0));
     ended.database.close_now();
 }
