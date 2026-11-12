@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::lifecycle::{create, input, LifecycleSut};
-use super::ref_store::StoreRef;
 use crate::check::model::{Owner, Property, RefModel, Sut};
 use crate::check::value::{Input, Observation, PropertyRow, Step};
 
@@ -126,20 +125,13 @@ pub const PROPERTIES: [PropertyRow; 6] = [
 ];
 
 pub struct StoreOwner {
-    pub full: bool,
     pub only: Option<&'static str>,
     pub alphabet: Vec<Input>,
 }
 
 impl StoreOwner {
     pub fn public(only: Option<&'static str>) -> Self {
-        Self { full: false, only, alphabet: vec![input("login"), input("session_reset"), input("close"), create("a"), Input::new("create").with("as", "b").with("epoch", "other"), input("rows")] }
-    }
-
-    pub fn full(only: Option<&'static str>) -> Self {
-        let mut alphabet = Self::public(None).alphabet;
-        alphabet.extend([input("fail_commit"), input("fail_clear"), input("hold_writer"), input("release_writer"), input("rows_held"), Input::new("commit_batch").with("names", json!(["x", "y"]))]);
-        Self { full: true, only, alphabet }
+        Self { only, alphabet: vec![input("login"), input("session_reset"), input("close"), create("a"), Input::new("create").with("as", "b").with("epoch", "other"), input("rows")] }
     }
 }
 
@@ -154,7 +146,7 @@ impl Owner for StoreOwner {
     }
 
     fn model(&self) -> Option<Box<dyn RefModel>> {
-        Some(Box::new(StoreRef::new(self.full)))
+        None
     }
 
     async fn real(&self) -> Box<dyn Sut> {

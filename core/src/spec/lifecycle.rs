@@ -5,7 +5,6 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::harness_life::{kind, timeout, Rig, STEP_LIMIT};
-use super::ref_lifecycle::LifecycleRef;
 use crate::check::explore::{all_traces, seeded};
 use crate::check::model::{run, Divergence, Owner, Property, RefModel, Sut};
 use crate::check::value::{Input, Observation, PropertyRow, Step};
@@ -323,7 +322,6 @@ pub const PROPERTIES: [PropertyRow; 8] = [
 ];
 
 pub struct LifecycleOwner {
-    pub full: bool,
     pub only: Option<&'static str>,
     pub alphabet: Vec<Input>,
 }
@@ -331,13 +329,7 @@ pub struct LifecycleOwner {
 impl LifecycleOwner {
     pub fn public(only: Option<&'static str>) -> Self {
         let alphabet = vec![input("login"), input("session_reset"), input("logout"), input("close"), data("current"), data("other"), create("a"), input("rows"), input("idle")];
-        Self { full: false, only, alphabet }
-    }
-
-    pub fn full(only: Option<&'static str>) -> Self {
-        let mut alphabet = Self::public(None).alphabet;
-        alphabet.extend([input("credential_other"), input("server_ended_stale"), input("store_hold"), input("store_ok"), input("store_fail"), input("store_release"), input("server_ended"), input("stray_cleared"), input("stray_models_cleared"), input("stray_clear_failed"), input("stray_drained"), Input::new("drain").with("owner", "Feed")]);
-        Self { full: true, only, alphabet }
+        Self { only, alphabet }
     }
 }
 
@@ -352,7 +344,7 @@ impl Owner for LifecycleOwner {
     }
 
     fn model(&self) -> Option<Box<dyn RefModel>> {
-        Some(Box::new(LifecycleRef::new(self.full)))
+        None
     }
 
     async fn real(&self) -> Box<dyn Sut> {
