@@ -28,7 +28,6 @@ public final class ScriptedPreparer: Preparer, @unchecked Sendable {
     progress.report(fraction: 0.5)
     guard case .done = outcome else { return outcome }
     do {
-      try? FileManager.default.removeItem(atPath: job.destination)
       try FileManager.default.copyItem(atPath: job.source, toPath: job.destination)
     } catch {
       return .failed(message: "the stand cannot copy the source: \(error.localizedDescription)")
