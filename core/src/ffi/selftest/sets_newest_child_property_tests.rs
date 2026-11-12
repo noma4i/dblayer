@@ -8,11 +8,12 @@ use super::flow_fixtures::{add_chat, cell};
 use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Gate, Rig, World};
 use crate::ffi::tape::Rows;
-use crate::ffi::wire::{Cell, WireOperationReceipt, WireRow};
+use crate::ffi::wire::{Cell, WireRow};
+use crate::ffi::WireOperationReceipt;
 use crate::test_wait::settled_showing;
 
-const SEEDS: u64 = 12;
-const STEPS: usize = 14;
+const SEEDS: u64 = 100;
+const STEPS: usize = 24;
 
 struct Random(u64);
 
@@ -47,6 +48,7 @@ struct Reference {
     received: BTreeMap<String, Msg>,
     own: Vec<Own>,
     kept: Vec<String>,
+    event_deleted: BTreeSet<String>,
     hidden: Option<String>,
     pending: Option<String>,
     next: usize,
@@ -56,7 +58,7 @@ struct Reference {
 }
 
 impl Reference {
-    fn new() -> Self { Reference { server: BTreeMap::new(), received: BTreeMap::new(), own: Vec::new(), kept: Vec::new(), hidden: None, pending: None, next: 1, next_seq: 1, clock: 100, used: BTreeSet::new() } }
+    fn new() -> Self { Reference { server: BTreeMap::new(), received: BTreeMap::new(), own: Vec::new(), kept: Vec::new(), event_deleted: BTreeSet::new(), hidden: None, pending: None, next: 1, next_seq: 1, clock: 100, used: BTreeSet::new() } }
 
     fn server_message(&mut self, random: &mut Random) -> Msg {
         self.clock += 1 + random.below(3) as i64;
@@ -104,6 +106,8 @@ fn frames(rig: &Rig, rows: &Rows) -> Vec<Shown> {
 
 fn message_row(message: &Msg) -> serde_json::Value { json!({"id": message.id, "chatId": "c1", "text": format!("text {}", message.id), "at": message.at, "seq": message.seq}) }
 
+async fn land(rig: &Rig, model: &str, row: serde_json::Value) { rig.land_unsettled(model, row).await; }
+
 struct Run {
     rig: Rig,
     rows: Arc<Rows>,
@@ -133,7 +137,7 @@ impl Run {
 
     fn describe(&self) -> String {
         let reference = &self.reference;
-        format!("seed program {:?}; reference: received {:?}, own {:?}, hidden {:?}, held {}", self.program, reference.received.keys().collect::<Vec<_>>(), reference.own, reference.hidden, self.held.is_some())
+        format!("; program {:?}; reference: received {:?}, own {:?}, hidden {:?}, held {}", self.program, reference.received.keys().collect::<Vec<_>>(), reference.own, reference.hidden, self.held.is_some())
     }
 
     async fn barrier(&self, seed: u64, step: &str) {
@@ -145,12 +149,10 @@ impl Run {
         assert!(pointer.as_ref().is_none_or(|id| visible.contains(id)), "seed {seed}, after step `{step}`: the pointer {pointer:?} names a row that is not a visible child; {}", self.describe());
     }
 
-    async fn land(&self, model: &str, row: serde_json::Value) { self.rig.land_unsettled(model, row).await; }
-
     async fn step(&mut self, random: &mut Random) -> (String, bool) {
         let epoch = self.rig.database.session_epoch();
         let reference = &mut self.reference;
-        let mut choices: Vec<&str> = vec!["foreign", "missed", "page", "stale_parent", "edit", "server_delete"];
+        let mut choices: Vec<&str> = vec!["foreign", "missed", "page", "parent_with_child", "parent_values", "edit", "server_delete"];
         if self.held.is_none() {
             choices.extend(["own_send", "own_send", "own_delete", "resubscribe"]);
             if !reference.kept.is_empty() { choices.push("discard"); }
@@ -163,7 +165,7 @@ impl Run {
             "foreign" => {
                 let message = reference.server_message(random);
                 reference.received.insert(message.id.clone(), message.clone());
-                self.land("Message", message_row(&message)).await;
+                land(&self.rig, "Message", message_row(&message)).await;
                 (format!("foreign event {}", message.id), false)
             }
             "missed" => {
@@ -179,18 +181,26 @@ impl Run {
                 }
                 for message in &page {
                     reference.received.insert(message.id.clone(), message.clone());
-                    self.land("Message", message_row(message)).await;
+                    land(&self.rig, "Message", message_row(message)).await;
                 }
                 (format!("page {:?}", page.iter().map(|message| (message.id.as_str(), message.seq)).collect::<Vec<_>>()), false)
             }
-            "stale_parent" => {
-                if free.is_empty() { return ("stale parent without a message".into(), false); }
-                let message = random.pick(&free);
-                reference.received.insert(message.id.clone(), message.clone());
+            "parent_with_child" => {
+                let pool: Vec<Msg> = reference.server.values().filter(|(message, deleted)| reference.pending.as_deref() != Some(message.id.as_str()) && reference.hidden.as_deref() != Some(message.id.as_str()) && (!deleted || reference.event_deleted.contains(&message.id))).map(|(message, _)| message.clone()).collect();
+                if pool.is_empty() { return ("parent answer without a message".into(), false); }
+                let message = random.pick(&pool);
+                if !reference.server[&message.id].1 { reference.received.insert(message.id.clone(), message.clone()); }
                 let mut row = json!({"id": "c1", "name": "c1", "lastMessageId": message.id, "lastMessageAt": message.at, "lastSequenceNumber": message.seq});
                 row["lastMessage"] = message_row(&message);
-                self.land("Chat", row).await;
-                (format!("stale parent answer with {}", message.id), false)
+                land(&self.rig, "Chat", row).await;
+                (format!("parent answer of an earlier state with {}", message.id), false)
+            }
+            "parent_values" => {
+                let all: Vec<Msg> = reference.server.values().map(|(message, _)| message.clone()).collect();
+                if all.is_empty() { return ("parent row without a message".into(), false); }
+                let message = random.pick(&all);
+                land(&self.rig, "Chat", json!({"id": "c1", "name": "c1", "lastMessageId": message.id, "lastMessageAt": message.at, "lastSequenceNumber": message.seq})).await;
+                (format!("parent row that names {}", message.id), false)
             }
             "edit" => {
                 let visible: Vec<Msg> = reference.visible().into_iter().cloned().collect();
@@ -198,7 +208,7 @@ impl Run {
                 let message = random.pick(&visible);
                 let mut row = message_row(&message);
                 row["text"] = json!(format!("edited {}", message.id));
-                self.land("Message", row).await;
+                land(&self.rig, "Message", row).await;
                 (format!("edit event {}", message.id), false)
             }
             "server_delete" => {
@@ -206,7 +216,8 @@ impl Run {
                 let message = random.pick(&free);
                 let dropped = reference.received.remove(&message.id).is_some();
                 reference.server.get_mut(&message.id).unwrap().1 = true;
-                self.land("Message", json!({"id": message.id, "deleted": true})).await;
+                reference.event_deleted.insert(message.id.clone());
+                land(&self.rig, "Message", json!({"id": message.id, "deleted": true})).await;
                 (format!("server deletes {}", message.id), dropped)
             }
             "own_send" => {
@@ -315,6 +326,10 @@ async fn program(seed: u64) -> Result<(), String> {
 async fn sets_fields_follow_the_newest_child_in_every_order() {
     let runs: Vec<_> = (1..=SEEDS).map(|seed| tokio::spawn(program(seed))).collect();
     for run in runs {
-        if let Err(failure) = run.await.unwrap() { panic!("{failure}"); }
+        match run.await {
+            Err(error) => std::panic::resume_unwind(error.into_panic()),
+            Ok(Err(failure)) => panic!("{failure}"),
+            Ok(Ok(())) => {}
+        }
     }
 }

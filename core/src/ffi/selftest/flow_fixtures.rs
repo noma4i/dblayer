@@ -18,7 +18,7 @@ pub(super) fn chat_spec() -> ModelSpec {
     let mut chat = ModelSpec::new("Chat", vec![
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec::scalar("name", ScalarKind::Str).optional(),
-        optional("lastMessageId", ScalarKind::Id).derived(),
+        optional("lastMessageId", ScalarKind::Id).indexed().derived(),
         optional("lastMessageAt", ScalarKind::Int).derived(),
         optional("lastSequenceNumber", ScalarKind::Int).derived(),
         optional("lastActivityAt", ScalarKind::Int),

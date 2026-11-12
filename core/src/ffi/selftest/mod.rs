@@ -38,6 +38,7 @@ mod rig_held;
 mod rig_models;
 mod rig_tests;
 mod chat_last_message_flow_tests;
+mod sets_newest_child_property_tests;
 mod chat_lists_flow_tests;
 mod chat_row_flow_tests;
 mod chat_typing_flow_tests;

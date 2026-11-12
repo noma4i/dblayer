@@ -56,7 +56,8 @@ impl Rig {
         let (stream, reader) = self.event_stream(model).await;
         let token = bound(self.switch.events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
         assert!(self.switch.events.peer.event(&token, json!({"data": {"rigEvents": {model: row}}})), "the subscription is open");
-        let seen = bound(stream.pull(reader)).await;
+        let mut seen = bound(stream.pull(reader)).await;
+        while matches!(seen, Some(ReadValue::Gap)) { seen = bound(stream.pull(reader)).await; }
         let Some(seen @ ReadValue::Event { .. }) = seen else { panic!("{model} event landed: {seen:?}") };
         seen
     }
