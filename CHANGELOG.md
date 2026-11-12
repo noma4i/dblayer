@@ -5,6 +5,7 @@
 ### Changed
 
 - Start one network observer per process, read by the database and `serverConfig`.
+- Sort rows with equal values, and a sort by `id`, in numeric id order.
 
 ### Fixed
 
@@ -20,8 +21,6 @@
 ### Fixed
 
 - A row created on the device keeps the value its create gives to a `sets:` field.
-- Keep the `sets:` value a local write gives to the row of a parent.
-- Land a saved create answer on reopen instead of rolling the row back.
 
 ## 6.27.0 - 2026-11-12
 
@@ -31,7 +30,6 @@
 
 ### Changed
 
-- Sort rows with equal values, and a sort by `id`, in numeric id order.
 - Keep the server outcome of an operation when the database refuses its answer rows.
 - Retry the rollback of a refused operation after a database refusal.
 - Requeue an operation waiting to retry when the network drops, and retry on return.
