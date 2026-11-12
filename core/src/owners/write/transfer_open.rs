@@ -24,7 +24,7 @@ impl TransferState {
             transfer.restore_element = row.restore_element.clone();
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
-            transfer.stored_shown = Some((u8::MAX, false));
+            transfer.stored_shown = Some((u8::MAX, 0));
             transfer.pending_step = row.pending_step.filter(|pending| row.saved_answer.as_ref().is_none_or(|(request_id, _)| request_id != pending));
             if let Some((request_id, answer)) = &row.saved_answer {
                 transfer.seeded = Some((*request_id, crate::owners::session::session_answer(answer.clone()).map(|body| (body, crate::transport::AnswerKind::Answered { sequence: None }))));
@@ -32,6 +32,7 @@ impl TransferState {
             }
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;
+            transfer.floor = if row.prepare.is_some() { 0 } else { row.floor };
             transfer.attempts = row.attempts;
             transfer.etags = row.etags.clone();
             transfer.signed_id = row.signed_id.clone();
@@ -138,8 +139,7 @@ impl TransferState {
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.prepare.is_some() { return self.restore_prepare(id, fx); }
-        let shown = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { Shown::Uploading { progress: 100 } } else { Shown::Queued };
-        self.show(id, shown, fx);
+        if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { self.show(id, Shown::Uploading { progress: row.floor.max(99) }, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
     }

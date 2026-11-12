@@ -153,5 +153,8 @@ pub struct UploadInfo {
     /// The id of the copy in the file directory while the transfer holds one: `local_url` is made from it at the read.
     #[serde(skip)]
     pub copy_file: Option<String>,
+    /// The share shown last in hundredths.
+    #[serde(default)]
+    pub share: u32,
 }
 

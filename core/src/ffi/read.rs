@@ -65,7 +65,7 @@ pub enum ReadValue {
     CableClose { position: u64, event: crate::owners::read::feed::CableClose },
     Lost { first: u64, last: u64 },
     Gap,
-    Status { revision: i64, state: String, wait_reason: Option<String>, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
+    Status { revision: i64, state: String, wait_reason: Option<String>, progress: f64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
     /// The last value of a stream, exactly one.
     Ended { cause: EndCause },
 }
@@ -169,7 +169,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::CableClose { position, event } => ReadValue::CableClose { position, event },
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
-        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
+        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress as f64 / 100.0, error: blob.error, local_url: blob.local_url, processing: blob.processing },
         Value::Ended(cause) => ReadValue::Ended { cause },
     })
 }

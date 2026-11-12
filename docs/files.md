@@ -117,7 +117,7 @@ try await DB.open(endpoint: endpoint, modelsJSON: models,
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 try await DB.account().upload(moment, action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
-moment.uploads["upload_clip"]?.progress      // 42.0
+moment.uploads["upload_clip"]?.progress      // 0.42
 try await moment.cancelUpload(action: "upload_clip")
 ```
 
@@ -128,7 +128,7 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = models,
 val request = UploadRequest(path = file.path, variables = variables)
 AccountScope.current().upload(moment, "upload_clip", request, Moment)
 moment.uploads["upload_clip"]?.status       // Uploading
-moment.uploads["upload_clip"]?.progress      // 42.0
+moment.uploads["upload_clip"]?.progress      // 0.42
 moment.cancelUpload("upload_clip")
 ```
 
@@ -309,7 +309,7 @@ The final content mutation does not hold a file permit.
 | `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `source_pending` (the upload was created without a file and waits for it). A step that waits for the network or for power saving to end is `queued` |
 | `stage`                   | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation`                                                                                                                       |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
-| `progress`                | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown                                                                                                                           |
+| `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                           |
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
 | `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`                                                                                                      |
 | `localUrl`                | the file URL of the copy of the library while the transfer holds it, `nil` otherwise                                                                                                                         |

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS sync_upload (
   stage TEXT NOT NULL,
   sent INTEGER NOT NULL,
   total INTEGER NOT NULL,
+  progress INTEGER NOT NULL DEFAULT 0,
   wait TEXT,
   attempts INTEGER NOT NULL,
   error_kind TEXT,

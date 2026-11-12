@@ -72,7 +72,7 @@ impl UploadKind {
         use crate::owners::write::transfer::Shown;
         match self {
             Self::AwaitingSource => Shown::WaitingSource,
-            Self::SyncUpload | Self::Retrying => Shown::Queued,
+            Self::SyncUpload | Self::Retrying => Shown::Queued { progress: 0 },
             Self::ConfirmedParts => Shown::Uploading { progress: 0 },
             Self::Completed => Shown::Uploading { progress: 100 },
             Self::Failed => Shown::Failed { error: String::new() },
@@ -93,6 +93,8 @@ pub struct UploadRow {
     pub fields: Option<String>,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
+    /// The share of the file shown last, in hundredths.
+    pub progress: u32,
     pub attempts: u32,
     pub completed: bool,
     pub failed: Option<String>,

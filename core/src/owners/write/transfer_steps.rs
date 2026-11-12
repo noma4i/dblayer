@@ -18,7 +18,17 @@ impl TransferState {
 
     fn operation_of(&self, transfer: &Transfer) -> u64 { transfer.batch_id.and_then(|batch| self.groups.get(&batch)).and_then(|group| group.op_id).or(transfer.op_id).unwrap_or(0) }
 
-    fn progress(transfer: &Transfer) -> Option<u32> { transfer.source.as_ref().filter(|source| source.parts > 0).map(|source| transfer.confirmed_parts * 100 / source.parts) }
+    /// The share of the file on the server and in flight in hundredths, never below the share shown last and below 100 until the server has the whole file.
+    pub(super) fn share(transfer: &Transfer, part_size: u64, sending: bool) -> Option<u32> {
+        let source = transfer.source.as_ref().filter(|source| source.parts > 0)?;
+        let confirmed = match (source.parts, transfer.confirmed_parts) {
+            (_, 0) => 0,
+            (1, _) => transfer.size,
+            (_, parts) => (1..=u64::from(parts)).map(|number| super::upload::part_range(transfer.size, part_size, u32::try_from(number).unwrap_or(u32::MAX)).1).sum(),
+        };
+        let reached = if sending { 99 } else if transfer.size == 0 { 0 } else { ((confirmed + transfer.inflight).min(transfer.size) * 100 / transfer.size).min(99) as u32 };
+        Some(reached.max(transfer.floor))
+    }
 
     fn can_start(&self, transfer: &Transfer) -> bool {
         let opened = !transfer.restored || self.phase == Phase::Ready;
@@ -69,7 +79,8 @@ impl TransferState {
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
         let Some(effect) = Self::step_effect(transfer, operation) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
-        let Some(progress) = (if transfer.stage == TransferStage::Completing { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
+        transfer.inflight = 0;
+        let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.stage == TransferStage::Completing) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         let shown = Shown::Uploading { progress };
         let (uploading, attempt_id) = (transfer.stage == TransferStage::Uploading, transfer.attempt_id);
         self.show(id, shown, fx);
@@ -94,7 +105,7 @@ impl TransferState {
                 run(fx, TransferEffect::CancelStep { transfer_id: id });
                 fx.push(Effect::Cancel(put_timer(attempt_id)));
             }
-            self.show(id, Shown::Queued, fx);
+            self.show_queued(id, fx);
         }
     }
 
@@ -115,6 +126,7 @@ impl TransferState {
             transfer.upload_id = upload_id;
         }
         transfer.confirmed_parts += 1;
+        transfer.inflight = 0;
         transfer.attempts = 0;
         transfer.etags.push(etag);
         transfer.last_part = transfer.source.as_ref().is_some_and(|source| transfer.confirmed_parts >= source.parts);
@@ -287,9 +299,17 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Ready;
         transfer.next_step = if transfer.last_part { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
-        let Some(progress) = (if transfer.last_part { Some(100) } else { Self::progress(transfer) }) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.last_part) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         self.show(id, Shown::Uploading { progress }, fx);
         self.start_in_order(now, fx);
+    }
+
+    pub(super) fn put_progress(&mut self, id: TransferId, attempt_id: AttemptId, sent: u64, fx: &mut Fx) {
+        if !self.live(id, TransferStage::Uploading, attempt_id) { return; }
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.inflight = transfer.inflight.max(sent);
+        let Some(progress) = Self::share(transfer, self.sizing.part_size, false) else { return };
+        if progress > transfer.floor { self.show(id, Shown::Uploading { progress }, fx); }
     }
 
     pub(super) fn complete_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {

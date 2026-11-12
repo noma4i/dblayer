@@ -100,6 +100,7 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
                 }
                 info.sent_bytes = crate::owners::write::upload::bytes_sent(&info, size);
                 info.total_bytes = size;
+                info.share = u32::try_from(row.get::<_, i64>(14)?).unwrap_or(0);
                 let entry = found.entry(id).or_default();
                 if row.get::<_, Option<i64>>(12)?.is_some() {
                     entry.1.insert(action.clone());

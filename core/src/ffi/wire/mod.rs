@@ -84,7 +84,7 @@ pub struct WireUpload {
     pub stage: String,
     pub sent_bytes: u64,
     pub total_bytes: u64,
-    /// The sent share of the bytes in percent, 0 to 100, 0 while the total is unknown.
+    /// The share of the file 0 to 1 in steps of 0.01 that the status shows: it never goes down.
     pub progress: f64,
     pub wait_reason: Option<String>,
     pub attempts: u32,
@@ -316,7 +316,7 @@ pub(crate) fn upload(info: &UploadInfo) -> WireUpload {
         stage: enum_text(&info.stage).unwrap_or_default(),
         sent_bytes: info.sent_bytes,
         total_bytes: info.total_bytes,
-        progress: if info.total_bytes == 0 { 0.0 } else { (info.sent_bytes as f64 * 100.0 / info.total_bytes as f64).min(100.0) },
+        progress: match info.status { UploadStatus::Waiting | UploadStatus::Cancelled => 0.0, _ => f64::from(info.share) / 100.0 },
         wait_reason: info.wait_reason.and_then(|reason| enum_text(&reason)),
         attempts: info.attempts,
         error: info.error.as_ref().map(failure),

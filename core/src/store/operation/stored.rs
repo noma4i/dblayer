@@ -126,6 +126,7 @@ pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
         local_url: None,
         processing: None,
         copy_file: None,
+        share: 0,
     }))
 }
 

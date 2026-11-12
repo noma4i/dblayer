@@ -233,6 +233,7 @@ impl Delivery {
             Ok((wait_reason, local_url, processing)) => BlobStatus { wait_reason: *wait_reason, local_url: local_url.clone(), processing: processing.clone(), ..transfer.clone() },
             Err(error) => BlobStatus { state: "failed".into(), wait_reason: None, progress: 0, error: Some(error.clone()), local_url: None, processing: None },
         };
+        let blob = if matches!(blob.state.as_str(), "gone" | "failed") && self.blob.is_some() { BlobStatus { progress: self.blob.as_ref().map_or(0, |last| last.progress), ..blob } } else { blob };
         if !self.sink_open() || self.blob.as_ref() == Some(&blob) {
             return;
         }

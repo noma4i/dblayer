@@ -76,6 +76,8 @@ impl TransferState {
             next_step: NextStep::Part(1),
             upload_id: None,
             confirmed_parts: 0,
+            inflight: 0,
+            floor: 0,
             etags: Vec::new(),
             last_part: false,
             aborted: false,
@@ -437,7 +439,7 @@ impl TransferState {
             self.show(id, Shown::Uploading { progress: 100 }, fx);
             self.submit_mutation(id, fx);
         } else {
-            self.show(id, Shown::Queued, fx);
+            self.show_queued(id, fx);
         }
     }
 
@@ -467,6 +469,7 @@ impl TransferState {
             transfer.supply_local = String::new();
             transfer.next_step = NextStep::Part(1);
             transfer.confirmed_parts = 0;
+            transfer.floor = 0;
             transfer.upload_id = None;
             transfer.blob_created_at = None;
             transfer.error = None;

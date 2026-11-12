@@ -104,6 +104,7 @@ pub struct StoredTransfer {
     pub fields: serde_json::Map<String, serde_json::Value>,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
+    pub floor: u32,
     pub attempts: u32,
     pub etags: Vec<Option<String>>,
     pub completed: bool,
@@ -284,6 +285,7 @@ pub enum TransferInput {
     Probed { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::ProbeOutcome },
     /// The whole percent of the run of the attempt.
     PrepareProgress { transfer_id: TransferId, attempt_id: AttemptId, percent: u32 },
+    PutProgress { transfer_id: TransferId, attempt_id: AttemptId, sent: u64 },
     Prepared { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::PrepareOutcome },
     Online(Online),
     PowerSaving(bool),
@@ -298,7 +300,7 @@ pub enum TransferInput {
 pub enum Shown {
     Copying,
     WaitingSource,
-    Queued,
+    Queued { progress: u32 },
     Uploading { progress: u32 },
     Preparing { progress: u32 },
     Failed { error: String },
@@ -307,14 +309,15 @@ pub enum Shown {
 
 impl Shown {
     /// What the shown value writes to `sync_upload`: two values that give the same columns write once.
-    pub fn columns(&self) -> (u8, bool) {
+    pub fn columns(&self) -> (u8, u32) {
         match self {
-            Self::Copying | Self::Preparing { .. } => (0, false),
-            Self::WaitingSource => (1, false),
-            Self::Queued => (2, false),
-            Self::Uploading { progress } => (3, *progress >= 100),
-            Self::Failed { .. } => (4, false),
-            Self::Gone => (5, false),
+            Self::Copying => (0, 0),
+            Self::Preparing { progress } => (0, *progress),
+            Self::WaitingSource => (1, 0),
+            Self::Queued { progress } => (2, *progress),
+            Self::Uploading { progress } => (3, *progress),
+            Self::Failed { .. } => (4, 0),
+            Self::Gone => (5, 0),
         }
     }
 
@@ -480,6 +483,10 @@ pub struct Transfer {
     pub next_step: NextStep,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
+    /// The bytes of the attempt in flight that the platform reported.
+    pub inflight: u64,
+    /// The last share shown in hundredths: the shown value never goes below it.
+    pub floor: u32,
     pub etags: Vec<Option<String>>,
     pub last_part: bool,
     pub aborted: bool,
@@ -511,7 +518,7 @@ pub struct Transfer {
     pub cache_stale: bool,
     pub round_error: Option<String>,
     /// The columns of `sync_upload` that the last shown value wrote: `None` while no batch wrote the row.
-    pub stored_shown: Option<(u8, bool)>,
+    pub stored_shown: Option<(u8, u32)>,
     /// The value the readers of the transfer got last.
     pub last_shown: Option<Shown>,
     pub removal: Option<Removal>,
@@ -586,7 +593,7 @@ pub(super) struct Pending {
     pub kind: StoreKind,
     pub orphan: Option<(String, Key)>,
     /// The columns each transfer shows once the batch commits.
-    pub written: BTreeMap<TransferId, (u8, bool)>,
+    pub written: BTreeMap<TransferId, (u8, u32)>,
 }
 
 #[derive(Debug)]
@@ -735,6 +742,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         fields: transfer.batch_id.filter(|_| !fields.is_empty()).map(|_| serde_json::Value::Object(fields).to_string()),
         upload_id: if kind == StoreKind::Failed && transfer.failure_abort { None } else { transfer.upload_id.clone() },
         confirmed_parts: if kind == StoreKind::Failed && transfer.failure_abort { 0 } else { transfer.confirmed_parts },
+        progress: transfer.floor,
         attempts: transfer.attempts,
         completed: matches!(kind, StoreKind::Completed) || transfer.signed_id.is_some(),
         failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying && supplied.is_none()) },

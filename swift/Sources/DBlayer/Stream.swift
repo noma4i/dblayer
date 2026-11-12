@@ -277,7 +277,7 @@ public struct TransferProgress: Sendable, Equatable {
   public let revision: Int64
   public let state: String
   public let waitReason: String?
-  public let progress: UInt64
+  public let progress: Double
   public let error: String?
   public let localUrl: String?
   public let processing: WireProcessing?

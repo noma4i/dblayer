@@ -29,6 +29,8 @@ pub struct Link {
     /// The answer of the saved pair of a restored step: the first request under its id gets it without the network.
     seeded: Option<(u64, Result<Response, TransportError>)>,
     seed_used: std::sync::atomic::AtomicBool,
+    /// Where the bytes of a PUT in flight go: the owner of the transfer.
+    progress: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
 impl Drop for Link {
@@ -37,7 +39,7 @@ impl Drop for Link {
 
 impl Link {
     #[cfg(test)]
-    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default() } }
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None } }
 
     /// `step` names the request: its id is the function of the step, so a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
@@ -67,8 +69,20 @@ impl Link {
         }
     }
 
+    /// Reports to the owner once per hundredth of the range: the owner gets at most 100 inputs per PUT.
+    fn hundredths(report: Arc<dyn Fn(u64) + Send + Sync>, length: u64) -> crate::transport::ByteSink {
+        let (step, last) = (length / 100, std::sync::atomic::AtomicU64::new(0));
+        Arc::new(move |sent| {
+            if sent >= last.load(std::sync::atomic::Ordering::Relaxed) + step.max(1) || sent >= length {
+                last.store(sent, std::sync::atomic::Ordering::Relaxed);
+                report(sent);
+            }
+        })
+    }
+
     pub async fn put(&self, mut request: PutRequest) -> Result<PutReply, TransportError> {
         request.cancel = self.cancel.clone();
+        if let Some(report) = self.progress.clone() { request.sent = Self::hundredths(report, request.file.length); }
         self.gate.put(self.epoch, request).await
     }
 }
@@ -284,7 +298,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default() })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
@@ -317,6 +331,7 @@ impl TransferExecutor {
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
         let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded } = ask;
         let source = self.local(transfer_id, source);
+        let progress = back.clone();
         let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id, key: key.clone() }) };
         self.task(
             stamp,
@@ -327,6 +342,7 @@ impl TransferExecutor {
                 link.minted = Some(Arc::new(report));
                 link.identity = (transfer_id, cycle_id, part.unwrap_or(0));
                 link.seeded = seeded_response(seeded);
+                link.progress = Some(Arc::new(move |sent| progress.reply(stamp, TransferInput::PutProgress { transfer_id, attempt_id, sent })));
                 Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
             },
             move |result| match result {

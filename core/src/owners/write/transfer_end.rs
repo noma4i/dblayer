@@ -179,7 +179,7 @@ impl TransferState {
         if let Some(rep) = rep {
             reply(fx, rep, TransferAnswer::Receipt(receipt));
         }
-        if preparing { self.queue_prepare(id, fx); } else { self.show(id, Shown::Queued, fx); }
+        if preparing { self.queue_prepare(id, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.start_in_order(now, fx);
     }
@@ -341,7 +341,7 @@ impl TransferState {
                         Self::refuse(fx, rep, Fault::of_reject(reason.clone()));
                     }
                     if prior == TransferStage::Ready {
-                        self.show(id, Shown::Queued, fx);
+                        self.show_queued(id, fx);
                     }
                     if prior == TransferStage::BatchReady {
                         self.show(id, Shown::Uploading { progress: 100 }, fx);

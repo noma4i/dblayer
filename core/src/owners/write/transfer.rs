@@ -34,12 +34,13 @@ impl TransferState {
             TransferStage::AwaitingSource => Shown::WaitingSource,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
-            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::BatchReady | TransferStage::PersistingBatchIntent | TransferStage::Mutating => Shown::Uploading { progress: 100 },
-            TransferStage::Uploading | TransferStage::PersistingPart => match transfer.source.as_ref().filter(|source| source.parts > 0) {
-                Some(source) => Shown::Uploading { progress: transfer.confirmed_parts * 100 / source.parts },
+            TransferStage::Completing | TransferStage::PersistingComplete => Shown::Uploading { progress: Self::share(transfer, self.sizing.part_size, true).unwrap_or(transfer.floor) },
+            TransferStage::BatchReady | TransferStage::PersistingBatchIntent | TransferStage::Mutating => Shown::Uploading { progress: 100 },
+            TransferStage::Uploading | TransferStage::PersistingPart => match Self::share(transfer, self.sizing.part_size, false) {
+                Some(progress) => Shown::Uploading { progress },
                 None => Shown::Failed { error: "Internal(InvalidSource)".into() },
             },
-            _ => Shown::Queued,
+            _ => Shown::Queued { progress: transfer.floor },
         }
     }
 
@@ -53,13 +54,20 @@ impl TransferState {
         StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error, virtual_transfer: transfer.restore_element.as_ref().map(|_| (transfer.transfer_id, transfer.op_id)) }
     }
 
+    pub(super) fn show_queued(&mut self, id: TransferId, fx: &mut Fx) {
+        let progress = self.transfers.get(&id).map_or(0, |transfer| transfer.floor);
+        self.show(id, Shown::Queued { progress }, fx);
+    }
+
     /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
     pub(super) fn show(&mut self, id: TransferId, shown: Shown, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let key = transfer.key.clone();
+        if let Shown::Uploading { progress } = shown { transfer.floor = transfer.floor.max(progress); }
         let columns = shown.columns();
         transfer.last_shown = Some(shown.clone());
         if Self::unwritten(transfer, &shown) {
+            if transfer.restored && shown != Shown::Gone { self.published.entry(key.clone()).or_insert((shown.clone(), transfer.revision)); }
             let waiting = self.pending.values().any(|pending| pending.kind == StoreKind::Shown && pending.written.get(&id) == Some(&columns));
             if !waiting {
                 let op = Self::shown_op(transfer, shown);
@@ -101,7 +109,7 @@ impl TransferState {
     }
 
     /// The Store holds `columns` of the row: a later value of the transfer is written, the value of this batch is published when `publish`.
-    fn shown_committed(&mut self, id: TransferId, columns: (u8, bool), (publish, revision): (bool, i64), reconcile: bool, fx: &mut Fx) {
+    fn shown_committed(&mut self, id: TransferId, columns: (u8, u32), (publish, revision): (bool, i64), reconcile: bool, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stored_shown = Some(columns);
         transfer.revision = transfer.revision.max(revision);
@@ -295,12 +303,12 @@ impl TransferState {
             }))
             .chain(numbers)
             .collect();
-        let columns: BTreeMap<String, (u8, bool)> = ops.iter().filter_map(|op| match op {
-            StoreOp::Upload { row, kind } => Some((row.key.clone(), kind.shown().columns())),
+        let columns: BTreeMap<String, (u8, u32)> = ops.iter().filter_map(|op| match op {
+            StoreOp::Upload { row, kind } => Some((row.key.clone(), (kind.shown().columns().0, row.progress))),
             StoreOp::UploadShown { key, shown, .. } => Some((key.clone(), shown.columns())),
             _ => None,
         }).collect();
-        let written: BTreeMap<TransferId, (u8, bool)> = ids.iter().filter_map(|id| self.transfers.get(id).and_then(|transfer| columns.get(&transfer.key)).map(|columns| (*id, *columns))).collect();
+        let written: BTreeMap<TransferId, (u8, u32)> = ids.iter().filter_map(|id| self.transfers.get(id).and_then(|transfer| columns.get(&transfer.key)).map(|columns| (*id, *columns))).collect();
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None, written });
@@ -893,6 +901,7 @@ impl TransferState {
             TransferInput::PrepareSlotFreed => self.start_prepares(fx),
             TransferInput::Probed { transfer_id, attempt_id, outcome } => self.probed(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::PrepareProgress { transfer_id, attempt_id, percent } => self.prepare_progress(transfer_id, attempt_id, percent, fx),
+            TransferInput::PutProgress { transfer_id, attempt_id, sent } => self.put_progress(transfer_id, attempt_id, sent, fx),
             TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),

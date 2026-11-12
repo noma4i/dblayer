@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Show the upload progress as a share from 0 to 1 that counts the bytes in flight and never goes down.
 - Declare the fields of `sets:` as `derived: true`, they take their values from the children only.
 - Name the child fields of `newer:` as a list.
 
