@@ -108,7 +108,6 @@ impl OutboxState {
                     self.fail_exhausted(op_id, fx);
                 }
             }
-            Some(Stage::Sending) => self.requeue(op_id, fx),
             Some(Stage::PersistingAttempt) => self.store(op_id, CommitKind::Attempt, fx),
             Some(Stage::Landing) => self.store(op_id, CommitKind::Land, fx),
             Some(Stage::RollingBack(_)) => self.store(op_id, CommitKind::Rollback, fx),
