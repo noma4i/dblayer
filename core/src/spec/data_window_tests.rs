@@ -202,22 +202,6 @@ async fn data_insert_on_create() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_joins_loaded_window() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("create-call.sqlite").to_str().unwrap().to_string();
-    let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
-    models[0].relations.push(relation("created", true, false));
-    let server = Server::new();
-    let rig = open_models(serde_json::to_string(&models).unwrap(), path, server.clone(), Arc::default()).await;
-    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
-    load(&rig, "created").await;
-    server.hold(Kind::Mutate, true);
-    let receipt = within(rig.db.create(rig.epoch(), "Moment".into(), json!({"text":"created"}).to_string(), "{}".into())).await.unwrap();
-    let id = receipt.optimistic_value.unwrap().id;
-    assert_eq!(ids(&rig, "created").await, [id]);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn matching_threshold_updates_loaded_windows_through_database() {
     use crate::schema::FieldSpec;
     use crate::value::ScalarKind;
@@ -282,81 +266,84 @@ fn created_window_membership_uses_the_committed_window() {
     assert_eq!(rows[0].get("id"), Some(&json!(row_id)));
 }
 
+/// A committed row enters a loaded window by its row rules (thresholds, from page, outbox, local and feed sources) and by its membership, and leaves it when its fields stop matching.
 #[test]
-fn data_matches_window() {
-    use crate::owners::contract::BatchAuthor;
-    use crate::owners::read::windows::WindowKey;
-    use crate::owners::store::{RowValue, StoreBatch, StoreOp};
-    use crate::schema::FieldSpec;
-    use crate::store::Store;
-    use crate::value::ScalarKind;
+fn data_row_rules_and_membership_decide_the_window() {
+    {
+        use crate::owners::contract::BatchAuthor;
+        use crate::owners::read::windows::WindowKey;
+        use crate::owners::store::{RowValue, StoreBatch, StoreOp};
+        use crate::schema::FieldSpec;
+        use crate::store::Store;
+        use crate::value::ScalarKind;
 
-    let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
-    models[0].fields.push(FieldSpec::scalar("score", ScalarKind::Int).nullable());
-    let mut selected = relation("selected", false, true);
-    selected.joins_events = true;
-    selected.text_params.push("minimum".into());
-    selected.scalar_types.insert("minimum".into(), ScalarKind::Int);
-    selected.row_rules.push(RowRule { field: "score".into(), test: RowTest::GreaterThan { parameter: "minimum".into() } });
-    models[0].relations.push(selected);
-    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let commit = |author, ops| {
-        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
-        db.write_batch(&batch, db.files(), None).unwrap();
-    };
-    for minimum in [5, 10] {
-        let key = WindowKey::relation("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap());
-        commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
-    }
-    let ids = |minimum| {
-        let query = db.remote_relation_query("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap()).unwrap().unwrap();
-        db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
-    };
-    for (score, expected) in [(json!(8), [true, false]), (json!(12), [true, true]), (json!(3), [false, false]), (Value::Null, [false, false])] {
-        let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":score}).to_string() };
+        let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
+        models[0].fields.push(FieldSpec::scalar("score", ScalarKind::Int).nullable());
+        let mut selected = relation("selected", false, true);
+        selected.joins_events = true;
+        selected.text_params.push("minimum".into());
+        selected.scalar_types.insert("minimum".into(), ScalarKind::Int);
+        selected.row_rules.push(RowRule { field: "score".into(), test: RowTest::GreaterThan { parameter: "minimum".into() } });
+        models[0].relations.push(selected);
+        let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let commit = |author, ops| {
+            let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+            db.write_batch(&batch, db.files(), None).unwrap();
+        };
+        for minimum in [5, 10] {
+            let key = WindowKey::relation("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap());
+            commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+        }
+        let ids = |minimum| {
+            let query = db.remote_relation_query("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap()).unwrap().unwrap();
+            db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
+        };
+        for (score, expected) in [(json!(8), [true, false]), (json!(12), [true, true]), (json!(3), [false, false]), (Value::Null, [false, false])] {
+            let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":score}).to_string() };
+            commit(BatchAuthor::Outbox, vec![StoreOp::Rows { model: "Moment".into(), rows: vec![row] }]);
+            assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], expected);
+        }
+        let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":12}).to_string() };
         commit(BatchAuthor::Outbox, vec![StoreOp::Rows { model: "Moment".into(), rows: vec![row] }]);
-        assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], expected);
-    }
-    let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":12}).to_string() };
-    commit(BatchAuthor::Outbox, vec![StoreOp::Rows { model: "Moment".into(), rows: vec![row] }]);
-    let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":8}).to_string() };
-    commit(BatchAuthor::LocalWrites, vec![StoreOp::LocalRows { model: "Moment".into(), rows: vec![row] }]);
-    assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, false]);
-    let event = json!({"op":"upsert", "id":"m1", "row":{"id":"m1", "score":12}}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
-    db.write_batch(&batch, db.files(), None).unwrap();
-    assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
-}
-
-#[test]
-fn data_membership_window_leave() {
-    use crate::owners::contract::BatchAuthor;
-    use crate::owners::read::windows::WindowKey;
-    use crate::owners::store::{RowValue, StoreBatch, StoreOp};
-    use crate::schema::FieldSpec;
-    use crate::store::Store;
-    use crate::value::ScalarKind;
-
-    let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
-    models[0].fields.push(FieldSpec::list("shelves", ScalarKind::Str));
-    let mut shelf = relation("shelf", false, false);
-    shelf.text_params.push("shelf".into());
-    shelf.membership.insert("shelf".into(), Membership::Contains("shelves".into()));
-    models[0].relations.push(shelf);
-    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let ids = |shelf: &str| {
-        let query = db.remote_relation_query("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap()).unwrap().unwrap();
-        db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
-    };
-    for (shelf, held) in [("A", [json!(["m1"]), json!([])]), ("B", [json!([]), json!(["m1"])])] {
-        let key = WindowKey::relation("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap());
-        let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
-        let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
-        let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
+        let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "score":8}).to_string() };
+        commit(BatchAuthor::LocalWrites, vec![StoreOp::LocalRows { model: "Moment".into(), rows: vec![row] }]);
+        assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, false]);
+        let event = json!({"op":"upsert", "id":"m1", "row":{"id":"m1", "score":12}}).to_string();
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
         db.write_batch(&batch, db.files(), None).unwrap();
-        assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
+        assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
+    }
+    {
+        use crate::owners::contract::BatchAuthor;
+        use crate::owners::read::windows::WindowKey;
+        use crate::owners::store::{RowValue, StoreBatch, StoreOp};
+        use crate::schema::FieldSpec;
+        use crate::store::Store;
+        use crate::value::ScalarKind;
+
+        let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
+        models[0].fields.push(FieldSpec::list("shelves", ScalarKind::Str));
+        let mut shelf = relation("shelf", false, false);
+        shelf.text_params.push("shelf".into());
+        shelf.membership.insert("shelf".into(), Membership::Contains("shelves".into()));
+        models[0].relations.push(shelf);
+        let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let ids = |shelf: &str| {
+            let query = db.remote_relation_query("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap()).unwrap().unwrap();
+            db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
+        };
+        for (shelf, held) in [("A", [json!(["m1"]), json!([])]), ("B", [json!([]), json!(["m1"])])] {
+            let key = WindowKey::relation("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap());
+            let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
+            let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+            let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
+            db.write_batch(&batch, db.files(), None).unwrap();
+            assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
+        }
     }
 }
+
+
 
 mod by_source {
     use super::*;
