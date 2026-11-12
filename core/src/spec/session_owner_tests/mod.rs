@@ -383,6 +383,7 @@ mod session_owner_early_release_tests;
 mod session_owner_release_tests;
 mod session_owner_write_failure_tests;
 mod session_owner_detached_tests;
+mod session_owner_notes_tests;
 
 fn kind_of(history: &[RefEffect], request_id: u64, body: &str, sequence: Option<u64>) -> crate::transport::AnswerKind {
     let pending = history.iter().rev().find_map(|effect| match effect { RefEffect::HttpRequest { pending, .. } if pending.request_id == request_id => Some(pending), _ => None });

@@ -18,6 +18,7 @@ mod session_owner_tests;
 mod session_gap_tests;
 mod interrupted_session_answer_tests;
 mod calls_owner_tests;
+mod calls_releasing_tests;
 mod store_tests;
 
 mod delivery_gap_tests;
