@@ -144,9 +144,9 @@ pub enum TransferFile {
 }
 
 impl TransferFile {
-    /// The one rule of the file of a transfer: a durable copy is `size > 0`, before it the source of the row.
-    pub fn of(size: u64, copy_id: String, source: Option<String>) -> Option<Self> {
-        if size > 0 { Some(Self::Copy(copy_id)) } else { source.map(Self::Caller) }
+    /// The one rule of the file of a transfer: a durable copy is `size > 0`, before it the source of the row while the accepting call runs (a failed row has no file of the library).
+    pub fn of(size: u64, copy_id: String, source: Option<String>, failed: bool) -> Option<Self> {
+        if size > 0 { Some(Self::Copy(copy_id)) } else { source.filter(|_| !failed).map(Self::Caller) }
     }
 }
 

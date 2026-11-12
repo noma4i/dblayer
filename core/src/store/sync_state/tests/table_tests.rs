@@ -121,3 +121,15 @@ fn read_returns_only_rows_that_exist() {
     assert_eq!(found["m1"].state, SyncState::Failed);
     assert!(read_sync(&connection, "chats", &["m1".to_string()]).unwrap().is_empty());
 }
+
+/// P-XFER-23: a row with no durable copy reads the file of the caller while the accepting call runs and no file once it failed.
+#[test]
+fn the_file_of_a_row_without_a_copy_is_the_caller_file_unless_it_failed() {
+    let connection = database();
+    for (id, status) in [("m1", "queued"), ("m2", "failed")] {
+        connection.execute_batch(&format!("INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, size, source, transfer_id) VALUES ('moments', '{id}', 'photo', '{status}', 'prepare', 0, 1, 0, 7, 0, '/caller/{id}.jpg', 9)")).unwrap();
+    }
+    let read = read_sync(&connection, "moments", &["m1".into(), "m2".into()]).unwrap();
+    let file = |id: &str| read[id].uploads["photo"].copy_file.clone();
+    assert_eq!((file("m1"), file("m2")), (Some(crate::owners::write::upload::TransferFile::Caller("/caller/m1.jpg".into())), None));
+}

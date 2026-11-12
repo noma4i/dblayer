@@ -92,7 +92,7 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
             if let Some(mut info) = info_at(row, 2)? {
                 let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
                 let size = row.get::<_, Option<i64>>(10)?.map_or(Ok(0), |size| unsigned(size, 10))?;
-                info.copy_file = crate::owners::write::upload::TransferFile::of(size, crate::owners::write::transfer::file_id(unsigned(row.get(11)?, 11)?), row.get::<_, Option<String>>(15)?);
+                info.copy_file = crate::owners::write::upload::TransferFile::of(size, crate::owners::write::transfer::file_id(unsigned(row.get(11)?, 11)?), row.get::<_, Option<String>>(15)?, info.status == crate::owners::write::upload::UploadStatus::Failed);
                 if let (None, Some(reason)) = (&info.error, row.get::<_, Option<String>>(13)?) {
                     info.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Refused, reason));
                 }
