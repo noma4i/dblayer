@@ -206,7 +206,7 @@ async fn xfer_detached_bad_target() {
     let run = started(MEBIBYTE).await;
     let live = run.detached.started()[0].0;
     run.database.put_ended(live, RawOutcome::Failed { failure: RawFailure { domain: "url".into(), code: None, message: "the PUT target is not a URL".into() } });
-    drained(&run.database).await;
+    bound(run.database.writes_quiet(run.database.session_epoch())).await;
     assert_eq!(run.detached.started().len(), 1, "no attempt starts before the Backoff");
     run.clock.advance(60 * 1000);
     let detached = run.detached.clone();
@@ -222,7 +222,7 @@ async fn xfer_detached_missing_needs_resume() {
     let run = started(MEBIBYTE).await;
     let live = run.detached.started()[0].0;
     run.database.put_missing(live);
-    drained(&run.database).await;
+    bound(run.database.writes_quiet(run.database.session_epoch())).await;
     assert_eq!((run.detached.started().len(), run.stand.script.count("PresignParts")), (1, 1));
     run.detached.finish(0, Detached::ok());
     crate::test_wait::settled(&run.database, "the row landed", || landed(&run.database)).await;

@@ -116,18 +116,6 @@ val receipt = staged.commit(buildJsonObject { put("text", "hello") })
 val removed = staged.discard()
 ```
 
-- On iOS the PUT of a file runs in a background `URLSession` and finishes with the app in the background. Add the call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`. Remove the background task and the `beginBackgroundTask` calls around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
-
-```swift
-func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-  DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
-}
-```
-
-```kotlin
-// Android: no change, the upload job runs the PUT.
-```
-
 - `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
 - The parents of a changed row are touched once per batch, the queue order of restored operations is kept, and a failed operation with a lost answer stops no other write. The app changes nothing for these fixes.
 
@@ -148,3 +136,17 @@ scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.
 - A stored upload step fails with the state of the session when the session cannot send it (`StateLost`, or the reason of a blocked session) instead of staying queued. A `failed` row of this kind is handled by `retry` or `discard`.
 - A refused write of the session record to the disk, or of the erase of the account data at the end of a session, ends at the next online or foreground event: calls get `Storage` until then, and the end of the session goes on after the write went through. The app adds no timer.
 - The file probe of a custom `Preparer` reports the turn of a video as 0, 90, 180 or 270, an EXIF orientation as 1 to 8 (any other value is 1), and the location of a video as the key `location`. Remove the own conversion of negative turns and of the platform spelling of the location key.
+
+## 10. After 6.31.1
+
+- On iOS the PUT of a file runs in a background `URLSession` and finishes with the app in the background. Add the call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`. Remove the background task and the `beginBackgroundTask` calls around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
+
+```swift
+func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+  DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
+}
+```
+
+```kotlin
+// Android: no change, the upload job runs the PUT.
+```
