@@ -17,6 +17,10 @@
 - Remove an upload at open when its copy was not durable, and read the file of the caller only during the call.
 - Deliver a `NetworkPath` instead of a `Bool` from `NetworkStatus.changes` and `NetworkStatus.flow`.
 
+### Fixed
+
+- Restore the queue order of operations after a restart: a held pair of an earlier operation no longer waits behind a later operation of the same row.
+
 ## 6.30.0 - 2026-11-13
 
 ### Added
