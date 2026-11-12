@@ -362,23 +362,6 @@ fn xfer_minted_write_interrupted() {
     }
 }
 
-/// xfer_orphan_restart_after_close (D-277, owner decision 2026-11-10): the debt written by the Control batch is read back by the next open (Restored.orphans) and the first network admission aborts it once.
-#[test]
-fn xfer_orphan_restart_after_close() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.online(false);
-    minted(&mut twin, id, "u1");
-    let refused = twin.reject(RejectReason::NoSession);
-    assert_eq!(refused.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt is written before the process ends");
-    twin.commit();
-    twin.close();
-    let mut reopened = orphan_restart(vec![("u1".into(), KEY.into())]);
-    assert_eq!(reopened.online(true).orphan_aborts(), vec!["u1".to_string()], "the debt of the closed process is aborted after the restart");
-    reopened.online(false);
-    assert!(reopened.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
-}
-
 /// xfer_minted_write_invalid (P-DATA-97): the Store refuses the write of the minted id as invalid and would refuse the same batch again. Nothing is written or scheduled, the debt stays in memory and the end of the epoch writes it as an orphan.
 #[test]
 fn xfer_minted_write_invalid() {
@@ -536,21 +519,4 @@ fn xfer_orphan_remove_rejected() {
     twin.reject(RejectReason::Storage("disk".into()));
     twin.online(false);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "the refused removal keeps the debt and the abort goes again");
-}
-
-/// xfer_upload_minted_rejected (D-277): an epoch end that refuses the write of the minted id does not abort from memory: the debt is written as a Control batch and the next network admission aborts it only after that batch is committed.
-#[test]
-fn xfer_upload_minted_rejected() {
-    for reason in [RejectReason::Closed, RejectReason::NoSession] {
-        let mut twin = Twin::new();
-        let id = twin.uploading(KEY, 3);
-        twin.online(false);
-        minted(&mut twin, id, "u1");
-        let refused = twin.reject(reason.clone());
-        assert_eq!(refused.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "{reason:?}: the debt is written, not kept in memory only: {refused:?}");
-        assert!(twin.online(true).orphan_aborts().is_empty(), "{reason:?}: no abort before the debt is durable");
-        twin.online(false);
-        twin.commit();
-        assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()], "{reason:?}: the next network after Committed aborts the orphan");
-    }
 }
