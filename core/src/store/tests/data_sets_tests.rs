@@ -127,7 +127,6 @@ fn land(db: &Arc<Store>, source: &str) {
     }
 }
 
-/// P-DATA-103: the row of the parent and the row of its child settle the parent fields in any order and number of landings.
 #[test]
 fn data_sets_two_sources_settle() {
     let sources = ["parent", "answer", "event", "page"];
@@ -146,7 +145,6 @@ fn data_sets_two_sources_settle() {
     }
 }
 
-/// P-DATA-57, P-DATA-60: a prediction does not move the time back, the confirmed child replaces it by the order.
 #[test]
 fn data_sets_prediction_is_replaced_by_the_confirmed_child() {
     for (device, server, expected) in [(9, 6, ("m9", 6)), (3, 6, ("m9", 6)), (3, 4, ("m5", 5))] {
@@ -162,7 +160,6 @@ fn data_sets_prediction_is_replaced_by_the_confirmed_child() {
     }
 }
 
-/// P-DATA-59: an edit of the child the server value names does not change the fields of the parent.
 #[test]
 fn data_sets_named_child_edit_keeps_the_server_value() {
     let db = open();
@@ -173,7 +170,6 @@ fn data_sets_named_child_edit_keeps_the_server_value() {
     }
 }
 
-/// P-DATA-57: an edit of the predicted child the parent points at does not move the time back.
 #[test]
 fn data_sets_predicted_edit_keeps_the_time() {
     let db = open();
@@ -184,7 +180,6 @@ fn data_sets_predicted_edit_keeps_the_time() {
     }
 }
 
-/// P-DATA-59: the child taken after a destroy is the one the order of `newer` ranks first, an equal time is decided by the id.
 #[test]
 fn data_sets_destroy_takes_the_first_by_the_order() {
     for ids in [["m1", "m2"], ["m2", "m1"]] {
@@ -197,7 +192,6 @@ fn data_sets_destroy_takes_the_first_by_the_order() {
     }
 }
 
-/// P-DATA-59: a destroy of the pointed child reads a number of children that does not grow with their count.
 #[test]
 fn data_sets_destroy_reads_a_bounded_number_of_children() {
     let read = |count: i64| {
@@ -251,7 +245,6 @@ fn data_sets_derived_once_per_batch() {
     }
 }
 
-/// P-DATA-57: any order of landing of children with equal and absent values gives the first child by the order.
 #[test]
 fn data_newer_order_is_total() {
     use super::sets_reference_tests::{derive, newest, Child};
@@ -286,7 +279,6 @@ fn data_newer_order_is_total() {
     }
 }
 
-/// P-DATA-58: the value the server gave is kept: a destroy of children, a row of the parent without the fields and an older child do not lose it.
 #[test]
 fn data_sets_server_value_is_kept() {
     let db = open();
@@ -300,7 +292,6 @@ fn data_sets_server_value_is_kept() {
     assert_eq!(sets(&db), sets_of("m5", 7, 3), "the child is destroyed");
 }
 
-/// P-DATA-60: the server value that named the real id while the operation was open wins after the swap.
 #[test]
 fn data_sets_server_value_during_pending_wins_after_swap() {
     let db = open();
@@ -315,7 +306,6 @@ fn data_sets_server_value_during_pending_wins_after_swap() {
     assert_eq!(sets(&db), super::sets_reference_tests::Sets { body: Some("r1".into()), ..sets_of("r1", 4, 2) }, "the value of the server for r1");
 }
 
-/// P-DATA-61: a rollback gives the fields of the server value back, the parent keeps no value from before the operation.
 #[test]
 fn data_sets_rollback_keeps_the_server_value() {
     let db = open();

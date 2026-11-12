@@ -249,7 +249,6 @@ fn data_sets_property_equals_the_function() {
     assert!(found.is_empty(), "cells against P-DATA-103:\n{}", found.join("\n"));
 }
 
-/// The generator reaches every kind of step and the reference sees a pending child, a server value and a destroy.
 #[test]
 fn data_sets_property_generator_reaches_the_cells() {
     let inputs = seeded(&alphabet(), 7919, 400);

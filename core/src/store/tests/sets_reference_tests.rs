@@ -48,7 +48,6 @@ fn by_id(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// P-DATA-57: `Greater` = `a` is newer. A temporary id first, then the pairs of `newer` in the declared order (absent = oldest), then the id.
 pub(super) fn order(a: &Child, b: &Child) -> Ordering {
     a.temp().cmp(&b.temp()).then(a.seq.cmp(&b.seq)).then(a.at.cmp(&b.at)).then_with(|| by_id(&a.id, &b.id))
 }
@@ -108,7 +107,6 @@ pub(super) fn parent_revision(db: &Store) -> i64 {
     crate::store::fixtures::count(db, "SELECT revision FROM row_chats WHERE id = 'c1'")
 }
 
-/// The shortest failing trace of a seeded run: its inputs, the property and the message.
 pub(super) fn red_of(owner: &dyn Owner, seed: u64, length: usize) -> Option<String> {
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     runtime.block_on(async {
