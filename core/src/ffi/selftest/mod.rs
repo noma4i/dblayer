@@ -104,3 +104,4 @@ mod crash_image_revoked_tests;
 mod crash_image_group_tests;
 mod crash_image_multipart_tests;
 mod crash_image_server_tests;
+mod crash_image_secret_refused_tests;

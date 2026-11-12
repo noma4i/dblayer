@@ -45,7 +45,7 @@ pub(in super::super) struct WatchedHeld {
     sets: AtomicUsize,
     clears: AtomicUsize,
     fail_next_clear: AtomicBool,
-    fail_next_set: AtomicBool,
+    pub(in super::super) fail_next_set: AtomicBool,
 }
 
 impl CredentialStore for WatchedHeld {

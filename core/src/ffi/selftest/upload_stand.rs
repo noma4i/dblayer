@@ -242,6 +242,7 @@ pub(super) struct Stand {
     root: Option<Option<&'static str>>,
     keep_moment: bool,
     preparer: Option<Arc<dyn Preparer>>,
+    signed_out: bool,
 }
 
 impl Drop for Stand {
@@ -249,7 +250,10 @@ impl Drop for Stand {
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false } }
+
+    /// The open does not sign in: the test signs in itself.
+    pub(super) fn signed_out(mut self) -> Self { self.signed_out = true; self }
 
     pub(super) fn with_preparer(mut self, preparer: Arc<dyn Preparer>) -> Self {
         self.preparer = Some(preparer);
@@ -292,7 +296,7 @@ impl Stand {
     pub(super) async fn open_with(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>) -> Arc<Database> { self.open_ordered(path, operations, clock, OpenOrder::OnlineFirst).await }
 
     pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
-        let restored = self.rig.credentials.inner.value().is_some();
+        let restored = self.signed_out || self.rig.credentials.inner.value().is_some();
         let models = self.models();
         let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
