@@ -23,6 +23,7 @@ data class OperationFailure(
     val message: String,
     val extensions: @Serializable(with = GraphqlExtensionsSerializer::class) GraphqlExtensions?,
     val responseLimit: ULong? = null,
+    val reason: String? = null,
 )
 
 @Serializable

@@ -23,11 +23,14 @@ internal class SystemPreparer(
 ) : Preparer {
     private val running = AtomicReference<Pair<ULong, Job>?>(null)
 
-    override suspend fun probe(path: String): ProbeOutcome = withContext(Dispatchers.IO) {
+    override suspend fun probe(path: String, kind: PrepareKind): ProbeOutcome = withContext(Dispatchers.IO) {
         try {
             val file = File(path)
             if (!file.isFile || !file.canRead()) ProbeOutcome.Failed("$path is not a readable file")
-            else probeImage(file) ?: probeVideo(file)
+            else when (kind) {
+                PrepareKind.IMAGE -> probeImage(file) ?: ProbeOutcome.Failed("$path is not an image")
+                PrepareKind.VIDEO -> probeVideo(file)
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

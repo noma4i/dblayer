@@ -10,7 +10,7 @@ suspend fun registerStandOperations(database: Database, defsJson: String) {
 /** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
 interface WrapsMock { val base: MockTransport }
 
-suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", preparer: Preparer? = null): Database {
+suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", preparer: Preparer? = ScriptedPreparer()): Database {
     standServer = null
     DBlayer.openedDatabase()?.closeDatabase()
     return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT, preparer = preparer), null)
@@ -113,8 +113,8 @@ suspend fun loginAgain() {
 }
 
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. By default the operations are declared at open and online follows in the sign-in. With `onlineAtOpen` the platform reports online at open and the operations are declared after it, except the upload steps the core requires at open. */
-suspend fun openSigned(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", onlineAtOpen: Boolean = false): Database {
-    val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
+suspend fun openSigned(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", onlineAtOpen: Boolean = false, preparer: Preparer? = ScriptedPreparer()): Database {
+    val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations, preparer = preparer))
     val credential = credentialOf(config)
     val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(mock))
     server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
@@ -126,11 +126,11 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
         val steps = UPLOAD_STEP_OPERATIONS.map { it.first }.toSet()
         val (atOpen, later) = declared.partition { ((it as kotlinx.serialization.json.JsonObject)["name"] as kotlinx.serialization.json.JsonPrimitive).content in steps }
         DBlayer.openedDatabase()?.closeDatabase()
-        val opened = adopt(DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT), OnlineAtOpen()))
+        val opened = adopt(DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT, preparer = preparer), OnlineAtOpen()))
         opened.registerOperations(withSessionProfile(kotlinx.serialization.json.JsonArray(later).toString()))
         opened
     } else {
-        adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations)))
+        adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations), preparer))
     }
     standServer = server
     signIn(database, restored, setsOnline = !onlineAtOpen)
@@ -139,7 +139,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
 
 /** The same session stand on a clock that only `advance` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations. */
 @OptIn(DBlayerTestingApi::class)
-suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null): TestClock {
+suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null, preparer: Preparer? = ScriptedPreparer()): TestClock {
     val credential = credentialOf(Config(path, null))
     val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(transport))
     server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
@@ -150,7 +150,7 @@ suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, oper
     } catch (_: DbException.NotOpen) {
     }
     val restored = credential.get() != null
-    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = observers ?: if (onlineAtOpen) null else SilentPlatform())
+    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = observers ?: if (onlineAtOpen) null else SilentPlatform(), preparer = preparer)
     if (onlineAtOpen) DBlayer.database.setOnline(true)
     standServer = server
     DBlayer.database.registerOperations(withSessionProfile(operations))
@@ -159,8 +159,8 @@ suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, oper
 }
 
 /** A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session. */
-suspend fun openSignedOffline(config: Config, modelsJson: String, operations: String = SEND_MOMENT): Database {
-    val database = openSigned(config, modelsJson, MockTransport(), operations)
+suspend fun openSignedOffline(config: Config, modelsJson: String, operations: String = SEND_MOMENT, preparer: Preparer? = ScriptedPreparer()): Database {
+    val database = openSigned(config, modelsJson, MockTransport(), operations, preparer = preparer)
     database.setOnline(false)
     return database
 }

@@ -92,7 +92,7 @@ fun SyncInfo.Companion.of(wire: WireSync): SyncInfo = SyncInfo(
     },
     actions = wire.actions,
     dirtyFields = wire.dirtyFields,
-    error = wire.error?.let { OperationFailure(it.kind, it.sessionCode, it.requestSize, it.requestLimit, it.message, it.extensions, it.responseLimit) },
+    error = wire.error?.let { OperationFailure(it.kind, it.sessionCode, it.requestSize, it.requestLimit, it.message, it.extensions, it.responseLimit, it.reason) },
     attempts = wire.attempts.toInt(),
     since = wire.since,
 )
@@ -114,7 +114,7 @@ fun UploadInfo.Companion.of(wire: WireUpload): UploadInfo = UploadInfo(
     progress = wire.progress,
     waitReason = wire.waitReason,
     attempts = wire.attempts.toInt(),
-    error = wire.error?.let { OperationFailure(it.kind, it.sessionCode, it.requestSize, it.requestLimit, it.message, it.extensions, it.responseLimit) },
+    error = wire.error?.let { OperationFailure(it.kind, it.sessionCode, it.requestSize, it.requestLimit, it.message, it.extensions, it.responseLimit, it.reason) },
     localUrl = wire.localUrl,
     processing = wire.processing?.let { UploadProcessing(it.progress) },
 )

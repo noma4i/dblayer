@@ -4,8 +4,8 @@ import kotlinx.serialization.json.JsonObject
 
 class Prepare internal constructor(internal val wire: WirePrepare) {
     companion object {
-        fun video(limits: VideoLimits? = null, mirror: Boolean = false, onCannotDecode: CannotDecode = CannotDecode.FAIL) = Prepare(WirePrepare.Video(limits, mirror, onCannotDecode))
-        fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG) = Prepare(WirePrepare.Image(edit, quality, format))
+        fun video(limits: VideoLimits? = null, mirror: Boolean = false, onCannotDecode: CannotDecode = CannotDecode.FAIL, maxBytes: ULong? = null) = Prepare(WirePrepare.Video(limits, mirror, onCannotDecode, maxBytes))
+        fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG, maxBytes: ULong? = null) = Prepare(WirePrepare.Image(edit, quality, format, maxBytes))
     }
 }
 
