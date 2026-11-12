@@ -292,3 +292,22 @@ fn win_change_after_commit_marks_the_next_load() {
     }
     assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+/// P-DATA-101: the load whose landing batch the Store refuses as invalid ends with the text of the Store.
+#[test]
+fn win_invalid_landing_carries_the_store_text() {
+    let text = "constraint violated: missing membership field lists";
+    let mut rig = rig();
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestPassive { key: key(), id: 9 });
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: key(), read_id: 1, result: Ok(None) });
+    rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
+    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })));
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: true, store_revision: 0 });
+    let batches = rig.batches.clone();
+    pump(&mut rig.det, |_| !batches.all().is_empty());
+    let batch = rig.batches.all().last().expect("a landing batch").id;
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Rejected(crate::owners::contract::Rejected { batch, reason: crate::owners::contract::RejectReason::Invalid(text.into()) }));
+    rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
+    let failed: Vec<crate::ffi::DbError> = rig.rest.lock().unwrap().iter().filter_map(|effect| match effect { WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { failure }, .. }, .. } => Some(failure.clone()), _ => None }).collect();
+    assert_eq!(failed, vec![crate::ffi::DbError::Invalid { detail: text.into() }]);
+}

@@ -312,9 +312,9 @@ fn out_invalid_plan_is_not_retried() {
     for (name, kind, arrive) in reach {
         let mut twin = Twin::new();
         let id = arrive(&mut twin);
-        let invalid = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
+        let invalid = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
         assert_eq!((kinds(&invalid), timers(&invalid), sends(&invalid), invalid.len()), (vec![CommitKind::ErrorMark], 0, 0, 1), "{name}: only the mark is written: {invalid:?}");
-        assert_eq!((twin.stage(id), twin.state().ops[&id].error.as_deref()), (Some(St::MarkingFailed), Some("Internal(Invalid)")), "{name}");
+        assert_eq!((twin.stage(id), twin.state().ops[&id].error.as_deref()), (Some(St::MarkingFailed), Some("Internal(Invalid): bad row")), "{name}");
         let marked = twin.committed(id);
         assert_eq!((twin.stage(id), kinds(&marked), timers(&marked)), (Some(St::Failed), Vec::new(), 0), "{name}");
 

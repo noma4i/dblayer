@@ -147,7 +147,7 @@ fn store_commit_no_basis() {
         author: BatchAuthor::Window, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
         ops: vec![crate::owners::store::StoreOp::Rows { model: "Moment".into(), rows: vec![crate::owners::store::RowValue { row_id: "b".into(), values: "{}".into() }] }],
     }));
-    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(RejectReason::Invalid(_)), .. })));
+    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(RejectReason::Invalid(text)), .. } if text == "the batch has no basis for a model of its rows")), "the refusal names its cause: {effects:?}");
     assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
 }
 
@@ -174,7 +174,7 @@ fn store_commit_control_invalid() {
         author: BatchAuthor::Transfer, id: 9, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
         ops: vec![crate::owners::store::StoreOp::RemoveUpload { key: "Moment:r1:upload".into() }],
     }));
-    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { stamp: crate::runtime::EpochStamp::Control, reply: StoreReply::Rejected(RejectReason::Invalid(_)), .. })), "an op of the epoch under a Control stamp is refused: {effects:?}");
+    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { stamp: crate::runtime::EpochStamp::Control, reply: StoreReply::Rejected(RejectReason::Invalid(text)), .. } if text == "the control batch carries rows or an operation of an epoch")), "an op of the epoch under a Control stamp is refused with its cause: {effects:?}");
     assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
 }
 

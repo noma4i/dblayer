@@ -436,4 +436,5 @@ fn an_owner_refusal_keeps_the_name_of_its_cell() {
     assert!(matches!(refusal(Fault::Internal), DbError::Internal { .. }));
     assert!(matches!(refusal(Fault::Copy("source".into())), DbError::Copy { .. }));
     assert!(matches!(refusal(Fault::Rejected(RejectReason::Storage("disk".into()))), DbError::Storage { .. }));
+    assert!(matches!(refusal(Fault::Rejected(RejectReason::Invalid("bad row".into()))), DbError::Invalid { detail } if detail == "update: bad row"));
 }

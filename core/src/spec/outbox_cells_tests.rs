@@ -858,14 +858,26 @@ fn out_removed_row_invalid_is_not_retried() {
     assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
 }
 
+/// P-DATA-101: a submit the Store refuses as invalid answers its caller and the later wait of its outcome with the text of the Store.
+#[test]
+fn out_submit_invalid_carries_the_store_text() {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Rollback, false);
+    let receipt = twin.receipt(id, EPOCH);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+    assert_eq!(answers(&effects, SUBMIT_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))]);
+    let waited = twin.post(OutboxInput::Outcome { receipt, reply: WAITER, discard_on_failure: false });
+    assert_eq!(answers(&waited, WAITER), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Invalid { detail: "bad row".into() }))]);
+}
+
 #[test]
 fn out_persisting_attempt_invalid() {
     let mut twin = Twin::new();
     let id = persisting(&mut twin, false);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert_eq!(twin.state().ops[&id].error.as_deref(), Some("Internal(Invalid)"));
-    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
+    assert_eq!(twin.state().ops[&id].error.as_deref(), Some("Internal(Invalid): bad row"));
+    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
 }
 
 #[test]
@@ -941,9 +953,9 @@ fn out_landing_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
+    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
 }
 
 #[test]
@@ -951,9 +963,9 @@ fn out_rollback_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
+    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
 }
 
 fn discarded(effects: &[OutboxEffect]) -> usize { answers(effects, WAITER).iter().filter(|answer| **answer == OutboxAnswer::Outcome(OutboxOutcome::Discarded)).count() }

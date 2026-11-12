@@ -73,3 +73,20 @@ fn store_sqlite_codes_are_classified() {
     }
     assert!(wrong.is_empty(), "{} wrong codes:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+/// P-DATA-101: the refusal of a data error carries the text of the error.
+#[test]
+fn store_invalid_reason_carries_the_error_text() {
+    use crate::store::StoreError;
+    let data = [
+        StoreError::Constraint("missing membership field lists".into()),
+        StoreError::UnknownModel("nowhere".into()),
+        StoreError::Invalid("the id is empty".into()),
+        StoreError::Plan(crate::store::PlanFault::RowIdMismatch),
+        StoreError::Json(serde_json::from_str::<serde_json::Value>("not json").unwrap_err()),
+    ];
+    for error in data {
+        let text = error.to_string();
+        assert_eq!(error.reject_reason(), RejectReason::Invalid(text));
+    }
+}
