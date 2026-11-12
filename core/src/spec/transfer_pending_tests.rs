@@ -203,19 +203,33 @@ fn xfer_supply_committed() {
 
 #[test]
 fn xfer_supply_rejected() {
-    for back in [TransferStage::AwaitingSource, TransferStage::Failed] {
-        let mut twin = Twin::offline();
-        let (id, reply) = supplied_with_back(&mut twin, back);
-        twin.copy_done(id);
-        let out = twin.reject(crate::owners::contract::RejectReason::Storage("disk".into()));
-        assert_eq!(twin.stage(id), back);
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(crate::owners::contract::RejectReason::Storage("disk".into()))));
-        assert_eq!(out.deletes(), 1);
-        assert!(out.shows().is_empty());
-        if back == TransferStage::Failed {
-            assert_eq!(twin.state().transfers[&id].error.as_deref(), Some("source_failed:preparation"));
+    use crate::owners::contract::RejectReason;
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into())] {
+        for back in [TransferStage::AwaitingSource, TransferStage::Failed] {
+            let mut twin = Twin::offline();
+            let (id, reply) = supplied_with_back(&mut twin, back);
+            twin.copy_done(id);
+            let out = twin.reject(reason.clone());
+            assert_eq!(twin.stage(id), back, "{reason:?}");
+            assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(reason.clone())));
+            assert_eq!(out.deletes(), 1, "{reason:?}");
+            assert!(out.shows().is_empty(), "{reason:?}");
+            if back == TransferStage::Failed {
+                assert_eq!(twin.state().transfers[&id].error.as_deref(), Some("source_failed:preparation"), "{reason:?}");
+            }
         }
     }
+}
+
+/// P-DATA-101: the Store refuses the write of a failed source as invalid, the caller of the failure gets the text of the Store.
+#[test]
+fn xfer_source_failed_write_invalid() {
+    let mut twin = Twin::offline();
+    pending(&mut twin);
+    twin.commit();
+    twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "preparation".into(), reply: 9 });
+    let out = twin.reject(crate::owners::contract::RejectReason::Invalid("bad row".into()));
+    assert_eq!(Twin::fault(&out, 9), Some(Fault::Rejected(crate::owners::contract::RejectReason::Invalid("bad row".into()))));
 }
 
 #[test]
