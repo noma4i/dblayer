@@ -17,7 +17,7 @@ func closePrevious() async {
   do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {} catch { fatalError("closing the previous database failed: \(error)") }
 }
 
-public func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", preparer: Preparer? = nil) async throws -> Database {
+public func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", preparer: Preparer? = ScriptedPreparer()) async throws -> Database {
   await closePrevious()
   return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint, preparer: preparer), observers: nil)
 }
@@ -145,9 +145,9 @@ public func loginAgain() async throws {
 
 /// A transport signs in through the real session path, and its queries and mutations ride the session HTTP. By default the operations are declared at open and online follows in the sign-in. With `onlineAtOpen` the platform reports online at open and the operations are declared after it.
 @MainActor @discardableResult
-public func openSigned(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", onlineAtOpen: Bool = false) async throws -> Database {
+public func openSigned(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", onlineAtOpen: Bool = false, preparer: Preparer? = ScriptedPreparer()) async throws -> Database {
   guard let mock = transport as? any ScriptedTransport else {
-    return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
+    return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, preparer: preparer))
   }
   let held = credential(of: config)
   let server = try SealedServer(contract: held.contract, bridge: bridgeToTransport(mock))
@@ -156,7 +156,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
   let restored = try held.get() != nil
   let database: Database
   if onlineAtOpen {
-    let ports = OpenPorts(transport: mock, encrypted: standEncrypted(), credentials: held, http: server, endpoint: scriptedEndpoint)
+    let ports = OpenPorts(transport: mock, encrypted: standEncrypted(), credentials: held, http: server, endpoint: scriptedEndpoint, preparer: preparer)
     let declared = definitions(of: withUploadSteps(operations, models: modelsJson))
     let steps = Set(uploadStepOperations.map(\.name))
     await closePrevious()
@@ -164,7 +164,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
     let later = declared.filter { !steps.contains($0.name) }.map { ["name": $0.name, "document": $0.document] }
     try await database.registerOperations(defsJson: withSessionProfile(String(decoding: try JSONSerialization.data(withJSONObject: later), as: UTF8.self)))
   } else {
-    database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations)))
+    database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations), preparer: preparer))
   }
   standServerLock.withLock { standServer = server }
   try await signIn(restored: restored, setsOnline: !onlineAtOpen)
@@ -173,14 +173,14 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
 
 /// The same session stand on a clock that only `advance(by:)` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations.
 @MainActor @discardableResult
-public func openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil, onlineAtOpen: Bool = true) async throws -> TestClock {
+public func openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil, onlineAtOpen: Bool = true, preparer: Preparer? = ScriptedPreparer()) async throws -> TestClock {
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let server = try SealedServer(contract: held.contract, bridge: bridgeToTransport(transport))
   try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
   let restored = try held.get() != nil
-  let clock = try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJson), path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers ?? (onlineAtOpen ? nil : SilentPlatform()))
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJson), path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers ?? (onlineAtOpen ? nil : SilentPlatform()), preparer: preparer)
   standServerLock.withLock { standServer = server }
   try await DB.opener.opened().registerOperations(defsJson: withSessionProfile(operations))
   try await signIn(restored: restored)
@@ -189,8 +189,8 @@ public func openSignedClocked(modelsJson: String, transport: MockTransport, oper
 
 /// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session.
 @MainActor @discardableResult
-public func openSignedOffline(config: Config, modelsJson: String, operations: String = sendMoment) async throws -> Database {
-  let database = try await openSigned(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations)
+public func openSignedOffline(config: Config, modelsJson: String, operations: String = sendMoment, preparer: Preparer? = ScriptedPreparer()) async throws -> Database {
+  let database = try await openSigned(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations, preparer: preparer)
   try database.setOnline(online: false)
   return database
 }

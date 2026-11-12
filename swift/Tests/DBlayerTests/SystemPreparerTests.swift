@@ -177,7 +177,7 @@ private struct VideoFacts {
 }
 
 private func videoFacts(_ url: URL) async throws -> VideoFacts {
-  guard case let .video(source, keys) = await SystemPreparer().probe(path: url.path) else { throw PrepareFailure(message: "the result is no video") }
+  guard case let .video(source, keys) = await SystemPreparer().probe(path: url.path, kind: .video) else { throw PrepareFailure(message: "the result is no video") }
   let asset = MediaContainer.asset(url)
   let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
   let formats = try await track.load(.formatDescriptions)
@@ -330,7 +330,8 @@ struct SystemPreparerTests {
         continue
       }
       var keys: [String] = []
-      switch await preparer.probe(path: source.path) {
+      let kind: PrepareKind = if case .image = row.plan([]) { .image } else { .video }
+      switch await preparer.probe(path: source.path, kind: kind) {
       case let .video(_, metadataKeys): keys = metadataKeys
       case .image: break
       case let .failed(message):
