@@ -83,7 +83,6 @@ impl<T> Joinable<T> for JoinHandle<T> {
     }
 }
 
-#[cfg(dblayer_loom)]
 impl<T> Joinable<T> for std::thread::ScopedJoinHandle<'_, T> {
     #[track_caller]
     fn join_bounded(self) -> T {
@@ -91,6 +90,7 @@ impl<T> Joinable<T> for std::thread::ScopedJoinHandle<'_, T> {
     }
 }
 
+#[cfg(dblayer_loom)]
 impl<T> Joinable<T> for loom::thread::JoinHandle<T> {
     fn join_bounded(self) -> T {
         self.join().unwrap()
