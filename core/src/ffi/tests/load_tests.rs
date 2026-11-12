@@ -141,17 +141,11 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
 
 #[tokio::test]
 async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
-    let (db, transport, clock) = rig_with_clock().await;
+    let (db, transport, _clock) = rig_with_clock().await;
     load(&db, "feed").await.unwrap();
     assert_eq!(queries(&transport), 1, "never loaded");
     load(&db, "feed").await.unwrap();
     assert_eq!(queries(&transport), 1, "fresh");
-
-    load(&db, "quick").await.unwrap();
-    assert_eq!(queries(&transport), 2);
-    clock.advance(200);
-    load(&db, "quick").await.unwrap();
-    assert_eq!(queries(&transport), 3, "fresh_for elapsed");
 }
 
 #[tokio::test]

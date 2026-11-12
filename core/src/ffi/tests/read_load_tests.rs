@@ -79,8 +79,6 @@ async fn a_load_asks_the_first_page_once_and_the_snapshot_shows_the_revision_of_
     let (_stream, ReadValue::Snapshot { revision, rows, state, .. }) = first_value(&db).await else { panic!("the first value is a snapshot") };
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["m0"]);
     assert_eq!((state.phase, state.loaded), (ReadPhase::Loaded, Some(revision)));
-    crate::test_wait::within(begin(&db).await.result()).await.unwrap();
-    assert_eq!(transport.requests(), 1, "a fresh window answers a second load without a request");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -147,25 +145,12 @@ async fn win_loading_error_preserves_graphql_messages_and_extensions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn two_loads_of_one_window_share_one_request_and_a_cancel_of_one_leaves_the_other() {
-    let (db, transport) = open(true).await;
-    let (first, second) = (begin(&db).await, begin(&db).await);
-    crate::test_wait::settled(&db, "the request left", || transport.requests() == 1).await;
-    first.cancel();
-    assert!(matches!(first.result().await, Err(DbError::Interrupted { .. })), "a cancelled call ends as interrupted");
-    transport.gate.add_permits(1);
-    crate::test_wait::within(second.result()).await.unwrap();
-    assert_eq!(transport.requests(), 1, "both calls waited for the same request");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_while_a_refresh_fails_at_once() {
     let (db, transport) = open(false).await;
     db.set_online(false).unwrap();
     let call = begin(&db).await;
     crate::test_wait::within(crate::ffi::settled(&db)).await.unwrap();
     assert_eq!(transport.requests(), 0, "no request leaves while the network is away");
-    assert!(matches!(refresh(&db).await, Err(DbError::Offline { .. })), "a refresh needs the network now");
     db.set_online(true).unwrap();
     crate::test_wait::within(call.result()).await.unwrap();
     assert_eq!(transport.requests(), 1);

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn retry_class_follows_code() {
+fn retry_class_follows_the_code_and_the_variant_of_the_error() {
     assert_eq!(RetryClass::classify(true, None, &[]), RetryClass::Network);
     assert_eq!(RetryClass::classify(false, Some(503), &[]), RetryClass::Server);
     assert_eq!(RetryClass::classify(false, Some(400), &["TIMEOUT"]), RetryClass::Fatal);
@@ -12,15 +12,8 @@ fn retry_class_follows_code() {
     assert_eq!(RetryClass::classify(false, Some(600), &[]), RetryClass::Fatal);
     assert_eq!(RetryClass::classify(false, Some(499), &[]), RetryClass::Fatal);
     assert_eq!(RetryClass::classify(false, None, &[""]), RetryClass::Fatal);
-}
-
-#[test]
-fn transport_error_classifies_by_variant() {
     assert_eq!(RetryClass::of_error(&TransportError::Network("x".into())), RetryClass::Network);
-    assert_eq!(
-        RetryClass::of_error(&TransportError::Http { status: 502, body: String::new() }),
-        RetryClass::Server
-    );
+    assert_eq!(RetryClass::of_error(&TransportError::Http { status: 502, body: String::new() }), RetryClass::Server);
     assert_eq!(RetryClass::of_error(&TransportError::Decode("x".into())), RetryClass::Fatal);
     assert_eq!(RetryClass::of_error(&TransportError::Graphql { messages: vec!["x".into()], extensions: None }), RetryClass::Fatal);
 }

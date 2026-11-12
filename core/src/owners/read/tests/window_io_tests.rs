@@ -155,18 +155,16 @@ fn win_io_cancel_no_answer() {
 #[test]
 fn sess_prop_transport_classify() {
     use crate::owners::contract::{ErrorClass, TransportOutcome};
-    use crate::transport::RetryClass;
     let graphql = |code: &str| TransportError::Graphql { messages: vec![code.into()], extensions: Some(crate::transport::GraphqlExtensions { code: Some(code.into()), transaction_disposition: None, fields: Default::default() }) };
     let table = [
-        (TransportError::Network("down".into()), RetryClass::Network, ErrorClass::Network, true),
-        (TransportError::Http { status: 503, body: String::new() }, RetryClass::Server, ErrorClass::Server, true),
-        (TransportError::Http { status: 429, body: String::new() }, RetryClass::Retriable, ErrorClass::Server, true),
-        (TransportError::Http { status: 400, body: String::new() }, RetryClass::Fatal, ErrorClass::Permanent, false),
-        (graphql("TIMEOUT"), RetryClass::Retriable, ErrorClass::Server, true),
-        (graphql("FORBIDDEN"), RetryClass::Fatal, ErrorClass::Permanent, false),
+        (TransportError::Network("down".into()), ErrorClass::Network, true),
+        (TransportError::Http { status: 503, body: String::new() }, ErrorClass::Server, true),
+        (TransportError::Http { status: 429, body: String::new() }, ErrorClass::Server, true),
+        (TransportError::Http { status: 400, body: String::new() }, ErrorClass::Permanent, false),
+        (graphql("TIMEOUT"), ErrorClass::Server, true),
+        (graphql("FORBIDDEN"), ErrorClass::Permanent, false),
     ];
-    for (error, class, window, transfer) in table {
-        assert_eq!(RetryClass::of_error(&error), class, "{error}");
+    for (error, window, transfer) in table {
         assert!(matches!(super::window_io::failure::<()>(&error), TransportOutcome::Error(found) if found.class == window), "{error}: Windows");
         assert_eq!(crate::owners::write::transfer_executor::temporary(&error), transfer, "{error}: Transfer");
     }

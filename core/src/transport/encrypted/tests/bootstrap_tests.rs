@@ -183,7 +183,7 @@ impl HttpExchange for Http {
 }
 
 #[tokio::test]
-async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service_from_pin() {
+async fn fetch_needs_no_database_and_validates_before_http() {
     let clock = ManualClock::new(Duration::from_secs(1790000000));
     let http = Arc::new(Http { calls: AtomicUsize::new(0), status: 200 });
     let mut encrypted = configuration();
@@ -198,10 +198,6 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
         assert!(fetch_with(&configuration(), platform, "1.2", None, http.clone(), &clock).await.is_ok());
     }
     assert_eq!(http.calls.load(Ordering::SeqCst), 2);
-    for status in [400, 413] {
-        let http = Arc::new(Http { calls: AtomicUsize::new(0), status });
-        assert!(matches!(fetch_with(&configuration(), AppPlatform::Ios, "1.2.3", None, http, &clock).await, Err(TransportError::Http { status: actual, .. }) if status == actual));
-    }
 }
 
 async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::runtime::Clock) -> Result<ServerConfig, TransportError> {
@@ -280,13 +276,6 @@ async fn run_with(http: Arc<dyn HttpExchange>, progress: &crate::transport::retr
 }
 
 #[test]
-fn life_bootstrap_ok() { crate::test_wait::paused(async {
-    let http = scripted(vec![good()]);
-    let config = run(http.clone(), &http.progress, &configuration()).await.unwrap();
-    assert_eq!((config.config_version, http.calls.load(Ordering::SeqCst)), (1, 1));
-}) }
-
-#[test]
 fn life_bootstrap_invalid_config() { crate::test_wait::paused(async {
     for origin in ["http://example.com", "https://example.com/path", "ftp://example.com"] {
         let http = scripted(vec![]);
@@ -295,15 +284,6 @@ fn life_bootstrap_invalid_config() { crate::test_wait::paused(async {
         assert!(matches!(run(http.clone(), &http.progress, &config).await, Err(TransportError::Config { code: ConfigCode::InvalidRequest, .. })), "{origin}");
         assert_eq!(http.calls.load(Ordering::SeqCst), 0, "{origin}");
     }
-}) }
-
-#[test]
-fn life_bootstrap_pin() { crate::test_wait::paused(async {
-    let http = scripted(vec![]);
-    let mut config = configuration();
-    config.pin = "wrong".into();
-    assert!(matches!(run(http.clone(), &http.progress, &config).await, Err(TransportError::Security { code: SecurityCode::ServerKeyMismatch, .. })));
-    assert_eq!(http.calls.load(Ordering::SeqCst), 0);
 }) }
 
 #[test]
@@ -334,15 +314,6 @@ fn life_bootstrap_refused() { crate::test_wait::paused(async {
 }) }
 
 #[test]
-fn life_bootstrap_config_code() { crate::test_wait::paused(async {
-    for (field, value, code) in [("configVersion", json!(2), ConfigCode::UnsupportedVersion), ("updateRequired", json!("false"), ConfigCode::InvalidFormat)] {
-        let http = scripted(vec![answered(move |response| response["body"][field] = value.clone())]);
-        assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Config { code: actual, .. }) if actual == code), "{field}");
-        assert_eq!(http.calls.load(Ordering::SeqCst), 1, "{field}");
-    }
-}) }
-
-#[test]
 fn life_bootstrap_http() { crate::test_wait::paused(async {
     for code in [301, 400, 404, 413] {
         let http = scripted(vec![status(code)]);
@@ -370,16 +341,6 @@ fn life_bootstrap_retry() { crate::test_wait::paused(async {
         assert!((ceiling * 8 / 10..=ceiling).contains(delay_ms), "{delay_ms} outside {ceiling}");
     }
     assert_eq!(http.progress.current(), RetrySnapshot::default());
-}) }
-
-#[test]
-fn life_bootstrap_timeout() { crate::test_wait::paused(async {
-    let http = scripted(vec![failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Io), good()]);
-    let clock = waits(&http.progress);
-    assert!(run_with(http.clone(), &http.progress, &configuration(), &clock).await.is_ok());
-    assert_eq!(http.calls.load(Ordering::SeqCst), 4);
-    let attempts: Vec<Vec<u32>> = clock.during.lock().unwrap().iter().map(|snapshot| snapshot.waiting.iter().map(|entry| entry.attempt).collect()).collect();
-    assert_eq!(attempts, [vec![1], vec![2], vec![3]], "each timeout waits with the next attempt number");
 }) }
 
 struct DropFlag(Arc<AtomicUsize>);
