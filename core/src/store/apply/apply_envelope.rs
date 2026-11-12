@@ -21,7 +21,7 @@ pub(in super::super) fn apply_envelope_at(
     let mut followed = planned.clone();
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
-    super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _, _)| &mut **current))?;
+    let pointer_rows_read = super::super::follow_pointer::follow_parent_pointers(connection, models, &mut followed, feed_cache.as_mut().map(|(current, _, _)| &mut **current))?;
     followed.reduce_repeats();
     followed.validate(generation)?;
     let envelope = &followed;
@@ -42,9 +42,15 @@ pub(in super::super) fn apply_envelope_at(
             }
         }
     }
-    let Some((current, hidden, undo)) = feed_cache else { return write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut EventUndo::default()) };
-    undo.rows.extend(envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }));
-    write_followed(connection, models, envelope, (now_ms, revision), originals, Some((current, hidden)), undo)
+    let mut result = match feed_cache {
+        None => write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut EventUndo::default())?,
+        Some((current, hidden, undo)) => {
+            undo.rows.extend(envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }));
+            write_followed(connection, models, envelope, (now_ms, revision), originals, Some((current, hidden)), undo)?
+        }
+    };
+    result.pointer_rows_read = pointer_rows_read;
+    Ok(result)
 }
 
 fn write_followed(

@@ -20,6 +20,7 @@ struct WrittenBatch<'a> {
     expiry: ExpiryParts,
     resets: ResetParts,
     candidates: usize,
+    pointer_rows: usize,
     shown: Vec<Option<super::Row>>,
 }
 
@@ -58,8 +59,11 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, shown }) => {
-                self.lock().counters.outbox_candidates += candidates;
+            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, pointer_rows, shown }) => {
+                let mut store = self.lock();
+                store.counters.outbox_candidates += candidates;
+                store.counters.pointer_rows_read += pointer_rows;
+                drop(store);
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
@@ -135,6 +139,7 @@ impl Store {
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
         let candidates = writer.candidates;
+        let pointer_rows = results.iter().map(|result| result.pointer_rows_read).sum();
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row(include_str!("sql/batch_write/write_batch_prepared_select_file.sql"), [&file.record.id], |row| row.get(0))?;
@@ -181,6 +186,6 @@ impl Store {
             if position != current.position { self.overlays.publish(snapshot); }
         }
         if let Some(journal) = journal { journal.finish(); }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, shown })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, pointer_rows, shown })
     }
 }

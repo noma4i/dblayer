@@ -11,6 +11,7 @@ pub struct Counters {
     pub edge_read_steps: usize,
     pub edge_read_scans: usize,
     pub outbox_candidates: usize,
+    pub pointer_rows_read: usize,
 }
 
 impl Add for Counters {
@@ -27,6 +28,7 @@ impl Add for Counters {
             edge_read_steps: self.edge_read_steps + other.edge_read_steps,
             edge_read_scans: self.edge_read_scans + other.edge_read_scans,
             outbox_candidates: self.outbox_candidates + other.outbox_candidates,
+            pointer_rows_read: self.pointer_rows_read + other.pointer_rows_read,
         }
     }
 }

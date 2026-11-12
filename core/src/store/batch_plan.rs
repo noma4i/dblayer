@@ -360,6 +360,7 @@ pub struct CommitResult {
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,
+    pub pointer_rows_read: usize,
 }
 
 impl CommitResult {
@@ -380,6 +381,7 @@ impl CommitResult {
             snapshot: None,
             item_snapshots: Vec::new(),
             position: 0,
+            pointer_rows_read: 0,
         }
     }
 

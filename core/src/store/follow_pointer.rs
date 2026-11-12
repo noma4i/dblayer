@@ -5,7 +5,6 @@ use serde_json::{json, Map, Value};
 
 use crate::store::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
 use crate::value::{read_id, same_fields};
 
@@ -25,6 +24,7 @@ struct Ops<'a> {
     written: HashMap<RowRef, usize>,
     doomed: HashSet<RowRef>,
     current: Option<&'a mut super::apply::Prefetched>,
+    children_read: usize,
 }
 
 impl Ops<'_> {
@@ -45,6 +45,11 @@ impl Ops<'_> {
         Ok(cache.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone()))
     }
 
+    fn load_child(&mut self, reader: &Reader<'_>, row: &RowRef) -> Result<Option<Row>, StoreError> {
+        self.children_read += 1;
+        self.load(reader, row)
+    }
+
     fn set(&mut self, parents: &mut Parents, parent: RowRef, merged: Row) {
         if let Some(index) = self.written.get(&parent) {
             if let EntityOp::Upsert { row, .. } = &mut self.entities[*index] {
@@ -62,7 +67,7 @@ fn pointer_associations(models: &BTreeMap<String, ModelInfo>, model: &ModelKey) 
 }
 
 /// A parent row names its newest child in `sets`: a landing child advances the pointer, a replaced child renames it, a destroyed child hands it to the previous sibling.
-pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, current: Option<&mut super::apply::Prefetched>) -> Result<(), StoreError> {
+pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, current: Option<&mut super::apply::Prefetched>) -> Result<usize, StoreError> {
     let reader = Reader::new(connection, models);
     let mut parents = Parents::default();
     let written = envelope.entity_ops.iter().enumerate().filter(|(_, op)| matches!(op, EntityOp::Upsert { .. })).map(|(index, op)| (op.row_ref(), index)).collect();
@@ -70,7 +75,7 @@ pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<
     let (mut changes, rest): (Vec<EntityOp>, Vec<EntityOp>) = envelope.entity_ops.iter().cloned().partition(|op| matches!(op, EntityOp::Destroy { reason: DestroyReason::Replaced { .. }, .. }));
     changes.extend(rest);
     let replaced = std::mem::take(&mut envelope.replaced);
-    let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed, current };
+    let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed, current, children_read: 0 };
     for op in changes {
         match op {
             EntityOp::Upsert { model, row, .. } => advance(models, &reader, (&model, &row), &replaced, &mut ops, &mut parents)?,
@@ -79,12 +84,13 @@ pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<
             EntityOp::Touch { .. } => {}
         }
     }
+    let children_read = ops.children_read;
     envelope.replaced = replaced;
     envelope.entity_ops.retain(|op| !matches!(op, EntityOp::Touch { .. }) || !parents.rows.contains_key(&op.row_ref()));
     for (parent, after) in parents.rows {
         envelope.entity_ops.push(EntityOp::Upsert { model: parent.model, id: parent.id, row: after });
     }
-    Ok(())
+    Ok(children_read)
 }
 
 fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, (model, row): (&ModelKey, &Row), replaced: &BTreeMap<RowRef, Row>, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), StoreError> {
@@ -96,7 +102,7 @@ fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, (model, ro
     super::apply::canonicalize(models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?, &mut canonical);
     let row = &canonical;
     let child = row.get("id").and_then(read_id).map(|id| RowRef::new(model.clone(), id));
-    let stored = match &child { Some(child) => ops.load(reader, child)?.or_else(|| replaced.get(child).cloned()), None => None };
+    let stored = match &child { Some(child) => ops.load_child(reader, child)?.or_else(|| replaced.get(child).cloned()), None => None };
     for association in associations {
         let Some(parent_id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
         let parent = RowRef::new(association.target.clone(), parent_id);
@@ -150,8 +156,8 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
     if associations.is_empty() {
         return Ok(());
     }
-    let Some(child) = ops.load(reader, &RowRef::new(model.clone(), id.clone()))? else { return Ok(()) };
-    let child_spec = &models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+    let Some(child) = ops.load_child(reader, &RowRef::new(model.clone(), id.clone()))? else { return Ok(()) };
+    let table = &models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.table;
     for association in associations {
         let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id).filter(|_| !association.newer.is_empty()) else { continue };
         let Some(pointer) = association.pointer_field() else { continue };
@@ -163,15 +169,9 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
         if current.get(pointer).and_then(read_id).as_ref() != Some(id) {
             continue;
         }
-        let query = Query::new(model.as_str()).filtered(Where::equal(&association.foreign_key, json!(parent_id.as_str())));
-        let statement = compile_keys(&query, child_spec).map_err(fault)?;
         let mut siblings = Vec::new();
-        for (sibling_id, _) in fetch_keys(reader.connection(), &statement).map_err(fault)? {
-            let sibling = RowRef::new(model.clone(), RowId::new(&sibling_id).map_err(fault)?);
-            if ops.doomed.contains(&sibling) {
-                continue;
-            }
-            siblings.extend(ops.load(reader, &sibling)?);
+        for sibling in first_ranked(reader, (model, table), &association, &parent_id, &ops.doomed)? {
+            siblings.extend(ops.load_child(reader, &sibling)?);
         }
         let previous = association.newest(&siblings);
         let mut merged = current.clone();
@@ -183,4 +183,28 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
         }
     }
     Ok(())
+}
+
+fn first_ranked(reader: &Reader<'_>, (model, table): (&ModelKey, &str), association: &AssociationSpec, parent_id: &RowId, doomed: &HashSet<RowRef>) -> Result<Vec<RowRef>, StoreError> {
+    let order = crate::store::ddl::newer_order(association).into_iter().map(|(term, descending)| if descending { format!("{term} DESC") } else { term }).collect::<Vec<_>>().join(", ");
+    let fields: String = association.newer.iter().map(|newer| format!(", {}", crate::store::ddl::sql_ident(&crate::store::ddl::column_name(&newer.child)))).collect();
+    let foreign_key = crate::store::ddl::sql_ident(&crate::store::ddl::column_name(&association.foreign_key));
+    let mut statement = reader.connection().prepare_cached(&format!("SELECT id{fields} FROM {table} WHERE {foreign_key} = ?1 ORDER BY {order}"))?;
+    let mut rows = statement.query([parent_id.as_str()])?;
+    let mut first: Option<(bool, Vec<rusqlite::types::Value>)> = None;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let rank = (crate::identity::is_temp_id(&id), (1..=association.newer.len()).map(|column| row.get(column)).collect::<Result<Vec<_>, _>>()?);
+        if first.as_ref().is_some_and(|first| *first != rank) {
+            break;
+        }
+        let sibling = RowRef::new(model.clone(), RowId::new(&id).map_err(fault)?);
+        if doomed.contains(&sibling) {
+            continue;
+        }
+        first.get_or_insert(rank);
+        found.push(sibling);
+    }
+    Ok(found)
 }
