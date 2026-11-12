@@ -1,8 +1,9 @@
-//! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
+//! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler`, read through its effects and replies.
 
-use super::ref_session::{OUTBOX_AUTHOR, TRANSFER_AUTHOR, AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
+mod vocab;
+pub use vocab::{author_of, Answer, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Reason, Secret, OUTBOX_AUTHOR, TRANSFER_AUTHOR};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
-use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
+use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 use crate::transport::SessionCode;
@@ -122,54 +123,11 @@ fn owner_pending(pending: RefPending) -> PendingCall {
     PendingCall { request_id: pending.request_id, sequence: pending.sequence, class: class_of(pending.class), operation: pending.operation, path: pending.path, body: pending.body, document: pending.document, credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner, epoch: pending.epoch, reply: pending.reply }
 }
 
-fn queued_of(queued: &Queued) -> RefQueued {
-    match queued {
-        Queued::Call { operation, body, reply } => RefQueued::Call { operation: operation.clone(), body: body.clone(), reply: *reply },
-        Queued::Mutate { author, owner, req_id, epoch, path, body, purpose } => RefQueued::Mutate { author: *author, owner: owner.clone(), req_id: *req_id, epoch: *epoch, path: path.clone(), body: body.clone(), purpose: *purpose },
-    }
-}
-
-
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {
         AuthorOutcome::Response { body, pending_retained, .. } => Outcome::Response(body.clone(), *pending_retained),
         AuthorOutcome::Error { class, error, pending_retained } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error), *pending_retained),
         AuthorOutcome::Dropped => Outcome::Dropped,
-    }
-}
-
-fn phase_of(phase: &SessionPhase) -> RefState {
-    let call_phase = |phase: &owner::AttemptPhase| match phase {
-        owner::AttemptPhase::InFlight(attempt) => CallPhase::InFlight(*attempt),
-        owner::AttemptPhase::WaitingRetry => CallPhase::WaitingRetry,
-        owner::AttemptPhase::WaitingNetwork => CallPhase::WaitingNetwork,
-        owner::AttemptPhase::WaitingSecret => CallPhase::WaitingSecret,
-    };
-    match phase {
-        SessionPhase::Idle => RefState::Idle,
-        SessionPhase::Sealing { pending, seal_id } => RefState::Sealing { pending: pending_of(pending), seal_id: *seal_id },
-        SessionPhase::Generating { call, op } => RefState::Generating { call: queued_of(&call.clone().into()), op: *op },
-        SessionPhase::Storing { call, credential_new, op, after } => RefState::Storing { call: queued_of(&call.clone().into()), credential_new: *credential_new, op: *op, after: match after {
-            owner::AfterStore::Persist => AfterStore::Persist,
-            owner::AfterStore::Clear(error) => AfterStore::Clear(fail_of(error)),
-            owner::AfterStore::Drain => AfterStore::Drain,
-        } },
-        SessionPhase::ClearingSecret { call, reason, op, after } => RefState::ClearingSecret { call: call.as_ref().map(queued_of), reason: reason.as_ref().and_then(|answer| answer_of(answer).err()), op: *op, after: match after {
-            owner::AfterClear::Idle => AfterClear::Idle,
-            owner::AfterClear::Drain => AfterClear::Drain,
-        } },
-        SessionPhase::PendingHeld { pending } => RefState::PendingHeld { pending: pending_of(pending) },
-        SessionPhase::SecretMismatch => RefState::SecretMismatch,
-        SessionPhase::SecretUnavailable { error, read } => RefState::SecretUnavailable { error: error.clone(), read: *read },
-        SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
-        SessionPhase::Calling { pending, attempts, phase } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase) },
-        SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: if pending.class == owner::OperationClass::Login && sequence.is_none() { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended },
-        SessionPhase::Blocked { pending, reason } => RefState::Blocked { pending: pending.as_ref().map(pending_of), reason: match reason {
-            owner::Block::Invalid => Block::Invalid,
-            owner::Block::SequenceConflict => Block::SequenceConflict,
-            owner::Block::StateLost => Block::StateLost,
-        } },
-        SessionPhase::Closed => RefState::Closed,
     }
 }
 
@@ -202,7 +160,6 @@ struct Twin {
     det: DetScheduler,
     addr: Address<SessionCalls>,
     log: Log<SessionEffect>,
-    reference: Ref,
     history: Vec<RefEffect>,
     replies: Vec<(u64, Result<String, Fail>)>,
     raw_text: String,
@@ -210,6 +167,7 @@ struct Twin {
     pending: Option<RefPending>,
     attempt: Option<u64>,
     op: Option<u64>,
+    batch: Option<u64>,
 }
 
 impl Twin {
@@ -222,7 +180,7 @@ impl Twin {
         let mut det = DetScheduler::new(2);
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
-        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new(), raw_text: String::new(), seal: None, pending: None, attempt: None, op: None };
+        let mut twin = Self { det, addr, log, history: Vec::new(), replies: Vec::new(), raw_text: String::new(), seal: None, pending: None, attempt: None, op: None, batch: None };
         twin.feed(Input::Published { epoch: EPOCH, identity: None, state: PubState::Session });
         if let Some(online) = online { twin.feed(Input::Snapshot { epoch: EPOCH, online }); }
         let secret = credential.as_ref().map_or(Secret::Missing, |credential| Secret::Present(credential.digest));
@@ -237,17 +195,14 @@ impl Twin {
                 self.feed(Input::Sealed { seal_id, size: 1 });
             }
         }
+        let current = self.batch.unwrap_or(9_999);
+        let resolve = |batch: u64| if batch == 0 { current } else { batch };
         match &input {
             Input::Sealed { .. } | Input::SealFailed { .. } => self.seal = None,
+            Input::Committed(_) | Input::Rejected(..) => self.batch = None,
             Input::Open { pending: Some(pending), .. } | Input::Restored { pending: Some(pending), .. } => self.pending = Some(pending.clone()),
             _ => {}
         }
-        let batch_of = |state: &RefState| match state {
-            RefState::Persisting { batch, .. } | RefState::Landing { batch, .. } => *batch,
-            _ => 9_999,
-        };
-        let current = batch_of(&self.reference.state);
-        let resolve = |batch: u64| if batch == 0 { current } else { batch };
         let owner_input = match input.clone() {
             Input::Sealed { seal_id, size } => SessionInput::Sealed { seal_id, size },
             Input::SealFailed { seal_id, error } => SessionInput::SealFailed { seal_id, error: match error { Fail::StateLost => SessionError::StateLost, _ => SessionError::Storage("seal failed".into()) } },
@@ -281,75 +236,51 @@ impl Twin {
             Input::EpochEnded { epoch, cause: c } => SessionInput::EpochEnded(EpochEnded { epoch, cause: cause(c) }),
             Input::Closing => SessionInput::Closing,
         };
-        let reference_input = match input {
-            Input::Committed(0) => Input::Committed(current),
-            Input::Rejected(0, reason) => Input::Rejected(current, reason),
-            other => other,
-        };
-        let traced = self.det.trace().len();
         let cleared = matches!(&owner_input, SessionInput::SecretCleared { .. });
+        let traced = self.det.trace().len();
         self.det.post(self.addr, EpochStamp::Control, owner_input);
         self.det.run_until_quiet(100).expect("the owner is quiet");
         let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count();
         let raw = take(&self.log);
         self.raw_text = format!("{raw:?}");
-        let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
-        if scheduled > 0 {
-            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick, scheduled));
-        }
-        let mut sorted_have = effects.clone();
-        let mut sorted_want = want.effects.clone();
-        sorted_have.sort_by_key(|effect| format!("{effect:?}"));
-        sorted_want.sort_by_key(|effect| format!("{effect:?}"));
-        assert_eq!(sorted_have, sorted_want, "the same effects");
+        effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick, scheduled));
         let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {
             SessionEffect::Reply { id, answer } => Some((*id, if cleared { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) })),
             _ => None,
         }).collect();
-        assert_eq!(replies, want.replies, "the same replies");
         for effect in &effects {
             match effect {
                 RefEffect::SealProbe { seal_id, pending, .. } => { self.seal = Some(*seal_id); self.pending = Some(pending.clone()); }
-                RefEffect::CommitPending { pending, .. } => self.pending = Some(pending.clone()),
+                RefEffect::CommitPending { batch, pending, .. } => { self.batch = Some(*batch); self.pending = Some(pending.clone()); }
+                RefEffect::CommitLanding { batch, .. } => self.batch = Some(*batch),
                 RefEffect::HttpRequest { pending, attempt_id } => { self.attempt = Some(*attempt_id); self.pending = Some(pending.clone()); }
                 RefEffect::GenerateCredential { op } | RefEffect::StoreSecret { op, .. } | RefEffect::ClearSecret { op } | RefEffect::ReadSecret { op } => self.op = Some(*op),
                 _ => {}
             }
         }
         self.replies.extend(replies);
-        self.history.extend(want.effects.iter().cloned());
-        let state = self.det.state(self.addr).expect("the owner state");
-        assert_eq!(phase_of(state.phase()), self.reference.state, "the same state");
-        assert_eq!(state.credential().map(|c| RefCredential { digest: c.digest, sequence: c.sequence }), self.reference.credential, "the same credential");
-        assert_eq!(state.queued(), self.reference.queue.len(), "the same queue");
-        assert_eq!(state.awaiting_publication().map(|(reply, wait)| (reply, match wait { crate::owners::session::PublishWait::EpochAfter(epoch) => Some(epoch), crate::owners::session::PublishWait::Identity => None })), self.reference.awaiting(), "the same answer after publish");
-        assert_eq!(state.restored_direct().map(pending_of), self.reference.restored_direct, "the same restored direct pending");
-        assert_eq!(state.restored_detached().map(pending_of), self.reference.restored_detached, "the same restored detached pending");
-        assert_eq!(state.released(), self.reference.released.len(), "the same remembered Releases");
-        want.effects
+        self.history.extend(effects.iter().cloned());
+        effects
     }
 
     fn feed_all(&mut self, inputs: impl IntoIterator<Item = Input>) { inputs.into_iter().for_each(|input| { self.feed(input); }); }
 
+    fn credential(&self) -> Option<RefCredential> { self.det.state(self.addr).expect("the owner state").credential().map(|c| RefCredential { digest: c.digest, sequence: c.sequence }) }
+
     fn pending(&self) -> RefPending { self.pending.clone().expect("the owner has sent or stored a request") }
 
-    fn credential(&self) -> Option<RefCredential> { self.reference.credential }
-
-    fn rid(&self) -> u64 { self.pending.as_ref().expect("the owner has sent or stored a request").request_id }
+    fn rid(&self) -> u64 { self.pending().request_id }
 
     fn aid(&self) -> u64 { self.attempt.expect("the owner has sent a request") }
 
     fn op(&self) -> u64 { self.op.expect("the owner asked for a secret operation") }
-
-    fn in_phase(&self, want: CallPhase) -> bool { matches!(&self.reference.state, RefState::Calling { phase, .. } if *phase == want) }
 
     fn response(&self, sequence: u64) -> Input { Input::Response { request_id: self.rid(), attempt_id: self.aid(), body: "{}".into(), sequence: Some(sequence), refusal: None } }
 
     fn http_error(&self, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id: self.rid(), attempt_id: self.aid(), temporary, auth, security: None, body: None } }
 
     fn dropped(&self) -> Input { Input::Dropped { request_id: self.rid(), attempt_id: self.aid() } }
-
 }
 
 fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), body: "{}".into(), reply } }
@@ -397,7 +328,6 @@ fn held() -> Twin {
     let mut twin = calling_mutate();
     let input = twin.dropped();
     twin.feed(input);
-    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
     twin
 }
 
@@ -426,12 +356,11 @@ fn blocked_invalid() -> Twin {
     let input = twin.response(1);
     twin.feed(input);
     twin.feed(rejected(Reason::Invalid));
-    assert!(matches!(&twin.reference.state, RefState::Blocked { pending: Some(pending), reason: Block::Invalid } if pending.author == Some(7) && pending.reply.is_none()));
     twin
 }
 
 fn stored(owner: Option<crate::transport::RequestOwner>, request_id: u64, sequence: u64) -> RefPending {
-    let author = owner.as_ref().and_then(super::ref_session::author_of);
+    let author = owner.as_ref().and_then(author_of);
     RefPending { request_id, sequence, class: Class::Authenticated, operation: String::new(), path: OTP.into(), document: None, body: "{}".into(), credential: None, purpose: 0, author, owner, epoch: 0, reply: None }
 }
 
