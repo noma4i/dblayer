@@ -25,26 +25,18 @@ pub struct EffectTombstone {
     pub row_id: String,
 }
 
-/// The parent row changes its `updated_at`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectTouch {
-    pub model: String,
-    pub row_id: String,
-}
-
 /// What an operation changes before the server answers; `RollBack` takes it back.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IntentEffects {
     pub rows: Vec<EffectRow>,
     pub members: Vec<EffectMember>,
     pub tombstones: Vec<EffectTombstone>,
-    pub touches: Vec<EffectTouch>,
     /// The `(model, row_id)` the receipt of the call shows: the Store reads it in the transaction of the intent and replies with it.
     pub shown: Option<(String, String)>,
 }
 
 impl IntentEffects {
-    pub fn is_empty(&self) -> bool { self.rows.is_empty() && self.members.is_empty() && self.tombstones.is_empty() && self.touches.is_empty() }
+    pub fn is_empty(&self) -> bool { self.rows.is_empty() && self.members.is_empty() && self.tombstones.is_empty() }
 }
 
 /// A row of the server answer or of a local write.
@@ -171,7 +163,7 @@ pub enum StoreOp {
     Swap { model: String, temp: String, real: String },
     /// The row the batch answers with: the Store reads it in the transaction of the batch and replies with it.
     Show { model: String, row_id: String },
-    /// The rows, membership, tombstones and touches of a call that has no operation (a local model, an action without a mutation): final at once.
+    /// The rows, membership and tombstones of a call that has no operation (a local model, an action without a mutation): final at once.
     Planned { effects: IntentEffects },
     /// A file for a field of a row: the bytes go to the directory of the files or to the table, the row gets the descriptor.
     AttachFile { model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String },

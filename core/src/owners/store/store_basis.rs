@@ -40,7 +40,6 @@ pub(super) fn effect_models(models: &mut BTreeSet<String>, effects: &IntentEffec
     models.extend(effects.rows.iter().map(|row| row.model.clone()));
     models.extend(effects.members.iter().map(|row| row.model.clone()));
     models.extend(effects.tombstones.iter().map(|row| row.model.clone()));
-    models.extend(effects.touches.iter().map(|row| row.model.clone()));
 }
 
 pub(super) fn key_model(models: &mut BTreeSet<String>, key: &str) {
