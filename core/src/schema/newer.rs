@@ -88,7 +88,7 @@ impl AssociationSpec {
     }
 }
 
-const SERVER_VALUE: &str = "server__";
+pub(crate) const SERVER_VALUE: &str = "server__";
 
 impl ModelSpec {
     pub fn with_server_values(models: &[ModelSpec]) -> Vec<ModelSpec> {

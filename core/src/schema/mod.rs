@@ -115,7 +115,7 @@ pub struct ChangeIdOf {
 }
 
 fn is_reserved_name(name: &str) -> bool {
-    name == "orderKey" || name == "sync" || name.starts_with('$')
+    name == "orderKey" || name == "sync" || name.starts_with('$') || name.starts_with(newer::SERVER_VALUE)
 }
 
 impl ModelSpec {
