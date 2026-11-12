@@ -124,7 +124,7 @@ fn xfer_orphan_abort_refused_keeps_debt() {
     use crate::owners::write::transfer::TransferInput;
     for (status, temporary) in [(Some(403u16), false), (Some(503u16), true), (None, true)] {
         let mut twin = Twin::bare(1);
-        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
         twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default(), held_orphan: None });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);

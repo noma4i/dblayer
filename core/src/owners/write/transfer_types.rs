@@ -265,7 +265,8 @@ pub enum TransferInput {
     /// The answer to `abort` of a removed transfer: `Ok` when the server removed the upload or has none, else the refusal.
     AbortDone { upload_id: String, result: Result<(), AbortFault> },
     RestoreFailed { error: String },
-    RegisterOperations { declarations: Vec<(String, String)> },
+    /// `complete`: the registration checked the operations of the app, so a declaration that is missing now will not come.
+    RegisterOperations { declarations: Vec<(String, String)>, complete: bool },
     RestoreReady { epoch: Epoch },
     RoundStatus { epoch: Epoch, transfer_ids: Vec<TransferId>, refused: Option<String> },
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
@@ -652,6 +653,7 @@ pub struct TransferState {
     /// The value row readers and Blob streams got last for a key, with the revision of the batch that wrote it: what a joining reader gets. A key without one shows `Gone`.
     pub(super) published: BTreeMap<Key, (Shown, i64)>,
     pub(super) declarations: BTreeSet<(String, String)>,
+    pub(super) complete: bool,
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,
     pub(super) orphan_flight: BTreeSet<String>,
@@ -706,6 +708,7 @@ impl TransferState {
             subscribers: BTreeMap::new(),
             published: BTreeMap::new(),
             declarations: BTreeSet::new(),
+            complete: false,
             orphans: BTreeMap::new(),
             orphan_flight: BTreeSet::new(),
             minted: BTreeMap::new(),

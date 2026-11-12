@@ -120,7 +120,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
     assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
@@ -202,7 +202,7 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
     setup.transport = Some(held.clone());
     setup.operations = Arc::new(|name| (name == "Change").then(|| ("mutation Change { change }".into(), "change".into())));
     let life = tokio::task::spawn_blocking(move || Life::start(setup).unwrap()).await.unwrap();
-    life.register_operations(vec![("Change".into(), crate::owners::calls::CallKind::Mutate)], Vec::new());
+    life.register_operations(vec![("Change".into(), crate::owners::calls::CallKind::Mutate)], Vec::new(), false);
     life.credential_committed(IDENTITY);
     crate::test_wait::settled(&life, "the identity was published", || life.published().identity == Some(IDENTITY)).await;
     assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
@@ -330,7 +330,7 @@ async fn net_prop_connectivity_not_database() {
     let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
     assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
@@ -345,7 +345,7 @@ async fn net_prop_no_request_before_snapshot() {
     let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
+    life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(transport.calls().is_empty(), "no request left before the network said it is online");
     assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });

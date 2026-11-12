@@ -15,7 +15,7 @@ fn restored(twin: &mut Twin, orphans: Vec<(String, String)>, held_orphan: Option
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans, batches: Default::default(), held_orphan: held_orphan.map(str::to_string) })
 }
 
-fn register(twin: &mut Twin) -> Out { twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }) }
+fn register(twin: &mut Twin) -> Out { twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }) }
 
 fn ready(twin: &mut Twin) -> Out { twin.post(TransferInput::RestoreReady { epoch: EPOCH }) }
 

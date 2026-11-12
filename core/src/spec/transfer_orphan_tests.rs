@@ -19,7 +19,7 @@ fn with_upload(twin: &mut Twin, key: &str) -> TransferId {
 
 fn orphan_restart(orphans: Vec<(String, String)>) -> Twin {
     let mut twin = Twin::bare(1);
-    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans, batches: Default::default(), held_orphan: None });
     twin
 }
@@ -53,7 +53,7 @@ fn xfer_orphan_abort_waits_declaration() {
                 Offline => twin.online(false),
                 Restored => twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default(), held_orphan: None }),
                 RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
-                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
             };
             declared |= event == Register;
             assert!(declared || out.orphan_aborts().is_empty(), "{order:?} at {event:?}: an abort before the declaration would be refused for good, got {:?}", out.orphan_aborts());

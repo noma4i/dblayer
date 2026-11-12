@@ -94,7 +94,7 @@ fn xfer_prop_held_step_answer_before_declaration() {
         for event in &order {
             match event {
                 Event::Answer => twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: AuthorOutcome::Dropped }),
-                Event::Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                Event::Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
             };
         }
         assert_eq!(twin.stage(1), TransferStage::PersistingAttempt, "{order:?}: the answered pair lets the declared transfer write its attempt");

@@ -84,6 +84,7 @@ pub struct OutboxState {
     pub(super) ended: bool,
     pub(super) held: Vec<OutboxInput>,
     pub(super) declarations: BTreeSet<(String, String)>,
+    pub(super) complete: bool,
     /// Restored operations that wait for `RestoreReady` to write their next attempt.
     pub(super) deferred: Vec<OpId>,
     pub(super) waiting: BTreeMap<OpId, (StoredOp, bool)>,
@@ -140,6 +141,7 @@ impl OutboxState {
             ended: false,
             held: Vec::new(),
             declarations: BTreeSet::new(),
+            complete: false,
             deferred: Vec::new(),
             waiting: BTreeMap::new(),
             removed: BTreeSet::new(),
@@ -152,9 +154,10 @@ impl OutboxState {
 
     /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
     pub(super) fn begin_epoch(&mut self, epoch: Epoch) {
-        let declarations = std::mem::take(&mut self.declarations);
+        let (declarations, complete) = (std::mem::take(&mut self.declarations), self.complete);
         *self = if self.author == BatchAuthor::LocalWrites { Self::local_writes(epoch, self.peers.store) } else { Self::new(epoch, self.peers) };
         self.declarations = declarations;
+        self.complete = complete;
     }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
@@ -832,7 +835,7 @@ impl OutboxState {
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(now, fx),
             OutboxInput::RestoreReady { .. } => {}
-            OutboxInput::RegisterOperations { declarations } => self.register(now, declarations, fx),
+            OutboxInput::RegisterOperations { declarations, complete } => self.register(now, declarations, complete, fx),
             OutboxInput::Committed(committed) => self.committed(now, committed, fx),
             OutboxInput::Rejected(rejected) => self.rejected(now, rejected, fx),
             OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(now, op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false }, errors, fx),

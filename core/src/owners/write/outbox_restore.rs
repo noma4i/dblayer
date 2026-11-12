@@ -113,8 +113,9 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn register(&mut self, now: u64, declarations: Vec<(String, String)>, fx: &mut Effects<Outbox>) {
+    pub(super) fn register(&mut self, now: u64, declarations: Vec<(String, String)>, complete: bool, fx: &mut Effects<Outbox>) {
         self.declarations.extend(declarations);
+        self.complete = complete;
         if self.phase == Phase::Restoring {
             return;
         }
@@ -181,7 +182,7 @@ impl OutboxState {
                 fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));
                 fx.push(Effect::Run(OutboxEffect::SnapshotRequest { epoch: started.epoch }));
             }
-            OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
+            OutboxInput::RegisterOperations { declarations, complete } => { self.declarations.extend(declarations); self.complete = complete; }
             OutboxInput::AliasesRestored { aliases } => self.aliases = aliases,
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::EpochEnded(ended) => {

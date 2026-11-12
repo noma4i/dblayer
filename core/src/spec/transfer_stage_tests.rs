@@ -160,7 +160,7 @@ fn xfer_stage_idle() {
         TransferInput::PowerSaving(false),
         TransferInput::SlotFreed,
         TransferInput::Tick { kind: TransferTick::Expire },
-        TransferInput::RegisterOperations { declarations: Vec::new() },
+        TransferInput::RegisterOperations { declarations: Vec::new(), complete: false },
         TransferInput::RestoreReady { epoch: EPOCH },
     ];
     for signal in signals {

@@ -68,7 +68,7 @@ fn out_queued_expired() {
 
     for (attempts, expect_rollback) in [(1, true), (2, false)] {
         let mut twin = Twin::bare();
-        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
+        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         twin.det.tick(Time(11_000));
         let restored = twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, created_at: 0, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });

@@ -212,7 +212,8 @@ pub enum OutboxInput {
     OrphanAnswers { request_ids: Vec<RequestId> },
     OrphanTransfers { op_ids: Vec<OpId> },
     RestoreReady { epoch: Epoch },
-    RegisterOperations { declarations: Vec<(String, String)> },
+    /// `complete`: the registration checked the operations of the app, so a declaration that is missing now will not come.
+    RegisterOperations { declarations: Vec<(String, String)>, complete: bool },
     Committed(Committed),
     Rejected(Rejected),
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.

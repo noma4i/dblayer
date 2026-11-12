@@ -155,11 +155,11 @@ impl Life {
     }
 
     /// The declarations of a registration reach every receiver in one step; `Windows` starts the preload last.
-    pub fn register_operations(&self, calls: Vec<(String, CallKind)>, declarations: Vec<(String, String)>) {
+    pub fn register_operations(&self, calls: Vec<(String, CallKind)>, declarations: Vec<(String, String)>, complete: bool) {
         let calls = calls.into_iter().filter_map(|(name, kind)| (self.operations)(&name).map(|(document, root)| (name, crate::owners::calls::CallDefinition { kind, document, root }))).collect();
         self.wiring.to_calls(CallsInput::Declare(calls));
-        self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone() });
-        self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations });
+        self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone(), complete });
+        self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations, complete });
         self.wiring.to_windows(WindowsInput::RegisterOperations);
     }
 

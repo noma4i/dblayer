@@ -346,7 +346,7 @@ impl Database {
             return Err(DbError::Invalid { detail: format!("the operations the library sends by itself are not registered: {}", missing.join(", ")) });
         }
         self.reads.declare(declared);
-        self.life.register_operations(names, registered);
+        self.life.register_operations(names, registered, checked);
         Ok(())
     }
 

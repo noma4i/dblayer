@@ -239,7 +239,7 @@ impl Twin {
     pub fn opened_with(rows: Vec<StoredTransfer>, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>, batches: std::collections::BTreeMap<u64, Joint>) -> (Self, Out) {
         let mut twin = Self::bare(1);
         let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
-        twin.post(TransferInput::RegisterOperations { declarations });
+        twin.post(TransferInput::RegisterOperations { declarations, complete: false });
         let outcomes = outcomes.into_iter().map(|(id, outcome)| (id, [(1, outcome)].into())).collect();
         let batches = batches.into_iter().map(|(id, joint)| (id, crate::owners::write::transfer::StoredGroup { joint, op_id: Some(1_000_000 + id), intent_members: Vec::new() })).collect();
         let out = twin.post(TransferInput::Restored { uploads: rows, outcomes, orphans: Vec::new(), batches, held_orphan: None });
@@ -274,7 +274,7 @@ impl Twin {
 
     pub fn with_slots(slots: u32) -> Self {
         let mut twin = Self::bare(slots);
-        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
         twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         twin.post(TransferInput::Online(Online(true)));

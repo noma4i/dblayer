@@ -242,7 +242,7 @@ impl Twin {
     /// The owner in the phase `Ready` with an empty queue.
     pub(super) fn new() -> Self {
         let mut twin = Self::bare();
-        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
+        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())], complete: false });
         twin.post(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
         twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
         twin

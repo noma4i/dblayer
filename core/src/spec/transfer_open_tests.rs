@@ -110,7 +110,7 @@ fn xfer_prop_discard_outcome_before_or_after_declaration() {
         let mut row = completed(1, KEY);
         row.has_intent = true;
         let (mut twin, _) = undeclared(vec![row]);
-        let register = || TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] };
+        let register = || TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false };
         let outcome = || TransferInput::MutationOutcome { transfer_id: 1, cycle_id: 1, outcome: OutboxOutcome::Discarded, intent_removed: true, row_never_created: false };
         let mut removed = Vec::new();
         for input in if outcome_first { vec![outcome(), register()] } else { vec![register(), outcome()] } {
@@ -151,7 +151,7 @@ fn xfer_prop_online_before_declaration() {
                 Offline => twin.online(false),
                 Restored => twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                 RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
-                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
             };
             steps += out.steps().len();
         }
@@ -355,7 +355,7 @@ fn xfer_restore_ready_other() {
     let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert!(Twin::quiet(&out), "a second RestoreReady changes nothing: {out:?}");
     let mut restoring = Twin::bare(1);
-    restoring.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    restoring.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
     restoring.online(true);
     assert!(Twin::quiet(&restoring.post(TransferInput::RestoreReady { epoch: EPOCH })), "no rows have been read yet");
     let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
@@ -366,14 +366,14 @@ fn xfer_restore_ready_other() {
 fn xfer_register_rechecks_waiting() {
     let (mut twin, opened) = undeclared(vec![partly(1, KEY)]);
     assert_eq!((twin.stage(1), opened.shows().len(), opened.writes(), opened.copies(), opened.classified()), (TransferStage::WaitingDeclaration, 0, 0, 0, 1));
-    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
     assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued { progress: 0 }], vec![vec![1]]), "the row is classified again, only this one");
 }
 
 #[test]
 fn xfer_register_still_waiting() {
     let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
-    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "other".into())] });
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "other".into())], complete: false });
     assert!(Twin::quiet(&out), "{out:?}");
     assert_eq!(twin.stage(1), TransferStage::WaitingDeclaration);
 }
@@ -382,7 +382,7 @@ fn xfer_register_still_waiting() {
 fn xfer_register_other() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    twin.ignores(id, vec![TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }]);
+    twin.ignores(id, vec![TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }]);
 }
 
 #[test]
@@ -518,7 +518,7 @@ fn xfer_open_mutating() {
 #[test]
 fn xfer_calls_held_cancel_wins() {
     let mut twin = Twin::bare(1);
-    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
     let reply = twin.reply();
     let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
     assert!(Twin::quiet(&held), "a call during Restoring is held: {held:?}");
@@ -592,7 +592,7 @@ fn xfer_expired_failed_reopen_in_every_order() {
                 Online => twin.online(true),
                 Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                 RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
-                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
             };
             aborts.extend(out.orphan_aborts());
             removed += out.removed().len();
@@ -629,7 +629,7 @@ fn xfer_held_step_reopen_in_every_order() {
                 Online => twin.online(true),
                 Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                 RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
-                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
             };
             assert!(out.steps().is_empty() && out.releases().is_empty(), "{order:?} at {event:?}: Session owns the saved pair");
         }
@@ -659,7 +659,7 @@ fn xfer_prop_restored_failed_keeps_failed_at() {
                 let out = match event {
                     Clock => twin.at(Time(NOW)),
                     Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: BTreeMap::from([(1, BTreeMap::from([(1, outcome.clone())]))]), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
-                    Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                    Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
                     Online => twin.online(true),
                     Expire => { twin.det.tick(Time(NOW)); twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Expire }) },
                 };

@@ -116,7 +116,7 @@ fn xfer_prop_timeouts_for_any_accept_times() {
         row.failed_at = Some(Time(failed));
         let mut twin = Twin::bare(1);
         twin.det.tick(Time(failed + wait));
-        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
         twin.post(TransferInput::Restored { uploads: vec![row], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         let out = twin.post(TransferInput::Online(crate::owners::contract::Online(true)));

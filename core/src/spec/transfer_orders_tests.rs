@@ -464,7 +464,7 @@ fn xfer_orders_saved_outcome() {
                     Offline => twin.online(false),
                     Restored => twin.post(TransferInput::Restored { uploads: vec![row.clone()], outcomes: outcomes.clone(), orphans: Vec::new(), batches: Default::default(), held_orphan: None }),
                     RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
-                    Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+                    Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false }),
                 };
                 resent += out.submits() + out.steps().len() + out.completes();
             }

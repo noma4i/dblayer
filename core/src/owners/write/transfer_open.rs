@@ -219,8 +219,9 @@ impl TransferState {
     }
 
     /// A declaration arrives: a transfer that waits for it is classified again.
-    pub(super) fn register(&mut self, now: crate::runtime::Time, declarations: Vec<(String, String)>, fx: &mut Fx) {
+    pub(super) fn register(&mut self, now: crate::runtime::Time, declarations: Vec<(String, String)>, complete: bool, fx: &mut Fx) {
         self.declarations.extend(declarations);
+        self.complete = complete;
         if self.phase == Phase::Restoring {
             return;
         }

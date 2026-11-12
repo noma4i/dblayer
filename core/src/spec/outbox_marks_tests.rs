@@ -17,7 +17,7 @@ fn out_marking_failed_invalid() {
 #[test]
 fn out_failed_retry_restore_failed() {
     let mut twin = Twin::bare();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
+    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
     let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: None, removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });

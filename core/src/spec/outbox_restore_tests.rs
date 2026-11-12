@@ -30,7 +30,7 @@ fn out_restore_discards_only_orphaned_transfer_intents() {
     assert!(twin.store_text.contains("RetireTransferOutcome") && twin.store_text.contains("Discarded"), "{}", twin.store_text);
 }
 
-pub(super) fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
+pub(super) fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false }); }
 
 pub(super) fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Restored { ops, pending_lost: false }).into_iter().filter(|effect| !matches!(effect, OutboxEffect::RestoreClassified { .. })).collect()
@@ -178,7 +178,7 @@ fn out_register_rechecks_waiting() {
     restore(&mut twin, vec![stored(7, "r")]);
     assert_eq!(twin.stage(7), Some(St::WaitingDeclaration));
     ready(&mut twin);
-    let effects = twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
+    let effects = twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
     assert_eq!((twin.stage(7), kinds(&effects)), (Some(St::Sending), vec![]));
     assert_eq!(sends(&effects), 1);
 }
