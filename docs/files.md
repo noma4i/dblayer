@@ -76,10 +76,10 @@ val edit = PhotoEdit(PixelSize(1080u, 1920u), enlarge = false, crop = null, outp
 val photo = UploadRequest(path, prepare = Prepare.image(edit, quality = 0.8))
 ```
 
-- `Prepare.video(limits, mirror, onCannotDecode)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is.
-- `Prepare.image(edit, quality, format)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
-- A video that the device cannot decode fails with the error kind `prepare_failed:device_cannot_decode`. With `onCannotDecode` set to `uploadSource` the source goes as it is.
-- Any other failure of the preparation gives the error kind `prepare_failed:failed`. `retry(action)` prepares the source again.
+- `Prepare.video(limits, mirror, onCannotDecode, maxBytes)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is.
+- `Prepare.image(edit, quality, format, maxBytes)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
+- `maxBytes` is the largest file that may go to the network. It applies to the prepared file, or to the source when it goes as it is. A larger file fails the upload before any request with the reason `too_large`. `maxBytes` of 0 is refused with `Invalid`. A source without `prepare` has no limit: the app checks that file before the call.
+- A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `too_large` for a file above `maxBytes`, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
 - One preparation runs at a time, in the order of the operations. It does not need the network.
 - `cancelUpload(action)` stops a running preparation and removes its file.
 - An `UploadSource` of a [deferred source](#deferred-source) takes `prepare` too.
@@ -335,7 +335,7 @@ The final content mutation does not hold a file permit.
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
 | `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                           |
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
-| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`                                                                                                      |
+| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`                                                                                            |
 | `localUrl`                | the file URL of the copy of the library while the transfer holds it, `nil` otherwise                                                                                                                         |
 | `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                           |
 

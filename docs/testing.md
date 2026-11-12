@@ -36,6 +36,16 @@ registerStandOperations(database, lateOperationsJson)
 server.registerDocuments(lateOperationsJson)
 ```
 
+Every open of the stand installs a `ScriptedPreparer`, so a source with `prepare` settings uploads in a test. The double has no codecs: its probe answers the kind the settings name, `run` copies the source to the result, and the upload sends the bytes of the source. Pass your own `preparer` to open the stand with another one. The outcome of `run` and the facts of the video probe are parameters of the double.
+
+```swift
+let database = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operationsJSON, preparer: ScriptedPreparer(outcome: .cannotDecode(message: "no decoder")))
+```
+
+```kotlin
+val database = openSigned(config, modelsJson, transport, operations = operationsJson, preparer = ScriptedPreparer(PrepareOutcome.CannotDecode("no decoder")))
+```
+
 A test that calls `ServerContract` directly gets `Invalid` from `admit` and `settle` for text that is not valid JSON. A valid object with missing members is read with an empty request id, no sequence and no body. `admit` returns `stored`, `refused`, `twoBodies` or `fresh`. `registerDocument` adds a document and `document(hash)` finds it, `nil` or `null` when it is unknown.
 
 When two windows of one operation differ only in their variables, answer them by content with `respondWith`. The responder gets the request and returns the reply, or `nil` to take the next reply queued with `enqueue`. A repeat of the same request gets the same reply.

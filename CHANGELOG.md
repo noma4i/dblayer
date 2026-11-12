@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `maxBytes` of `Prepare.video` and `Prepare.image`: a file above it fails the upload with the reason `too_large`.
+- `reason` of `OperationFailure`: the cause of a `prepare_failed` error (`failed`, `device_cannot_decode`, `too_large`).
+- `ScriptedPreparer` in the test stands of both platforms.
+
+### Fixed
+
+- The test stand accepts a source with `prepare` settings.
+
 ## 6.29.0 - 2026-11-13
 
 ### Added
