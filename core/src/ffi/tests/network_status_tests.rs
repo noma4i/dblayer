@@ -397,7 +397,7 @@ fn observed() -> (Arc<NetworkStatus>, Arc<StatusDouble>) {
 }
 
 /// A path of the platform: a kind and a network number.
-fn path(kind: NetworkKind, network: u64) -> NetworkPath { NetworkPath { online: transport != NetworkKind::None, transport, network } }
+fn path(kind: NetworkKind, network: u64) -> NetworkPath { NetworkPath { online: kind != NetworkKind::None, kind, network } }
 
 /// Requirement net_path_value: the value of the process carries the kind and the network number as the platform gave them. Observable: `current` and the first frame. Assert: `None` before, then the path as given for an online and an offline input.
 #[test]
