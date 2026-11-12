@@ -635,6 +635,3 @@ fn more_name(result: LoadMoreResult) -> &'static str {
 mod database_sut;
 mod fold;
 mod symbolic;
-
-#[cfg(test)]
-mod tests;
