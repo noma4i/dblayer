@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::transfer::{Source, Steps};
-use super::transfer_executor::{Link, StepCodec, StepDone};
+use super::transfer_executor::{Link, LinkPut, StepCodec, StepDone, StepEnd};
 use crate::owners::life::OperationLookup;
 use crate::owners::read::codec::root_value;
 use crate::transport::{CancelToken, GraphQLRequest, PutFile, PutRequest, RequestOwner, Response, TransferIdentity, TransferStep, TransportError};
@@ -89,12 +89,7 @@ impl UploadCodec {
             cancel: CancelToken::new(),
             sent: Arc::new(|_| {}),
         };
-        let response = link.put(request).await?;
-        match response.status {
-            200..=299 => Ok(response.etag),
-            403 => Err(TransportError::Network("the upload url expired".into())),
-            status => Err(TransportError::Http { status, body: String::new() }),
-        }
+        put_status(link.put(request).await?)
     }
 
     async fn single(&self, link: &Link, operation: u64, body: &StepsBody, source: &Source, total: u64) -> Result<StepDone, TransportError> {
@@ -106,7 +101,7 @@ impl UploadCodec {
         let headers = parse_headers(data.data.get("headers")).map_err(TransportError::Decode)?;
         let file = PutFile { path: source.path.clone(), offset: 0, length: total };
         self.put(link, (&url, headers), file, (TransferStep::Put, (operation, &body.item))).await?;
-        Ok(StepDone { upload_id: Some(Held::Blob { signed_id: signed }.text()), etag: None })
+        Ok(StepDone { upload_id: Some(Held::Blob { signed_id: signed }.text()), etag: None, ..Default::default() })
     }
 
     async fn part(&self, link: &Link, operation: u64, part: u32, held: Option<&str>, (body, source, total): (&StepsBody, &Source, u64)) -> Result<StepDone, TransportError> {
@@ -122,15 +117,32 @@ impl UploadCodec {
                 (created.clone(), Some(created.text()))
             }
         };
+        if matches!(link.put, LinkPut::InitOnly) {
+            return Ok(StepDone { upload_id: minted, etag: None, end: StepEnd::Initiated });
+        }
         let Held::Multipart { key: blob_key, id } = blob else { return Err(rejected("the upload id is not a multipart id")) };
         let data = self.graphql(link, (&steps.presign.name, UploadStage::Presign), (operation, &body.item), json!({"key": blob_key, "uploadId": id, "partNumbers": [part]})).await?;
         let target = data.data.get("parts").and_then(Value::as_array).into_iter().flatten().find(|item| item.get("partNumber").and_then(Value::as_u64) == Some(u64::from(part))).ok_or_else(|| TransportError::Decode("the presign answer misses the part".into()))?;
         let url = target.get("url").and_then(Value::as_str).ok_or_else(|| TransportError::Decode("the presign answer has no url".into()))?;
         let headers = parse_headers(target.get("headers")).map_err(TransportError::Decode)?;
+        if matches!(link.put, LinkPut::Detached { .. }) {
+            let request = PutRequest { url: url.to_string(), headers, file: PutFile { path: source.path.clone(), offset: 0, length: total }, identity: TransferIdentity { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: body.item.clone(), step: TransferStep::Part { number: part } }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
+            link.start_put(request)?;
+            return Ok(StepDone { upload_id: minted, etag: None, end: StepEnd::Started });
+        }
         let (offset, length) = part_range(total, self.config.part_size, part);
         let etag = self.put(link, (url, headers), PutFile { path: source.path.clone(), offset, length }, (TransferStep::Part { number: part }, (operation, &body.item))).await?;
         let etag = etag.ok_or_else(|| TransportError::Decode("the part answer has no etag".into()))?;
-        Ok(StepDone { upload_id: minted, etag: Some(etag) })
+        Ok(StepDone { upload_id: minted, etag: Some(etag), ..Default::default() })
+    }
+}
+
+/// The answer of a PUT: the etag of a 2xx, the error of any other status. One function for the PUT in the process and the one outside it.
+pub(crate) fn put_status(reply: crate::transport::PutReply) -> Result<Option<String>, TransportError> {
+    match reply.status {
+        200..=299 => Ok(reply.etag),
+        403 => Err(TransportError::Network("the upload url expired".into())),
+        status => Err(TransportError::Http { status, body: String::new() }),
     }
 }
 

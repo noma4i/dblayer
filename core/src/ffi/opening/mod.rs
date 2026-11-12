@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crate::transport::{HttpRequest, RawOutcome};
 use super::open_slot::OpenSlot;
 use super::transport::ObserverStop;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, TestClock, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, PutExecutor, TestClock, Transport};
 
 /// A GraphQL operation the app declares: its name and its document.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -40,6 +40,12 @@ pub struct OpenPorts {
     /// Test stands set it: the database accepts a registration that leaves out an operation the library sends by itself. The `open` of an app never sets it.
     #[uniffi(default = false)]
     pub partial_operations: bool,
+    /// The platform runs the PUT of a file outside the process (iOS: a background `URLSession`): it needs `put_executor`.
+    #[uniffi(default = false)]
+    pub detached_put: bool,
+    /// The executor of the PUTs outside the process: `StartPut`, `CancelPut` and `ResumePuts` go to it.
+    #[uniffi(default = None)]
+    pub put_executor: Option<Arc<dyn PutExecutor>>,
 }
 
 struct ExecutorHttp(Arc<dyn Transport>);
@@ -66,6 +72,13 @@ impl OpenPorts {
             self.http = self.executor.clone().map(|executor| Arc::new(ExecutorHttp(executor)) as Arc<dyn EncryptedHttp>);
         }
         self
+    }
+
+    pub(super) fn check_detached_put(&self) -> Result<(), DbError> {
+        if self.detached_put != self.put_executor.is_some() {
+            return Err(DbError::Config { code: super::ConfigCode::InvalidRequest, detail: "detached_put and put_executor go together".into() });
+        }
+        Ok(())
     }
 
     fn check_data_sync(&self) -> Result<(), DbError> {

@@ -48,6 +48,7 @@ impl TransferState {
                 transfer.next_step = if stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
                 if std::mem::replace(&mut transfer.in_flight, false) {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
+                    self.cancel_put(id, fx);
                 }
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(now, fx);

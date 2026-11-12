@@ -11,6 +11,8 @@ pub struct UploadConfig {
     pub presign_ttl: Duration,
     pub tick: Duration,
     pub failed_ttl: Duration,
+    /// The platform runs a PUT outside the process (`OpenPorts.detached_put`).
+    pub detached_put: bool,
 }
 
 impl Default for UploadConfig {
@@ -23,6 +25,7 @@ impl Default for UploadConfig {
             presign_ttl: Duration::from_secs(50 * 60),
             tick: Duration::from_millis(100),
             failed_ttl: Duration::from_secs(7 * 24 * 60 * 60),
+            detached_put: false,
         }
     }
 }

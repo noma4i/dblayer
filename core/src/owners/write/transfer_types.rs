@@ -10,7 +10,7 @@ use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, Online, Rejected, ReplyId};
 use crate::owners::store::{StoreWriter, UploadRow};
 use crate::runtime::{Address, Effect, Effects, Epoch, Time};
-use crate::transport::NetworkPurpose;
+use crate::transport::{NetworkPurpose, PutIdentity};
 
 /// The reply id of the final mutation Transfer hands to Outbox: Transfer waits for `MutationOutcome`, not for a reply.
 pub const NO_REPLY: ReplyId = ReplyId::MAX;
@@ -279,6 +279,12 @@ pub enum TransferInput {
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     ReplacementReserved { target: super::outbox::ReserveTarget, result: Result<(OpId, Option<super::outbox::ReplacementOperation>), Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
+    /// The first step of a multipart upload outside the process ended: the server has `upload_id`, no part is sent.
+    InitDone { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String },
+    /// The outcome of a PUT outside the process, classified as the answer of a PUT in the process: the etag, or `(temporary, error)`.
+    PutEnded { identity: PutIdentity, result: Result<Option<String>, (bool, String)> },
+    /// The executor has no system task for `identity`.
+    PutMissing { identity: PutIdentity },
     UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String, key: Key },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool, error: String },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: Option<String> },
@@ -392,6 +398,14 @@ pub enum StoreKind {
     Commit,
 }
 
+/// Who runs the PUT of a step: the process (`Live`), or the platform outside it, where the first step of a multipart upload only creates the upload (`InitOnly`) and the next one starts the PUT (`Detached`, `attempt` = the count of attempts the row records).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PutMode {
+    Live,
+    InitOnly,
+    Detached { attempt: u64 },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
@@ -407,12 +421,16 @@ pub enum TransferEffect {
     /// Read the result of the platform in chunks: the answer comes back as `CopyDone` or `CopyFailed`.
     Measure { transfer_id: TransferId, attempt_id: AttemptId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer>, put: PutMode },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<SeededAnswer> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },
     CancelStep { transfer_id: TransferId },
+    /// The system task of a PUT outside the process goes: the platform executor cancels it.
+    CancelPut { identity: PutIdentity },
+    /// The opening lists the PUTs outside the process that the core waits for: the executor answers each and cancels the tasks that are not listed.
+    ResumePuts { identities: Vec<PutIdentity> },
     ReleaseStep { request_id: u64 },
     DeleteFile { path: String },
     Reply { reply: ReplyId, answer: TransferAnswer },
@@ -513,6 +531,8 @@ pub struct Transfer {
     /// Storage refusals in a row of the writes of the transfer (P-DATA-102).
     pub storage_refusals: u32,
     pub in_flight: bool,
+    /// The PUT of the attempt in flight runs outside the process.
+    pub put_detached: bool,
     pub waiting_retry: bool,
     pub next_step: NextStep,
     pub upload_id: Option<String>,
@@ -725,7 +745,7 @@ impl TransferState {
             next_attempt: 1,
             next_timer: 1,
             put_timeout: super::upload::UploadConfig::default().put_timeout,
-            sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size },
+            sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size, detached: false },
             drained: false,
             abort_root: "abortMultipart".into(),
             starts_held: false,

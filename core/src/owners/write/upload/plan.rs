@@ -17,13 +17,15 @@ pub struct Sizing {
     pub single_declared: bool,
     pub threshold: u64,
     pub part_size: u64,
+    /// The PUT runs outside the process: a multipart file has one part as large as the file.
+    pub detached: bool,
 }
 
 impl Sizing {
     /// The number of parts and whether the upload is multipart. A held file is always multipart: it has no single PUT (D-372).
     pub fn of(&self, total: u64, held: bool) -> (u32, bool) {
-        let multipart = self.multipart_declared && (held || !self.single_declared || scenario_for(total, self.threshold) == UploadScenario::Multipart);
-        (if multipart { part_count(total, self.part_size) } else { 1 }, multipart)
+        let multipart = self.multipart_declared && (held || self.detached || !self.single_declared || scenario_for(total, self.threshold) == UploadScenario::Multipart);
+        (if multipart && !self.detached { part_count(total, self.part_size) } else { 1 }, multipart)
     }
 }
 

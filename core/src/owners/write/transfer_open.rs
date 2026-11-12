@@ -157,9 +157,28 @@ impl TransferState {
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.prepare.is_some() { return self.restore_prepare(id, fx); }
+        if self.restore_put(id, &row, fx) { return; }
         if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { self.show(id, Shown::Uploading { progress: row.floor.max(99) }, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
+    }
+
+    /// A multipart upload outside the process with a recorded attempt: the system may still run its PUT, so the transfer waits in `Uploading` for `PutEnded` or `PutMissing` after `ResumePuts`.
+    fn restore_put(&mut self, id: TransferId, row: &StoredTransfer, fx: &mut Fx) -> bool {
+        let waits = self.sizing.detached && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
+            && self.transfers.get(&id).and_then(|transfer| transfer.steps.as_ref()).and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart);
+        if !waits { return false; }
+        let attempt_id = self.attempt();
+        let Some(transfer) = self.transfers.get_mut(&id) else { return false };
+        transfer.stage = TransferStage::Uploading;
+        transfer.in_flight = true;
+        transfer.put_detached = true;
+        transfer.attempt_id = attempt_id;
+        let Some(progress) = Self::share(transfer, self.sizing.part_size, false) else { return false };
+        self.show(id, Shown::Uploading { progress }, fx);
+        self.rounds_needed(vec![id], fx);
+        self.schedule_expire(fx);
+        true
     }
 
     fn restore_copy(&mut self, id: TransferId, fx: &mut Fx) {
@@ -265,6 +284,10 @@ impl TransferState {
         self.send_orphans(true, fx);
         self.replay_held(now, fx);
         self.release_classified(now, fx);
+        if self.sizing.detached {
+            let identities = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| self.put_identity(transfer)).collect();
+            run(fx, TransferEffect::ResumePuts { identities });
+        }
     }
 
     fn release_classified(&mut self, now: crate::runtime::Time, fx: &mut Fx) {

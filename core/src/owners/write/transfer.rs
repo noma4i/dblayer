@@ -605,6 +605,7 @@ impl TransferState {
         }
         if in_flight {
             run(fx, TransferEffect::CancelStep { transfer_id: id });
+            if cause != crate::ffi::EndCause::Closed { self.cancel_put(id, fx); }
         }
         let outcome = match removal {
             Some(Removal::Confirmed { revision, result, row_id }) => OutboxOutcome::Confirmed { revision, result, row_id },
@@ -867,6 +868,9 @@ impl TransferState {
                 self.op_reserved(target, result, fx);
             }
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(now, transfer_id, attempt_id, part, upload_id, etag, fx),
+            TransferInput::InitDone { transfer_id, attempt_id, upload_id } => self.init_done(transfer_id, attempt_id, upload_id, fx),
+            TransferInput::PutEnded { identity, result } => self.put_ended(now, identity, result, fx),
+            TransferInput::PutMissing { identity } => self.put_missing(now, identity, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(now, transfer_id, attempt_id, (temporary, error), fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(now, transfer_id, attempt_id, signed_id, fx),
@@ -948,7 +952,7 @@ impl TransferState {
                 self.replay_held(now, fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
+            held @ (TransferInput::PutEnded { .. } | TransferInput::PutMissing { .. } | TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;

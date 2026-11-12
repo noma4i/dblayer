@@ -14,6 +14,14 @@ pub struct TransferIdentity {
     pub step: TransferStep,
 }
 
+/// Names a PUT that the platform runs outside the process: the epoch of the process, the transfer and the attempt that started it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Record)]
+pub struct PutIdentity {
+    pub epoch: u64,
+    pub transfer_id: u64,
+    pub attempt_id: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PutFile {
     pub path: String,

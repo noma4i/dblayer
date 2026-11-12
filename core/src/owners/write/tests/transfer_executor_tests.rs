@@ -49,7 +49,7 @@ impl StepCodec for Codec {
         } else {
             link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part })), &step_key()).await?;
         }
-        Ok(StepDone { upload_id: (part == Some(1)).then(|| "u1".to_string()), etag: None })
+        Ok(StepDone { upload_id: (part == Some(1)).then(|| "u1".to_string()), etag: None, ..Default::default() })
     }
 
     async fn complete(&self, link: &Link, _key: &str, upload_id: Option<&str>, _parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError> {

@@ -45,7 +45,7 @@ fn invalid(detail: impl Into<String>) -> DbError { DbError::Invalid { detail: de
 fn key_of(model: &str, row: &str, action: &str) -> String { format!("{model}:{row}:{action}") }
 
 impl Database {
-    fn upload_config(&self) -> UploadConfig { UploadConfig::default() }
+    fn upload_config(&self) -> UploadConfig { UploadConfig { detached_put: self.detached, ..Default::default() } }
 
     fn upload_operations(&self) -> Result<&crate::owners::write::upload::UploadOperations, DbError> {
         self.uploads.as_ref().ok_or_else(|| invalid("upload operations are not declared: pass UploadOperations to open"))

@@ -74,14 +74,14 @@ pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
 pub use preparer::{PrepareKind, PrepareJob, PrepareOutcome, PrepareProgress, PreparePlan, Preparer, ProbeOutcome};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use queue::{OperationInfo, OperationQueueStatus};
-pub use crate::transport::{PutFile, PutReply};
+pub use crate::transport::{PutFile, PutIdentity, PutReply};
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest, FAKE_ENDPOINT};
 pub use cable::{PlatformSocket, CableEvents, CableOutcome};
 pub use crate::transport::{HttpRequest, RawFailure, RawOutcome};
-pub use transport::{ByteProgress, OnlineSink, PlatformObserver, PutTarget, Transport};
+pub use transport::{ByteProgress, OnlineSink, PlatformObserver, PutExecutor, PutTarget, Transport};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {

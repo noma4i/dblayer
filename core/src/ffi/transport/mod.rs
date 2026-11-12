@@ -18,6 +18,17 @@ pub trait Transport: Send + Sync {
     async fn put(&self, target: PutTarget, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> core::RawOutcome;
 }
 
+/// The platform executor of a PUT that runs outside the process (`OpenPorts.detached_put`). Every call is cheap and returns at once. The outcome of a PUT comes back as `Database.put_ended`.
+#[uniffi::export(with_foreign)]
+pub trait PutExecutor: Send + Sync {
+    /// Starts the PUT of `file` to `target` as the system task `identity`.
+    fn start_put(&self, identity: core::PutIdentity, target: PutTarget, file: core::PutFile);
+    /// Cancels the system task `identity`.
+    fn cancel_put(&self, identity: core::PutIdentity);
+    /// The core lists the live PUTs once after the opening: the executor answers each with `put_ended`, `put_missing` or nothing, and cancels the tasks that are not listed.
+    fn resume_puts(&self, identities: Vec<core::PutIdentity>);
+}
+
 /// Where one PUT goes: the presigned `url`, its headers as the executor sets them and the core timeouts.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PutTarget {

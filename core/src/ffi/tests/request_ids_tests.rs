@@ -13,7 +13,7 @@ async fn life(transport: &Arc<MockTransport>, clock: Arc<dyn Clock>) -> Arc<Data
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.push(relation("feed", "5.minutes"));
     let wired = transport.clone();
-    let database = Database::start_with(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), clock, move |db, _| {
+    let database = Database::start_with(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), clock, None, move |db, _| {
         super::signed_session_tests::signed_session(db);
         Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
     }).unwrap();
