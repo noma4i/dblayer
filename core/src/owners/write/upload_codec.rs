@@ -80,7 +80,7 @@ impl UploadCodec {
         Ok(Answered { data, label: format!("{name}: {root}") })
     }
 
-    async fn put(&self, link: &Link, (url, headers): (&str, Vec<(String, String)>), file: PutFile, (step, identity): (TransferStep, (u64, &str))) -> Result<Option<String>, TransportError> {
+    async fn put(&self, link: &Link, (url, headers): (&str, Vec<(String, String)>), file: PutFile, (step, identity): (TransferStep, (u64, &str))) -> Result<crate::transport::PutReply, TransportError> {
         let request = PutRequest {
             url: url.to_string(),
             headers,
@@ -89,7 +89,7 @@ impl UploadCodec {
             cancel: CancelToken::new(),
             sent: Arc::new(|_| {}),
         };
-        put_status(link.put(request).await?)
+        link.put(request).await
     }
 
     async fn single(&self, link: &Link, operation: u64, body: &StepsBody, source: &Source, total: u64) -> Result<StepDone, TransportError> {
@@ -100,7 +100,7 @@ impl UploadCodec {
         let (url, signed) = (data.text("url")?, data.text("signedId")?);
         let headers = parse_headers(data.data.get("headers")).map_err(TransportError::Decode)?;
         let file = PutFile { path: source.path.clone(), offset: 0, length: total };
-        self.put(link, (&url, headers), file, (TransferStep::Put, (operation, &body.item))).await?;
+        put_status(self.put(link, (&url, headers), file, (TransferStep::Put, (operation, &body.item))).await?)?;
         Ok(StepDone { upload_id: Some(Held::Blob { signed_id: signed }.text()), etag: None, ..Default::default() })
     }
 
@@ -131,19 +131,23 @@ impl UploadCodec {
             return Ok(StepDone { upload_id: minted, etag: None, end: StepEnd::Started });
         }
         let (offset, length) = part_range(total, self.config.part_size, part);
-        let etag = self.put(link, (url, headers), PutFile { path: source.path.clone(), offset, length }, (TransferStep::Part { number: part }, (operation, &body.item))).await?;
-        let etag = etag.ok_or_else(|| TransportError::Decode("the part answer has no etag".into()))?;
+        let etag = part_reply(self.put(link, (url, headers), PutFile { path: source.path.clone(), offset, length }, (TransferStep::Part { number: part }, (operation, &body.item))).await?)?;
         Ok(StepDone { upload_id: minted, etag: Some(etag), ..Default::default() })
     }
 }
 
-/// The answer of a PUT: the etag of a 2xx, the error of any other status. One function for the PUT in the process and the one outside it.
-pub(crate) fn put_status(reply: crate::transport::PutReply) -> Result<Option<String>, TransportError> {
+/// The answer of a PUT: the etag of a 2xx, the error of any other status.
+fn put_status(reply: crate::transport::PutReply) -> Result<Option<String>, TransportError> {
     match reply.status {
         200..=299 => Ok(reply.etag),
         403 => Err(TransportError::Network("the upload url expired".into())),
         status => Err(TransportError::Http { status, body: String::new() }),
     }
+}
+
+/// The answer of the PUT of a part: the etag of a 2xx, no etag is a failure. One function for the PUT in the process and the one outside it.
+pub(crate) fn part_reply(reply: crate::transport::PutReply) -> Result<String, TransportError> {
+    put_status(reply)?.ok_or_else(|| TransportError::Decode("the part answer has no etag".into()))
 }
 
 fn rejected(message: &str) -> TransportError { TransportError::Graphql { messages: vec![message.to_string()], extensions: None } }

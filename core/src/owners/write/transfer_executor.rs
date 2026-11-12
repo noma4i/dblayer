@@ -481,7 +481,7 @@ pub(super) fn abort_result(result: &Result<(), TransportError>) -> Result<(), Ab
 /// `PutEnded` of the platform as the answer of a PUT in the process: the etag, or `(temporary, error)`.
 pub(crate) fn put_result(outcome: crate::transport::RawOutcome) -> Result<Option<String>, (bool, String)> {
     let result = match outcome {
-        crate::transport::RawOutcome::Response { status, etag, .. } => super::upload_codec::put_status(PutReply { status, etag }),
+        crate::transport::RawOutcome::Response { status, etag, .. } => super::upload_codec::part_reply(PutReply { status, etag }).map(Some),
         crate::transport::RawOutcome::Failed { failure } => Err(crate::transport::classify(&failure, crate::transport::ExchangeKind::Put)),
     };
     result.map_err(|error| (temporary(&error), failure::of_transport(&error)))

@@ -110,11 +110,11 @@ async fn xfer_detached_ended_ok() {
     run.database.close_now();
 }
 
-/// A permanent refusal of the system task fails the transfer as a refusal of a PUT in the process does, and `Complete` never goes.
+/// A permanent refusal of the system task and a 2xx answer without an etag fail the transfer as a refusal of a PUT in the process does, and `Complete` never goes.
 /// Observable: the status of the row and the calls. Catches: an outcome that is taken as a success, a refusal that is retried.
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_detached_ended_failed() {
-    for status_code in [400, 410] {
+    for status_code in [400, 410, 200, 204] {
         let run = started(MEBIBYTE).await;
         run.detached.finish(0, RawOutcome::Response { status: status_code, etag: None, body: String::new() });
         crate::test_wait::settled(&run.database, "the upload failed", || status(&run.database, &run.temporary) == Some(WireUploadStatus::Failed)).await;
