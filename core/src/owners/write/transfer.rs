@@ -283,9 +283,17 @@ impl TransferState {
     /// The multipart upload a removed transfer leaves on the server: it gets `abort` until the server answers.
     pub(super) fn orphan_of(transfer: &Transfer) -> Option<String> { transfer.upload_id.clone().filter(|_| !transfer.aborted && transfer.signed_id.is_none()) }
 
-    /// P-XFER-49: the debt of a minted id lives while its upload is not done: its transfer still holds the id as an orphan, or the debt has no transfer.
-    pub(super) fn debt_live(&self, upload_id: &str, debt: &MintedDebt) -> bool {
-        debt.transfer.is_none_or(|id| self.transfers.get(&id).and_then(Self::orphan_of).as_deref() == Some(upload_id))
+    pub(super) fn debt_live(&self, upload_id: &str, transfer: Option<TransferId>) -> bool {
+        transfer.is_none_or(|id| self.transfers.get(&id).and_then(Self::orphan_of).as_deref() == Some(upload_id))
+    }
+
+    pub(super) fn debt_of(&self, pending: &Pending) -> Option<(String, Key, Option<TransferId>)> {
+        let (upload_id, key, transfer) = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
+            (Some((upload_id, key)), _) => (upload_id.clone(), key.clone(), None),
+            (None, Some(transfer)) => (transfer.upload_id.clone()?, transfer.key.clone(), Some(transfer.transfer_id)),
+            (None, None) => return None,
+        };
+        self.debt_live(&upload_id, transfer).then_some((upload_id, key, transfer))
     }
 
     pub(super) fn removal_orphan(transfer: &Transfer, removal: &Removal) -> Option<String> {
@@ -446,12 +454,7 @@ impl TransferState {
 
     /// The Store refused the write of a minted `upload_id`: the debt stays, and with `retry` the write goes again after the backoff.
     pub(super) fn owe_minted(&mut self, pending: &Pending, retry: bool, fx: &mut Fx) {
-        let owed = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
-            (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone(), None)),
-            (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone(), Some(transfer.transfer_id))),
-            (None, None) => None,
-        };
-        let Some((upload_id, key, transfer)) = owed else { return };
+        let Some((upload_id, key, transfer)) = self.debt_of(pending) else { return };
         let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
@@ -541,8 +544,13 @@ impl TransferState {
             }
             return self.maybe_drained(fx);
         }
+        let writes_id = matches!(pending.kind, StoreKind::SyncUpload | StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed | StoreKind::Retrying | StoreKind::BatchIntent | StoreKind::MixedOutcomes);
+        let transfers = &self.transfers;
+        self.minted.retain(|upload_id, debt| {
+            let written = debt.transfer.is_some_and(|id| pending.ids.contains(&id) && (matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) || (writes_id && transfers.get(&id).is_some_and(|transfer| transfer.upload_id.as_deref() == Some(upload_id.as_str())))));
+            !written && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id)
+        });
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
-            self.minted.retain(|upload_id, debt| debt.transfer.is_none_or(|id| !pending.ids.contains(&id)) && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id));
             if let Some((upload_id, key)) = pending.orphan {
                 self.orphans.insert(upload_id, key);
                 self.send_orphans(false, fx);
@@ -617,11 +625,7 @@ impl TransferState {
         if pending.kind == StoreKind::StagedCleared { return; }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
-            let minted = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
-                (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone())),
-                (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
-                (None, None) => None,
-            };
+            let minted = self.debt_of(&pending).map(|(upload_id, key, _)| (upload_id, key));
             match &rejected.reason {
                 RejectReason::Storage(_) | RejectReason::StaleGeneration { .. } => self.owe_minted(&pending, true, fx),
                 RejectReason::Invalid(_) => self.owe_minted(&pending, false, fx),

@@ -226,7 +226,7 @@ impl TransferState {
     /// `MintedPending x Tick`: the debt of a minted id is written again. It goes under `Control` when its transfer is gone or the epoch ended, as a row of the live transfer otherwise.
     fn tick_minted(&mut self, upload_id: &str, attempt_id: AttemptId, fx: &mut Fx) {
         let Some(debt) = self.minted.get(upload_id).filter(|debt| debt.attempt_id == attempt_id).cloned() else { return };
-        if !self.debt_live(upload_id, &debt) {
+        if !self.debt_live(upload_id, debt.transfer) {
             self.minted.remove(upload_id);
             return;
         }
