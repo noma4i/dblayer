@@ -4,3 +4,6 @@ swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(String.self) { self = .string(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([JSONValue].self) { self = .array(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/SystemPreparer.swift	try? FileManager.default.removeItem(atPath: job.destination)	removes the partial result of a failed run, the failure of the run is the outcome
+swift/Sources/DBlayer/VideoWrite.swift	guard let handle = try? FileHandle(forReadingFrom: url), let head = try? handle.read(upToCount: 12) else { return nil }	reads the container brand, an unreadable file fails in the asset load that follows
+swift/Sources/DBlayer/VideoWrite.swift	try? handle.close()	closes a read handle after the brand is read
