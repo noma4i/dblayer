@@ -29,6 +29,7 @@ mod window_gap_tests;
 mod rig;
 mod outbox_harness;
 mod outbox_discard_tests;
+mod outbox_discard_wait_tests;
 mod data_rig_tests;
 mod data_lands_tests;
 mod data_window_tests;

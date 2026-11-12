@@ -719,7 +719,8 @@ fn out_discard_of_an_operation_in_flight_is_refused() {
     for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::Sending, St::MarkingFailed, St::MarkingRetry] {
         let mut twin = if stage == St::Sending { let mut twin = Twin::new(); sending(&mut twin, Policy::Rollback, false); twin } else { in_batch_stage(stage, false).0 };
         let effects = twin.post(discard());
-        assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), (vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
+        let expected = if matches!(stage, St::Landing | St::Sending) { (vec![OutboxAnswer::Err(Fault::InFlight)], 1) } else { (Vec::new(), 0) };
+        assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), expected, "{stage:?}");
     }
     for stage in [St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
         let mut twin = in_batch_stage(stage, false).0;

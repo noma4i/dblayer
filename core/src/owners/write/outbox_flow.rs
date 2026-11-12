@@ -201,12 +201,25 @@ impl OutboxState {
         self.discard_op(op_id, reply, fx);
     }
 
+    /// The stages of the internal steps of the library: a `Discard` waits in them for the stage the operation leaves to (D-392).
+    pub(super) fn defers_discard(stage: Stage) -> bool { matches!(stage, Stage::Submitting | Stage::PersistingAttempt | Stage::MarkingFailed | Stage::MarkingRetry) }
+
+    /// The end of every step of the owner: an operation that left the stage of an internal step runs its waiting `Discard` commands by the row of its stage.
+    pub(super) fn run_waiting_discards(&mut self, fx: &mut Effects<Outbox>) {
+        let waiting = std::mem::take(&mut self.discard_waiting);
+        for (op_id, reply) in waiting {
+            match self.ops.get(&op_id).map(|operation| operation.stage) {
+                Some(stage) if Self::defers_discard(stage) => self.discard_waiting.push((op_id, reply)),
+                _ => self.discard_op(op_id, reply, fx),
+            }
+        }
+    }
+
     pub(super) fn discard_op(&mut self, op_id: OpId, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if self.replacements.values().any(|old| *old == Some(op_id)) { return Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)); }
         match self.ops[&op_id].stage {
-            Stage::Submitting | Stage::PersistingAttempt | Stage::Sending | Stage::Landing | Stage::MarkingFailed | Stage::MarkingRetry | Stage::WaitingDeclaration => {
-                Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight));
-            }
+            Stage::Submitting | Stage::PersistingAttempt | Stage::MarkingFailed | Stage::MarkingRetry => self.discard_waiting.push((op_id, reply)),
+            Stage::Sending | Stage::Landing | Stage::WaitingDeclaration => Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)),
             Stage::Queued | Stage::Failed => {
                 self.discard_waiters.push((op_id, reply));
                 self.start_discard(op_id, fx);

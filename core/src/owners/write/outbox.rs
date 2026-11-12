@@ -68,6 +68,7 @@ pub struct OutboxState {
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
+    pub(super) discard_waiting: Vec<(OpId, ReplyId)>,
     pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
     pub(super) confirmed_discards: BTreeMap<OpId, (u64, String)>,
     pub(super) transfer_discards: BTreeMap<OpId, (u64, u64)>,
@@ -125,6 +126,7 @@ impl OutboxState {
             submit_replies: BTreeMap::new(),
             retry_waiters: Vec::new(),
             discard_waiters: Vec::new(),
+            discard_waiting: Vec::new(),
             outcome_waiters: Vec::new(),
             confirmed_discards: BTreeMap::new(),
             transfer_discards: BTreeMap::new(),
@@ -765,6 +767,9 @@ impl OutboxState {
         for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
             Self::reply(fx, reply, answer.clone());
         }
+        for reply in Self::take_waiters(&mut self.discard_waiting, op_id) {
+            Self::reply(fx, reply, answer.clone());
+        }
     }
 
     pub(super) fn interrupt_all(&mut self, cause: crate::ffi::EndCause, fx: &mut Effects<Outbox>) {
@@ -857,7 +862,7 @@ impl OutboxState {
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply } => match self.open_for_transfer(transfer_id, cycle_id) {
                 Some(op_id) => {
-                    if self.stage_of(op_id) == Some(Stage::Failed) { self.transfer_discards.insert(op_id, (transfer_id, cycle_id)); }
+                    if self.stage_of(op_id).is_some_and(|stage| stage == Stage::Failed || Self::defers_discard(stage)) { self.transfer_discards.insert(op_id, (transfer_id, cycle_id)); }
                     self.discard_op(op_id, reply, fx);
                 }
                 None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
@@ -947,6 +952,7 @@ impl StateOwner for Outbox {
         } else {
             state.handle(now, input, &mut fx);
         }
+        state.run_waiting_discards(&mut fx);
         state.release_quiet(&mut fx);
         fx
     }
