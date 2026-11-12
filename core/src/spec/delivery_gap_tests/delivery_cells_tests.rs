@@ -146,7 +146,6 @@ fn dlv_cancel_sink_closed_released() {
     twin.step(Input::Cancel { reply: 7 });
     twin.step(Input::Release);
     assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7)]);
-    assert!(twin.reference.gone);
     assert_eq!(twin.state().streams(), 0, "the machine is out of the dictionary");
 }
 

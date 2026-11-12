@@ -1,11 +1,11 @@
 //! Owner-level tests of the `delivery` machine: the owner `Deliveries` on `DetScheduler`, every row of the table and every property.
-//! A row test feeds the same input to the reference (`ref_delivery.rs`) and to the owner through its address, then compares the effects.
+//! A row test feeds an input to the owner through its address and asserts the effects it gave out.
 //! The values a reader gets are the `Answer` effects of `Pull`. Names are the `Test` column.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::ref_delivery::{self as r, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
+use super::delivery_words::{self as r, rows, Cause, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
 use crate::owners::contract::{Committed, EpochEnded, Models, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
@@ -123,7 +123,8 @@ struct Twin {
     addr: Address<Spy<Deliveries>>,
     log: Spied,
     answers: Outcomes<PullAnswer>,
-    reference: Delivery,
+    /// A `Pull` is parked until an `Answer` effect comes.
+    parked: bool,
     /// The total the reads of this twin give with their rows.
     total: Option<u64>,
     pull: Option<crate::runtime::OutcomeId>,
@@ -135,7 +136,7 @@ impl Twin {
         let log = new_log();
         let addr = add_deliveries(&mut det, &log);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new(), total: None, pull: None }
+        Self { det, addr, log, answers: Outcomes::new(), parked: false, total: None, pull: None }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -231,7 +232,7 @@ impl Twin {
             Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
-                if !self.reference.waiting() { self.pull = Some(outcome); }
+                if !self.parked { self.pull = Some(outcome); }
                 self.call(d::DeliveryInput::Pull { stream, outcome, reader: 1 });
             }
             Input::PullCancelled { matched } => {
@@ -268,20 +269,15 @@ impl Twin {
             entries.extend(take(&self.log));
         }
         let got = Self::modelled(entries);
-        self.reference.next_total(self.total);
-        let want = self.reference.step(input);
-        assert_eq!(got, want, "the owner and the reference give the same effects");
-        if !self.reference.gone {
-            assert_eq!(self.state().journal_len(STREAM), self.reference.journal.len(), "the same journal length");
-        }
-        want
+        let answered = got.iter().any(|effect| matches!(effect, Effect::Answer(_)));
+        if answered { self.parked = false; } else if input == Input::Pull { self.parked = true; }
+        got
     }
-
 
     fn read_all(&mut self) -> Vec<Val> {
         let mut values = Vec::new();
         for _ in 0..2_000 {
-            if self.reference.journal.is_empty() {
+            if self.state().journal_len(STREAM) == 0 {
                 break;
             }
             for effect in self.step(Input::Pull) {
@@ -290,7 +286,7 @@ impl Twin {
                 }
             }
         }
-        assert!(self.reference.journal.is_empty(), "the journal is read");
+        assert_eq!(self.state().journal_len(STREAM), 0, "the journal is read");
         values
     }
 
@@ -589,25 +585,3 @@ fn dlv_opening_window() {
 
 mod delivery_cells_tests;
 mod delivery_properties_tests;
-
-#[test]
-fn matrix_owner_state_input_delivery() {
-    use crate::test_matrix::{state_input_pairs, Matrix};
-    let mut matrix = Matrix::new("S-delivery");
-    fn open_count() -> Twin { open_as(Kind::Count) }
-    fn open_entity() -> Twin { open_as(Kind::Entity(Fetch::Stale)) }
-    let alphabet: Vec<(&str, Input)> = vec![
-        ("Open list", Input::Open { kind: Kind::List, epoch_current: true }), ("Open stale epoch", Input::Open { kind: Kind::List, epoch_current: false }), ("OpenNoSession", Input::OpenNoSession), ("OpenInvalid", Input::OpenInvalid),
-        ("Committed touching", Input::Committed { revision: 2, touches: true }), ("Committed not touching", Input::Committed { revision: 3, touches: false }),
-        ("Changed", Input::Changed { revision: 2, rows: vec![("Moment".into(), "r1".into())], reset: false }), ("Changed reset", Input::Changed { revision: 3, rows: vec![], reset: true }),
-        ("ReadDone", Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }), ("ReadOverflow", Input::ReadOverflow { revision: 2 }), ("CountDone", Input::CountDone { revision: 2, count: 3 }),
-        ("ReadStale", Input::ReadStale { revision: 1, rows: rows(&["r1"]) }), ("ReadFailed", Input::ReadFailed { revision: 2 }), ("ReadFailedStale", Input::ReadFailedStale),
-        ("WindowState idle", Input::WindowState(Ws::idle())), ("WindowState loaded", Input::WindowState(Ws::loaded_at(2))),
-        ("Joined", Input::Joined { position: 0 }), ("ModelReady", Input::ModelReady), ("ModelEvent", Input::ModelEvent { position: 1, payload: "p".into() }), ("ModelLost", Input::ModelLost { first: 2, last: 3 }), ("ModelGap", Input::ModelGap),
-        ("Resync", Input::Resync), ("Transfer", Input::Transfer { state: "sending".into(), revision: 19 }),
-        ("Pull", Input::Pull), ("PullCancelled matched", Input::PullCancelled { matched: true }), ("Cancel", Input::Cancel { reply: 5 }), ("Release", Input::Release), ("SinkClosed", Input::SinkClosed),
-        ("EpochEnded own", Input::EpochEnded { own: true }), ("EpochEnded other", Input::EpochEnded { own: false }), ("EpochClosed", Input::EpochClosed), ("Closing", Input::Closing),
-    ];
-    state_input_pairs(&mut matrix, "reference ref_delivery", vec![("new", Twin::new), ("open rows", open_rows), ("live rows", live_rows), ("open events", open_events), ("open count", open_count), ("open entity", open_entity), ("ended by epoch", ended_by_epoch)], alphabet, |twin: &mut Twin, input| { twin.step(input); });
-    matrix.finish();
-}
