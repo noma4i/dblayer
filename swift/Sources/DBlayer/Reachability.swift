@@ -16,17 +16,14 @@ struct SystemPath {
   }
 }
 
-/// The number of the default network: it grows each time the name of the main interface changes.
+/// The number of the default network: it grows each time the name of the main interface changes. Only the queue of the monitor calls it.
 private final class NetworkCounter: @unchecked Sendable {
-  private let lock = NSLock()
   private var interface: String?
   private var count: UInt64 = 0
 
   func number(of name: String?) -> UInt64 {
-    lock.withLock {
-      if name != nil, name != interface { count += 1; interface = name }
-      return count
-    }
+    if name != nil, name != interface { count += 1; interface = name }
+    return count
   }
 }
 
