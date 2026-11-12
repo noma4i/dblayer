@@ -16,7 +16,7 @@ use crate::owners::write::transfer::{batch_size_admitted, BatchItem, CommitReque
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
-use crate::owners::write::upload::{mime_of, UploadConfig, UploadFile};
+use crate::owners::write::upload::{mime_of, UploadFile};
 
 /// What one transfer is planned from.
 struct Plan<'a> {
@@ -45,8 +45,6 @@ fn invalid(detail: impl Into<String>) -> DbError { DbError::Invalid { detail: de
 fn key_of(model: &str, row: &str, action: &str) -> String { format!("{model}:{row}:{action}") }
 
 impl Database {
-    fn upload_config(&self) -> UploadConfig { UploadConfig { detached_put: self.detached, ..Default::default() } }
-
     fn upload_operations(&self) -> Result<&crate::owners::write::upload::UploadOperations, DbError> {
         self.uploads.as_ref().ok_or_else(|| invalid("upload operations are not declared: pass UploadOperations to open"))
     }
@@ -56,8 +54,7 @@ impl Database {
         #[cfg(test)] self.db.files().record_source_read();
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid(crate::store::files::EMPTY_SOURCE)); }
-        let config = self.upload_config();
-        let sizing = self.upload_operations()?.sizing(&config);
+        let sizing = self.upload_operations()?.sizing(&self.upload_config);
         if held && !sizing.multipart_declared { return Err(invalid("a staged upload needs the multipart steps")); }
         let (parts, multipart) = sizing.of(total, held);
         Ok((Source { path: path.to_string(), parts }, multipart))

@@ -121,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) partial_operations: Arc<std::sync::atomic::AtomicBool>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) detached: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) partial_operations: Arc<std::sync::atomic::AtomicBool>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) upload_config: crate::owners::write::upload::UploadConfig, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -163,10 +163,11 @@ impl Database {
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), put.clone())?;
+        let upload_config = crate::owners::write::upload::UploadConfig { detached_put: put.is_some(), ..Default::default() };
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), put.clone(), &upload_config)?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, partial_operations: Default::default(), jobs, detached: put.is_some(), wires: Arc::new(wires) }))
+        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, partial_operations: Default::default(), jobs, upload_config, wires: Arc::new(wires) }))
     }
 
     pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
@@ -205,10 +206,9 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), put: Option<Arc<dyn super::PutExecutor>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), put: Option<Arc<dyn super::PutExecutor>>, config: &crate::owners::write::upload::UploadConfig) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
-        let config = crate::owners::write::upload::UploadConfig { detached_put: put.is_some(), ..Default::default() };
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
             put_timeout: config.put_timeout,
             sizing: operations.sizing(&config),
