@@ -10,10 +10,10 @@ suspend fun registerStandOperations(database: Database, defsJson: String) {
 /** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
 interface WrapsMock { val base: MockTransport }
 
-suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database {
+suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", preparer: Preparer? = null): Database {
     standServer = null
     DBlayer.openedDatabase()?.closeDatabase()
-    return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+    return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT, preparer = preparer), null)
 }
 
 fun withRawCalls(source: String, names: List<String> = listOf("SessionProfile", "PurchaseCreate", "RecordAlbumSend")): String {
