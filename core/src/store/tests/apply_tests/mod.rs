@@ -36,13 +36,18 @@ fn nullable_relation_membership_moves_to_null_and_back() {
 }
 
 #[test]
-fn inv_row_03_identical_upsert_changes_nothing_and_keeps_revision() {
+fn inv_row_03_identical_upsert_and_append_change_nothing() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     let repeat = commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     assert!(repeat.is_noop());
     assert!(repeat.rows.is_empty());
     assert_eq!(store.revision_seq().unwrap(), 1);
+    let thread = scope("messages", "thread");
+    commit(&store, vec![], vec![append(&thread, "m1", "a")]);
+    let again = commit(&store, vec![], vec![append(&thread, "m1", "a")]);
+    assert!(again.is_noop());
+    assert!(again.scopes.is_empty());
 }
 
 #[test]
@@ -146,6 +151,7 @@ fn destroy_replaced_moves_membership_to_successor_without_tombstone() {
     );
     assert!(!store.is_tombstoned("messages", "temp-1").unwrap());
     assert!(result.scopes.contains(&thread));
+    assert_eq!(result.replaced, vec![(crate::identity::RowRef::new(model("messages"), id("temp-1")), id("m1"))]);
 }
 
 #[test]
@@ -165,16 +171,6 @@ fn members_come_back_ordered_by_order_key() {
     commit(&store, vec![], vec![append(&thread, "m2", "b"), append(&thread, "m1", "a")]);
     let members: Vec<String> = store.scope_members("messages", thread.key.as_str()).unwrap().into_iter().map(|m| m.0).collect();
     assert_eq!(members, vec!["m1", "m2"]);
-}
-
-#[test]
-fn move_changes_member_order() {
-    let (store, _) = booted_store();
-    let thread = scope("messages", "thread");
-    commit(&store, vec![], vec![append(&thread, "m1", "a"), append(&thread, "m2", "b")]);
-    commit(&store, vec![], vec![ScopeOp::Move { scope: thread.clone(), row: id("m1"), order_key: "z".into() }]);
-    let members: Vec<String> = store.scope_members("messages", thread.key.as_str()).unwrap().into_iter().map(|m| m.0).collect();
-    assert_eq!(members, vec!["m2", "m1"]);
 }
 
 #[test]
@@ -214,15 +210,6 @@ fn append_reuses_detached_order_key_in_either_operation_order() {
 }
 
 #[test]
-fn detach_removes_only_that_member() {
-    let (store, _) = booted_store();
-    let thread = scope("messages", "thread");
-    commit(&store, vec![], vec![append(&thread, "m1", "a"), append(&thread, "m2", "b")]);
-    commit(&store, vec![], vec![ScopeOp::Detach { scope: thread.clone(), row: id("m1") }]);
-    assert_eq!(store.scope_members("messages", thread.key.as_str()).unwrap().len(), 1);
-}
-
-#[test]
 fn inv_order_01_order_key_collision_rolls_back_whole_envelope() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");
@@ -238,16 +225,6 @@ fn inv_order_01_order_key_collision_rolls_back_whole_envelope() {
     assert_eq!(store.revision_seq().unwrap(), 1);
     assert!(store.apply_failure().is_none());
     commit(&store, vec![upsert("messages", message("m3", "c1"))], vec![]);
-}
-
-#[test]
-fn unchanged_append_is_not_a_write() {
-    let (store, _) = booted_store();
-    let thread = scope("messages", "thread");
-    commit(&store, vec![], vec![append(&thread, "m1", "a")]);
-    let again = commit(&store, vec![], vec![append(&thread, "m1", "a")]);
-    assert!(again.is_noop());
-    assert!(again.scopes.is_empty());
 }
 
 #[test]

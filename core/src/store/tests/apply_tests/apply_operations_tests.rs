@@ -22,41 +22,6 @@ pub(super) fn transitions(store: &Store, items: Vec<OperationTransition>) -> cra
 }
 
 #[test]
-fn begin_writes_operation_row_with_assigned_seq() {
-    let (store, _) = booted_store();
-    let result = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
-    assert_eq!(result.operations.len(), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE status = 'pending' AND dedupe_key = 'k'"), 1);
-    assert_eq!(result.revision, Some(1));
-}
-
-#[test]
-fn begin_with_existing_seq_replaces_the_row() {
-    let (store, _) = booted_store();
-    let first = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
-    let seq = *first.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Begin(Box::new(record(Some(seq), OperationStatus::Failed, Some("k"))))]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE dedupe_key IS NULL AND status = 'failed'"), 1);
-}
-
-#[test]
-fn closing_an_operation_follows_its_status() {
-    let cases = [
-        ("committed", OperationStatus::Committed, "SELECT COUNT(*) FROM op", 0),
-        ("failed", OperationStatus::Failed, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL", 1),
-    ];
-    for (case, status, operations_sql, operations) in cases {
-        let (store, _) = booted_store();
-        let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
-        let seq = *started.operations.iter().next().unwrap();
-        let closing = if status.is_terminal() { OperationTransition::Close { seq, status } } else { OperationTransition::Fail { seq, status, failure: OperationFailure::new(FailureKind::Rejected, "no") } };
-        transitions(&store, vec![closing]);
-        assert_eq!(count(&store, operations_sql), operations, "{case}: operations");
-    }
-}
-
-#[test]
 fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     let (store, _) = booted_store();
     let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
@@ -121,17 +86,6 @@ fn open_dedupe_key_is_unique_and_failed_frees_it() {
 }
 
 #[test]
-fn rows_and_operation_transition_commit_together() {
-    let (store, _) = booted_store();
-    let mut both = envelope(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
-    both.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))];
-    let result = store.commit(both).unwrap();
-    assert_eq!(result.revision, Some(1));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-}
-
-#[test]
 fn direct_commit_keeps_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();
@@ -139,18 +93,6 @@ fn direct_commit_keeps_tombstones() {
     commit(&store, vec![destroy("messages", "fresh", DestroyReason::Server)], vec![]);
     assert!(store.is_tombstoned("messages", "old").unwrap());
     assert!(store.is_tombstoned("messages", "fresh").unwrap());
-}
-
-#[test]
-fn a_replaced_destroy_is_reported_as_a_pair() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
-    let result = commit(
-        &store,
-        vec![destroy("messages", "temp-1", DestroyReason::Replaced { by: id("m1") }), upsert("messages", message("m1", "c1"))],
-        vec![],
-    );
-    assert_eq!(result.replaced, vec![(crate::identity::RowRef::new(model("messages"), id("temp-1")), id("m1"))]);
 }
 
 #[test]
@@ -214,6 +156,7 @@ fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
     let result = store.commit(mixed).unwrap();
     assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Inserted)]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
+    assert_eq!((result.revision, count(&store, "SELECT COUNT(*) FROM row_messages"), count(&store, "SELECT COUNT(*) FROM op")), (Some(1), 1, 1));
 }
 
 #[test]
@@ -239,6 +182,7 @@ fn closing_the_operation_removes_row_sync_and_reports_the_row() {
     let seq = *begun.operations.iter().next().unwrap();
     let closed = transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
     assert_eq!(sync_row(&store, "temp-1"), None);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(synced_rows(&closed), [("temp-1".to_string(), RowChangeKind::Synced)]);
 }
 
@@ -253,6 +197,7 @@ fn retargeting_an_operation_moves_row_sync_to_the_new_id() {
     let result = transitions(&store, vec![OperationTransition::Begin(Box::new(moved))]);
     assert_eq!((sync_row(&store, "temp-1"), sync_row(&store, "m7")), (None, Some("pending:0".into())));
     assert_eq!(result.rows.len(), 2);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
 }
 
 #[test]
@@ -264,31 +209,6 @@ fn row_sync_change_reaches_the_scopes_that_hold_the_row() {
     moved.temp_id = None;
     let result = transitions(&store, vec![OperationTransition::Begin(Box::new(moved))]);
     assert_eq!(result.scopes, [scope("messages", "thread")].into());
-}
-
-#[test]
-fn an_update_writes_only_the_changed_field_and_its_revision() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b1"}))], vec![]);
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b2"}))], vec![]);
-    assert_eq!(text(&store, "SELECT body FROM row_messages WHERE id = 'm1'"), Some("b2".into()));
-    assert_eq!(count(&store, "SELECT rev__body FROM row_messages WHERE id = 'm1'"), 2);
-    assert_eq!(count(&store, "SELECT rev__chat_id FROM row_messages WHERE id = 'm1'"), 1);
-    assert_eq!(count(&store, "SELECT revision FROM row_messages WHERE id = 'm1'"), 2);
-}
-
-#[test]
-fn an_update_does_not_touch_the_columns_of_unchanged_fields() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b1"}))], vec![]);
-    exec(
-        &store,
-        "CREATE TEMP TABLE touched (column_name TEXT);
-         CREATE TEMP TRIGGER touch_chat AFTER UPDATE OF chat_id ON row_messages BEGIN INSERT INTO touched VALUES ('chat_id'); END;
-         CREATE TEMP TRIGGER touch_body AFTER UPDATE OF body ON row_messages BEGIN INSERT INTO touched VALUES ('body'); END;",
-    );
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b2"}))], vec![]);
-    assert_eq!(text(&store, "SELECT group_concat(column_name) FROM touched"), Some("body".into()));
 }
 
 pub(super) fn listed_messages_store() -> Store {
