@@ -63,6 +63,7 @@ pub(super) enum OutboxEffect {
     TransferOutcome { outcome: o::OutboxOutcome },
     TransferOutcomes,
     Schedule,
+    CancelTimer,
     Drained,
     Started { epoch: u64 },
     SnapshotRequest,
@@ -123,7 +124,8 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Send { to: TRANSFER_AT, .. } => return None,
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
         Emitted::Schedule { .. } => OutboxEffect::Schedule,
-        Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
+        Emitted::Cancel(_) => OutboxEffect::CancelTimer,
+        Emitted::Broadcast(_) => return None,
     })
 }
 

@@ -71,6 +71,7 @@ pub(super) fn ref_tokens(effects: &[Effect]) -> Vec<String> {
         Effect::Session { op, what } if what.starts_with("Mutate") => Some(format!("send {op}")),
         Effect::Session { what, .. } if what.starts_with("Cancel") => Some("cancel".to_string()),
         Effect::Session { .. } => None,
+        Effect::Schedule { what, .. } if what.starts_with("Unschedule") => Some("unschedule".to_string()),
         Effect::Schedule { .. } => Some("schedule".to_string()),
         Effect::Transfer { what, .. } if what.starts_with("SelectRow") || what.starts_with("SelectConfirmed") => None,
         Effect::Transfer { what, .. } => { let inner = what.strip_prefix("MutationOutcome(").and_then(|rest| rest.strip_suffix(')')).unwrap_or(what); Some(format!("transfer {}", outcome_token(inner))) }
@@ -100,6 +101,7 @@ pub(super) fn own_tokens(effects: &[OutboxEffect]) -> Vec<String> {
         OutboxEffect::Reply { answer, .. } => Some(format!("reply {}", own_answer(answer))),
         OutboxEffect::TransferOutcome { outcome } => Some(format!("transfer {}", outcome_token(&format!("{outcome:?}")))),
         OutboxEffect::Schedule => Some("schedule".to_string()),
+        OutboxEffect::CancelTimer => Some("unschedule".to_string()),
         OutboxEffect::Drained => Some("drained".to_string()),
         _ => None,
     }).collect()

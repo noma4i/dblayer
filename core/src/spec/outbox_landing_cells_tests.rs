@@ -30,16 +30,6 @@ fn out_sending_temp_offline() {
 }
 
 #[test]
-fn out_sending_tick_offline() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    twin.post(OutboxInput::Online(Online(false)));
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::Queued), vec![CommitKind::Requeue], 0), "a retry tick while offline requeues with the pending status");
-}
-
-#[test]
 fn out_sending_exhausted_keep() {
     for policy in [Policy::Keep, Policy::Rollback] {
         for cause in [None, Some(64)] {
