@@ -1,7 +1,7 @@
 //! The server side of the cable socket for tests: the handshake of the protocol and the sealed frames, shared by the selftest rigs and the corpus mock.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
@@ -35,10 +35,8 @@ pub(crate) struct CablePeer {
     config: crate::transport::EncryptedConfig,
     connections: Arc<Mutex<HashMap<String, Arc<Connection>>>>,
     next: Arc<AtomicUsize>,
-    close_codes: Arc<Mutex<Vec<(String, u16)>>>,
-    hold_confirmations: Arc<AtomicBool>,
     observer: Option<Observer>,
-    contract: Option<(Arc<Mutex<crate::server_contract::CableContract>>, Arc<dyn crate::runtime::Clock>)>,
+    contract: Option<Arc<Mutex<crate::server_contract::CableContract>>>,
 }
 
 struct PeerLink {
@@ -57,8 +55,7 @@ impl PlatformSocket for PeerLink {
         }
     }
 
-    fn close(&self, code: u16, _: String) {
-        self.peer.close_codes.lock().unwrap().push((self.token.clone(), code));
+    fn close(&self, _: u16, _: String) {
         self.peer.observe(PeerEvent::Closed(self.token.clone()));
     }
 
@@ -67,20 +64,12 @@ impl PlatformSocket for PeerLink {
 
 impl CablePeer {
     pub(crate) fn new(config: crate::transport::EncryptedConfig) -> Self {
-        Self { config, connections: Arc::default(), next: Arc::default(), close_codes: Arc::default(), hold_confirmations: Arc::default(), observer: None, contract: None }
+        Self { config, connections: Arc::default(), next: Arc::default(), observer: None, contract: None }
     }
 
-    pub(crate) fn with_contract(mut self, contract: Arc<Mutex<crate::server_contract::CableContract>>, clock: Arc<dyn crate::runtime::Clock>) -> Self {
-        self.contract = Some((contract, clock));
+    pub(crate) fn with_contract(mut self, contract: Arc<Mutex<crate::server_contract::CableContract>>) -> Self {
+        self.contract = Some(contract);
         self
-    }
-
-    pub(crate) fn expire_idle(&self, token: &str) {
-        let Some((contract, clock)) = &self.contract else { return };
-        let expired = contract.lock().unwrap().expire(clock.now().as_millis() as u64);
-        if expired {
-            if let Some(connection) = self.connection(token) { connection.events.ended(Some(4408), Some("idle".into()), None); }
-        }
     }
 
     pub(crate) fn observed(config: crate::transport::EncryptedConfig, observer: impl Fn(PeerEvent) + Send + Sync + 'static) -> Self {
@@ -89,12 +78,6 @@ impl CablePeer {
 
     /// The sockets opened so far.
     pub(crate) fn connects(&self) -> usize { self.next.load(Ordering::SeqCst) }
-
-    pub(crate) fn hold_confirmations(&self) { self.hold_confirmations.store(true, Ordering::SeqCst); }
-
-    pub(crate) fn close_codes(&self, token: &str) -> Vec<u16> {
-        self.close_codes.lock().unwrap().iter().filter_map(|(found, code)| (found == token).then_some(*code)).collect()
-    }
 
     fn observe(&self, event: PeerEvent) {
         if let Some(observer) = &self.observer { observer(event); }
@@ -147,15 +130,15 @@ impl CablePeer {
         let key = connection.keys.lock().unwrap().as_ref().unwrap().1;
         let plain = Aes256Gcm::new_from_slice(&key).unwrap().decrypt(Nonce::from_slice(&iv), Payload { msg: &sealed, aad: parts[0].as_bytes() }).unwrap();
         let body: Value = serde_json::from_slice(&plain)?;
-        if let Some((contract, clock)) = &self.contract {
-            let response = contract.lock().unwrap().receive(clock.now().as_millis() as u64, &body);
+        if let Some(contract) = &self.contract {
+            let response = contract.lock().unwrap().receive(&body);
             if let Some(response) = response { self.emit(token, response); }
         }
         if body["t"] == "subscribe" {
             let id = body["id"].as_str().unwrap().to_string();
             connection.subscribes.lock().unwrap().push(body.clone());
             *connection.subscription.lock().unwrap() = Some(id.clone());
-            if !self.hold_confirmations.load(Ordering::SeqCst) { self.emit(token, json!({"t":"subscribed", "id":id})); }
+            self.emit(token, json!({"t":"subscribed", "id":id}));
             return Ok(Some(id));
         }
         Ok(None)
@@ -179,15 +162,7 @@ impl CablePeer {
         json!({"message":{"frame":frame}}).to_string()
     }
 
-    pub(crate) fn emit_burst(&self, token: &str, bodies: Vec<Value>) {
-        let Some(connection) = self.connection(token) else { return };
-        let frames: Vec<_> = bodies.into_iter().map(|body| Self::seal(&connection, body)).collect();
-        for frame in frames { connection.events.frame(frame); }
-    }
-
     pub(crate) fn subscribes(&self, token: &str) -> Vec<Value> { self.connection(token).map(|connection| connection.subscribes.lock().unwrap().clone()).unwrap_or_default() }
-
-    pub(crate) fn subscription_id(&self, token: &str) -> Option<String> { self.connection(token).and_then(|connection| connection.subscription.lock().unwrap().clone()) }
 
     /// A data event of the open subscription.
     pub(crate) fn event(&self, token: &str, result: Value) -> bool {

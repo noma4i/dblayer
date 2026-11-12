@@ -68,7 +68,7 @@ fn error_of(kind: &str) -> Option<DbError> {
 impl Mock {
     pub fn new() -> Arc<Self> {
         let contract = Arc::new(Mutex::new(CableContract { answer_ping: true, ..Default::default() }));
-        let peer = CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()).with_contract(contract, Arc::new(crate::runtime::ManualClock::new(std::time::Duration::ZERO)));
+        let peer = CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()).with_contract(contract);
         Arc::new(Self { inner: Mutex::new(Inner::default()), peer })
     }
 

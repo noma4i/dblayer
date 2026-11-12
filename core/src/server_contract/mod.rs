@@ -41,23 +41,14 @@ pub(crate) const SEQUENCE_CONFLICT: &str = "SEQUENCE_CONFLICT";
 #[derive(Default)]
 pub(crate) struct CableContract {
     pub frames: Vec<Value>,
-    pub last_frame_ms: u64,
-    pub closed: Vec<u16>,
     pub answer_ping: bool,
 }
 
 #[cfg(test)]
 impl CableContract {
-    pub fn receive(&mut self, now_ms: u64, body: &Value) -> Option<Value> {
-        self.last_frame_ms = now_ms;
+    pub fn receive(&mut self, body: &Value) -> Option<Value> {
         self.frames.push(body.clone());
         (self.answer_ping && body["t"] == "ping").then(|| json!({"t":"pong", "ts":body["ts"]}))
-    }
-
-    pub fn expire(&mut self, now_ms: u64) -> bool {
-        if now_ms.saturating_sub(self.last_frame_ms) < 60_000 || !self.closed.is_empty() { return false; }
-        self.closed.push(4408);
-        true
     }
 }
 
