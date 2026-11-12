@@ -57,6 +57,7 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
 enum SignalTarget {
     Life(std::sync::Weak<crate::owners::life::Life>),
     Connectivity(Arc<core::Connectivity>),
+    Status,
 }
 
 /// The foreground registrations of one sink: a delivery counts only while its token is live, and revoking waits for the deliveries in flight.
@@ -92,6 +93,8 @@ pub struct OnlineSink { target: SignalTarget, registrations: Arc<Registrations> 
 impl OnlineSink {
     pub(crate) fn of_life(life: &Arc<crate::owners::life::Life>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Life(Arc::downgrade(life)), registrations: Arc::default() }) }
 
+    pub(crate) fn of_status() -> Arc<Self> { Arc::new(Self { target: SignalTarget::Status, registrations: Arc::default() }) }
+
     pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity), registrations: Arc::default() }) }
 
     /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
@@ -101,6 +104,7 @@ impl OnlineSink {
             connectivity.change(online);
             return Ok(());
         }
+        if matches!(self.target, SignalTarget::Status) { return Ok(()); }
         let Some(life) = self.life() else { return Err(super::command::closed()) };
         let waiter = life.set_online(online);
         match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
@@ -116,7 +120,7 @@ impl OnlineSink {
     fn life(&self) -> Option<Arc<crate::owners::life::Life>> {
         match &self.target {
             SignalTarget::Life(life) => life.upgrade(),
-            SignalTarget::Connectivity(_) => None,
+            SignalTarget::Connectivity(_) | SignalTarget::Status => None,
         }
     }
 }

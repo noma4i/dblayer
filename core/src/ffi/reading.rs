@@ -11,7 +11,6 @@ impl<T: Clone> Reader<T> {
         Self { changes: tokio::sync::Mutex::new(Reading { changes, first: true }), stopped }
     }
 
-    /// The next value, `None` once the reader was cancelled or the source is gone.
     pub(super) async fn next(&self) -> Option<T> {
         let mut stopped = self.stopped.subscribe();
         let mut reading = self.changes.lock().await;
@@ -24,6 +23,5 @@ impl<T: Clone> Reader<T> {
         }
     }
 
-    /// Ends this reader: a waiting `next` and every later one return `None`.
     pub(super) fn cancel(&self) { crate::lock::effect(|| self.stopped.send_replace(true)); }
 }
