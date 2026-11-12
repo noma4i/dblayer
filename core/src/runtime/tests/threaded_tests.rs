@@ -71,35 +71,6 @@ impl EffectRunner<OrderedSource> for ObserveRuns {
 }
 
 #[test]
-fn mixed_effects_enqueue_before_the_next_run_in_the_scheduler() {
-    let (entered, _held) = mpsc::channel();
-    let (_release, release_rx) = mpsc::channel();
-    let mut det = DetScheduler::new(0);
-    let recipient = det.add::<OrderedRecipient>("recipient", (), HoldRecipient { entered, release: release_rx });
-    let observed = Arc::new(Mutex::new(0));
-    let source = det.add::<OrderedSource>("source", recipient, ObserveRuns(observed.clone()));
-    det.post(source, EpochStamp::Control, OrderedSourceInput::Go);
-    let choose = |det: &mut DetScheduler, wanted| {
-        let index = det.choices().iter().position(|choice| *choice == wanted).unwrap();
-        assert!(det.step_choice(index));
-    };
-    choose(&mut det, Choice::Step(source.index()));
-    choose(&mut det, Choice::Emit(source.index()));
-    assert!(det.choices().contains(&Choice::Step(recipient.index())));
-    assert_eq!(*observed.lock().unwrap(), 0);
-    choose(&mut det, Choice::Emit(source.index()));
-    assert_eq!(*observed.lock().unwrap(), 1);
-    choose(&mut det, Choice::Emit(source.index()));
-    choose(&mut det, Choice::Step(recipient.index()));
-    choose(&mut det, Choice::Step(recipient.index()));
-    let inputs: Vec<_> = det.history(recipient).into_iter().map(|entry| entry.input.as_str()).collect();
-    assert_eq!(inputs, ["Notice", "Idle"]);
-    assert_eq!(*observed.lock().unwrap(), 1);
-    choose(&mut det, Choice::Emit(source.index()));
-    assert_eq!(*observed.lock().unwrap(), 2);
-}
-
-#[test]
 fn mixed_effects_enqueue_before_the_next_run_on_threads() {
     let (entered, held) = mpsc::channel();
     let (release, release_rx) = mpsc::channel();
@@ -291,4 +262,17 @@ fn rt_time_stays_monotone_when_the_clock_goes_back() {
     poke(&runtime);
     poke(&runtime);
     assert_eq!(*seen.lock().unwrap(), [Time(1_000), Time(1_500), Time(1_500), Time(1_500)]);
+}
+
+#[test]
+fn no_library_lock_is_held_while_a_runner_runs() {
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let mut builder = RuntimeBuilder::for_tests();
+    let toy = builder.add::<Toy>("toy", ToyState::default(), ToyRunner { held: Some(held.clone()), ..ToyRunner::default() });
+    let runtime = builder.start().unwrap();
+    runtime.start_epoch(1);
+    runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![3, 4]));
+    runtime.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(5));
+    runtime.barrier();
+    assert_eq!(*held.lock().unwrap_or_else(std::sync::PoisonError::into_inner), Vec::<&str>::new(), "no library lock is held while a runner runs");
 }

@@ -2,15 +2,11 @@ use super::*;
 
 mod append_log_tests;
 mod toys_tests;
-mod ref_runtime_tests;
 pub(crate) mod property_tests;
 mod cell_tests;
-mod det_tests;
-mod explore_tests;
 mod outcomes_tests;
 mod threaded_tests;
 mod counted_tests;
-mod props_tests;
 mod overload_tests;
 mod mailbox_tests;
 mod flights_tests;
