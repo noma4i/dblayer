@@ -19,8 +19,6 @@ use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound,
 pub const JOURNAL_LIMIT: usize = 256;
 
 const READ_TASK: EffectId = 1 << 62;
-/// The bit that tells the interest of a stream in a row in debt from its interest in its own window (D-393).
-const DEBT_INTEREST: u64 = 1 << 61;
 
 pub fn read_task(stream: StreamId, read_id: u64) -> EffectId { READ_TASK | (stream << 32) | (read_id & 0xFFFF_FFFF) }
 
@@ -581,7 +579,7 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
             Emit::DebtPlus(row) | Emit::DebtMinus(row) => {
                 let Some(relation) = machine.view.node.as_ref() else { continue };
                 let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(row))]);
-                let (key, id) = (WindowKey::relation(&machine.view.model, relation, &params), stream | DEBT_INTEREST);
+                let (key, id) = (WindowKey::relation(&machine.view.model, relation, &params), stream | (1 << 61));
                 Effect::Send(Outbound::new(peers.windows, if plus { WindowsInput::InterestPlus { key, id } } else { WindowsInput::InterestMinus { key, id } }))
             }
             Emit::WantPlus => Effect::Run(DeliveryEffect::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() }),

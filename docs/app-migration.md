@@ -139,6 +139,16 @@ scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.
 
 ## 10. After 6.31.1
 
+- An event `changed_by ..., via: :node` rereads the row that a list, a counter or a local read shows. Remove a poll, a separate reader of the row and a `via: :observed` that you added only to refresh the tiles of a list.
+
+```swift
+// no change: the list shows the new value of the row after the event
+```
+
+```kotlin
+// no change: the list shows the new value of the row after the event
+```
+
 - On iOS a file goes up in parts in the app, as on Android. The PUT in a background `URLSession` is off: the app adds no call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)` and changes no `beginBackgroundTask` around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
 
 ```swift
