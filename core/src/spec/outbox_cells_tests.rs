@@ -288,6 +288,23 @@ fn out_landing_stale_generation() {
     assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
 }
 
+/// P-DATA-102: every Storage refusal in a row of the same operation makes the pause before the next write longer.
+#[test]
+fn out_storage_retry_pause_grows() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let mut pauses = Vec::new();
+    for _ in 0..3 {
+        refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        pauses.extend(twin.pauses.clone());
+        let cycle_id = twin.state().ops[&id].cycle_id;
+        let again = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id });
+        assert_eq!(kinds(&again), vec![CommitKind::Land], "the landing batch goes again");
+    }
+    assert!(pauses.len() == 3 && pauses[0] < pauses[1] && pauses[1] < pauses[2], "3 refusals, 3 growing pauses: {pauses:?}");
+}
+
 #[test]
 fn out_landing_storage() {
     let mut twin = Twin::new();

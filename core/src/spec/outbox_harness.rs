@@ -220,6 +220,8 @@ pub(super) struct Twin {
     /// The typed text of the last inputs the Store received (`StoreOp` names).
     pub(super) last: Vec<OutboxEffect>,
     pub(super) store_text: String,
+    /// The pauses of the timers the last post set.
+    pub(super) pauses: Vec<std::time::Duration>,
     /// Every Store input of the last post with the id of its batch, in the order sent.
     pub(super) stores: Vec<(BatchId, String)>,
     pub(super) session_text: String,
@@ -232,7 +234,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_text: String::new(), stores: Vec::new(), session_text: String::new() }
+        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_text: String::new(), pauses: Vec::new(), stores: Vec::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -290,6 +292,7 @@ impl Twin {
         self.run();
         self.stores = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some((number_after(&input, "id: ")?, input)), _ => None }).collect();
         self.store_text = self.stores.iter().map(|(_, input)| input.as_str()).collect::<Vec<_>>().join("\n");
+        self.pauses = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Schedule { after, .. } => Some(after), _ => None }).collect();
         self.asked.extend(crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => Some(input), _ => None }));
         self.session_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
         let effects = take_fx(&self.log, state_of(&self.det));

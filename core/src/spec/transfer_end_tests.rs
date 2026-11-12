@@ -152,6 +152,47 @@ fn xfer_persisting_failure_storage() {
     assert_eq!((twin.stage(id), out.timers, out.shows().len()), (TransferStage::PersistingFailure, 1, 0), "the mark is written again after a pause");
 }
 
+/// P-DATA-102: every Storage refusal in a row of the writes of the same transfer makes the pause before the next write longer, on each path that repeats a write.
+#[test]
+fn xfer_storage_retry_pause_grows() {
+    use crate::owners::write::transfer::TransferTick;
+    type Path = (&'static str, fn(&mut Twin) -> (u64, Option<u64>), fn(&mut Twin, u64) -> Out, fn(u64) -> TransferInput);
+    let failure: Path = ("the failure mark", |twin| (twin.persisting_failure(KEY), None), |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: 0 } });
+    let restore: Path = ("the old row after a failed swap", |twin| {
+        let id = twin.failed(KEY);
+        twin.retry(KEY, Some(Source { path: "/fresh".into(), parts: 1 }));
+        twin.copy_done(id);
+        twin.commit();
+        twin.post(TransferInput::StagedPromoteFailed { transfer_id: id, detail: "rename".into() });
+        (id, None)
+    }, |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::StagedRestore { transfer_id: id } });
+    let shown: Path = ("the shown value", |twin| {
+        let id = twin.uploading(KEY, 3);
+        twin.hold_shown = true;
+        let out = twin.online(false);
+        (id, Some(out.shown_batches()[0]))
+    }, |twin, batch| twin.reject_shown(batch), |id| TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } });
+    for (name, arrive, refuse, due) in [failure, restore, shown] {
+        let mut twin = Twin::new();
+        let (id, mut held) = arrive(&mut twin);
+        let mut pauses = Vec::new();
+        for _ in 0..3 {
+            let refused = refuse(&mut twin, held.unwrap_or(0));
+            assert_eq!(refused.schedules.len(), 1, "{name}: one timer per refusal: {refused:?}");
+            pauses.push(refused.schedules[0].0);
+            let input = match due(id) {
+                TransferInput::Tick { kind: TransferTick::Retry { transfer_id, .. } } => TransferInput::Tick { kind: TransferTick::Retry { transfer_id, attempt_id: twin.attempt(transfer_id) } },
+                other => other,
+            };
+            twin.det.tick(crate::runtime::Time(1));
+            let again = twin.post(input);
+            assert_eq!(again.batches.len() + again.shown.len(), 1, "{name}: the write goes again: {again:?}");
+            held = again.shown_batches().first().copied();
+        }
+        assert!(pauses[0] < pauses[1] && pauses[1] < pauses[2], "{name}: 3 refusals, 3 growing pauses: {pauses:?}");
+    }
+}
+
 #[test]
 fn xfer_persisting_failure_tick() {
     let mut twin = Twin::new();
