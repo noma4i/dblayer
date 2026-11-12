@@ -4,6 +4,7 @@
 pub(crate) mod support;
 mod harness_life;
 mod lifecycle;
+mod ref_lifecycle;
 mod ref_session;
 mod store;
 mod delivery_words;
