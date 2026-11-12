@@ -151,6 +151,7 @@ impl Run {
 
     async fn step(&mut self, random: &mut Random) -> (String, bool) {
         let epoch = self.rig.database.session_epoch();
+        let held_message = match &self.held { Some(Held::Send { accepted: Some(message), .. }) => Some(message.clone()), _ => None };
         let reference = &mut self.reference;
         let mut choices: Vec<&str> = vec!["foreign", "missed", "page", "parent_with_child", "parent_values", "edit", "server_delete"];
         if self.held.is_none() {
@@ -158,6 +159,7 @@ impl Run {
             if !reference.kept.is_empty() { choices.push("discard"); }
         } else {
             choices.extend(["resolve", "resolve", "resolve"]);
+            if held_message.is_some() { choices.extend(["held_event", "held_page"]); }
         }
         let choice = random.pick(&choices);
         let free: Vec<Msg> = reference.server.values().filter(|(message, deleted)| !deleted && reference.pending.as_deref() != Some(message.id.as_str()) && reference.hidden.as_deref() != Some(message.id.as_str())).map(|(message, _)| message.clone()).collect();
@@ -184,6 +186,22 @@ impl Run {
                     land(&self.rig, "Message", message_row(message)).await;
                 }
                 (format!("page {:?}", page.iter().map(|message| (message.id.as_str(), message.seq)).collect::<Vec<_>>()), false)
+            }
+            "held_event" => {
+                let message = held_message.unwrap();
+                reference.received.insert(message.id.clone(), message.clone());
+                land(&self.rig, "Message", message_row(&message)).await;
+                (format!("event of the held own send as {} at seq {}", message.id, message.seq), false)
+            }
+            "held_page" => {
+                let message = held_message.unwrap();
+                let mut page = vec![message];
+                for other in free.iter().take(1 + random.below(2)) { page.push(other.clone()); }
+                for message in &page {
+                    reference.received.insert(message.id.clone(), message.clone());
+                    land(&self.rig, "Message", message_row(message)).await;
+                }
+                (format!("page with the held own send {:?}", page.iter().map(|message| (message.id.as_str(), message.seq)).collect::<Vec<_>>()), false)
             }
             "parent_with_child" => {
                 let pool: Vec<Msg> = reference.server.values().filter(|(message, deleted)| reference.pending.as_deref() != Some(message.id.as_str()) && reference.hidden.as_deref() != Some(message.id.as_str()) && (!deleted || reference.event_deleted.contains(&message.id))).map(|(message, _)| message.clone()).collect();
