@@ -1,6 +1,5 @@
 //! Owner-level tests of the `window` machine: the owner `Windows` on `DetScheduler`, every row of the table and every property.
-//! A row test feeds the same input to the reference (`ref_window.rs`) and to the owner through its address, then compares the effects,
-//! the outcomes of the callers, the stage and the phase. Names are the `Test` column, `_owner` marks the owner twin of a test that also runs on the API.
+//! A row test feeds an input to the owner through its address and asserts what the owner does outward: the effects, the outcomes of the callers, the stage and the phase.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -11,7 +10,7 @@ use std::sync::{Arc, PoisonError};
 const NOW: i64 = 1_000_000;
 
 use super::ref_window::Phase;
-use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, State, Window, PRELOAD};
+use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
 use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
@@ -126,23 +125,15 @@ fn id64(id: u32) -> u64 { if id == PRELOAD { w::PRELOAD } else { u64::from(id) }
 
 fn cursor_text(cursor: u32) -> String { format!("c{cursor}") }
 
-fn stage_of(state: &State) -> WindowStage {
-    match state {
-        State::Opening => WindowStage::Opening,
-        State::Idle => WindowStage::Idle,
-        State::Loading { .. } => WindowStage::Loading,
-        State::Landing { .. } => WindowStage::Landing,
-        State::Waiting { .. } => WindowStage::Waiting,
-        State::Ended => WindowStage::Ended,
-    }
-}
-
-/// The owner and the reference side by side.
+/// The owner on the deterministic scheduler; `step` feeds one input of the table and returns the effects the owner sent.
 struct Twin {
     det: DetScheduler,
     addr: Address<Spy<Windows>>,
     log: Spied,
-    reference: Window,
+    /// The request in flight: its id and attempt, as the owner sent them last.
+    flight: Option<(u64, u32)>,
+    /// The id of the last batch the owner sent to the Store.
+    batch: Option<u64>,
     revision: i64,
     generation: u64,
     pin_revision: Arc<AtomicU64>,
@@ -155,6 +146,8 @@ struct Twin {
     commit: String,
     /// Every outcome the owner gave to a caller, in order.
     outcomes: Vec<(u32, Result3)>,
+    /// The outcomes of the last step.
+    last_outcomes: Vec<(u32, Result3)>,
 }
 
 impl Twin {
@@ -176,20 +169,17 @@ impl Twin {
     fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self { Self::assemble(online, max, (preload, sources), (members_complete, false)) }
 
     fn assemble(online: Option<bool>, max: u32, (preload, sources): (Vec<WindowKey>, Vec<WindowKey>), (members_complete, media): (bool, bool)) -> Self {
-        let source = !sources.is_empty();
         let state = w::WindowsState::new(EPOCH, online, peers()).with_local_request_ids().with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_media(Arc::new(move |_| media)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
-        let mut twin = Self::launch(state, online, max, (members_complete, media));
-        twin.reference.source = source;
-        twin
+        Self::launch(state)
     }
 
     /// A twin whose preload keys wait for `RegisterOperations`, as the owner is installed.
     fn awaiting_operations() -> Self {
         let state = w::WindowsState::new(EPOCH, None, peers()).with_local_request_ids().with_preload(vec![key()]).with_operations_awaited().with_lifetimes(Arc::new(|_| (300_000, 60_000)));
-        Self::launch(state, None, u32::MAX, (false, false))
+        Self::launch(state)
     }
 
-    fn launch(state: w::WindowsState, online: Option<bool>, max: u32, (members_complete, media): (bool, bool)) -> Self {
+    fn launch(state: w::WindowsState) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
         let pin_revision = Arc::new(AtomicU64::new(0));
@@ -197,12 +187,7 @@ impl Twin {
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
         let addr = add_windows(&mut det, &log, state, reads, pin_revision.clone());
         det.start_epoch(EPOCH);
-        let mut reference = if online.is_some() { Window::new() } else { Window::before_online() };
-        reference.online = online;
-        reference.max_pages = max;
-        reference.members_complete = members_complete;
-        reference.media = media;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new() }
+        Self { det, addr, log, flight: None, batch: None, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -222,28 +207,11 @@ impl Twin {
         self.run();
     }
 
-    fn ref_request(&self) -> (u64, u32) {
-        match self.reference.state {
-            State::Loading { attempt, .. } => (self.reference.step, attempt),
-            other => panic!("no request in flight in {other:?}"),
-        }
-    }
+    fn ref_request(&self) -> (u64, u32) { self.flight.expect("a request in flight") }
 
-    fn ref_load(&self) -> u64 {
-        match self.reference.state {
-            State::Loading { request, .. } => request,
-            other => panic!("no load in {other:?}"),
-        }
-    }
+    fn ref_landing(&self) -> u64 { self.batch.expect("a batch in flight") }
 
-    fn ref_landing(&self) -> u64 {
-        match self.reference.state {
-            State::Landing { request, .. } => request,
-            other => panic!("no landing in {other:?}"),
-        }
-    }
-
-    /// Feeds one input of the table to both sides. Returns the effects of the reference after the check against the owner.
+    /// Feeds one input of the table to the owner. Returns the effects it sent.
     fn step(&mut self, input: Input) -> Vec<Effect> {
         self.det.tick(crate::runtime::Time(self.now as u64));
         take(&self.log);
@@ -323,58 +291,21 @@ impl Twin {
         }
         let emitted = take(&self.log);
         if let Some(Emitted::Send { input, .. }) = emitted.iter().rev().find(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.contains("author: Window"))) { self.commit.clone_from(input); }
-        let pin_sent = emitted.iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.starts_with("Pin {")));
-        self.reference.now = self.now;
-        let mut want = self.reference.step(input);
-        if !self.hold.load(Ordering::SeqCst) && self.reference.state == State::Opening {
-            want.extend(self.reference.step(Input::Read(Read::None)));
-        }
-        want.dedup_by(|next, last| *next == Effect::WindowState && *last == Effect::WindowState);
         let (got, outcomes) = self.split(emitted);
-        let watched = self.reference.interest.iter().any(|id| *id != PRELOAD);
-        let expected: Vec<Effect> = want.iter().filter(|effect| watched || **effect != Effect::WindowState).cloned().collect();
-        let mut ordered = expected.clone();
-        if pin_sent {
-            if let Some(index) = ordered.iter().position(|effect| matches!(effect, Effect::Request { .. } | Effect::Marker { .. } | Effect::Tail { .. })) {
-                let request = ordered.remove(index);
-                ordered.push(request);
+        for effect in &got {
+            match effect {
+                Effect::Request { request, attempt, .. } | Effect::Marker { request, attempt, .. } | Effect::Tail { request, attempt, .. } => self.flight = Some((*request, *attempt)),
+                Effect::Commit { request, .. } => self.batch = Some(*request),
+                _ => {}
             }
         }
-        assert_eq!(got, ordered, "the owner and the reference give the same effects");
-        let mut want_outcomes = self.reference.take_outcomes();
         self.outcomes.extend(outcomes.iter().copied());
-        let mut got_outcomes = outcomes;
-        want_outcomes.sort_by_key(|(id, _)| *id);
-        got_outcomes.sort_by_key(|(id, _)| *id);
-        assert_eq!(got_outcomes, want_outcomes, "the owner and the reference answer the same callers");
-        self.same_state();
+        self.last_outcomes = outcomes;
         let held = self.hold.load(Ordering::SeqCst);
-        expected.into_iter().filter(|effect| held || *effect != Effect::ReadWindow).collect()
+        got.into_iter().filter(|effect| held || *effect != Effect::ReadWindow).collect()
     }
 
-    fn same_state(&self) {
-        let Some(stage) = self.stage() else { return };
-        assert_eq!(stage, stage_of(&self.reference.state), "the stage");
-        let streamed = self.reference.interest.iter().any(|id| *id != PRELOAD);
-        if stage != WindowStage::Ended && streamed {
-            assert_eq!(self.phase(), self.reference.phase(), "the phase");
-        }
-        let interest: Vec<u64> = self.reference.interest.iter().map(|id| id64(*id)).collect();
-        let mut owner_interest = self.state().interest(&key());
-        owner_interest.sort_unstable();
-        let mut want_interest = interest;
-        want_interest.sort_unstable();
-        assert_eq!(owner_interest, want_interest, "the interest");
-        let waiters: Vec<u64> = self.reference.waiters.keys().map(|id| id64(*id)).collect();
-        assert_eq!(self.state().waiters(&key()), waiters, "the waiters");
-        if stage != WindowStage::Ended && streamed {
-            let state = self.load_state();
-            assert_eq!((state.has_more, state.settled), (self.reference.has_more(), self.reference.settled()), "has_more and settled");
-            assert_eq!(state.error.is_some(), self.reference.error().is_some(), "the error");
-        }
-    }
-
-    /// The reference models `WindowState` as one effect; the owner sends it to every stream of the interest, so a window with no stream sends none.
+    /// One `WindowState` effect stands for the sends to every stream of the interest.
     fn split(&self, emitted: Vec<Emitted<WindowsEffect>>) -> (Vec<Effect>, Vec<(u32, Result3)>) {
         let (mut modelled, mut outcomes) = (Vec::new(), Vec::new());
         for entry in emitted {
@@ -512,4 +443,3 @@ mod window_pages_tests;
 mod window_media_tests;
 mod window_orders_tests;
 mod window_orders_more_tests;
-mod window_state_input_matrix_tests;

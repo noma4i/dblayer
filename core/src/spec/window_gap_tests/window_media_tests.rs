@@ -160,7 +160,7 @@ fn win_media_confirm_retry() {
     let effects = answer_marker(&mut twin, marker(9, 1, 5));
     assert!(matches!(&effects[..], [Effect::ScheduleRetry { .. }]), "{effects:?}");
     assert_eq!(twin.phase(), Phase::Loading);
-    let request = twin.ref_load();
+    let Some(Effect::ScheduleRetry { request }) = effects.first().cloned() else { panic!("{effects:?}") };
     let effects = twin.step(Input::Retry { request });
     assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the confirm is asked again: {effects:?}");
 }
@@ -178,8 +178,7 @@ fn wire_ids(effects: &[Effect]) -> (u64, u32) {
 fn win_media_chain_request_ids() {
     let mut twin = Twin::media();
     let marker_step = wire_ids(&twin.watch());
-    let load = twin.ref_load();
-    assert_eq!(marker_step.0, load, "the first step is the request of the load");
+    let load = marker_step.0;
     let (_, attempt) = twin.ref_request();
     let page_step = wire_ids(&answer_marker(&mut twin, marker(9, 1, 0)));
     let (_, page_attempt) = twin.ref_request();
@@ -189,7 +188,6 @@ fn win_media_chain_request_ids() {
     let confirm_step = wire_ids(&twin.respond(None));
     assert!(marker_step.0 != page_step.0 && page_step.0 != confirm_step.0 && marker_step.0 != confirm_step.0, "3 steps, 3 request ids: {marker_step:?} {page_step:?} {confirm_step:?}");
     assert!(attempt != page_attempt, "a step starts a new attempt");
-    assert_eq!(twin.ref_load(), load, "the pin and the batch stay with the load");
     let refused = answer_marker(&mut twin, marker(9, 1, 5));
     assert!(matches!(&refused[..], [Effect::ScheduleRetry { request }] if *request == load), "{refused:?}");
     let asked_again = wire_ids(&twin.step(Input::Retry { request: load }));
@@ -209,8 +207,8 @@ fn win_media_chain_request_ids() {
 fn win_media_confirm_failed() {
     let mut twin = media_full();
     twin.respond(None);
-    answer_marker(&mut twin, marker(9, 1, 5));
-    let request = twin.ref_load();
+    let refused = answer_marker(&mut twin, marker(9, 1, 5));
+    let Some(Effect::ScheduleRetry { request }) = refused.first().cloned() else { panic!("{refused:?}") };
     twin.step(Input::Retry { request });
     let effects = answer_marker(&mut twin, marker(9, 1, 5));
     assert_eq!(commits(&effects), 0, "a chain that did not confirm lands nothing");

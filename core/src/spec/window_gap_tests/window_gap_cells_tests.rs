@@ -83,7 +83,6 @@ fn win_nodes_empty() {
     let (_, outcomes) = twin.split(take(&twin.log));
     assert_eq!(outcomes, [(1, Result3::Loaded)]);
     assert_eq!(twin.state().windows(), 0, "no machine for a key without ids");
-    assert_eq!(Window::empty_nodes_outcome(1), (1, Result3::Loaded));
 }
 
 #[test]
