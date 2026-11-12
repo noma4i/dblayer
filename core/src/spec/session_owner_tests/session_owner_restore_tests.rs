@@ -8,9 +8,13 @@ fn sess_closed() {
 }
 
 #[test]
-fn sess_open_empty() {
-    let twin = opened(open(None, None, false, Secret::Missing));
-    assert!(matches!(twin.reference.state, RefState::Idle) && twin.history.is_empty());
+fn sess_open_sends_nothing_without_a_pair_for_an_author() {
+    let login = RefPending { class: Class::Login, credential: Some(CRED), sequence: 1, ..stored(None, 5, 1) };
+    for (credential, pending) in [(None, None), (Some((CRED, 6)), Some(stored(None, 5, 7))), (Some((CRED, 0)), Some(login))] {
+        let secret = if credential.is_some() { Secret::Present(CRED) } else { Secret::Missing };
+        let twin = opened(open(credential, pending, false, secret));
+        assert!(twin.history.is_empty(), "Session sends nothing before Restored: {:?}", twin.history);
+    }
 }
 
 #[test]
@@ -22,36 +26,23 @@ fn sess_open_restored() {
 #[test]
 fn sess_open_pending() {
     let owner = crate::transport::RequestOwner::Operation { seq: 3 };
-    let twin = opened(open(Some((CRED, 6)), Some(stored(Some(owner), 3, 7)), false, Secret::Present(CRED)));
-    assert!(matches!(&twin.reference.state, RefState::PendingHeld { pending } if pending.author == Some(super::super::ref_session::OUTBOX_AUTHOR)), "the author hears the stored pair from Restored and repeats it");
+    let mut twin = opened(open(Some((CRED, 6)), Some(stored(Some(owner.clone()), 3, 7)), false, Secret::Present(CRED)));
     assert!(twin.history.is_empty(), "Session sends nothing itself");
+    let repeated = twin.feed(Input::Mutate { author: OUTBOX_AUTHOR, owner: Some(owner), req_id: 3, epoch: EPOCH, path: OTP.into(), body: "{}".into(), purpose: 0 });
+    assert!(matches!(&repeated[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 3 && pending.sequence == 7 && pending.author == Some(OUTBOX_AUTHOR)), "the author repeats the stored pair: {repeated:?}");
 }
 
 #[test]
 fn sess_open_pending_transfer_replays_its_pair_for_the_same_step() {
     let owner = crate::transport::RequestOwner::Transfer { operation_id: 4, item_id: "key-1".into(), step: crate::owners::write::upload::UploadStage::Create };
     let mut twin = opened(open(Some((CRED, 6)), Some(stored(Some(owner.clone()), 3, 7)), false, Secret::Present(CRED)));
-    twin.feed(Input::Mutate { author: 9, owner: Some(owner), req_id: 3, epoch: EPOCH, path: OTP.into(), body: "{\"other\":1}".into(), purpose: 0 });
-    assert!(matches!(&twin.reference.state, RefState::Calling { pending, .. } if pending.author == Some(9) && pending.request_id == 3 && pending.body == "{}"), "the saved pair goes out again for the new asker, the new body does not");
-}
-
-#[test]
-fn sess_open_direct_pending() {
-    let twin = opened(open(Some((CRED, 6)), Some(stored(None, 5, 7)), false, Secret::Present(CRED)));
-    assert!(matches!(twin.reference.state, RefState::Idle) && twin.history.is_empty());
-}
-
-#[test]
-fn sess_open_direct_login_pending() {
-    let login = RefPending { class: Class::Login, credential: Some(CRED), sequence: 1, ..stored(None, 5, 1) };
-    let twin = opened(open(Some((CRED, 0)), Some(login), false, Secret::Present(CRED)));
-    assert!(matches!(twin.reference.state, RefState::Idle) && twin.history.is_empty());
+    let effects = twin.feed(Input::Mutate { author: 9, owner: Some(owner), req_id: 3, epoch: EPOCH, path: OTP.into(), body: "{\"other\":1}".into(), purpose: 0 });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.author == Some(9) && pending.request_id == 3 && pending.body == "{}"), "the saved pair goes out again for the new asker, the new body does not: {effects:?}");
 }
 
 #[test]
 fn sess_open_pending_lost() {
     let mut twin = opened(open(Some((CRED, 6)), None, true, Secret::Present(CRED)));
-    assert!(matches!(twin.reference.state, RefState::Blocked { pending: None, reason: Block::StateLost }));
     twin.feed(call(1));
     assert_eq!(twin.replies, vec![(1, Err(Fail::StateLost))]);
 }
@@ -59,7 +50,6 @@ fn sess_open_pending_lost() {
 #[test]
 fn sess_open_secret_unavailable() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
-    assert!(matches!(&twin.reference.state, RefState::SecretUnavailable { error, read: None } if error == "locked"));
     twin.feed(call(1));
     assert_eq!(twin.replies, vec![(1, Err(Fail::Storage))]);
 }
@@ -74,16 +64,15 @@ fn sess_open_orphan_secret() {
 fn sess_open_digest_without_secret() {
     let twin = opened(open(Some((CRED, 6)), None, false, Secret::Missing));
     assert_eq!(twin.history, vec![RefEffect::SessionReset]);
-    assert!(twin.reference.credential.is_none());
+    assert!(twin.credential().is_none());
 }
 
 #[test]
 fn sess_open_digest_mismatch() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Present(9)));
-    assert!(matches!(twin.reference.state, RefState::SecretMismatch));
     twin.feed_all([call(1), mutate(7, 11)]);
     assert_eq!(twin.replies, vec![(1, Err(Fail::StateLost))]);
-    assert_eq!(twin.reference.credential.map(|credential| credential.digest), Some(CRED), "the credential is not replaced");
+    assert_eq!(twin.credential().map(|credential| credential.digest), Some(CRED), "the credential is not replaced");
 }
 
 #[test]
@@ -99,7 +88,7 @@ fn sess_restore_failed_refuses() {
     let mut twin = Twin::new();
     twin.feed(Input::RestoreFailed { epoch: EPOCH, error: "disk".into() });
     assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, permanent(Fail::Storage))]);
-    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(0));
+    assert_eq!(twin.credential().map(|credential| credential.sequence), Some(0));
 }
 
 #[test]
@@ -124,7 +113,6 @@ fn sess_restored_direct_pending() {
     let mut twin = Twin::new();
     let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
     assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
-    assert!(twin.reference.restored_direct.is_some());
 }
 
 #[test]
@@ -136,57 +124,28 @@ fn sess_restore_ready_direct() {
     let input = twin.response(1);
     twin.feed_all([input, committed()]);
     assert!(twin.replies.is_empty(), "an answer without a caller shows nothing");
-    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
+    assert_eq!(twin.credential().map(|credential| credential.sequence), Some(1));
 }
 
 fn transfer_owner() -> crate::transport::RequestOwner {
     crate::transport::RequestOwner::Transfer { operation_id: 4, item_id: "key-1".into(), step: crate::owners::write::upload::UploadStage::Create }
 }
 
-#[test]
-fn sess_restored_transfer_pending() {
-    let mut twin = Twin::new();
-    let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 1)) });
-    assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
-    assert!(twin.reference.restored_transfer.as_ref().is_some_and(|pending| pending.request_id == 5 && pending.author == Some(super::super::ref_session::TRANSFER_AUTHOR) && pending.reply.is_none()));
-    assert!(twin.reference.restored_direct.is_none() && twin.reference.restored_detached.is_none(), "the pending is held for the Transfer owner, not a direct or detached call");
-    let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1), "Session drives the held transfer pair itself: {effects:?}");
-}
-
 fn orphan_owner() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Orphan { upload_id: "u1".into() } }
-
-/// lifecycle.md:308, 524-525 (D-280): the held abort pair of a multipart debt is restored like a transfer pair and answered to the Transfer author.
-#[test]
-fn sess_restored_orphan() {
-    let mut twin = Twin::new();
-    let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(orphan_owner()), 5, 1)) });
-    assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
-    assert!(twin.reference.restored_transfer.as_ref().is_some_and(|pending| pending.request_id == 5 && pending.author == Some(super::super::ref_session::TRANSFER_AUTHOR) && pending.reply.is_none()), "the orphan pair is held for the Transfer author");
-    let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1 && pending.reply.is_none()), "the stored abort pair goes out byte for byte: {effects:?}");
-    let input = twin.response(1);
-    twin.feed(input);
-    let committed = twin.feed(committed());
-    assert_eq!(committed, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into(), false))], "the abort answer reaches the Transfer author as the debt outcome, not a call reply");
-    assert!(twin.replies.is_empty());
-}
 
 #[test]
 fn sess_restore_ready_transfer_pending() {
     let mut twin = Twin::new();
-    twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 1)) });
+    assert_eq!(twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 1)) }), vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
     let effects = twin.feed(Input::RestoreReady { epoch: EPOCH });
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1 && pending.reply.is_none()), "the stored pair goes out byte for byte: {effects:?}");
-    assert!(matches!(&twin.reference.state, RefState::Calling { pending, attempts: 1, .. } if pending.request_id == 5));
-    assert!(twin.reference.restored_transfer.is_none());
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.sequence == 1 && pending.reply.is_none() && pending.author == Some(TRANSFER_AUTHOR)), "the stored pair goes out byte for byte: {effects:?}");
     let input = twin.response(1);
     let landing = twin.feed(input);
     assert!(matches!(&landing[..], [RefEffect::CommitLanding { answer: Some((5, Ok(_))), .. }]), "the pair answer is stored for the Transfer author: {landing:?}");
     let committed = twin.feed(committed());
-    assert_eq!(committed, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into(), false))], "the pair answer reaches the Transfer author, not a call reply");
+    assert_eq!(committed, vec![answer(TRANSFER_AUTHOR, 5, Outcome::Response("{}".into(), false))], "the pair answer reaches the Transfer author, not a call reply");
     assert!(twin.replies.is_empty(), "no call reply");
-    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
+    assert_eq!(twin.credential().map(|credential| credential.sequence), Some(1));
 }
 
 #[test]
@@ -200,7 +159,6 @@ fn sess_restore_ready_other() {
     stale.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
     assert!(stale.feed(Input::RestoreReady { epoch: EPOCH - 1 }).is_empty());
     assert!(stale.feed(Input::RestoreReady { epoch: EPOCH + 1 }).is_empty());
-    assert!(stale.reference.restored_direct.is_some());
     assert!(matches!(stale.feed(Input::RestoreReady { epoch: EPOCH }).as_slice(), [RefEffect::HttpRequest { .. }]));
 }
 
@@ -220,10 +178,10 @@ fn sess_restored_direct_dropped() {
     let mut twin = Twin::new();
     twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
     twin.feed(ended(EndCause::Other));
-    assert!(twin.reference.restored_direct.is_none());
+    assert!(twin.feed(Input::RestoreReady { epoch: EPOCH }).is_empty(), "an ended epoch drops the stored pair");
     let mut closing = Twin::new();
     closing.feed_all([Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) }, Input::Closing]);
-    assert!(closing.reference.restored_direct.is_none());
+    assert!(closing.feed(Input::RestoreReady { epoch: EPOCH }).is_empty(), "closing drops the stored pair");
 }
 
 #[test]
@@ -234,9 +192,7 @@ fn sess_restored_late_epoch() {
     twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
     let late = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
     assert_eq!(late, vec![RefEffect::RestoreClassified { epoch: EPOCH }], "the pending of the ended epoch starts no request");
-    assert!(twin.reference.restored_direct.is_none());
-    assert!(twin.feed(Input::RestoreReady { epoch: EPOCH }).is_empty());
-    assert!(!twin.reference.restore_ready, "the permission of the ended epoch is dropped");
+    assert!(twin.feed(Input::RestoreReady { epoch: EPOCH }).is_empty(), "the permission of the ended epoch is dropped");
 }
 
 #[test]
@@ -245,9 +201,10 @@ fn sess_snapshot_late_epoch() {
     twin.feed(ended(EndCause::SessionReset));
     twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
     assert!(twin.feed(Input::Snapshot { epoch: EPOCH, online: true }).is_empty());
-    assert_eq!(twin.reference.online, None, "the snapshot of the ended epoch changes nothing");
-    twin.feed(Input::Snapshot { epoch: EPOCH + 1, online: true });
-    assert_eq!(twin.reference.online, Some(true));
+    twin.feed(call_of("visit", 1));
+    finish_seal(&mut twin);
+    assert!(twin.feed(committed()).is_empty(), "the snapshot of the ended epoch changes nothing");
+    assert!(matches!(&twin.feed(Input::Snapshot { epoch: EPOCH + 1, online: true })[..], [RefEffect::HttpRequest { .. }]));
 }
 
 #[test]
@@ -259,10 +216,8 @@ fn sess_idle_call_awaiting_publication() {
     twin.feed_all([Input::SecretStored { op, ok: true }, committed()]);
     let input = twin.response(1);
     twin.feed_all([input, committed()]);
-    assert!(twin.reference.after_publish.is_some());
     assert!(twin.feed(call(2)).is_empty(), "a new call waits for the publication of the credential");
     assert!(twin.feed(mutate(7, 11)).is_empty(), "so does a Mutate");
-    assert_eq!(twin.reference.queue.len(), 2);
     assert_eq!(twin.history.iter().filter(|effect| matches!(effect, RefEffect::CommitPending { .. })).count(), 1);
 }
 
@@ -271,7 +226,6 @@ fn sess_restored_other() {
     for mut twin in [persisting(), generating(), held(), blocked_invalid(), opened(open(Some((CRED, 6)), None, false, Secret::Present(9)))] {
         let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
         assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
-        assert_eq!(twin.reference.restored_direct.as_ref().map(|pending| pending.request_id), Some(5));
     }
 }
 
@@ -293,13 +247,11 @@ fn sess_mismatch_call() {
 fn sess_mismatch_sessionless() {
     for secret in [Secret::Present(9), Secret::Error("locked".into())] {
         let mut twin = opened(open(Some((CRED, 6)), None, false, secret));
-        let before = twin.reference.state.clone();
         let effects = twin.feed(call_of("visit", 1));
         assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.class == Class::Sessionless));
         twin.feed(committed());
         let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), sequence: None, refusal: None };
         twin.feed_all([input, committed()]);
-        assert_eq!(twin.reference.state, before, "the state returns to where the call began");
         assert_eq!(twin.replies, vec![(1, Ok("{}".into()))]);
     }
 }
@@ -315,7 +267,7 @@ fn sess_mismatch_epoch_ended() {
     for secret in [Secret::Present(9), Secret::Error("locked".into())] {
         let mut twin = opened(open(Some((CRED, 6)), None, false, secret));
         twin.feed(ended(EndCause::SessionReset));
-        assert!(matches!(twin.reference.state, RefState::Idle) && twin.reference.credential.is_none());
+        assert!(twin.credential().is_none());
     }
 }
 
@@ -331,9 +283,11 @@ fn sess_mismatch_closing() {
 fn sess_mismatch_other() {
     for secret in [Secret::Present(9), Secret::Error("locked".into())] {
         let mut twin = opened(open(Some((CRED, 6)), None, false, secret));
-        twin.feed_all([Input::Online(false), Input::Tick, published(PubState::Session), Input::Cancel { req_id: 3 }, ended(EndCause::Other)]);
-        assert_eq!(twin.reference.online, Some(false));
-        assert!(matches!(twin.reference.state, RefState::SecretMismatch | RefState::SecretUnavailable { .. }));
+        for input in [Input::Online(false), Input::Tick, published(PubState::Session), Input::Cancel { req_id: 3 }, ended(EndCause::Other)] {
+            assert!(twin.feed(input).is_empty());
+        }
+        twin.feed(call(1));
+        assert_eq!(twin.replies.len(), 1, "the call is still refused");
     }
 }
 
@@ -357,20 +311,12 @@ pub(super) fn unavailable_reading() -> Twin {
 }
 
 #[test]
-fn sess_unavailable_foreground() {
-    let twin = unavailable_reading();
-    assert!(matches!(twin.reference.state, RefState::SecretUnavailable { read: Some(_), .. }));
-}
-
-#[test]
 fn sess_unavailable_read_present() {
     let mut twin = unavailable_reading();
     twin.feed(call(2));
     let op = twin.op();
     twin.feed(Input::SecretRead { op, read: Secret::Present(CRED) });
-    assert!(matches!(twin.reference.state, RefState::Idle), "calls with the session work again");
-    let mut queued = unavailable_reading();
-    queued.feed(Input::SecretStored { op: 1, ok: true });
+    assert!(matches!(&twin.feed(call(3))[..], [RefEffect::SealProbe { .. }]), "calls with the session work again");
 }
 
 #[test]
@@ -378,7 +324,8 @@ fn sess_unavailable_read_mismatch() {
     let mut twin = unavailable_reading();
     let op = twin.op();
     twin.feed(Input::SecretRead { op, read: Secret::Present(9) });
-    assert!(matches!(twin.reference.state, RefState::SecretMismatch));
+    twin.feed(call(3));
+    assert_eq!(twin.replies.last(), Some(&(3, Err(Fail::StateLost))));
 }
 
 #[test]
@@ -387,7 +334,7 @@ fn sess_unavailable_read_missing() {
     let op = twin.op();
     let effects = twin.feed(Input::SecretRead { op, read: Secret::Missing });
     assert_eq!(effects, vec![RefEffect::SessionReset], "the same cell as the open without a secret");
-    assert!(twin.reference.credential.is_none());
+    assert!(twin.credential().is_none());
 }
 
 #[test]
@@ -395,7 +342,6 @@ fn sess_unavailable_read_error() {
     let mut twin = unavailable_reading();
     let op = twin.op();
     assert!(twin.feed(Input::SecretRead { op, read: Secret::Error("still".into()) }).is_empty());
-    assert!(matches!(twin.reference.state, RefState::SecretUnavailable { read: None, .. }), "the next Foreground reads again");
     assert!(matches!(&twin.feed(Input::Foreground)[..], [RefEffect::ReadSecret { .. }]));
 }
 
@@ -403,12 +349,16 @@ fn sess_unavailable_read_error() {
 fn sess_secret_read_stray() {
     let mut twin = unavailable_reading();
     let op = twin.op();
-    twin.feed(Input::SecretRead { op: op + 9, read: Secret::Present(CRED) });
-    assert!(matches!(twin.reference.state, RefState::SecretUnavailable { read: Some(_), .. }));
+    assert!(twin.feed(Input::SecretRead { op: op + 9, read: Secret::Present(CRED) }).is_empty());
+    twin.feed(Input::SecretRead { op, read: Secret::Present(CRED) });
+    assert!(matches!(&twin.feed(call(3))[..], [RefEffect::SealProbe { .. }]), "the stray read changed nothing, the real one counts");
     let mut calling = calling();
     let (rid, aid) = (calling.rid(), calling.aid());
-    calling.feed_all([Input::SecretRead { op: 1, read: Secret::Missing }, Input::SecretMissing { request_id: rid + 9, attempt_id: aid, lost: true }, Input::SecretMissing { request_id: rid, attempt_id: aid + 9, lost: true }]);
-    assert!(matches!(calling.reference.state, RefState::Calling { phase: CallPhase::InFlight(_), .. }));
+    for stray in [Input::SecretRead { op: 1, read: Secret::Missing }, Input::SecretMissing { request_id: rid + 9, attempt_id: aid, lost: true }, Input::SecretMissing { request_id: rid, attempt_id: aid + 9, lost: true }] {
+        assert!(calling.feed(stray).is_empty());
+    }
+    let input = calling.response(1);
+    assert!(matches!(&calling.feed(input)[..], [RefEffect::CommitLanding { .. }]), "the attempt is still in flight");
 }
 
 #[test]
@@ -417,7 +367,7 @@ fn sess_held_epoch_ended() {
     twin.feed(call(2));
     twin.feed(ended(EndCause::ServerEnded));
     assert_eq!(twin.replies, vec![(2, Err(Fail::NoSession))]);
-    assert!(twin.reference.credential.is_none());
+    assert!(twin.credential().is_none());
 }
 
 #[test]
@@ -432,14 +382,13 @@ fn sess_held_closing() {
 fn sess_held_queue() {
     let mut twin = held();
     assert!(twin.feed(call(2)).is_empty() && twin.feed(mutate(7, 12)).is_empty());
-    assert_eq!(twin.reference.queue.len(), 2, "the slot belongs to the pair of the author");
 }
 
 #[test]
 fn sess_held_cancel() {
     let mut twin = held();
     assert!(twin.feed(Input::Cancel { req_id: 11 }).is_empty());
-    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }), "the pair is kept for the next Mutate");
+    assert!(matches!(&twin.feed(mutate(7, 11))[..], [RefEffect::HttpRequest { .. }]), "the pair is kept for the next Mutate");
 }
 
 #[test]
@@ -447,7 +396,6 @@ fn sess_held_release() {
     let mut twin = held();
     let rid = twin.rid();
     let effects = twin.feed(Input::Release { req_id: rid });
-    assert!(matches!(twin.reference.state, RefState::Calling { .. }), "the pair goes on after the release");
     assert!(matches!(effects.as_slice(), [RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Dropped }, RefEffect::HttpRequest { pending, .. }] if pending.request_id == rid && pending.author.is_none() && pending.owner == Some(crate::transport::RequestOwner::Detached)), "the former author hears Dropped and the same pair goes out with no author: {effects:?}");
 }
 
@@ -455,7 +403,7 @@ fn sess_held_release() {
 fn sess_release_other() {
     let mut twin = held();
     assert!(twin.feed(Input::Release { req_id: 99 }).is_empty());
-    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }), "another request does not release the pair");
+    assert!(matches!(&twin.feed(mutate(7, 11))[..], [RefEffect::HttpRequest { .. }]), "another request does not release the pair");
     let mut idle = Twin::new();
     assert!(idle.feed(Input::Release { req_id: 1 }).is_empty());
 }
@@ -469,8 +417,7 @@ fn sess_held_other() {
         Input::Revoked { request_id: rid, attempt_id: aid, body: "{}".into(), author_ref: None },
         Input::HttpError { request_id: rid, attempt_id: aid, temporary: false, auth: true, security: None, body: None },
         Input::Dropped { request_id: rid, attempt_id: aid }]);
-    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
-    assert_eq!(twin.reference.online, Some(true));
+    assert!(matches!(&twin.feed(mutate(7, 11))[..], [RefEffect::HttpRequest { .. }]), "the pair is still held");
 }
 
 #[test]
@@ -497,25 +444,15 @@ pub(super) fn next(seed: &mut u64) -> u64 {
     *seed >> 33
 }
 
-/// A random trace; requests, attempts and batches are read from the reference state so the inputs are mostly the right ones.
+/// A random trace; requests, attempts and secret operations are the last ones the owner announced so the inputs are mostly the right ones.
 pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input, &[RefEffect])) -> Twin {
     let mut s = seed;
     let mut twin = Twin::bare();
     let mut reply = 0;
     for _ in 0..steps {
-        let (request, sequence) = match &twin.reference.state {
-            RefState::Sealing { pending, .. } | RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => (pending.request_id, pending.sequence),
-            _ => (1, 1),
-        };
-        let attempt = match &twin.reference.state {
-            RefState::Calling { phase: CallPhase::InFlight(attempt), .. } => *attempt,
-            _ => 1,
-        };
-        let op = match &twin.reference.state {
-            RefState::Generating { op, .. } | RefState::Storing { op, .. } | RefState::ClearingSecret { op, .. } => *op,
-            RefState::SecretUnavailable { read: Some(op), .. } => *op,
-            _ => 1,
-        };
+        let (request, sequence) = twin.pending.as_ref().map_or((1, 1), |pending| (pending.request_id, pending.sequence));
+        let attempt = twin.attempt.unwrap_or(1);
+        let op = twin.op.unwrap_or(1);
         let input = match next(&mut s) % 31 {
             0..=2 => { reply += 1; call(reply) }
             3 | 4 => committed(),
@@ -548,12 +485,12 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
     twin
 }
 
-/// lifecycle.md:526 (D-280, D-269): the stored abort pair goes out once, byte for byte, its answer reaches the Transfer author once after Committed, and a late repeat of the answer does nothing.
+/// lifecycle.md:308, 524-526 (D-280, D-269): the held abort pair of a multipart debt goes out once, byte for byte, its answer reaches the Transfer author once after Committed, and a late repeat of the answer does nothing.
 #[test]
-fn session_restored_orphan_pair_once() {
+fn sess_restored_orphan() {
     let mut twin = Twin::new();
     let pair = stored(Some(orphan_owner()), 5, 1);
-    twin.feed(Input::Restored { epoch: EPOCH, pending: Some(pair.clone()) });
+    assert_eq!(twin.feed(Input::Restored { epoch: EPOCH, pending: Some(pair.clone()) }), vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
     let sent = twin.feed(Input::RestoreReady { epoch: EPOCH });
     let [RefEffect::HttpRequest { pending, .. }] = &sent[..] else { panic!("one request for the held pair: {sent:?}") };
     assert_eq!((pending.request_id, pending.sequence, &pending.path, &pending.body, &pending.owner), (pair.request_id, pair.sequence, &pair.path, &pair.body, &pair.owner), "the pair goes out as stored");
@@ -563,11 +500,11 @@ fn session_restored_orphan_pair_once() {
     let first = twin.response(1);
     twin.feed(first);
     let delivered = twin.feed(committed());
-    assert_eq!(delivered, vec![answer(super::super::ref_session::TRANSFER_AUTHOR, 5, Outcome::Response("{}".into(), false))], "one answer to the Transfer author after Committed");
+    assert_eq!(delivered, vec![answer(TRANSFER_AUTHOR, 5, Outcome::Response("{}".into(), false))], "one answer to the Transfer author after Committed");
 
     let late = Input::Response { request_id: request, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None };
     assert!(twin.feed(late).is_empty(), "a late repeat of the answer does nothing");
     assert!(twin.feed(committed()).is_empty(), "a repeated Committed gives no second answer");
     assert!(twin.replies.is_empty(), "no call reply");
-    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1), "the sequence moved once");
+    assert_eq!(twin.credential().map(|credential| credential.sequence), Some(1), "the sequence moved once");
 }
