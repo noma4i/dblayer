@@ -254,7 +254,7 @@ fn data_sets_property_equals_the_function() {
 fn data_sets_property_generator_reaches_the_cells() {
     let inputs = seeded(&alphabet(), 7919, 400);
     let kinds: std::collections::BTreeSet<&str> = inputs.iter().map(|input| input.name.as_str()).collect();
-    assert_eq!(kinds.len(), 7, "{kinds:?}");
+    assert_eq!(kinds.len(), 8, "{kinds:?}");
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     let reached = runtime.block_on(async {
         let mut real = SetsOwner.real().await;

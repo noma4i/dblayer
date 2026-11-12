@@ -17,6 +17,8 @@ use crate::schema::RowSource;
 use crate::store::fixtures::snapshot_specs;
 use crate::store::Store;
 
+use super::sets_reference_tests::{derive, milliseconds_of, stored_sets, Child, Server};
+
 pub(super) const LANDS: &str = "P-DATA-104 lands";
 pub(super) const REPEAT: &str = "P-DATA-104 repeat";
 
@@ -65,7 +67,7 @@ fn object(value: Value) -> Map<String, Value> {
 }
 
 fn rows(seed: u64) -> Vec<Row> {
-    let (pointer, at) = [("m2", 7), ("m1", 2), ("m3", 3)][(seed % 3) as usize];
+    let (pointer, at) = [("m2", 7), ("m9", 9), ("m2", 5)][(seed % 3) as usize];
     let message = |id: &'static str, at: i64, reactions: Value| Row { model: "messages", id, values: object(json!({"id": id, "chatId": "c1", "body": id, "createdAt": at, "reactions": reactions})) };
     let post = |id: &'static str, group: &str| Row { model: "posts", id, values: object(json!({"id": id, "text": id, "groupId": group})) };
     vec![
@@ -84,6 +86,10 @@ fn windows() -> [(&'static str, Value, &'static [&'static str]); 4] {
 }
 
 fn field_sets(model: &str, partial: bool, seed: u64) -> Vec<Vec<&'static str>> {
+    if model == "chats" {
+        let all = vec!["title", "lastMessageId", "lastMessageAt"];
+        return if partial { vec![all, vec!["lastMessageId", "lastMessageAt"], vec!["title"], Vec::new()] } else { vec![all] };
+    }
     let all = optional(model).to_vec();
     let mut sets = vec![all.clone()];
     if partial {
@@ -256,6 +262,87 @@ impl World {
     }
 }
 
+fn reaction_count(value: Option<&Value>) -> usize {
+    match value {
+        Some(Value::Array(items)) => items.len(),
+        Some(Value::String(text)) => serde_json::from_str::<Vec<Value>>(text).map_or(0, |items| items.len()),
+        _ => 0,
+    }
+}
+
+fn text_of(row: &Map<String, Value>, key: &str) -> Value {
+    row.get(key).cloned().unwrap_or(Value::Null)
+}
+
+fn in_case(case: Case, row: &Row) -> bool {
+    if row.model == "posts" { case.windows || case.tombstone } else { case.sets }
+}
+
+fn visible(store: &Store, case: Case, seed: u64) -> Value {
+    let mut out = Map::new();
+    for row in rows(seed).iter().filter(|row| in_case(case, row)) {
+        let stored = store.read(&[row.model], |reader| reader.point(row.model, row.id)).unwrap();
+        let shown = stored.map_or(Value::Null, |stored| match row.model {
+            "chats" => json!({"title": text_of(&stored, "title"), "sets": stored_sets(store).to_json()}),
+            "messages" => json!({"chatId": text_of(&stored, "chatId"), "body": text_of(&stored, "body"), "createdAt": milliseconds_of(stored.get("createdAt")), "reactions": reaction_count(stored.get("reactions"))}),
+            _ => json!({"text": text_of(&stored, "text"), "groupId": text_of(&stored, "groupId")}),
+        });
+        out.insert(format!("{}/{}", row.model, row.id), shown);
+    }
+    Value::Object(out)
+}
+
+fn wanted(case: Case, seed: u64) -> Value {
+    let all = rows(seed);
+    let at = |row: &Row| row.values["createdAt"].as_i64().unwrap();
+    let children: Vec<Child> = all.iter().filter(|row| row.model == "messages").map(|row| Child { id: row.id.into(), at: at(row), seq: None, body: row.id.into() }).collect();
+    let mut out = Map::new();
+    for row in all.iter().filter(|row| in_case(case, row)) {
+        let shown = match row.model {
+            "chats" => {
+                let server = Server { id: row.values["lastMessageId"].as_str().unwrap().into(), at: row.values["lastMessageAt"].as_i64().unwrap(), seq: None };
+                json!({"title": row.values["title"], "sets": derive(Some(&server), &children).to_json()})
+            }
+            "messages" => json!({"chatId": row.values["chatId"], "body": row.values["body"], "createdAt": at(row), "reactions": row.values["reactions"].as_array().unwrap().len()}),
+            _ => json!({"text": row.values["text"], "groupId": row.values["groupId"]}),
+        };
+        out.insert(format!("{}/{}", row.model, row.id), shown);
+    }
+    Value::Object(out)
+}
+
+impl World {
+    /// Independent of the order of landing: the rows by the reader, the members of the landed pages, the tombstone of a delivered delete.
+    fn snapshot_diff(&self, store: &Store, landed: &BTreeSet<usize>) -> Vec<String> {
+        let mut lines = Vec::new();
+        let (want, got) = (wanted(self.case, self.seed), visible(store, self.case, self.seed));
+        for (key, value) in want.as_object().unwrap() {
+            if got[key] != *value {
+                lines.push(format!("{key}: snapshot {value} store {}", got[key]));
+            }
+        }
+        let state = dump(store, false, false);
+        let table = |name: &str| -> Vec<Value> { state.get(name).and_then(Value::as_array).cloned().unwrap_or_default() };
+        let mut expected: BTreeMap<&str, usize> = BTreeMap::new();
+        for index in landed.iter().filter(|index| self.alphabet[**index].text("window").is_some()) {
+            for id in windows()[self.alphabet[*index].number("index").unwrap() as usize].2 {
+                *expected.entry(id).or_default() += 1;
+            }
+        }
+        for (id, count) in expected {
+            let held = table("scope_member").iter().filter(|member| member["row_id"] == json!(id)).count();
+            if held < count {
+                lines.push(format!("scope_member {id}: landed pages give {count} members, store {held}"));
+            }
+        }
+        let delivered = landed.iter().any(|index| self.alphabet[*index].text("path") == Some("delete"));
+        if self.case.tombstone && table("tombstone").len() != usize::from(delivered) {
+            lines.push(format!("tombstone: delete delivered {delivered}, store {}", table("tombstone").len()));
+        }
+        lines
+    }
+}
+
 struct Landing {
     world: Arc<World>,
     lander: Lander,
@@ -278,6 +365,7 @@ impl Sut for Landing {
         }
         let mut observations = vec![Observation::new("state", dump(store, false, world.case.order))];
         if informative {
+            observations.push(Observation::new("snapshot_diff", json!(world.snapshot_diff(store, &landed))));
             observations.push(Observation::new("canonical", self.canonical.entry(landed.clone()).or_insert_with(|| world.canonical(&landed)).clone()));
         }
         observations
@@ -322,6 +410,10 @@ fn observed<'a>(step: &'a Step, kind: &str) -> Option<&'a Value> {
 fn lands(steps: &[Step]) -> Result<(), String> {
     let last = steps.last().unwrap();
     let Some(canonical) = observed(last, "canonical") else { return Ok(()) };
+    let diff: Vec<&str> = observed(last, "snapshot_diff").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+    if !diff.is_empty() {
+        return Err(diff.join(" | "));
+    }
     differ(canonical, observed(last, "state").unwrap(), "canonical", "got")
 }
 
