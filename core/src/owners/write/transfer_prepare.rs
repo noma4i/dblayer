@@ -125,7 +125,6 @@ impl TransferState {
             Some(plan) => {
                 prep.phase = PreparePhase::Run;
                 prep.plan = Some(plan.clone());
-                self.delete_prepare_files(id, fx);
                 run(fx, TransferEffect::Prepare { transfer_id: id, attempt_id, plan });
             }
         }
@@ -174,8 +173,10 @@ impl TransferState {
         let repacking = matches!(&prep.plan, Some(PreparePlan::Video { plan, .. }) if !plan.reencode);
         if *on_cannot_decode == CannotDecode::Fail || repacking { return self.fail_prepare(now, id, PrepareReason::DeviceCannotDecode, message, fx); }
         let repack = prep.plan.as_ref().and_then(|plan| repack_of(plan, &prep.metadata_keys));
-        self.delete_prepare_files(id, fx);
-        let Some(plan) = repack else { return self.pass_through(now, id, fx) };
+        let Some(plan) = repack else {
+            self.delete_prepare_files(id, fx);
+            return self.pass_through(now, id, fx);
+        };
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.attempt_id = attempt_id;

@@ -255,6 +255,7 @@ impl TransferExecutor {
         let (files, prepares, back, cancelled) = (self.files.clone(), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
         let _ = self.wire.tasks.start(Box::pin(async move {
+            let _ = files.discard(&[prepared.clone(), staged_file_id(transfer_id)]);
             let outcome = preparer.run(job, progress).await;
             prepares.done(&transfer_id);
             if flag.load(Ordering::SeqCst) { let _ = files.discard(&[prepared]); } else { back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome }); }
