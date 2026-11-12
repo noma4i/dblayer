@@ -467,8 +467,9 @@ impl OutboxState {
     pub(super) fn answered(&mut self, now: u64, req_id: RequestId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
         use crate::owners::contract::ErrorClass;
         use crate::owners::session::AuthorOutcome;
-        let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
+        let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && (operation.stage == Stage::Sending || (operation.stage == Stage::Failed && operation.pending_owned))).map(|operation| operation.op_id) else { return };
         if self.removed.contains(&op_id) { return; }
+        if self.stage_of(op_id) == Some(Stage::Failed) { return self.failed_pair_answered(now, op_id, outcome, fx); }
         if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         match outcome {
             AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. }, .. } => {
@@ -501,6 +502,27 @@ impl OutboxState {
 }
 
 impl OutboxState {
+    /// The pair of a `Failed` operation answered after its `Release`: a success lands the operation, a refusal ends the owner mark, a transient answer changes nothing (Session replays the pair itself).
+    fn failed_pair_answered(&mut self, now: u64, op_id: OpId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
+        use crate::owners::session::AuthorOutcome;
+        match outcome {
+            AuthorOutcome::Response { kind: crate::transport::AnswerKind::Transient { .. }, .. } | AuthorOutcome::Dropped => {}
+            AuthorOutcome::Response { body, .. } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) {
+                    operation.pending_owned = false;
+                    operation.error = None;
+                    operation.stage = Stage::Landing;
+                    operation.rows_pending = true;
+                }
+                self.decode_answer(op_id, body, fx);
+                self.drain(now, fx);
+            }
+            AuthorOutcome::Error { pending_retained, .. } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = pending_retained; }
+            }
+        }
+    }
+
     /// No operation is being written, sent, landed or rolled back, and no local write is on its way.
     fn is_quiet(&self) -> bool {
         self.writes_active() == 0 && self.ops.values().all(|operation| match operation.stage {

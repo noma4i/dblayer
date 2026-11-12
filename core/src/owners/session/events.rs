@@ -166,7 +166,8 @@ impl SessionState {
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held, .. }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner));
                 if let (SessionPhase::PendingHeld { pending: held, .. }, true) = (self.phase.clone(), released) {
-                    self.start_calling(PendingCall { author: None, owner: Some(MutateOwner::Detached), ..held }, fx);
+                    let author = held.owner.as_ref().and_then(author_of).filter(|author| *author == OUTBOX_AUTHOR);
+                    self.start_calling(PendingCall { author, owner: Some(MutateOwner::Detached), ..held }, fx);
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None if pending.author.is_none() => self.restored_direct = Some(PendingCall { epoch, ..pending }),

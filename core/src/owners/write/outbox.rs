@@ -259,7 +259,7 @@ impl OutboxState {
     }
 
     /// Session accepts only the `Mutate` of the held pair while it is held: every other operation waits for its owner.
-    fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && other.stage != Stage::Done) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
+    fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && !matches!(other.stage, Stage::Done | Stage::Failed)) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
 
     pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && !self.pair_held_by_other(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
@@ -647,6 +647,13 @@ impl OutboxState {
         self.fail_with(op_id, cause.unwrap_or_else(|| "Exhausted".into()), fx);
     }
 
+    /// An operation that enters `Failed` with an unresolved pair lets Session replay it: `Release` once, the owner mark stays until the answer of the pair.
+    pub(super) fn hand_pair_to_session(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.pending_owned) else { return };
+        let request_id = operation.request_id;
+        if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: request_id }))); }
+    }
+
     /// The operation is `Failed` with `error` on its row: `outcome` waiters get `Failed`.
     pub(super) fn failed(&mut self, op_id: OpId, error: String, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
@@ -654,6 +661,7 @@ impl OutboxState {
         operation.error = Some(error.clone());
         let cycle = operation.cycle_id;
         operation.failed_errors.insert(cycle, error.clone());
+        self.hand_pair_to_session(op_id, fx);
         let failed = OutboxOutcome::Failed { error };
         self.tell_transfer(op_id, &failed, false, fx);
         if self.outcome_waiters.iter().any(|(id, waits, _, discard)| *id == op_id && *waits == cycle && *discard) {

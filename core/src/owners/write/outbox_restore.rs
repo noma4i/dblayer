@@ -21,7 +21,7 @@ impl OutboxState {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.restore_element = item.restore_element;
             }
-            return self.restored_failed(op_id, "RestoreFailed".into());
+            return self.restored_failed(op_id, "RestoreFailed".into(), fx);
         }
         if !self.declarations.contains(&(model, action)) {
             self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration, item.created_at);
@@ -37,9 +37,10 @@ impl OutboxState {
             operation.cycle_id = cycle_id.max(1);
             operation.sent = pending.is_some() || attempts == 0;
             operation.attempt_unsent = pending.is_none() && attempts >= 1;
+            if !pending_lost { if let Some((request_id, _)) = &pending { operation.request_id = *request_id; operation.pending_owned = true; } }
         }
         if pending_lost {
-            return self.restored_failed(op_id, "StateLost".into());
+            return self.restored_failed(op_id, "StateLost".into(), fx);
         }
         if let Some((request_id, answer)) = answered {
             if let Some(operation) = self.ops.get_mut(&op_id) {
@@ -58,16 +59,10 @@ impl OutboxState {
             };
         }
         if error_mark {
-            return self.restored_failed(op_id, "refused".into());
+            return self.restored_failed(op_id, "refused".into(), fx);
         }
         if attempts >= ATTEMPT_LIMIT {
             return self.fail_exhausted(op_id, fx);
-        }
-        if let Some((request_id, _)) = pending {
-            if let Some(operation) = self.ops.get_mut(&op_id) {
-                operation.request_id = request_id;
-                operation.pending_owned = true;
-            }
         }
         self.try_start(now, op_id, fx);
     }
@@ -83,7 +78,8 @@ impl OutboxState {
         self.commit(batch, std::collections::BTreeMap::new(), ops, 0, fx);
     }
 
-    pub(super) fn restored_failed(&mut self, op_id: OpId, error: String) {
+    pub(super) fn restored_failed(&mut self, op_id: OpId, error: String, fx: &mut Effects<Outbox>) {
+        self.hand_pair_to_session(op_id, fx);
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Failed;
             operation.error = Some(error.clone());
