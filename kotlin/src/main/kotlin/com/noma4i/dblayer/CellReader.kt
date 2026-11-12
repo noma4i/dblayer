@@ -106,7 +106,6 @@ fun UploadInfo.Companion.of(wire: WireUpload): UploadInfo = UploadInfo(
         WireUploadStatus.SENDING -> UploadStatus.Sending
         WireUploadStatus.DONE -> UploadStatus.Done
         WireUploadStatus.FAILED -> UploadStatus.Failed
-        WireUploadStatus.CANCELLED -> UploadStatus.Cancelled
     },
     stage = wire.stage,
     sentBytes = wire.sentBytes,

@@ -37,7 +37,7 @@ public struct UploadProcessing: Codable, Sendable, Equatable {
   public let progress: Double?
 }
 
-public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed, cancelled }
+public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed }
 
 public struct UploadInfo: Codable, Sendable, Equatable {
   public let status: UploadStatus
@@ -84,7 +84,6 @@ extension UploadStatus {
     case .sending: self = .sending
     case .done: self = .done
     case .failed: self = .failed
-    case .cancelled: self = .cancelled
     }
   }
 }

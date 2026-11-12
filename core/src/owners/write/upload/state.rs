@@ -12,7 +12,6 @@ pub enum UploadStatus {
     Sending,
     Done,
     Failed,
-    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -20,7 +19,6 @@ pub enum UploadStatus {
 pub enum WaitReason {
     CreateUnconfirmed,
     SourcePending,
-    Offline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -83,8 +81,6 @@ pub struct UploadState {
     pub error: Option<OperationFailure>,
     #[serde(default)]
     pub background_refused: Option<String>,
-    #[serde(default)]
-    pub offline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,7 +114,6 @@ impl UploadState {
             headers: Vec::new(),
             error: None,
             background_refused: None,
-            offline: false,
         }
     }
 

@@ -58,7 +58,6 @@ pub enum WireUploadStatus {
     Sending,
     Done,
     Failed,
-    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -311,12 +310,11 @@ pub(crate) fn upload(info: &UploadInfo) -> WireUpload {
             UploadStatus::Sending => WireUploadStatus::Sending,
             UploadStatus::Done => WireUploadStatus::Done,
             UploadStatus::Failed => WireUploadStatus::Failed,
-            UploadStatus::Cancelled => WireUploadStatus::Cancelled,
         },
         stage: enum_text(&info.stage).unwrap_or_default(),
         sent_bytes: info.sent_bytes,
         total_bytes: info.total_bytes,
-        progress: match info.status { UploadStatus::Waiting | UploadStatus::Cancelled => 0.0, _ => f64::from(info.share) / 100.0 },
+        progress: match info.status { UploadStatus::Waiting => 0.0, _ => f64::from(info.share) / 100.0 },
         wait_reason: info.wait_reason.and_then(|reason| enum_text(&reason)),
         attempts: info.attempts,
         error: info.error.as_ref().map(failure),

@@ -22,7 +22,6 @@ private func wireStatus(_ status: UploadStatus) -> WireUploadStatus {
   case .sending: .sending
   case .done: .done
   case .failed: .failed
-  case .cancelled: .cancelled
   }
 }
 

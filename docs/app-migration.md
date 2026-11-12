@@ -150,3 +150,17 @@ func application(_ application: UIApplication, handleEventsForBackgroundURLSessi
 ```kotlin
 // Android: no change, the upload job runs the PUT.
 ```
+
+- The upload status `cancelled` and the wait reason `offline` are removed: the core never set them. Remove their branch from the `switch` or `when`, and read "no network" from `NetworkStatus`.
+
+```swift
+switch upload.status {
+case .waiting, .preparing, .queued, .uploading, .sending, .done, .failed: break
+}
+```
+
+```kotlin
+when (upload.status) {
+    UploadStatus.Waiting, UploadStatus.Preparing, UploadStatus.Queued, UploadStatus.Uploading, UploadStatus.Sending, UploadStatus.Done, UploadStatus.Failed -> Unit
+}
+```

@@ -51,7 +51,6 @@ enum class UploadStatus {
     @SerialName("sending") Sending,
     @SerialName("done") Done,
     @SerialName("failed") Failed,
-    @SerialName("cancelled") Cancelled,
 }
 
 @Serializable

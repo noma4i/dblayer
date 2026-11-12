@@ -13,6 +13,10 @@
 - Show no `localUrl` for a failed upload row without a copy.
 - Refuse the copy of a source file that was emptied after the call read its size.
 
+### Removed
+
+- Remove the upload status `cancelled` and the wait reason `offline`, which the core never set.
+
 ## 6.31.1 - 2026-11-13
 
 ### Fixed

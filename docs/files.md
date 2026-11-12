@@ -364,7 +364,7 @@ The final content mutation does not hold a file permit.
 
 | Field                     | Meaning                                                                                                                                                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`, `cancelled`                                                                                                                      |
+| `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`                                                                                                                    |
 | `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `source_pending` (the upload was created without a file and waits for it). A step that waits for the network or for power saving to end is `queued` |
 | `stage`                   | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation`                                                                                                                       |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
