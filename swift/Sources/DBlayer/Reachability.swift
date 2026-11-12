@@ -17,15 +17,11 @@ struct SystemPath: PathSource {
 
 /// The OS observers the core starts after `open` and stops in `Closing`: each OS value goes to the sink as it comes.
 final class SystemObservers: PlatformObserver, @unchecked Sendable {
-  private let path: any PathSource
   private var stops: [@Sendable () -> Void] = []
-
-  init(path: any PathSource = SystemPath()) { self.path = path }
 
   func start(sink: OnlineSink) {
     let registration = sink.registerForeground()
     stops = [
-      path.observe { sink.setOnline(online: $0) },
       ForegroundEvents.observe { sink.enterForeground(token: registration) },
       PowerSaving.observe { sink.setPowerSaving(saving: $0) }
     ]
@@ -37,9 +33,13 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
   }
 }
 
-/// The observer of `NetworkStatus`: the core starts it once per process and never stops it.
+/// The observer of `NetworkStatus`: the core starts it once per process and never stops it. The database and `serverConfig` read its value. `makePath` is the one creation point of the network observer of the process.
 final class StatusObserver: PlatformObserver, @unchecked Sendable {
-  func start(sink: OnlineSink) { _ = SystemPath().observe { sink.setOnline(online: $0) } }
+  private let makePath: @Sendable () -> any PathSource
+
+  init(makePath: @escaping @Sendable () -> any PathSource = { SystemPath() }) { self.makePath = makePath }
+
+  func start(sink: OnlineSink) { _ = makePath().observe { sink.setOnline(online: $0) } }
 
   func stop() {}
 }
