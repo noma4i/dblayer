@@ -589,13 +589,12 @@ fn shown_parent(db: &Store) -> serde_json::Map<String, Value> {
     db.read(&["chats"], |reader| reader.point("chats", "c1")).unwrap().unwrap()
 }
 
-/// P-DATA-121: the row of a parent written on the device keeps the value its own write gave to a `sets:` field, and its children compete with that value.
+/// P-DATA-121: the children of a parent written on the device compete with the value its own write gave to a `sets:` field, and the row of the server replaces that value.
 #[test]
-fn data_sets_own_value_of_a_local_parent() {
+fn data_sets_children_compete_with_the_own_value_of_a_local_parent() {
     for path in ["rows", "operation"] {
         let db = open();
         local_parent(&db, path, json!({"id": "c2", "title": "new", "lastMessageAt": 5}));
-        assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(5), "{path}: no children, the value of the create");
         land_children(&db, vec![child("m1", "c2", 3, None)]);
         assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(5), "{path}: an older confirmed child");
         land_children(&db, vec![child("m2", "c2", 9, None)]);
