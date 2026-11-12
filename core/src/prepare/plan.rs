@@ -8,7 +8,7 @@ pub struct BitrateStep {
     pub max_bps: u32,
 }
 
-/// What the app allows a video to be before it is sent. The app owns these tables, `default_video_limits` holds the V3 values.
+/// What a video may be before it is sent. The caller owns these tables, `default_video_limits` holds the defaults.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct VideoLimits {
     pub max_long_side: u32,

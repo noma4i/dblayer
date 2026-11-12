@@ -13,7 +13,7 @@ fn kotlin_template() -> String {
         text.push_str("    val job = GlobalScope.launch coroutineBlock@ {\n    uniffiOutDroppedCallback.uniffiSetValue(UniffiForeignFutureDroppedCallbackStruct(handle, uniffiForeignFutureDroppedCallbackImpl))\n");
     }
     text.push_str("        uniffiContinuationHandleMap.remove(data).resume(pollResult)\n    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, \n");
-    for kind in ["RustBuffer", "RustBuffer", "Void", "Void"] {
+    for kind in ["RustBuffer", "RustBuffer", "RustBuffer", "RustBuffer", "Void", "Void"] {
         text.push_str(&format!("    external fun ffi(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},)\n        override fun callback(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},)\n"));
     }
     text
@@ -33,7 +33,7 @@ fn bridge_prop_generated_kotlin_patches_name_every_place_they_change() {
     let patched = kotlin(&kotlin_template()).unwrap();
     assert_eq!(count_lines(&patched, "        ProcessOwner.claim()"), 1);
     assert_eq!(count_lines(&patched, "    job.start()"), 2);
-    assert_eq!(patched.matches("            val uniffiFutureCallback = UniffiForeignFutureAnswer").count(), 4);
+    assert_eq!(patched.matches("            val uniffiFutureCallback = UniffiForeignFutureAnswer").count(), 6);
     assert_eq!(count_lines(&patched, "internal object RuntimeLane {"), 1);
     assert_eq!(count_lines(&patched, "internal object ProcessOwner {"), 1);
 }
