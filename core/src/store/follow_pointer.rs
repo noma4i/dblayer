@@ -36,6 +36,7 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
     let mut derived = Vec::new();
     let mut read = 0;
     let mut stale = BTreeSet::new();
+    let mut hidden: Option<super::apply::HiddenRows> = None;
     for parent in parents {
         let Some(stored) = reader.point(parent.model.as_str(), parent.id.as_str())? else { continue };
         let info = models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?;
@@ -44,7 +45,15 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
         for child in models.values() {
             for association in setting(&child.spec).filter(|association| association.target == parent.model) {
                 let named = association.pointer_field().and_then(|field| server.get(field)).and_then(read_id);
-                let gone = match named { Some(id) => reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?, None => None };
+                let gone = match named { Some(id) => reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?.map(|seq| (seq, id)), None => None };
+                let gone = match gone {
+                    Some((seq, id)) => {
+                        let open = match &hidden { Some(open) => open, None => hidden.insert(super::apply::hidden_rows(reader.connection(), &[])?) };
+                        let stored = reader.stored_row(child.spec.key.as_str(), id.as_str())?.is_some();
+                        (!stored && !open.contains(&(child.spec.key.to_string(), id.to_string()))).then_some(seq)
+                    }
+                    None => None,
+                };
                 let destroyed_now = gone == Some(revision);
                 if destroyed_now { stale.insert(parent.model.to_string()); }
                 let mut server = server.clone();
