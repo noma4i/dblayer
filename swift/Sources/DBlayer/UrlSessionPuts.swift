@@ -224,12 +224,15 @@ extension DB {
 
   /// The queue of operations has no transfer in a PUT or in the steps that follow it.
   @Sendable static func settledTransfers() async {
-    guard let target = try? admitted(nil) else { return }
-    for await item in OperationQueueStream(stream: target.0.openValueStream(epoch: target.1, request: .operations)) {
-      switch item {
-      case let .queue(_, items): if !items.contains(where: { $0.upload.map { $0.status == .uploading || $0.status == .sending } ?? false }) { return }
-      case .ended: return
-      }
+    guard let account = try? account() else { return }
+    for await item in account.operations() {
+      guard case let .queue(_, items) = item else { return }
+      if !items.contains(where: busy) { return }
     }
+  }
+
+  private static func busy(_ operation: OperationInfo) -> Bool {
+    guard let status = operation.upload?.status else { return false }
+    return status == .uploading || status == .sending
   }
 }
