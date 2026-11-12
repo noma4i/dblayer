@@ -25,7 +25,7 @@ impl TransferState {
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
             transfer.stored_shown = Some((u8::MAX, false));
-            transfer.pending_step = row.pending_step;
+            transfer.pending_step = row.pending_step.filter(|pending| row.saved_answer.as_ref().is_none_or(|(request_id, _)| request_id != pending));
             if let Some((request_id, answer)) = &row.saved_answer {
                 transfer.seeded = Some((*request_id, crate::owners::session::session_answer(answer.clone()).map(|body| (body, crate::transport::AnswerKind::Answered { sequence: None }))));
                 transfer.answer_saved = Some(*request_id);

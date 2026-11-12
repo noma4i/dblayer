@@ -15,6 +15,8 @@
 - A saved server answer lands after a restart instead of rolling the operation back.
 - A failed upload replaced by a new upload stays one row after a stale write.
 - A refused removal write of a batch retries the same elements once.
+- A group upload cut by a process death finishes after the restart and leaves no operation.
+- A multipart upload cut by a process death finishes after the restart and sends its pending step.
 
 ## 6.27.1 - 2026-11-12
 
