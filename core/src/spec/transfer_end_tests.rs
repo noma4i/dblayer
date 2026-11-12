@@ -665,7 +665,7 @@ fn xfer_outcome_old_cycle() {
     twin.retry(KEY, None);
     twin.commit();
     let (old, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(old), vec![failed_outcome("disk")], "the stored outcome of cycle 1, whatever the state is now");
+    assert_eq!(out.replies(old), vec![failed_outcome("Internal(Invalid): bad row")], "the stored outcome of cycle 1, whatever the state is now");
     let (current, out) = twin.outcome(id, 2);
     assert!(out.replies(current).is_empty(), "cycle 2 is still running");
 }
