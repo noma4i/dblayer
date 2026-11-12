@@ -42,9 +42,9 @@ const FILE_CALLS: [&str; 5] = ["file", "url", "attach_file", "detach", "set_loca
 const UPLOAD_CALLS: [&str; 3] = ["upload", "supply_source", "fail_source"];
 const RELATION_CALLS: [&str; 4] = ["node", "nodes", "refresh", "edge_values"];
 
-/// The calls that name a model and a row, except the upload calls (`UPLOAD_CALLS`, run on the stand of uploads).
+/// The calls that name a model and a row, except the upload calls (`UPLOAD_CALLS`, run on the stand of uploads). `destroy` is last: it removes the shared row.
 const ROW_CALLS: [&str; 19] = [
-    "peek_row", "read_row", "file", "url", "retry", "discard", "destroy", "update", "act", "set_local", "set_ephemeral", "attach_file", "detach", "create", "cancel_upload", "node", "nodes", "refresh", "edge_values",
+    "peek_row", "read_row", "file", "url", "retry", "discard", "update", "act", "set_local", "set_ephemeral", "attach_file", "detach", "create", "cancel_upload", "node", "nodes", "refresh", "edge_values", "destroy",
 ];
 
 async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
