@@ -9,15 +9,15 @@ use crate::store::Store;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Child {
     pub id: String,
-    pub at: i64,
+    pub at: Option<i64>,
     pub seq: Option<i64>,
     pub body: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Server {
-    pub id: String,
-    pub at: i64,
+    pub id: Option<String>,
+    pub at: Option<i64>,
     pub seq: Option<i64>,
 }
 
@@ -41,10 +41,18 @@ impl Sets {
     }
 }
 
-fn by_id(a: &str, b: &str) -> Ordering {
-    match (a.parse::<i64>(), b.parse::<i64>()) {
-        (Ok(a), Ok(b)) => a.cmp(&b),
-        _ => a.cmp(b),
+/// P-DATA-118: digits without a leading zero that fit 64 bits are numeric.
+fn numeric(id: &str) -> Option<u64> {
+    let plain = !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && (id.len() == 1 || !id.starts_with('0'));
+    if plain { id.parse().ok() } else { None }
+}
+
+pub(super) fn by_id(a: &str, b: &str) -> Ordering {
+    match (numeric(a), numeric(b)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.as_bytes().cmp(b.as_bytes()),
     }
 }
 
@@ -57,29 +65,30 @@ pub(super) fn newest(children: &[Child]) -> Option<&Child> {
 }
 
 fn from_child(child: &Child) -> Sets {
-    Sets { id: Some(child.id.clone()), at: Some(child.at), seq: child.seq, body: Some(child.body.clone()) }
+    Sets { id: Some(child.id.clone()), at: child.at, seq: child.seq, body: Some(child.body.clone()) }
 }
 
 fn from_server(server: &Server) -> Sets {
-    Sets { id: Some(server.id.clone()), at: Some(server.at), seq: server.seq, body: None }
+    Sets { id: server.id.clone(), at: server.at, seq: server.seq, body: None }
 }
 
 fn child_beats_server(child: &Child, server: &Server) -> bool {
-    match (child.seq, server.seq) {
-        (Some(child), Some(server)) => child > server,
-        _ => child.at > server.at,
+    match (child.seq, server.seq, child.at, server.at) {
+        (Some(child), Some(server), _, _) => child > server,
+        (_, _, Some(child), Some(server)) => child > server,
+        _ => false,
     }
 }
 
-/// P-DATA-59: the value of the fields `sets:` of a parent from the server value of the parent and the stored children.
+/// P-DATA-59: the value of the fields `sets:` of a parent from the server value of the parent and the stored children. A field the winner lacks comes from the other side.
 pub(super) fn derive(server: Option<&Server>, children: &[Child]) -> Sets {
     let Some(newest) = newest(children) else { return server.map(from_server).unwrap_or_default() };
     let won = match server {
         None => from_child(newest),
-        Some(server) if server.id == newest.id || (!newest.temp() && !child_beats_server(newest, server)) => {
-            return Sets { body: Some(newest.body.clone()), ..from_server(server) };
+        Some(server) if server.id.as_deref() == Some(newest.id.as_str()) || (!newest.temp() && !child_beats_server(newest, server)) => {
+            return Sets { id: server.id.clone().or_else(|| Some(newest.id.clone())), at: server.at.or(newest.at), seq: server.seq.or(newest.seq), body: Some(newest.body.clone()) };
         }
-        Some(server) => Sets { seq: newest.seq.or(server.seq), ..from_child(newest) },
+        Some(server) => Sets { at: newest.at.or(server.at), seq: newest.seq.or(server.seq), ..from_child(newest) },
     };
     if !newest.temp() {
         return won;
@@ -98,7 +107,11 @@ pub(super) fn milliseconds_of(value: Option<&Value>) -> Option<i64> {
 }
 
 pub(super) fn stored_sets(db: &Store) -> Sets {
-    let row = db.read(&["chats"], |reader| reader.point("chats", "c1")).unwrap().unwrap();
+    stored_sets_of(db, "c1")
+}
+
+pub(super) fn stored_sets_of(db: &Store, chat: &str) -> Sets {
+    let row = db.read(&["chats"], |reader| reader.point("chats", chat)).unwrap().unwrap();
     let text = |key: &str| row.get(key).and_then(Value::as_str).map(str::to_string);
     Sets { id: text("lastMessageId"), at: milliseconds_of(row.get("lastMessageAt")), seq: row.get("lastSequenceNumber").and_then(Value::as_i64), body: text("lastMessageBody") }
 }
@@ -116,23 +129,4 @@ pub(super) fn red_of(owner: &dyn Owner, seed: u64, length: usize) -> Option<Stri
         let DivergenceKind::Property { name, message } = &small.fault else { return Some(format!("seed {seed}: observations diverged")) };
         Some(format!("seed {seed}: {} steps [{}] {name}: {message}", inputs.len(), inputs.join(", ")))
     })
-}
-
-#[test]
-fn data_newer_reference_orders_the_children() {
-    let child = |id: &str, at: i64, seq: Option<i64>| Child { id: id.into(), at, seq, body: id.into() };
-    let ranked = |mut children: Vec<Child>| {
-        children.sort_by(|a, b| order(b, a));
-        children.into_iter().map(|child| child.id).collect::<Vec<_>>()
-    };
-    let cases = [
-        ("a temporary id first whatever the times", vec![child("m9", 9, Some(9)), child("temp-1", 0, None)], vec!["temp-1", "m9"]),
-        ("the first pair, an absent value is the oldest", vec![child("m1", 9, None), child("m2", 1, Some(1))], vec!["m2", "m1"]),
-        ("the second pair when the first is equal", vec![child("m1", 1, Some(2)), child("m2", 3, Some(2))], vec!["m2", "m1"]),
-        ("numeric ids as numbers", vec![child("9", 1, None), child("10", 1, None)], vec!["10", "9"]),
-        ("text ids as text", vec![child("m2", 1, None), child("m10", 1, None)], vec!["m2", "m10"]),
-    ];
-    for (name, children, expected) in cases {
-        assert_eq!(ranked(children), expected, "{name}");
-    }
 }

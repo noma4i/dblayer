@@ -295,12 +295,12 @@ fn visible(store: &Store, case: Case, seed: u64) -> Value {
 fn wanted(case: Case, seed: u64) -> Value {
     let all = rows(seed);
     let at = |row: &Row| row.values["createdAt"].as_i64().unwrap();
-    let children: Vec<Child> = all.iter().filter(|row| row.model == "messages").map(|row| Child { id: row.id.into(), at: at(row), seq: None, body: row.id.into() }).collect();
+    let children: Vec<Child> = all.iter().filter(|row| row.model == "messages").map(|row| Child { id: row.id.into(), at: Some(at(row)), seq: None, body: row.id.into() }).collect();
     let mut out = Map::new();
     for row in all.iter().filter(|row| in_case(case, row)) {
         let shown = match row.model {
             "chats" => {
-                let server = Server { id: row.values["lastMessageId"].as_str().unwrap().into(), at: row.values["lastMessageAt"].as_i64().unwrap(), seq: None };
+                let server = Server { id: row.values["lastMessageId"].as_str().map(Into::into), at: row.values["lastMessageAt"].as_i64(), seq: None };
                 json!({"title": row.values["title"], "sets": derive(Some(&server), &children).to_json()})
             }
             "messages" => json!({"chatId": row.values["chatId"], "body": row.values["body"], "createdAt": at(row), "reactions": row.values["reactions"].as_array().unwrap().len()}),

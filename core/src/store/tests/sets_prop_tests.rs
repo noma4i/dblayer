@@ -105,13 +105,13 @@ impl Landing {
                 let (id, at, seq) = (text("id"), number(input, "at"), optional(number(input, "seq")));
                 let body = format!("{}{}", text("body"), id);
                 self.deliver(&text("path"), "messages", child_row(&id, at, seq, &body));
-                self.children.insert(id.clone(), Child { id, at, seq, body });
+                self.children.insert(id.clone(), Child { id, at: Some(at), seq, body });
             }
             "parent" => {
                 let (pointer, at, seq) = (text("pointer"), number(input, "at"), number(input, "seq"));
                 let values = json!({"id": "c1", "title": "t", "lastMessageId": pointer, "lastMessageAt": at, "lastSequenceNumber": seq});
                 self.deliver(&text("path"), "chats", RowValue { row_id: "c1".into(), values: values.to_string() });
-                self.server = Some(Server { id: pointer, at, seq: Some(seq) });
+                self.server = Some(Server { id: Some(pointer), at: Some(at), seq: Some(seq) });
             }
             "bare" => self.deliver(&text("path"), "chats", RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t"}).to_string() }),
             "temp" => {
@@ -124,7 +124,7 @@ impl Landing {
                     Some(Op::Done) => return,
                 }
                 self.ops.insert(op, Op::Open);
-                self.children.insert(id.clone(), Child { id, at: device, seq: None, body: format!("t{op}") });
+                self.children.insert(id.clone(), Child { id, at: Some(device), seq: None, body: format!("t{op}") });
             }
             "confirm" => {
                 let op = input.number("op").unwrap();
@@ -140,7 +140,7 @@ impl Landing {
                 ];
                 write(&self.store, BatchAuthor::Outbox, Vec::new(), ops);
                 self.children.remove(&temp);
-                self.children.insert(real.clone(), Child { id: real, at, seq, body: format!("s{op}") });
+                self.children.insert(real.clone(), Child { id: real, at: Some(at), seq, body: format!("s{op}") });
                 self.ops.insert(op, Op::Done);
             }
             "rollback" => {

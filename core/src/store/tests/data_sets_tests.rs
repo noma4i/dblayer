@@ -264,7 +264,7 @@ fn data_newer_order_is_total() {
         vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)],
     ];
     for children in groups {
-        let kids: Vec<Child> = children.iter().map(|(id, at, seq)| Child { id: (*id).into(), at: *at, seq: *seq, body: (*id).into() }).collect();
+        let kids: Vec<Child> = children.iter().map(|(id, at, seq)| Child { id: (*id).into(), at: Some(*at), seq: *seq, body: (*id).into() }).collect();
         let first = newest(&kids).unwrap().id.clone();
         for order in permutations(&(0..kids.len()).collect::<Vec<_>>()) {
             let db = open();
