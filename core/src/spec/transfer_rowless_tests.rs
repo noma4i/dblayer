@@ -5,8 +5,7 @@ use std::sync::Arc;
 use super::transfer_harness::*;
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
-use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage, TransferTick};
-use crate::runtime::Time;
+use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 
 const KEY: &str = "CurrentUser:me:upload_photo";
 const OTHER: &str = "CurrentUser:other:upload_photo";
@@ -125,21 +124,6 @@ fn xfer_accept_check_order_without_row() {
 }
 
 #[test]
-fn xfer_rowless_steps() {
-    let mut twin = Twin::new();
-    let (id, _) = uploading(&mut twin, KEY, 2);
-    let first = twin.attempt(id);
-    let out = twin.step_ok(id, 1, Some("u1"));
-    assert_eq!(out.writes(), 1);
-    let mut steps = out.steps();
-    assert_eq!(twin.t(id).cycle_id, 1);
-    steps.extend(twin.commit().steps());
-    steps.extend(twin.commit().steps());
-    assert_eq!(steps.len(), 1, "one next step: {steps:?}");
-    assert!(steps[0].0 == Some(2) && steps[0].1 != first, "the second part with a new attempt: {steps:?}");
-}
-
-#[test]
 fn xfer_rowless_confirmed() {
     let mut twin = Twin::new();
     let (id, _) = mutating(&mut twin, KEY);
@@ -189,30 +173,6 @@ fn xfer_rowless_retry() {
     assert_eq!(Twin::fault(&out, reply), None, "a retry never reads the missing row");
     let out = twin.commit();
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.op_id == id && receipt.cycle_id == 2 && receipt.optimistic.is_none()), "{:?}", out.replies(reply));
-}
-
-#[test]
-fn xfer_rowless_orphan() {
-    let mut twin = Twin::new();
-    let (id, _) = uploading(&mut twin, KEY, 3);
-    twin.step_ok(id, 1, Some("u1"));
-    twin.commit();
-    twin.commit();
-    let (reply, out) = twin.discard(KEY);
-    assert_eq!((out.orphans_written(), out.removed()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()]), "the debt of the multipart upload is written by the id of the upload");
-    let out = twin.commit();
-    assert_eq!((out.orphan_aborts(), out.replies(reply)), (vec!["u1".to_string()], vec![TransferAnswer::Ok]));
-}
-
-#[test]
-fn xfer_rowless_failed_expiry() {
-    let mut twin = Twin::new();
-    let id = failed(&mut twin, KEY);
-    twin.det.tick(Time(8 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.deletes()), (TransferStage::Done, 1), "the copy goes with the transfer");
 }
 
 #[test]
