@@ -137,8 +137,10 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
+        let parents: std::collections::BTreeSet<_> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
+        let (derived, pointer_rows) = super::follow_pointer::derived_parents(&Reader::new(&transaction, &inner.models), &inner.models, &parents)?;
+        if !derived.is_empty() { results.push(writer.apply(&super::BatchPlan { entity_ops: derived, ..super::BatchPlan::new(inner.generation) })?); }
         let candidates = writer.candidates;
-        let pointer_rows = results.iter().map(|result| result.pointer_rows_read).sum();
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row(include_str!("sql/batch_write/write_batch_prepared_select_file.sql"), [&file.record.id], |row| row.get(0))?;

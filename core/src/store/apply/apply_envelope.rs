@@ -92,7 +92,7 @@ fn write_followed(
     };
     let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, prefetched)?;
     let mut parents = BTreeSet::new();
-    super::super::follow_pointer::affected_parents(models, &envelope.entity_ops, prefetched, &mut parents)?;
+    super::super::follow_pointer::affected_parents(&Reader::new(connection, models), models, &envelope.entity_ops, prefetched, &mut parents)?;
 
     for operation in &envelope.entity_ops {
         match operation {
@@ -164,14 +164,8 @@ fn write_followed(
             }
         }
     }
-    super::super::follow_pointer::affected_parents(models, &envelope.entity_ops, prefetched, &mut parents)?;
-    result.parents_affected = parents.len();
-    let (derived, children_read) = super::super::follow_pointer::derived_parents(&Reader::new(connection, models), models, &parents)?;
-    result.pointer_rows_read = children_read;
-    for (model, row) in derived {
-        let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-        apply_upsert(connection, info, &model, &row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut *prefetched, pending: &mut pending, windows: &mut windows, threshold_windows: &mut threshold_windows, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
-    }
+    super::super::follow_pointer::affected_parents(&Reader::new(connection, models), models, &envelope.entity_ops, prefetched, &mut parents)?;
+    result.parents = parents;
     for (model, id) in recompute_sync(connection, &synced_keys)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
         if !touched {

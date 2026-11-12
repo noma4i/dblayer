@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 
 use crate::store::EntityOp;
-use crate::identity::{ModelKey, RowId, RowRef};
+use crate::identity::{RowId, RowRef};
 use crate::schema::{AssociationKind, AssociationSpec, ModelSpec};
 use crate::value::{read_id, same_fields};
 
@@ -17,21 +17,22 @@ fn setting(spec: &ModelSpec) -> impl Iterator<Item = &AssociationSpec> {
     spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty())
 }
 
-pub(super) fn affected_parents(models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], rows: &super::apply::Prefetched, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
+pub(super) fn affected_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], rows: &super::apply::Prefetched, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
     for operation in operations {
         let row = operation.row_ref();
         let spec = &models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.to_string()))?.spec;
         if matches!(operation, EntityOp::Upsert { .. }) && spec.server_values().next().is_some() { parents.insert(row.clone()); }
-        let Some(Some(stored)) = rows.get(&(row.model.to_string(), row.id.to_string())) else { continue };
+        let stored = match rows.get(&(row.model.to_string(), row.id.to_string())) { Some(stored) => stored.as_ref().map(|stored| stored.row.clone()), None => reader.point(row.model.as_str(), row.id.as_str())? };
+        let Some(stored) = stored else { continue };
         for association in setting(spec) {
-            let Some(parent) = stored.row.get(&association.foreign_key).and_then(read_id) else { continue };
+            let Some(parent) = stored.get(&association.foreign_key).and_then(read_id) else { continue };
             parents.insert(RowRef::new(association.target.clone(), RowId::new(parent.as_str()).map_err(fault)?));
         }
     }
     Ok(())
 }
 
-pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>) -> Result<(Vec<(ModelKey, Row)>, usize), StoreError> {
+pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>) -> Result<(Vec<EntityOp>, usize), StoreError> {
     let mut derived = Vec::new();
     let mut read = 0;
     for parent in parents {
@@ -61,7 +62,7 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
                 }
             }
         }
-        if !same_fields(&next, &stored) { derived.push((parent.model.clone(), next)); }
+        if !same_fields(&next, &stored) { derived.push(EntityOp::Upsert { model: parent.model.clone(), id: parent.id.clone(), row: next }); }
     }
     Ok((derived, read))
 }
