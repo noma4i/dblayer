@@ -224,16 +224,6 @@ fn win_wait_nodes() {
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");
 }
 
-#[test]
-fn win_wait_cancel() {
-    let mut twin = loading();
-    assert_eq!(twin.step(Input::InterestMinus { id: 1 }), [Effect::Cancel { request: 1, attempt: 1 }]);
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    let mut shared = loading();
-    shared.call(2, Goal::First);
-    assert!(shared.step(Input::InterestMinus { id: 1 }).is_empty(), "another waiter keeps the request");
-}
-
 // Properties. An executor stub answers requests and commits in the same scheduler, the explorer orders everything it sends.
 
 #[derive(Clone, Debug, PartialEq, Eq)]

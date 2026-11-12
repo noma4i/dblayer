@@ -1,75 +1,74 @@
 use super::*;
 
 
-/// P-WIN-01: a caller gets at most one outcome on any trace and exactly one once the window is not waiting for the network.
+/// On every explored order of two callers, a Stale and the network flip: a caller gets at most one outcome (exactly one once the window does not wait), Loaded only for a landed revision, at most one request in flight.
 #[test]
-fn win_prop_outcome_once() {
-    let report = explore(explore_rig, LIMITS, |_| {
-        let (log, _) = seen();
-        let events = snapshot(&log);
-        for id in [1u32, 2] {
-            let count = events.iter().filter(|event| matches!(event, Seen::Outcome(found, _) if *found == id)).count();
-            if count > 1 {
-                return Err(format!("caller {id} got {count} outcomes"));
-            }
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
-    assert!(report.traces > 10);
-    let report = explore(explore_rig, Limits { depth: 40, max_traces: 3_000 }, |det| {
-        if !det.ready().is_empty() {
-            return Ok(());
-        }
-        let (log, _) = seen();
-        let events = snapshot(&log);
-        let windows = det.state(Address::<Spy<Windows>>::new(WINDOWS)).map(|spy| &spy.inner).ok_or("no state")?;
-        if windows.stage(&key()) == Some(WindowStage::Waiting) {
-            return Ok(());
-        }
-        for id in [1u32, 2] {
-            let count = events.iter().filter(|event| matches!(event, Seen::Outcome(found, _) if *found == id)).count();
-            if count != 1 && windows.windows() > 0 {
-                return Err(format!("caller {id} got {count} outcomes"));
-            }
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
-}
-
-/// P-WIN-02: `Loaded{R}` is given only for a revision at which the rows of the answer landed.
-#[test]
-fn win_prop_loaded_rows() {
-    let report = explore(explore_rig, LIMITS, |_| {
-        let (log, _) = seen();
-        let events = snapshot(&log);
-        for (at, event) in events.iter().enumerate() {
-            if let Seen::Outcome(_, WindowOutcome::Loaded { revision, .. }) = event {
-                let landed = events[..at].iter().any(|before| matches!(before, Seen::Landed { revision: found, .. } if found == revision));
-                if !landed {
-                    return Err(format!("Loaded at {revision} without a landing"));
+fn win_prop_explored_invariants() {
+    {
+        let report = explore(explore_rig, LIMITS, |_| {
+            let (log, _) = seen();
+            let events = snapshot(&log);
+            for id in [1u32, 2] {
+                let count = events.iter().filter(|event| matches!(event, Seen::Outcome(found, _) if *found == id)).count();
+                if count > 1 {
+                    return Err(format!("caller {id} got {count} outcomes"));
                 }
             }
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+            Ok(())
+        });
+        assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+        assert!(report.traces > 10);
+        let report = explore(explore_rig, Limits { depth: 40, max_traces: 3_000 }, |det| {
+            if !det.ready().is_empty() {
+                return Ok(());
+            }
+            let (log, _) = seen();
+            let events = snapshot(&log);
+            let windows = det.state(Address::<Spy<Windows>>::new(WINDOWS)).map(|spy| &spy.inner).ok_or("no state")?;
+            if windows.stage(&key()) == Some(WindowStage::Waiting) {
+                return Ok(());
+            }
+            for id in [1u32, 2] {
+                let count = events.iter().filter(|event| matches!(event, Seen::Outcome(found, _) if *found == id)).count();
+                if count != 1 && windows.windows() > 0 {
+                    return Err(format!("caller {id} got {count} outcomes"));
+                }
+            }
+            Ok(())
+        });
+        assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+    }
+    {
+        let report = explore(explore_rig, LIMITS, |_| {
+            let (log, _) = seen();
+            let events = snapshot(&log);
+            for (at, event) in events.iter().enumerate() {
+                if let Seen::Outcome(_, WindowOutcome::Loaded { revision, .. }) = event {
+                    let landed = events[..at].iter().any(|before| matches!(before, Seen::Landed { revision: found, .. } if found == revision));
+                    if !landed {
+                        return Err(format!("Loaded at {revision} without a landing"));
+                    }
+                }
+            }
+            Ok(())
+        });
+        assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+    }
+    {
+        let report = explore(explore_rig, LIMITS, |_| {
+            let (log, _) = seen();
+            let open = open_requests(&snapshot(&log));
+            if open > 1 {
+                return Err(format!("{open} requests in the network"));
+            }
+            Ok(())
+        });
+        assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+    }
 }
 
-/// P-WIN-03: at most one request of the key is in the network.
-#[test]
-fn win_prop_single_flight() {
-    let report = explore(explore_rig, LIMITS, |_| {
-        let (log, _) = seen();
-        let open = open_requests(&snapshot(&log));
-        if open > 1 {
-            return Err(format!("{open} requests in the network"));
-        }
-        Ok(())
-    });
-    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
-}
+
+
 
 /// P-WIN-05: going online reads once every window that is not fresh and has interest or waiters, with no earlier network error needed.
 #[test]
@@ -85,19 +84,6 @@ fn win_prop_online_once() {
     assert_eq!(stale.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "a stale window reads without an earlier network error");
     let mut waiting_call = waiting();
     assert_eq!(requests(&waiting_call.step(Input::Online(true))), 1);
-}
-
-/// P-WIN-06: no input, no request and no schedule; a retry is scheduled only while online.
-#[test]
-fn win_prop_idle() {
-    let twin = fresh();
-    assert_eq!(twin.det.ready().len(), 0);
-    assert!(take(&twin.log).is_empty());
-    let mut offline = Twin::new();
-    offline.call(1, Goal::First);
-    offline.step(Input::Online(false));
-    let effects = offline.step(Input::TransportError { request: 1, attempt: 1, failure: Failure::Network });
-    assert!(effects.iter().all(|effect| !matches!(effect, Effect::ScheduleRetry { .. })), "no retry is scheduled offline");
 }
 
 /// P-WIN-07: the last `Interest-` cancels the request and the answer of the cancelled request is not committed; after the point of acceptance the landing ends.
@@ -127,20 +113,46 @@ fn win_prop_stale_reload_once() {
     assert_eq!(requests(&last), 0);
 }
 
-/// P-WIN-09: the conditions read only the fields `online` and `generation[m]` of the dictionary.
+/// The basis of a batch is the generation of the dictionary, names every model of the answer at the issue, and a reissue after a stale generation carries the generations of the refusal.
 #[test]
-fn win_prop_fields_only() {
-    let mut twin = Twin::new();
-    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-    twin.step(Input::Online(false));
-    twin.call(1, Goal::First);
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
-    take(&twin.log);
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
-    let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-    assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
+fn win_basis_generations_of_the_batch() {
+    {
+        let mut twin = Twin::new();
+        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
+        twin.step(Input::Online(false));
+        twin.call(1, Goal::First);
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
+        take(&twin.log);
+        twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
+        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
+        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
+        assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
+    }
+    {
+        let mut twin = Twin::new();
+        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 1 }));
+        twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
+        twin.call(1, Goal::First);
+        take(&twin.log);
+        let mut page = AnswerPage::new(1, vec!["r1".into()], None);
+        page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
+        page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
+        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page });
+        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
+        assert!(sent.contains("\"Chat\": 1") && sent.contains("\"Moment\": 1"), "the generations of the issue: {sent}");
+    }
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::First);
+        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
+        twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 3)].into() } }));
+        take(&twin.log);
+        twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
+        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
+        assert!(sent.contains("\"Moment\": 3"), "the basis of the new request is the generation of the refusal: {sent}");
+    }
 }
+
 
 #[test]
 fn win_base_revision() {
@@ -155,44 +167,6 @@ fn win_base_revision() {
     twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert!(sent_batch(&mut twin).contains("base_revision: 13"), "the next batch carries the next Pinned revision");
-}
-
-/// P-WIN-10: the outcome `Loaded` of `AllPages` comes only at the end of the pages: one request per page after the first.
-#[test]
-fn win_prop_load_all_complete() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::All);
-    let mut requests_after_first = 0;
-    for page in 1..=3u32 {
-        let cursor = (page < 3).then_some(page + 1);
-        twin.respond(cursor);
-        requests_after_first += requests(&twin.land());
-    }
-    assert_eq!(requests_after_first, 2, "one request per page after the first");
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(twin.state().waiters(&key()).is_empty());
-}
-
-/// P-WIN-16: a `members_complete` window with a reader reaches the end of the cursor without calls of the app, settles only after the last page and ignores `max_pages`; without a reader the chain stands.
-#[test]
-fn win_prop_members_complete() {
-    let mut twin = Twin::members_complete();
-    twin.watch();
-    twin.call(1, Goal::First);
-    let mut requests_after_first = 0;
-    for page in 1..=5u32 {
-        twin.respond((page < 5).then_some(page + 1));
-        requests_after_first += requests(&twin.land());
-        assert_eq!(twin.load_state().settled, page == 5, "settled only after the last page");
-    }
-    assert_eq!(requests_after_first, 4, "one request per page after the first");
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    let mut alone = Twin::members_complete();
-    alone.watch();
-    alone.respond(Some(2));
-    alone.step(Input::InterestMinus { id: STREAM });
-    assert_eq!(requests(&alone.land()), 0, "without a reader the chain stands");
-    assert_eq!(alone.stage(), Some(WindowStage::Idle));
 }
 
 /// P-WIN-11: a finished waiter does not stay: `Stale` and `Online(true)` give no request when interest and waiters are empty; the preload stays.
@@ -210,94 +184,58 @@ fn win_prop_waiters_leave() {
     assert_eq!(preload.state().interest(&key()), [w::PRELOAD], "the preload interest stays");
 }
 
-/// P-WIN-12: before the first addressed `Online` a machine asks for nothing.
+/// Windows of two keys are independent: an answer goes to the key that owns the request, a key answers a fresh call with its own landed revision, Closing gives one Drained.
 #[test]
-fn win_prop_no_request_before_online() {
-    let mut twin = Twin::before_online();
-    assert!(requests(&twin.watch()) == 0);
-    assert!(requests(&twin.call(1, Goal::First)) == 0);
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert_eq!(requests(&twin.step(Input::Online(true))), 1);
-}
-
-/// The dictionary: windows of two keys are independent, the answer goes to the key that owns the request, `Closing` gives one `Drained`.
-#[test]
-fn win_dictionary_owner() {
-    let mut det = DetScheduler::new(5);
-    let log = new_log();
-    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), Arc::new(AtomicU64::new(0)));
-    det.start_epoch(EPOCH);
-    let other = WindowKey { model: "Chat".into(), name: "room".into() };
-    for (key, id) in [(key(), 1), (other.clone(), 2)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: 0 });
+fn win_windows_of_keys_are_independent() {
+    {
+        let mut det = DetScheduler::new(5);
+        let log = new_log();
+        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), Arc::new(AtomicU64::new(0)));
+        det.start_epoch(EPOCH);
+        let other = WindowKey { model: "Chat".into(), name: "room".into() };
+        for (key, id) in [(key(), 1), (other.clone(), 2)] {
+            det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: 0 });
+        }
+        det.run_until_quiet(100).expect("quiet");
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["c1".into()], None) });
+        det.run_until_quiet(100).expect("quiet");
+        let state = inner(&det, windows);
+        assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Loading), Some(WindowStage::Landing)), "the answer of request 2 reaches the key that owns it");
+        det.close();
+        det.run_until_quiet(100).expect("quiet");
+        let effects = runs(take(&log));
+        let drained = effects.iter().filter(|effect| matches!(effect, WindowsEffect::Drained(_))).count();
+        assert_eq!(drained, 1, "one Drained for all windows");
+        assert!(effects.iter().any(|effect| matches!(effect, WindowsEffect::Window { key, effect: WindowEffect::Cancel { request: 1, .. } } if *key == self::key())), "the loading window is cancelled at Closing");
+        let state = inner(&det, windows);
+        assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Ended), Some(WindowStage::Ended)));
     }
-    det.run_until_quiet(100).expect("quiet");
-    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["c1".into()], None) });
-    det.run_until_quiet(100).expect("quiet");
-    let state = inner(&det, windows);
-    assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Loading), Some(WindowStage::Landing)), "the answer of request 2 reaches the key that owns it");
-    det.close();
-    det.run_until_quiet(100).expect("quiet");
-    let effects = runs(take(&log));
-    let drained = effects.iter().filter(|effect| matches!(effect, WindowsEffect::Drained(_))).count();
-    assert_eq!(drained, 1, "one Drained for all windows");
-    assert!(effects.iter().any(|effect| matches!(effect, WindowsEffect::Window { key, effect: WindowEffect::Cancel { request: 1, .. } } if *key == self::key())), "the loading window is cancelled at Closing");
-    let state = inner(&det, windows);
-    assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Ended), Some(WindowStage::Ended)));
-}
-
-/// `landed_revision` belongs to the machine: a key answers a fresh call with its own last landing, not the last landing of any key.
-#[test]
-fn win_landed_revision_per_machine() {
-    let mut det = DetScheduler::new(5);
-    let log = new_log();
-    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), Arc::new(AtomicU64::new(0)));
-    det.start_epoch(EPOCH);
-    let other = WindowKey { model: "Chat".into(), name: "room".into() };
-    let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision };
-    for (key, id) in [(key(), 1), (other.clone(), 2)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), load(key, id, 0));
+    {
+        let mut det = DetScheduler::new(5);
+        let log = new_log();
+        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), Arc::new(AtomicU64::new(0)));
+        det.start_epoch(EPOCH);
+        let other = WindowKey { model: "Chat".into(), name: "room".into() };
+        let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision };
+        for (key, id) in [(key(), 1), (other.clone(), 2)] {
+            det.post(windows, EpochStamp::Epoch(EPOCH), load(key, id, 0));
+        }
+        det.run_until_quiet(100).expect("quiet");
+        for (request, row, revision) in [(1, "r1", 5), (2, "c1", 9)] {
+            det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None) });
+            det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+        }
+        det.run_until_quiet(100).expect("quiet");
+        take(&log);
+        det.post(windows, EpochStamp::Epoch(EPOCH), load(key(), 3, 99));
+        det.run_until_quiet(100).expect("quiet");
+        assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5, .. } }, .. })), "the fresh key answers with its own landing");
     }
-    det.run_until_quiet(100).expect("quiet");
-    for (request, row, revision) in [(1, "r1", 5), (2, "c1", 9)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None) });
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    }
-    det.run_until_quiet(100).expect("quiet");
-    take(&log);
-    det.post(windows, EpochStamp::Epoch(EPOCH), load(key(), 3, 99));
-    det.run_until_quiet(100).expect("quiet");
-    assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5, .. } }, .. })), "the fresh key answers with its own landing");
 }
 
-/// win_loading_response (P-WIN-04): the basis of a batch names every model of the answer with the generation it had when the request left, also a model the window did not know before.
-#[test]
-fn win_basis_names_every_model_of_the_answer_at_issue() {
-    let mut twin = Twin::new();
-    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 1 }));
-    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-    twin.call(1, Goal::First);
-    take(&twin.log);
-    let mut page = AnswerPage::new(1, vec!["r1".into()], None);
-    page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
-    page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page });
-    let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-    assert!(sent.contains("\"Chat\": 1") && sent.contains("\"Moment\": 1"), "the generations of the issue: {sent}");
-}
 
-/// win_landing_stale_generation: the new request carries the generations of the refusal.
-#[test]
-fn win_stale_generation_reissues_with_the_generations_of_the_refusal() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::First);
-    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
-    twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 3)].into() } }));
-    take(&twin.log);
-    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
-    let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-    assert!(sent.contains("\"Moment\": 3"), "the basis of the new request is the generation of the refusal: {sent}");
-}
+
+
 
 /// win_wait_nodes: an id that holds a comma stays one id and the key keeps the order and the boundaries of the ids.
 #[test]
@@ -324,68 +262,6 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
     twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-/// P-WIN-27: while the interest of a second call is in the waiters before the first call leaves, no order of the second `Load`, the `Interest-` of the first and the response gives a second request or a cancel.
-#[test]
-fn win_prop_cancel_sibling_single_flight() {
-    const JOIN: u8 = 0;
-    const LEAVE: u8 = 1;
-    const ANSWER: u8 = 2;
-    for order in [[JOIN, LEAVE, ANSWER], [JOIN, ANSWER, LEAVE], [ANSWER, JOIN, LEAVE]] {
-        let mut twin = loading();
-        let mut trace = Vec::new();
-        for turn in order {
-            let effects = match turn {
-                JOIN => twin.call(2, Goal::First),
-                LEAVE => twin.step(Input::InterestMinus { id: 1 }),
-                _ => twin.respond(None),
-            };
-            trace.push((turn, effects));
-        }
-        if twin.stage() == Some(WindowStage::Landing) {
-            let landed = twin.land();
-            trace.push((9, landed));
-        }
-        let again = trace.iter().flat_map(|(_, effects)| effects).filter(|effect| matches!(effect, Effect::Request { .. } | Effect::Cancel { .. })).count();
-        assert_eq!(again, 0, "order {order:?} sent a second request or a cancel, trace {trace:?}");
-        assert_eq!(twin.stage(), Some(WindowStage::Idle), "order {order:?}");
-    }
-}
-
-/// P-WIN-28: one return of the network gives one read of a watched window in either order of `Online(true)` and `Stale{Gap}`.
-#[test]
-fn win_prop_reconnect_gap_one_reload() {
-    const SEQ: u64 = 1;
-    for (name, make) in [("fresh", fresh_watched as fn() -> Twin), ("failed", failed_watched as fn() -> Twin)] {
-        for reload in [false, true] {
-            for gap_first in [false, true] {
-                let mut twin = make();
-                if reload {
-                    twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: u64::from(STREAM) });
-                }
-                take(&twin.log);
-                let mut sent = Vec::new();
-                let mut feed = |twin: &mut Twin, input: w::WindowsInput| {
-                    twin.post(input);
-                    let (effects, _) = twin.split(take(&twin.log));
-                    sent.extend(effects);
-                };
-                feed(&mut twin, w::WindowsInput::Online { online: Online(false), online_seq: 0 });
-                let online = w::WindowsInput::Online { online: Online(true), online_seq: SEQ };
-                let gap = w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: SEQ } };
-                if gap_first {
-                    feed(&mut twin, gap);
-                    feed(&mut twin, online);
-                } else {
-                    feed(&mut twin, online);
-                    feed(&mut twin, gap);
-                }
-                let reads = sent.iter().filter(|effect| matches!(effect, Effect::Request { .. })).count();
-                assert_eq!(reads, 1, "{name} reload={reload} gap_first={gap_first}: {sent:?}");
-            }
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

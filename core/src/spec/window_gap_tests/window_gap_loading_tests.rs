@@ -201,49 +201,77 @@ fn win_landing_stale_reread() {
 
 
 
+/// After a landing the chain asks the next page only for a waiter whose goal is not met (all pages, next page) and the network is up and the page limit is not reached; every other waiter hears Loaded.
 #[test]
-fn win_landing_committed_all_next() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::All);
-    twin.call(2, Goal::First);
-    twin.respond(Some(2));
-    assert_eq!(twin.land(), [Effect::Request { request: 2, attempt: 2, page: 2 }]);
-    assert_eq!(twin.state().waiters(&key()), [1], "the caller of `all` waits, the other heard `Loaded`");
-    twin.finish(None);
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+fn win_landing_follows_the_goal_of_the_waiters() {
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::All);
+        twin.call(2, Goal::First);
+        twin.respond(Some(2));
+        assert_eq!(twin.land(), [Effect::Request { request: 2, attempt: 2, page: 2 }]);
+        assert_eq!(twin.state().waiters(&key()), [1], "the caller of `all` waits, the other heard `Loaded`");
+        twin.finish(None);
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    }
+    {
+        let mut twin = Twin::with_max_pages(1);
+        twin.call(1, Goal::All);
+        twin.call(2, Goal::First);
+        twin.respond(Some(2));
+        assert_eq!(twin.land(), none(), "page limit reached: all heard an outcome");
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    }
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::All);
+        twin.call(2, Goal::First);
+        twin.respond(Some(2));
+        twin.step(Input::Online(false));
+        assert_eq!(twin.land(), none());
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+        assert_eq!(twin.state().waiters(&key()), [1]);
+    }
+    {
+        let mut twin = fresh_with_cursor();
+        twin.call(2, Goal::Next);
+        twin.call(3, Goal::Next);
+        twin.respond(Some(3));
+        assert_eq!(twin.land(), [Effect::Request { request: 3, attempt: 3, page: 3 }], "the waiters of page 2 heard `Loaded`");
+        assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    }
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::First);
+        twin.call(2, Goal::Next);
+        twin.respond(Some(2));
+        twin.step(Input::Online(false));
+        assert_eq!(twin.land(), none());
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+        assert_eq!(twin.state().waiters(&key()), [2]);
+    }
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::First);
+        twin.call(2, Goal::Next);
+        twin.respond(None);
+        assert_eq!(twin.land(), none());
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        assert!(twin.state().waiters(&key()).is_empty(), "no more pages: every waiter heard `Loaded`");
+    }
+    {
+        let mut twin = Twin::with_max_pages(1);
+        twin.call(1, Goal::First);
+        twin.call(2, Goal::Next);
+        twin.respond(Some(2));
+        assert_eq!(twin.land(), none());
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    }
 }
 
-#[test]
-fn win_landing_committed_page_limit() {
-    let mut twin = Twin::with_max_pages(1);
-    twin.call(1, Goal::All);
-    twin.call(2, Goal::First);
-    twin.respond(Some(2));
-    assert_eq!(twin.land(), none(), "page limit reached: all heard an outcome");
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
 
-#[test]
-fn win_landing_committed_all_offline() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::All);
-    twin.call(2, Goal::First);
-    twin.respond(Some(2));
-    twin.step(Input::Online(false));
-    assert_eq!(twin.land(), none());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert_eq!(twin.state().waiters(&key()), [1]);
-}
 
-#[test]
-fn win_landing_committed_next_page() {
-    let mut twin = fresh_with_cursor();
-    twin.call(2, Goal::Next);
-    twin.call(3, Goal::Next);
-    twin.respond(Some(3));
-    assert_eq!(twin.land(), [Effect::Request { request: 3, attempt: 3, page: 3 }], "the waiters of page 2 heard `Loaded`");
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
+
 
 #[test]
 fn win_members_complete_chain_offline() {
@@ -259,38 +287,8 @@ fn win_members_complete_chain_offline() {
     assert_eq!(twin.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 2 }], "the return of the network continues the chain");
 }
 
-#[test]
-fn win_landing_committed_next_page_offline() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::First);
-    twin.call(2, Goal::Next);
-    twin.respond(Some(2));
-    twin.step(Input::Online(false));
-    assert_eq!(twin.land(), none());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert_eq!(twin.state().waiters(&key()), [2]);
-}
 
-#[test]
-fn win_landing_committed_next_page_end() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::First);
-    twin.call(2, Goal::Next);
-    twin.respond(None);
-    assert_eq!(twin.land(), none());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(twin.state().waiters(&key()).is_empty(), "no more pages: every waiter heard `Loaded`");
-}
 
-#[test]
-fn win_landing_committed_next_page_limit() {
-    let mut twin = Twin::with_max_pages(1);
-    twin.call(1, Goal::First);
-    twin.call(2, Goal::Next);
-    twin.respond(Some(2));
-    assert_eq!(twin.land(), none());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
 
 
 
