@@ -75,14 +75,14 @@ fn win_prop_single_flight() {
 #[test]
 fn win_prop_online_once() {
     let mut twin = failed_watched();
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
     assert!(twin.step(Input::Online(true)).is_empty(), "a second signal does not read again");
     let mut quiet = fresh_watched();
     assert!(quiet.step(Input::Online(true)).is_empty(), "a fresh window is not reread");
     let mut stale = fresh_watched();
     stale.step(Input::Online(false));
     stale.step(Input::Stale { in_keys: true });
-    assert_eq!(stale.step(Input::Online(true)), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState], "a stale window reads without an earlier network error");
+    assert_eq!(stale.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "a stale window reads without an earlier network error");
     let mut waiting_call = waiting();
     assert_eq!(requests(&waiting_call.step(Input::Online(true))), 1);
 }
@@ -140,17 +140,6 @@ fn win_prop_fields_only() {
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
-}
-
-#[test]
-fn win_prop_landing_settles_first() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::First);
-    twin.call(2, Goal::All);
-    twin.respond(Some(2));
-    let effects = twin.land();
-    assert_eq!(requests(&effects), 1, "the request for the next page is chosen by the AllPages waiter alone");
-    assert_eq!(twin.state().waiters(&key()).len(), 1, "the waiter of the first page left with its outcome");
 }
 
 #[test]

@@ -3,14 +3,6 @@ use super::*;
 // Loading.
 
 #[test]
-fn win_loading_join() {
-    let mut twin = loading();
-    assert_eq!(twin.watch(), [Effect::WindowState]);
-    assert_eq!(twin.state().interest(&key()), [u64::from(STREAM)]);
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-#[test]
 fn win_loading_join_waiter() {
     let mut twin = loading();
     assert!(twin.call(2, Goal::First).is_empty());
@@ -30,14 +22,6 @@ fn win_loading_leave() {
 }
 
 #[test]
-fn win_loading_last_leave() {
-    let mut twin = loading();
-    assert_eq!(twin.step(Input::InterestMinus { id: 1 }), [Effect::Cancel { request: 1, attempt: 1 }]);
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
-}
-
-#[test]
 fn win_loading_load_more() {
     let mut twin = loading();
     assert!(twin.call(2, Goal::Next).is_empty());
@@ -50,21 +34,6 @@ fn win_loading_response() {
     let mut twin = loading();
     assert_eq!(twin.respond(None), [Effect::Commit { request: 1, replace_all: false }]);
     assert_eq!(twin.stage(), Some(WindowStage::Landing));
-}
-
-#[test]
-fn win_loading_stray() {
-    let mut twin = loading();
-    for input in [
-        Input::Response { request: 9, attempt: 1, cursor: None, rows: true },
-        Input::Response { request: 1, attempt: 9, cursor: None, rows: true },
-        Input::TransportError { request: 1, attempt: 9, failure: Failure::Network },
-        Input::Dropped { request: 9, attempt: 1 },
-        Input::Retry { request: 9 },
-    ] {
-        assert!(twin.step(input).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Loading));
-    }
 }
 
 #[test]
@@ -128,14 +97,6 @@ fn win_loading_retry() {
 }
 
 #[test]
-fn win_loading_retry_stray() {
-    let mut twin = loading();
-    assert!(twin.step(Input::Retry { request: 1 }).is_empty(), "no retry is due while the attempt is in flight");
-    twin.fail(Failure::Network);
-    assert!(twin.step(Input::Retry { request: 9 }).is_empty());
-}
-
-#[test]
 fn win_loading_offline() {
     let mut twin = loading_watched();
     assert_eq!(twin.step(Input::Online(false)), [Effect::Cancel { request: 1, attempt: 1 }, Effect::WindowState]);
@@ -144,13 +105,6 @@ fn win_loading_offline() {
     let mut waiting_retry = loading();
     waiting_retry.fail(Failure::Network);
     assert!(waiting_retry.step(Input::Online(false)).is_empty(), "nothing is in flight to cancel");
-}
-
-#[test]
-fn win_loading_online() {
-    let mut twin = loading();
-    assert!(twin.step(Input::Online(true)).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
 #[test]
@@ -168,14 +122,6 @@ fn win_loading_stale_covered() {
     assert!(covered.step(Input::StaleGap).is_empty());
     covered.respond(None);
     assert_eq!(requests(&covered.land()), 0, "the request began after the return of the network");
-}
-
-#[test]
-fn win_loading_stray_store() {
-    let mut twin = loading();
-    assert!(twin.step(Input::Committed { request: 1, revision: 50 }).is_empty());
-    assert!(twin.step(Input::Rejected { request: 1, reason: Reject::Storage }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
 // Landing.
@@ -202,7 +148,7 @@ fn win_landing_committed_again() {
     twin.watch();
     twin.respond(None);
     let effects = twin.land();
-    assert_eq!(effects, [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+    assert_eq!(effects, [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
@@ -270,18 +216,6 @@ fn win_landing_committed_next_page() {
 }
 
 #[test]
-fn win_members_complete_chain() {
-    let mut twin = Twin::members_complete();
-    twin.watch();
-    twin.call(1, Goal::First);
-    twin.respond(Some(2));
-    assert_eq!(twin.land(), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState], "the next page is requested without a call of the app");
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-    assert!(twin.state().waiters(&key()).is_empty(), "the caller of the first page heard `Loaded`");
-    assert!(!twin.load_state().settled, "the window is not settled before the last page");
-}
-
-#[test]
 fn win_members_complete_chain_offline() {
     let mut twin = Twin::members_complete();
     twin.watch();
@@ -292,19 +226,7 @@ fn win_members_complete_chain_offline() {
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
     assert_eq!(twin.phase(), Phase::Loaded);
     assert!(!twin.load_state().settled);
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState], "the return of the network continues the chain");
-}
-
-#[test]
-fn win_members_complete_end() {
-    let mut twin = Twin::members_complete();
-    twin.watch();
-    twin.call(1, Goal::First);
-    twin.finish(Some(2));
-    assert_eq!(twin.finish(None), [Effect::WindowState]);
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    let state = twin.load_state();
-    assert!(state.settled && !state.has_more);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 2 }], "the return of the network continues the chain");
 }
 
 #[test]

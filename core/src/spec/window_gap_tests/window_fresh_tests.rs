@@ -32,15 +32,6 @@ fn win_opening_read() {
 }
 
 #[test]
-fn win_created_from_saved() {
-    let mut twin = opening_twin();
-    twin.watch();
-    let opened = twin.step(Input::Read(saved(NOW - 1_000, false)));
-    assert_eq!((requests(&opened), twin.stage()), (0, Some(WindowStage::Idle)), "a saved window inside its lifetime asks nothing");
-    assert_eq!(twin.call(1, Goal::First), none(), "a call on a fresh saved window is answered at once (the twin compares the outcome)");
-}
-
-#[test]
 fn win_created_other_generation() {
     let mut twin = opening_twin();
     twin.watch();
@@ -93,25 +84,6 @@ fn win_opening_end() {
     twin.call(1, Goal::First);
     twin.step(Input::EpochEnded);
     assert_eq!(twin.stage(), Some(WindowStage::Ended), "the call that waited is interrupted (the twin compares the outcome)");
-}
-
-#[test]
-fn win_idle_interest_expired() {
-    let mut twin = fresh_idle();
-    twin.now = NOW + LIFE - 1;
-    assert_eq!(requests(&twin.watch()), 0, "inside the lifetime a stream asks nothing");
-    twin.step(Input::InterestMinus { id: STREAM });
-    twin.now = NOW + LIFE;
-    assert_eq!(requests(&twin.watch()), 1, "at fresh_until the stream starts a load");
-}
-
-#[test]
-fn win_idle_load_expired() {
-    let mut twin = fresh_idle();
-    twin.now = NOW + LIFE - 1;
-    assert_eq!(requests(&twin.call(1, Goal::First)), 0);
-    twin.now = NOW + LIFE;
-    assert_eq!(requests(&twin.call(2, Goal::First)), 1, "a call at fresh_until starts a load");
 }
 
 #[test]

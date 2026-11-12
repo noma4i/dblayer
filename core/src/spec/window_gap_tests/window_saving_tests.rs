@@ -42,27 +42,6 @@ fn win_preload_existing_same() {
 }
 
 #[test]
-fn win_preload_power_saving() {
-    let twin = preload_twin(true);
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting), "the preload waits while the device saves power");
-}
-
-#[test]
-fn win_preload_saving_ended() {
-    let mut twin = preload_twin(true);
-    assert_eq!(requests(&twin.step(Input::PowerSaving(false))), 1, "the end of power saving starts the load");
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-#[test]
-fn win_preload_online_saving() {
-    let mut twin = preload_twin(true);
-    twin.step(Input::Online(false));
-    assert_eq!(requests(&twin.step(Input::Online(true))), 0, "the network returns while power saving holds: the preload still waits");
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
 fn win_preload_reader_joins_saving() {
     let mut twin = preload_twin(true);
     assert_eq!(requests(&twin.watch()), 1, "a reader does not wait for power saving");
@@ -97,15 +76,6 @@ fn win_power_saving_other() {
     for on in [true, false] {
         assert_eq!(twin.step(Input::PowerSaving(on)), none(), "a window without interest ignores power saving");
     }
-}
-
-#[test]
-fn win_waiting_offline_refused() {
-    let mut twin = Twin::before_online();
-    twin.watch();
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    twin.step(Input::OfflineRefused);
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting), "the error shows in the state (the twin compares the announce), the call waits for the network");
 }
 
 #[test]

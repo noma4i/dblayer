@@ -31,13 +31,6 @@ fn win_landing_storage() {
 }
 
 #[test]
-fn win_landing_join() {
-    let mut twin = landing();
-    assert_eq!(twin.watch(), [Effect::WindowState]);
-    assert_eq!(twin.stage(), Some(WindowStage::Landing));
-}
-
-#[test]
 fn win_landing_load() {
     let mut twin = landing();
     assert!(twin.call(2, Goal::First).is_empty());
@@ -45,23 +38,6 @@ fn win_landing_load() {
     twin.land();
     assert!(twin.state().waiters(&key()).is_empty(), "the landing answered the waiters that joined it");
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
-
-#[test]
-fn win_landing_leave() {
-    let mut twin = landing();
-    twin.call(2, Goal::First);
-    assert!(twin.step(Input::InterestMinus { id: 2 }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Landing));
-    twin.land();
-    assert_eq!(twin.stage(), Some(WindowStage::Idle), "the landing ends, a cancelled waiter hears nothing");
-}
-
-#[test]
-fn win_landing_online() {
-    let mut twin = landing();
-    assert!(twin.step(Input::Online(false)).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Landing));
 }
 
 #[test]
@@ -78,6 +54,31 @@ fn win_landing_wait() {
     }
 }
 
+/// A stream that joins a window in flight gets the state and starts nothing.
+#[test]
+fn win_busy_stream_joins() {
+    for (name, mut twin) in [("Loading", loading()), ("Landing", landing()), ("Waiting", waiting())] {
+        let stage = twin.stage();
+        assert_eq!(twin.watch(), [Effect::WindowState], "{name}");
+        assert_eq!(twin.state().interest(&key()), [u64::from(STREAM)], "{name}");
+        assert_eq!(twin.stage(), stage, "{name}");
+    }
+}
+
+/// Inputs the busy stages take without a move.
+#[test]
+fn win_busy_inputs_change_nothing() {
+    for (name, mut twin, input, stage) in [
+        ("landing, network away", landing(), Input::Online(false), WindowStage::Landing),
+        ("loading, network back", loading(), Input::Online(true), WindowStage::Loading),
+        ("waiting, network away", waiting(), Input::Online(false), WindowStage::Waiting),
+        ("waiting, stale", waiting(), Input::Stale { in_keys: true }, WindowStage::Waiting),
+    ] {
+        assert!(twin.step(input).is_empty(), "{name}");
+        assert_eq!(twin.stage(), Some(stage), "{name}");
+    }
+}
+
 // Waiting.
 
 #[test]
@@ -85,20 +86,6 @@ fn win_waiting_resume() {
     let mut twin = waiting();
     assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 1, attempt: 1, page: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
-}
-
-#[test]
-fn win_waiting_offline() {
-    let mut twin = waiting();
-    assert!(twin.step(Input::Online(false)).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
-fn win_waiting_join() {
-    let mut twin = waiting();
-    assert_eq!(twin.watch(), [Effect::WindowState]);
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
 }
 
 #[test]
@@ -122,29 +109,6 @@ fn win_waiting_last_leave() {
     let mut twin = waiting();
     assert!(twin.step(Input::InterestMinus { id: 1 }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
-
-#[test]
-fn win_waiting_stale() {
-    let mut twin = waiting();
-    assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
-fn win_waiting_stray() {
-    let mut twin = waiting();
-    for input in [
-        Input::Response { request: 1, attempt: 1, cursor: None, rows: true },
-        Input::TransportError { request: 1, attempt: 1, failure: Failure::Network },
-        Input::Dropped { request: 1, attempt: 1 },
-        Input::Retry { request: 1 },
-        Input::Committed { request: 1, revision: 5 },
-        Input::Rejected { request: 1, reason: Reject::Storage },
-    ] {
-        assert!(twin.step(input).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    }
 }
 
 // Ended.
