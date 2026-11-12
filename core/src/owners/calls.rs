@@ -306,7 +306,8 @@ impl StateOwner for Calls {
                     finished.push(call_id);
                     match phase {
                         CallPhase::Sending { request_id, kind: CallKind::Query, .. } => fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }),
-                        CallPhase::Sending { request_id, kind: CallKind::Mutate, .. } => fx.push(CallsEffect::Release { request_id }),
+                        CallPhase::Sending { request_id, kind: CallKind::Mutate, releasing: false, .. } => fx.push(CallsEffect::Release { request_id }),
+                        CallPhase::Sending { releasing: true, .. } => {}
                         CallPhase::Done => {}
                     }
                 }
