@@ -12,8 +12,6 @@ use crate::owners::store::StoreOp;
 use crate::runtime::{Effect, Time};
 use crate::value::sync::PrepareReason;
 
-const DEFAULT_QUALITY: f64 = 0.9;
-
 /// The plan of the run for what the platform read, `None` when the source goes as it is.
 fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome) -> Result<Option<PreparePlan>, String> {
     match (settings, probed) {
@@ -26,7 +24,7 @@ fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome) -> Result<Option<Prepa
         }
         (WirePrepare::Image { edit, quality, format }, ProbeOutcome::Image { width, height, exif_orientation, .. }) => {
             let plan = crate::prepare::photo_plan(*width, *height, *exif_orientation, *edit).ok_or_else(|| "the image cannot be planned".to_string())?;
-            Ok(Some(PreparePlan::Image { plan, quality: crate::prepare::jpeg_quality(quality.unwrap_or(DEFAULT_QUALITY)), format: *format }))
+            Ok(Some(PreparePlan::Image { plan, quality: crate::prepare::jpeg_quality(quality.unwrap_or(f64::NAN)), format: *format }))
         }
         _ => Err("the platform read a file of another kind than the settings ask for".into()),
     }
