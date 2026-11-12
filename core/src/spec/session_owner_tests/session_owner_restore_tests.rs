@@ -393,10 +393,9 @@ fn sess_held_cancel() {
 
 #[test]
 fn sess_held_release() {
-    let mut twin = held();
-    let rid = twin.rid();
-    let effects = twin.feed(Input::Release { req_id: rid });
-    assert!(matches!(effects.as_slice(), [RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Dropped }, RefEffect::HttpRequest { pending, .. }] if pending.request_id == rid && pending.author.is_none() && pending.owner == Some(crate::transport::RequestOwner::Detached)), "the former author hears Dropped and the same pair goes out with no author: {effects:?}");
+    let mut twin = opened(open(Some((CRED, 0)), Some(stored(Some(super::session_owner_release_tests::outbox_owner()), 5, 1)), false, Secret::Present(CRED)));
+    let effects = twin.feed(Input::Release { req_id: 5 });
+    assert!(matches!(effects.as_slice(), [RefEffect::Answer { author: OUTBOX_AUTHOR, req_id: 5, outcome: Outcome::Dropped }, RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.owner == Some(crate::transport::RequestOwner::Detached)), "the author that heard nothing hears Dropped once and the same pair goes out detached: {effects:?}");
 }
 
 #[test]
