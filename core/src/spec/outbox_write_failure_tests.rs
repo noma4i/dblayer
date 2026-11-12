@@ -117,9 +117,8 @@ fn out_prop_write_storage_count_reset_by_other_outcome() {
         refuse(&mut twin, id, RejectReason::Storage("disk".into()));
         assert!(twin.pauses[0] > first[0], "landing={landing_stage}: the pause grew with the count: {:?} against {first:?}", twin.pauses);
         tick(&mut twin, id);
-        let stale = RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() };
-        refuse(&mut twin, id, stale);
-        assert_eq!(twin.stage(id), Some(stage));
+        refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+        assert_eq!(twin.stage(id), Some(stage), "the server outcome stays: the batch without rows is written");
         refuse(&mut twin, id, RejectReason::Storage("disk".into()));
         assert_eq!(twin.pauses, first, "landing={landing_stage}: an outcome other than Storage reset the count");
     }
@@ -150,6 +149,8 @@ fn out_prop_landing_ended_answer_lands_at_open() {
             assert_eq!(reopened.stage(id), Some(St::Landing), "{reason:?}");
             assert_eq!(sends(&opened) + sends(&readied), 0, "no second request for the saved answer");
             reopened.waiter(id);
+            let landed = reopened.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+            assert_eq!((kinds(&landed), sends(&landed)), (vec![CommitKind::Land], 0), "the rows of the saved answer land in one batch: {landed:?}");
             let done = reopened.committed(id);
             assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Confirmed { .. }]), "exactly one Confirmed after the reopening: {done:?}");
             assert_eq!(sends(&done), 0, "no Send after Committed");

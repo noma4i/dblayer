@@ -232,7 +232,7 @@ fn xfer_persisting_copy_rejected_batch_removal_retried() {
     twin.copy_done(ids[1]);
     let out = twin.reject(storage());
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Removing), "{:?}", ids.iter().map(|id| twin.stage(*id)).collect::<Vec<_>>());
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::Storage), "the call is answered at once");
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(storage())), "the call is answered at once");
     assert_eq!((out.writes(), out.removed().len()), (1, 2), "one batch removes both uploads");
     let first = out.batches[0].ops.clone();
     let refused = twin.reject(storage());

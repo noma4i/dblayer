@@ -1000,7 +1000,7 @@ fn out_rollback_invalid() {
     assert_eq!((twin.stage(id), kinds(&started)), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback]));
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::Invalid)], "the waiting Discard gets Err(Invalid)");
+    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))], "the waiting Discard gets Err(Invalid) with the text of the error");
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
 }
 
