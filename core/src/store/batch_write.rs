@@ -137,7 +137,7 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
-        let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, revision, |plan| writer.apply(&plan), inner.generation)?;
+        let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan), inner.generation)?;
         results.extend(derived);
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();

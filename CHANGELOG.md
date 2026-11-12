@@ -5,6 +5,7 @@
 ### Fixed
 
 - A call with a sent pair answers `dropped`, not `network`, on a network failure.
+- A child hidden by an open destroy no longer shows in the fields its parent derives.
 
 ## 6.27.1 - 2026-11-12
 

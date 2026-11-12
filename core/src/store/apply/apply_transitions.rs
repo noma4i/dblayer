@@ -2,10 +2,12 @@ use super::*;
 
 pub(super) fn apply_transitions(
     connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
     transitions: &[OperationTransition],
     now_ms: i64,
     synced: &mut BTreeSet<SyncKey>,
     result: &mut CommitResult,
+    parents: &mut BTreeSet<RowRef>,
 ) -> Result<bool, StoreError> {
     let mut wrote = false;
     for transition in transitions {
@@ -27,6 +29,7 @@ pub(super) fn apply_transitions(
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
+                destroyed_parents(connection, models, *seq, parents)?;
                 delete_operation(connection, *seq)?;
                 result.operations.insert(*seq);
                 wrote = true;
@@ -98,6 +101,16 @@ pub(super) fn apply_transitions(
         }
     }
     Ok(wrote)
+}
+
+fn destroyed_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
+    let Some(prior) = crate::store::plan::op_effect::read_prior(connection, seq)? else { return Ok(()) };
+    for row in crate::store::plan::Prior::decode(prior)?.rows {
+        if let crate::store::plan::PriorRow::Destroyed { model, before, .. } = row {
+            if let Some(info) = models.get(&model) { crate::store::follow_pointer::parents_of(&info.spec, &before, parents)?; }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn operation_guard(event: OperationEvent) -> Result<String, StoreError> {

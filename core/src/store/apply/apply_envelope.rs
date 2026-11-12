@@ -121,7 +121,7 @@ fn write_followed(
 
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
-    wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
+    wrote |= apply_transitions(connection, models, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result, &mut parents)?;
     if let Some(originals) = originals {
         let reader = Reader::new(connection, models);
         let mut wanted = BTreeMap::<String, Vec<String>>::new();
