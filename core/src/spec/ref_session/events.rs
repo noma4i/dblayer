@@ -104,6 +104,7 @@ impl Session {
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 self.restore_error = None;
+                self.write_failures = 0;
                 if is_ended(cause) {
                     if self.after_publish.as_ref().is_some_and(|held| held.2.is_none()) {
                         if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::NoSession))); }
@@ -135,7 +136,9 @@ impl Session {
 
     fn detached(pending: Pending, out: &mut Out) -> Pending {
         if let Some(author) = pending.author { out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Dropped }); }
-        Pending { author: None, owner: Some(Owner::Detached), ..pending }
+        let keeps = matches!(pending.owner, Some(Owner::Operation { .. } | Owner::Unmatched { .. } | Owner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. })) || pending.owner == Some(Owner::Detached) && pending.author == Some(OUTBOX_AUTHOR);
+        let kept = pending.author.filter(|_| keeps);
+        Pending { author: kept, owner: Some(Owner::Detached), ..pending }
     }
 
     fn release(&mut self, req_id: RequestId, out: &mut Out) {
@@ -437,7 +440,7 @@ impl Session {
             }
             (State::Blocked { pending, reason }, Input::SessionCall { reply, .. }) => {
                 self.state = State::Blocked { pending, reason };
-                out.replies.push((reply, Err(Fail::StateLost)));
+                out.replies.push((reply, Err(blocked_fail(reason))));
             }
             (State::Blocked { pending, reason }, Input::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
@@ -460,7 +463,12 @@ impl Session {
                 self.state = State::Persisting { pending, batch };
                 self.write_refused(out);
             }
+            (State::Persisting { pending, batch }, Input::Rejected(rejected, Reason::NoSession | Reason::Closed)) if rejected == batch => {
+                self.write_failures = 0;
+                self.state = State::Persisting { pending, batch };
+            }
             (State::Persisting { pending, batch }, Input::Rejected(rejected, Reason::Invalid)) if rejected == batch => {
+                self.write_failures = 0;
                 self.detach_error = None;
                 Self::finish(out, &pending, Err(Fail::Invalid));
                 self.idle(out);
@@ -515,9 +523,23 @@ impl Session {
                 self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
                 self.write_refused(out);
             }
-            (State::Landing { pending, batch, answer, .. }, Input::Rejected(rejected, Reason::Invalid)) if rejected == batch => {
+            (State::Landing { pending, batch, answer, server_ended, .. }, Input::Rejected(rejected, Reason::Invalid)) if rejected == batch => {
+                self.write_failures = 0;
+                let mut pending = pending;
+                if server_ended {
+                    out.effects.push(Effect::ServerEnded { epoch: pending.epoch });
+                    if let (Some(reply), None) = (pending.reply, pending.author) {
+                        self.after_publish = Some((reply, answer.clone(), Some(pending.epoch)));
+                        pending.reply = None;
+                    }
+                    pending.author = None;
+                }
                 Self::finish_retained(out, &pending, answer, true);
                 self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::Invalid };
+            }
+            (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Rejected(rejected, Reason::NoSession | Reason::Closed)) if rejected == batch => {
+                self.write_failures = 0;
+                self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
             }
             (State::Landing { pending, answer, identity, sequence, server_ended, .. }, Input::Tick) if !self.write_in_flight => {
                 let batch = self.batch();
@@ -588,7 +610,7 @@ impl Session {
             Input::HttpError { request_id, attempt_id, temporary: true, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     out.effects.push(match body {
-                        Some(body) => Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Response(body) },
+                        Some(body) => Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Response(body, false) },
                         None => author_error_retained(author, pending.request_id, Kind::Temporary, Fail::Http, true),
                     });
                     self.state = State::PendingHeld { pending };

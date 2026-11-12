@@ -43,7 +43,6 @@ pub enum Fail {
     ResponseTooLarge { limit: u64 },
     TooLarge { size: u64, limit: u64 },
     Invalid,
-    Reason(Reason),
     Session(crate::transport::SessionCode),
     Graphql(String),
     Storage,
@@ -168,7 +167,7 @@ pub enum Kind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    Response(String),
+    Response(String, bool),
     Error(Kind, Fail, bool),
     Dropped,
 }
@@ -183,7 +182,6 @@ pub enum Effect {
     HttpRequest { pending: Pending, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     ScheduleTick { attempts: u64 },
-    ScheduleSessionTick { failures: u64 },
     GenerateCredential { op: SecretOpId },
     StoreSecret { credential: Digest, op: SecretOpId },
     ClearSecret { op: SecretOpId },
@@ -335,7 +333,7 @@ impl Session {
     fn finish_retained(out: &mut Out, pending: &Pending, result: Answer, retained: bool) {
         if let Some(reply) = pending.reply { out.replies.push((reply, result.clone())); }
         if let Some(author) = pending.author {
-            out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: match result { Ok(body) => Outcome::Response(body), Err(fail) => Outcome::Error(Kind::Permanent, fail, retained) } });
+            out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: match result { Ok(body) => Outcome::Response(body, retained), Err(fail) => Outcome::Error(Kind::Permanent, fail, retained) } });
         }
     }
 
@@ -490,7 +488,7 @@ impl Session {
     fn write_refused(&mut self, out: &mut Out) {
         self.write_failures += 1;
         self.write_in_flight = false;
-        out.effects.push(Effect::ScheduleSessionTick { failures: self.write_failures });
+        out.effects.push(Effect::ScheduleTick { attempts: self.write_failures });
     }
 
     fn clearing(&mut self, call: Option<Queued>, reason: Option<Fail>, after: AfterClear, out: &mut Out) {
