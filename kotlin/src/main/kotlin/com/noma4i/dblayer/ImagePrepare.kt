@@ -16,7 +16,7 @@ import kotlinx.coroutines.ensureActive
 internal fun probeImage(file: File): ProbeOutcome? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.path, it) }
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-    val tag = ExifInterface(file.path).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    val tag = ExifInterface(file.path).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL).takeIf { it in 1..8 } ?: ExifInterface.ORIENTATION_NORMAL
     val format = if (bounds.outMimeType == "image/png") ImageFormat.PNG else ImageFormat.JPEG
     return ProbeOutcome.Image(bounds.outWidth.toUInt(), bounds.outHeight.toUInt(), tag.toUInt(), format)
 }

@@ -215,6 +215,10 @@ private struct Row {
   let name: String
   var mayFail = false
   var kind: PrepareKind = .video
+  var turn: Int32 = 0
+  var exif: UInt32 = 1
+  var aac = true
+  var location = false
   let make: (URL) async throws -> Void
   let plan: ([String]) -> PreparePlan
   let check: (URL) async throws -> String
@@ -224,7 +228,7 @@ private func videoRow(
   _ name: String, _ clip: FixtureClip, mayFail: Bool = false, plan: @escaping ([String]) -> PreparePlan,
   check: @escaping (URL, VideoFacts) async throws -> String
 ) -> Row {
-  Row(name: name, mayFail: mayFail, make: { try await writeClip(clip, to: $0) }, plan: plan, check: { try await check($0, videoFacts($0)) })
+  Row(name: name, mayFail: mayFail, turn: clip.turned ? 90 : 0, aac: clip.codec == .h264, location: clip.metadata, make: { try await writeClip(clip, to: $0) }, plan: plan, check: { try await check($0, videoFacts($0)) })
 }
 
 private struct PictureFacts {
@@ -252,7 +256,7 @@ private func pictureRow(
 ) -> Row {
   let sideways = turn.rotationDegrees % 180 == 90
   return Row(
-    name: name, mayFail: mayFail, kind: .image,
+    name: name, mayFail: mayFail, kind: .image, exif: orientation,
     make: { try writePicture($0, type: type, width: width, height: height, orientation: orientation, alpha: alpha, tagged: true) },
     plan: { _ in photo(UInt32(width), UInt32(height), turn: turn, format: format) },
     check: {
@@ -332,8 +336,11 @@ struct SystemPreparerTests {
       }
       var keys: [String] = []
       switch await preparer.probe(path: source.path, kind: row.kind) {
-      case let .video(_, metadataKeys): keys = metadataKeys
-      case .image: break
+      case let .video(source, metadataKeys):
+        keys = metadataKeys
+        #expect(source.rotationDegrees == row.turn && source.mp4H264Aac == row.aac, "\(row.name): probe turn \(source.rotationDegrees) aac \(source.mp4H264Aac)")
+        #expect(metadataKeys.contains { $0.lowercased().contains("location") } == row.location, "\(row.name): probe keys \(metadataKeys)")
+      case let .image(_, _, exifOrientation, _): #expect(exifOrientation == row.exif, "\(row.name): probe exif \(exifOrientation)")
       case let .failed(message):
         #expect(Bool(false), "\(row.name): probe failed: \(message)")
         continue

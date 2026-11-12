@@ -125,8 +125,8 @@ internal fun metadataKeyOf(entry: Metadata.Entry): String = when (entry) {
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
-internal fun readMetadataKeys(context: Context, file: File): List<String> =
-    MetadataRetriever.Builder(context, MediaItem.fromUri(Uri.fromFile(file))).build().use { retriever ->
+internal fun readMetadataKeys(context: Context, file: File): List<String> {
+    val tracks = MetadataRetriever.Builder(context, MediaItem.fromUri(Uri.fromFile(file))).build().use { retriever ->
         val groups = retriever.retrieveTrackGroups().get()
         (0 until groups.length).flatMap { index ->
             val group = groups[index]
@@ -136,6 +136,18 @@ internal fun readMetadataKeys(context: Context, file: File): List<String> =
             }
         }
     }
+    return (tracks + listOfNotNull("location".takeIf { hasLocation(file) })).distinct()
+}
+
+private fun hasLocation(file: File): Boolean {
+    val retriever = MediaMetadataRetriever()
+    try {
+        retriever.setDataSource(file.absolutePath)
+        return retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION) != null
+    } finally {
+        retriever.release()
+    }
+}
 
 /** The muxer keeps no metadata entry of the source: no location, no creation time, no tag. */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -166,7 +178,7 @@ internal fun readVideoFacts(file: File): VideoFacts {
             (audio == null || audio.getString(MediaFormat.KEY_MIME) == MimeTypes.AUDIO_AAC)
         return VideoFacts(
             video.getInteger(MediaFormat.KEY_WIDTH), video.getInteger(MediaFormat.KEY_HEIGHT),
-            if (video.containsKey(MediaFormat.KEY_ROTATION)) video.getInteger(MediaFormat.KEY_ROTATION) else 0,
+            (if (video.containsKey(MediaFormat.KEY_ROTATION)) video.getInteger(MediaFormat.KEY_ROTATION) else 0).mod(360),
             trackRate ?: countedRate, bitrate.takeIf { it > 0 }, audio?.getInteger(MediaFormat.KEY_CHANNEL_COUNT), fits,
             video.getString(MediaFormat.KEY_MIME).orEmpty(),
             video.takeIf { it.containsKey(MediaFormat.KEY_PROFILE) }?.getInteger(MediaFormat.KEY_PROFILE),

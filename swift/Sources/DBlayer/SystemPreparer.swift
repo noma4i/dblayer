@@ -27,7 +27,7 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
        let height = properties[kCGImagePropertyPixelHeight] as? Int {
       return .image(
         width: UInt32(clamping: width), height: UInt32(clamping: height),
-        exifOrientation: (properties[kCGImagePropertyOrientation] as? UInt32) ?? 1,
+        exifOrientation: (properties[kCGImagePropertyOrientation] as? UInt32).flatMap { (1...8).contains($0) ? $0 : nil } ?? 1,
         format: (CGImageSourceGetType(source) as String?) == UTType.png.identifier ? .png : .jpeg
       )
     }
@@ -81,7 +81,7 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
       && audioFormats.allSatisfy { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC }
     let source = VideoSource(
       width: UInt32(abs(size.width)), height: UInt32(abs(size.height)),
-      rotationDegrees: Int32((atan2(transform.b, transform.a) * 180 / .pi).rounded()),
+      rotationDegrees: (Int32((atan2(transform.b, transform.a) * 180 / .pi).rounded()) % 360 + 360) % 360,
       frameRate: rate, bitrate: dataRate > 0 ? UInt32(dataRate) : nil, mp4H264Aac: fits
     )
     return .video(source: source, metadataKeys: try await metadataKeys(asset, tracks: [track] + (audioTrack.map { [$0] } ?? [])))

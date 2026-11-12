@@ -42,7 +42,7 @@ class SystemPreparerDeviceTest {
                 val source = outcome.source
                 if (expected != null) {
                     assertEquals("probe size", "${expected.width}x${expected.height}", "${source.width}x${source.height}")
-                    assertEquals("probe turn", expected.turn, ((source.rotationDegrees % 360) + 360) % 360)
+                    assertEquals("probe turn", expected.turn, source.rotationDegrees)
                     if (expected.aac != null) assertEquals("probe aac", expected.aac, source.mp4H264Aac)
                     if (expected.location) assertTrue("probe keys ${outcome.metadataKeys}", "location" in outcome.metadataKeys)
                 } else {
@@ -144,8 +144,8 @@ class SystemPreparerDeviceTest {
         Cell("H.264+AAC in limits with location (repack)", "h264-fit-location.mp4", video(false, 640, 360, strip = listOf("location")), src = Src(640, 360, location = true), check = videoRow(640, 360, keys = true)),
         Cell("H.264 above limits", "h264-large.mp4", video(true, 640, 360), src = Src(1280, 720), check = videoRow(640, 360)),
         Cell("HEVC", "hevc.mp4", video(true, 640, 360), mayFail = true, src = Src(640, 360, aac = false), check = videoRow(640, 360)),
-        Cell("portrait with turn 90", "h264-turned.mp4", video(true, 360, 640, rotation = 90), src = Src(640, 360, turn = 90), check = videoRow(360, 640)),
-        Cell("no audio track", "h264-silent.mp4", video(true, 320, 180), src = Src(640, 360, aac = false), check = videoRow(320, 180, audio = false)),
+        Cell("portrait with turn 270", "h264-turned.mp4", video(true, 360, 640, rotation = 270), src = Src(640, 360, turn = 270), check = videoRow(360, 640)),
+        Cell("no audio track", "h264-silent.mp4", video(true, 320, 180), src = Src(640, 360, aac = true), check = videoRow(320, 180, audio = false)),
         Cell("mirror", "h264-fit-location.mp4", video(true, 640, 360, mirror = true), src = Src(640, 360), check = videoRow(640, 360)),
         Cell("4K source", "h264-4k.mp4", video(true, 1920, 1080), mayFail = true, src = Src(3840, 2160), check = videoRow(1920, 1080)),
         Cell("4K SDR device clip", "arg:clip4kSdr", video(true, 1920, 1080), mayFail = true, check = videoRow(1920, 1080, frames = 1..100000)),
