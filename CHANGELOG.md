@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Start one network observer per process, read by the database and `serverConfig`.
+
 ### Fixed
 
 - A call with a sent pair answers `dropped`, not `network`, on a network failure.
