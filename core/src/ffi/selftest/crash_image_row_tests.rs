@@ -46,8 +46,8 @@ async fn a_file_cut_with_the_saved_create_answer_reopens_with_the_row_landed() {
                 other => panic!("the operation queue ended: {other:?}"),
             };
             let landed = reopened.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some();
-            let optimistic = reopened.peek_row(epoch, "Moment".into(), temporary).unwrap().is_some();
-            assert_eq!((landed, optimistic, fresh.script.count("CreateMoment")), (true, false, 0), "cut {index}: the saved answer lands the row once, with no second request");
+            let by_temporary = reopened.peek_row(epoch, "Moment".into(), temporary).unwrap().is_some_and(|row| row.id == "m77");
+            assert_eq!((landed, by_temporary, fresh.script.count("CreateMoment")), (true, true, 0), "cut {index}: the saved answer lands the row once, the temporary id reads the server row, no second request");
             assert_eq!(queue, 0, "cut {index}: the landed create leaves the queue");
             held.release();
             bound(reopened.close_database()).await.unwrap();
