@@ -10,30 +10,17 @@ fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| m
 
 fn cancels(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::CancelRequest)).count() }
 
-fn transfer() -> Ctx { Ctx { transfer: true, ..ready() } }
-
 #[test]
 fn out_closing() {
     let cause = EndCause::Closed;
-    for state in [St::Submitting, St::PersistingAttempt, St::Sending, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
+    for state in [St::WaitingDeclaration, St::Submitting, St::Queued, St::PersistingAttempt, St::Sending, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry, St::Failed] {
         let origin_transfer = state != St::MarkingRetry;
-        let ctx = Ctx { transfer: origin_transfer, ..ready() };
+        let ctx = Ctx { online: state != St::Queued, transfer: origin_transfer, ..ready() };
         let (mut twin, id) = reach(state, &ctx);
         let effects = input_of(&mut twin, id, &ctx, In::Closing);
         assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), drained(&effects), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), 1, usize::from(state == St::Sending)), "{state:?}: Closing ends the operation Closed, Drained once, the request is cancelled only when in flight");
         let want = if origin_transfer { vec![OutboxOutcome::Ended(cause.clone())] } else { Vec::new() };
         assert_eq!(transfer_outcomes(&effects), want, "{state:?}: a transfer operation gets the Ended outcome");
-    }
-}
-
-#[test]
-fn out_closing_queued() {
-    let cause = EndCause::Closed;
-    for state in [St::WaitingDeclaration, St::Queued, St::Failed] {
-        let ctx = if state == St::Queued { Ctx { online: false, ..transfer() } } else { transfer() };
-        let (mut twin, id) = reach(state, &ctx);
-        let effects = input_of(&mut twin, id, &ctx, In::Closing);
-        assert_eq!((twin.stage(id), twin.state().ops[&id].outcome.clone(), transfer_outcomes(&effects), drained(&effects), cancels(&effects)), (Some(St::Done), Some(OutboxOutcome::Ended(cause.clone())), vec![OutboxOutcome::Ended(cause.clone())], 1, 0), "{state:?}: Closing ends the waiting operation Closed, Drained once, no request to cancel");
     }
 }
 

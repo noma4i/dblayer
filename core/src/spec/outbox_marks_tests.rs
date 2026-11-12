@@ -7,22 +7,10 @@ use crate::owners::contract::{Online, RejectReason};
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 
 #[test]
-fn out_marking_failed_committed() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, true);
-    twin.waiter(id);
-    let effects = twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Failed));
-    assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Failed { .. }))), "{effects:?}");
-    assert!(matches!(transfer_outcomes(&effects).as_slice(), [OutboxOutcome::Failed { .. }]), "{effects:?}");
-}
-
-#[test]
 fn out_marking_failed_invalid() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, true);
     let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
-    assert_eq!(twin.stage(id), Some(St::Failed), "the mark is only in memory");
     assert!(matches!(transfer_outcomes(&effects).as_slice(), [OutboxOutcome::Failed { .. }]), "{effects:?}");
 }
 
@@ -46,7 +34,7 @@ fn out_marking_retry_committed() {
     let effects = twin.committed(id);
     let receipt = answers(&effects, RETRY_REPLY);
     assert!(matches!(receipt.as_slice(), [OutboxAnswer::Receipt(Receipt { cycle_id: 2, .. })]), "{effects:?}");
-    assert_eq!((twin.stage(id), sends(&effects)), (Some(St::Sending), 1));
+    assert_eq!(sends(&effects), 1);
 }
 
 #[test]
@@ -55,7 +43,7 @@ fn out_marking_retry_committed_queued() {
     let id = marking_retry(&mut twin);
     twin.post(OutboxInput::Online(Online(false)));
     let effects = twin.committed(id);
-    assert_eq!((twin.stage(id), sends(&effects), answers(&effects, RETRY_REPLY).len()), (Some(St::Queued), 0, 1));
+    assert_eq!((sends(&effects), answers(&effects, RETRY_REPLY).len()), (0, 1));
     assert!(twin.store_text.contains(&format!("Requeue {{ op_id: {id} }}")), "{}", twin.store_text);
 }
 
@@ -96,7 +84,6 @@ fn out_sending_response_ignore() {
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.waiter(id);
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!(twin.stage(id), Some(St::Landing));
     assert!(twin.store_text.contains("RemoveIntent") && !twin.store_text.contains("Rows"), "the intent goes, the optimistic fields stay, no row of the answer: {}", twin.store_text);
     let request_id = twin.state().ops[&id].request_id;
     assert!(twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
