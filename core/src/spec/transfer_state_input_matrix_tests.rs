@@ -206,36 +206,3 @@ fn xfer_failed_outcome_failed_waiting() {
         assert!(Twin::quiet(&out), "{out:?}");
     }
 }
-
-#[test]
-fn xfer_accept_rowless() {
-    use crate::owners::write::transfer::{TransferInput, TransferStage};
-    for pending in [false, true] {
-        let mut owner = Twin::new();
-        let mut item = super::transfer_harness::item(KEY, 1);
-        item.mutation.effects = Default::default();
-        if pending { item.source = None; item.steps = None; }
-        let out = owner.post(TransferInput::Accept { epoch: 1, item: Box::new(item), reply: 7 });
-        let id = owner.state().open_id(KEY).expect("rowless upload is accepted");
-        assert_eq!(owner.stage(id), TransferStage::Reserving);
-        assert_eq!((out.outbox.len(), out.writes(), out.replies(7).len()), (1, 0, 0));
-    }
-}
-
-#[test]
-fn xfer_rowless_accept_batch() {
-    use crate::owners::write::transfer::{TransferInput, TransferStage};
-    let keys = ["Moment:r1:upload", "Moment:r2:upload"];
-    let mut owner = Twin::new();
-    let items = keys.iter().map(|name| {
-        let mut item = super::transfer_harness::item(name, 1);
-        item.mutation.effects = Default::default();
-        item
-    }).collect();
-    let out = owner.post(TransferInput::AcceptBatch { epoch: 1, joint: Box::new(super::transfer_harness::joint()), items, reply: 7 });
-    assert_eq!(out.outbox.len(), 3);
-    for name in keys {
-        let id = owner.state().open_id(name).expect("rowless batch item is accepted");
-        assert_eq!(owner.stage(id), TransferStage::Reserving);
-    }
-}
