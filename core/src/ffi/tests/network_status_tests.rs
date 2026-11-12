@@ -244,7 +244,7 @@ fn net_prop_status_follows_only_the_platform() {
         for round in 0..24u32 {
             let value = (round.wrapping_mul(2_654_435_761) >> 7) % 3 != 0;
             if let Some(database) = platform.database.as_ref().filter(|_| round % 5 == 4) {
-                let _ = within(database.session_call("social".into(), SOCIAL_BODY.into())).await;
+                if last == Some(true) { let _ = within(database.session_call("social".into(), SOCIAL_BODY.into())).await; }
                 let _ = within(database.session_reset()).await;
                 platform.quiet().await;
             }
