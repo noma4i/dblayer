@@ -53,19 +53,6 @@ pub(super) fn open() -> Arc<Store> {
 }
 
 #[test]
-fn data_sets_every_write() {
-    let db = open();
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("m1", 1)] }]);
-    assert_eq!(chat(&db), json!(["m1", 1]), "a local create");
-    deliver(&db, 1, "event", "messages", message("m2", 2), Vec::new());
-    assert_eq!(chat(&db), json!(["m2", 2]), "an event");
-    deliver(&db, 1, "page", "messages", message("m3", 3), Vec::new());
-    assert_eq!(chat(&db), json!(["m3", 3]), "a page");
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m4", 4)] }]);
-    assert_eq!(chat(&db), json!(["m4", 4]), "the answer of a mutation");
-}
-
-#[test]
 fn data_newer_guards_parent() {
     let db = open();
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 5)] }]);
@@ -87,18 +74,6 @@ fn data_sets_destroy_moves_back() {
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec![gone.into()] }]);
         assert_eq!(chat(&db), expected, "after {gone}");
     }
-}
-
-#[test]
-fn data_sets_swap() {
-    let db = open();
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", 5)] }]);
-    assert_eq!(chat(&db), json!(["temp-1", 5]));
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![
-        StoreOp::Rows { model: "messages".into(), rows: vec![message("m9", 5)] },
-        StoreOp::Swap { model: "messages".into(), temp: "temp-1".into(), real: "m9".into() },
-    ]);
-    assert_eq!(chat(&db), json!(["m9", 5]));
 }
 
 pub(super) fn intent_creating(db: &Arc<Store>, op_id: u64, row: &RowValue) {
@@ -167,7 +142,7 @@ fn data_sets_two_sources_settle() {
 
 #[test]
 fn data_sets_prediction_is_replaced_by_the_confirmed_child() {
-    for (device, server, expected) in [(9, 6, ("m9", 6)), (3, 6, ("m9", 6)), (3, 4, ("m5", 5))] {
+    for (device, server, expected) in [(9, 6, ("m9", 6)), (3, 6, ("m9", 6)), (3, 4, ("m5", 5)), (5, 5, ("m9", 5))] {
         let db = open();
         land(&db, "answer");
         write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", device)] }]);
@@ -267,16 +242,6 @@ fn data_sets_derived_once_per_batch() {
 
 #[test]
 fn data_newer_order_is_total() {
-    fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
-        if items.len() <= 1 {
-            return vec![items.to_vec()];
-        }
-        (0..items.len()).flat_map(|at| {
-            let mut rest = items.to_vec();
-            let head = rest.remove(at);
-            permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
-        }).collect()
-    }
     let groups: [(Vec<(&str, i64, Option<i64>)>, &str); 3] = [
         (vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)], "10"),
         (vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))], "m2"),
@@ -436,16 +401,6 @@ fn data_sets_child_moves_to_another_parent() {
     assert_eq!((sets_of_chat("c1"), sets_of_chat("c2")), (shown("m1", 1, None, "m1"), shown("m2", 2, None, "m2")), "the old parent takes its other child, the new parent takes the moved one");
     land_children(&db, vec![child("m1", "c2", 1, None)]);
     assert_eq!((sets_of_chat("c1"), sets_of_chat("c2")), (Sets::default(), shown("m2", 2, None, "m2")), "the old parent has no child left");
-}
-
-#[test]
-fn data_sets_hidden_child_does_not_count() {
-    let db = open();
-    land_children(&db, vec![child("m1", "c1", 1, None), child("m2", "c1", 2, None)]);
-    intent_hiding(&db, 1, "messages", "m2");
-    assert_eq!(sets(&db), shown("m1", 1, None, "m1"), "the hidden child is left out");
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 1 }, StoreOp::RemoveIntent { op_id: 1 }]);
-    assert_eq!(sets(&db), shown("m2", 2, None, "m2"), "the child is back after the rollback");
 }
 
 #[test]

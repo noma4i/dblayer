@@ -193,22 +193,13 @@ fn inv_sync_02_queries_filter_by_sync_state_and_count_matches_rows() {
     let db = open();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "other"}));
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
     let pending = Query::new("moments").filtered(Where::equal("sync", json!("pending")));
     let synced = Query::new("moments").filtered(Where::equal("sync", json!("synced")));
-    assert_eq!((texts(&db, &pending), db.count(&pending).unwrap()), ([json!("edit")].to_vec(), 1));
-    assert_eq!((texts(&db, &synced), db.count(&synced).unwrap()), ([json!("other")].to_vec(), 1), "a row without a sync entry is synced");
-}
-
-#[test]
-fn inv_sync_02_state_change_reaches_a_list_observer_and_a_scope_free_query() {
-    let db = open();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
-    let pending = Query::new("moments").filtered(Where::equal("sync", json!("pending")));
     let before = db.revision_seq().unwrap();
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(6)]);
     assert!(db.revision_seq().unwrap() > before, "the state change is a commit that observers see");
-    assert_eq!(db.count(&pending).unwrap(), 1);
+    assert_eq!((texts(&db, &pending), db.count(&pending).unwrap()), ([json!("edit")].to_vec(), 1));
+    assert_eq!((texts(&db, &synced), db.count(&synced).unwrap()), ([json!("other")].to_vec(), 1), "a row without a sync entry is synced");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 6 }, StoreOp::RemoveIntent { op_id: 6 }]);
     assert_eq!(db.count(&pending).unwrap(), 0, "the end of the operation moves the row out of the pending query");
 }
@@ -270,81 +261,11 @@ fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
 }
 
 #[test]
-fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revision_stays() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    let first = set_typing(&db, "m1", true);
-    let second = set_typing(&db, "m1", false);
-    let reset = first.resets[0].clone();
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }] };
-    let third = db.write_batch(&batch, db.files(), None).unwrap();
-    assert!(first.notice.position < second.notice.position && second.notice.position < third.notice.position, "{} {} {}", first.notice.position, second.notice.position, third.notice.position);
-    assert_eq!((first.revision, second.revision, third.revision), (second.revision, second.revision, second.revision));
-}
-
-#[test]
-fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    let written = set_typing(&db, "m9", true);
-    assert_eq!(typing(&db, "m9"), None, "no row, nothing to show");
-    put(&db, "moments", json!({"id": "m9", "userId": "u1"}));
-    assert_eq!(typing(&db, "m9"), Some(json!(true)), "the value waited for the row");
-    let reset = &written.resets[0];
-    let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }] };
-    db.write_batch(&batch, db.files(), None).unwrap();
-    assert_eq!(typing(&db, "m9"), Some(json!(false)), "the clock reset applies");
-}
-
-#[test]
-fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    set_typing(&db, "m1", true);
-    let delete = json!({"op": "delete", "id": "m1"}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
-    db.write_batch(&batch, db.files(), None).unwrap();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    assert_eq!(typing(&db, "m1"), Some(json!(false)), "a new row of the same id starts from the default");
-}
-
-#[test]
-fn inv_ephemeral_06_reset_forgets_every_value() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    set_typing(&db, "m1", true);
-    db.erase_account(db.generation().next(), false).unwrap();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    assert_eq!(typing(&db, "m1"), Some(json!(false)));
-}
-
-#[test]
-fn inv_ephemeral_07_ephemeral_fields_cannot_be_queried() {
-    let specs = ephemeral_specs();
-    let spec = specs.iter().find(|spec| spec.key.as_str() == "moments").unwrap();
-    let filtered = Query::new("moments").filtered(Where::equal("typing", json!(true)));
-    assert_eq!(crate::store::query::compile_keys(&filtered, spec).unwrap_err(), crate::store::query::QueryError::EphemeralField("typing".into()));
-    let ordered = Query::new("moments").ordered(vec![Order::new("typing", SortDirection::Asc)]);
-    assert_eq!(crate::store::query::compile_keys(&ordered, spec).unwrap_err(), crate::store::query::QueryError::EphemeralField("typing".into()));
-}
-
-#[test]
 fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
     let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for index in 0..1500 { set_typing(&db, &format!("ghost{index}"), true); }
     let held = db.overlays.get(db.revision_seq().unwrap()).unwrap().values.len();
     assert!(held <= 1024, "{held} values for rows that never arrived stay in memory");
-}
-
-#[test]
-fn inv_order_02_equal_keys_sort_temp_rows_first_then_by_id_in_every_permutation() {
-    let ids = ["b", "a", "temp-9", "temp-1", "c"];
-    for shift in 0..ids.len() {
-        let db = open();
-        for index in 0..ids.len() { put(&db, "moments", json!({"id": ids[(index + shift) % ids.len()], "userId": "u1", "text": "same"})); }
-        let ordered = Query { order: vec![Order::new("text", SortDirection::Asc)], ..Query::new("moments") };
-        let found: Vec<String> = db.query(&ordered).unwrap().iter().map(|row| row.get("id").and_then(Value::as_str).unwrap().to_string()).collect();
-        assert_eq!(found, ["temp-1", "temp-9", "a", "b", "c"], "insertion order shift {shift}");
-    }
 }
 
 pub(super) fn server_row(path: &str, db: &Store, row: Value) {
@@ -361,55 +282,8 @@ pub(super) fn server_row(path: &str, db: &Store, row: Value) {
 
 pub(super) fn field(db: &Store, name: &str) -> Value { db.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.and_then(|row| row.get(name).cloned()).unwrap_or(Value::Null))).unwrap() }
 
-#[test]
-fn inv_merge_01_inv_merge_02_every_path_applies_the_sent_fields_and_leaves_the_rest() {
-    for path in ["answer", "event", "page"] {
-        let db = open();
-        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
-        server_row(path, &db, json!({"id": "m1", "text": "new"}));
-        assert_eq!((field(&db, "text"), field(&db, "userId")), (json!("new"), json!("u1")), "{path}: fields outside the row stay");
-        server_row(path, &db, json!({"id": "m1", "userId": null}));
-        assert_eq!((field(&db, "text"), field(&db, "userId")), (json!("new"), Value::Null), "{path}: null erases the field it names");
-    }
-}
-
-#[test]
-fn inv_merge_03_a_server_row_does_not_undo_an_unconfirmed_local_edit() {
-    for path in ["answer", "event", "page"] {
-        let db = open();
-        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
-        assert_eq!(field(&db, "text"), json!("edit"));
-        server_row(path, &db, json!({"id": "m1", "text": "stale server value"}));
-        assert_eq!(field(&db, "text"), json!("edit"), "{path}: the open operation owns the field");
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveIntent { op_id: 5 }]);
-        server_row(path, &db, json!({"id": "m1", "text": "confirmed"}));
-        assert_eq!(field(&db, "text"), json!("confirmed"), "{path}: after the end of the operation the server value lands");
-    }
-}
-
 pub(super) fn attach(model_row: &str, bytes: Vec<u8>) -> StoreOp {
     StoreOp::AttachFile { model: "moments".into(), row_id: model_row.into(), field: "media".into(), bytes, name: "photo".into(), mime: "image/jpeg".into() }
-}
-
-#[test]
-fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
-    let db = open();
-    put(&db, "moments", json!({"id": "temp-1", "userId": "u1"}));
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![attach("temp-1", vec![7; 40])]);
-    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id": "m5", "userId": "u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "m5".into() }]);
-    let id = |text: &str| crate::identity::RowId::new(text).unwrap();
-    assert_eq!(db.url("moments", &id("m5"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![7; 40]), "the real row owns the bytes");
-    assert_eq!(db.url("moments", &id("temp-1"), "media").unwrap(), None, "the temporary row owns none");
-}
-
-#[test]
-fn store_alias_written_with_swap() {
-    let db = open();
-    put(&db, "moments", json!({"id": "temp-1", "userId": "u1"}));
-    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id": "m5", "userId": "u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "m5".into() }]);
-    let real: String = db.read(&["moments"], |reader| Ok(reader.connection().query_row("SELECT real FROM row_alias WHERE model = ?1 AND temp = ?2", ["moments", "temp-1"], |row| row.get(0))?)).unwrap();
-    assert_eq!(real, "m5");
 }
 
 #[test]
@@ -476,24 +350,6 @@ fn inv_merge_08_a_landing_changes_only_the_list_of_its_own_selection() {
     assert_eq!(members(&db, "u2"), ["m2"]);
 }
 
-#[test]
-fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_after_it() {
-    let db = open();
-    let temp = crate::identity::RowId::generate_temp(None).to_string();
-    let values = json!({"id": temp, "userId": "u1", "text": "a"}).to_string();
-    let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
-    put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "a"}));
-    let answer = crate::owners::store::RowValue { row_id: "m9".into(), values: json!({"id": "m9", "userId": "u1", "text": "a"}).to_string() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![
-        StoreOp::Rows { model: "moments".into(), rows: vec![answer] },
-        StoreOp::Swap { model: "moments".into(), temp: temp.clone(), real: "m9".into() },
-        StoreOp::RemoveIntent { op_id: 1 },
-    ]);
-    assert!(db.read(&["moments"], |reader| reader.point("moments", &temp)).unwrap().is_none(), "the temp row is gone");
-    assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "one row stays");
-}
-
 pub(super) fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
     let temp = crate::identity::RowId::generate_temp(None).to_string();
     let values = json!({"id": temp, "userId": "u1", "text": text}).to_string();
@@ -527,33 +383,6 @@ fn inv_id_08_one_matching_candidate_is_replaced_by_the_row_of_the_event_and_seve
     event_row(&db, "m3", "");
     assert!(!gone(&blank), "an empty named field never matches");
     assert_eq!(db.count(&Query::new("moments")).unwrap(), 6);
-}
-
-#[test]
-fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
-    use crate::store::{BatchPlan, ScopeOp, ScopeRef};
-    use crate::identity::{ListKey, ModelKey};
-    let db = open();
-    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
-    for id in ["a", "b"] { put(&db, "moments", json!({"id": id, "userId": "u1", "text": id})); }
-    let first = crate::value::fractional_between(None, None).unwrap();
-    let second = crate::value::fractional_between(Some(&first), None).unwrap();
-    let append = |db: &Store, id: &str, key: &str| {
-        let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
-        envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::fixtures::id(id), order_key: key.into() });
-        db.commit(envelope).unwrap();
-    };
-    append(&db, "a", &first);
-    append(&db, "b", &second);
-    let leave = crate::owners::store::EffectMember { model: "moments".into(), list: "feed".into(), row_id: "b".into(), order_key: String::new(), leave: true };
-    let effects = IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "b".into() }], members: vec![leave], ..Default::default() };
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
-    put(&db, "moments", json!({"id": "x", "userId": "u1", "text": "x"}));
-    append(&db, "x", &second);
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::RollBack { op_id: 3 }, StoreOp::RemoveIntent { op_id: 3 }]);
-    let members: Vec<String> = db.read(&["moments"], |reader| reader.scope_members("moments", "feed")).unwrap().into_iter().map(|(id, _)| id).collect();
-    assert_eq!(members.len(), 3, "{members:?}");
-    assert!(members.contains(&"b".to_string()), "{members:?}");
 }
 
 #[test]

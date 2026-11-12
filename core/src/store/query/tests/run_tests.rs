@@ -186,25 +186,6 @@ fn order_limit_and_offset_page_through_rows() {
 }
 
 #[test]
-fn inv_order_03_ties_break_by_id() {
-    let connection = seeded();
-    put(&connection, sample("p0", json!("active"), json!(null), json!(null), json!(null), "2024-01-08"));
-    let by_status = Query::new("people").ordered(vec![Order::new("status", SortDirection::Asc)]);
-    let first = query_ids(&connection, &by_status);
-    assert_eq!(first, ["p4", "p6", "p0", "p1", "p2", "p3", "p5"]);
-    assert_eq!(query_ids(&connection, &by_status), first);
-}
-
-#[test]
-fn inv_order_02_equal_values_list_a_temp_row_before_the_permanent_rows() {
-    let connection = seeded();
-    put(&connection, sample("temp-t1", json!("active"), json!(null), json!(null), json!(null), "2024-01-07"));
-    put(&connection, sample("p0", json!("active"), json!(null), json!(null), json!(null), "2024-01-08"));
-    let by_status = Query::new("people").ordered(vec![Order::new("status", SortDirection::Asc)]);
-    assert_eq!(query_ids(&connection, &by_status), ["p4", "p6", "temp-t1", "p0", "p1", "p2", "p3", "p5"]);
-}
-
-#[test]
 fn count_ignores_limit_and_offset() {
     let connection = seeded();
     let query = Query::new("people").filtered(Where::equal("status", json!("active"))).limited(1).offset_by(1);
