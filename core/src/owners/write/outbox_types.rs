@@ -325,6 +325,8 @@ pub struct QueuedOperation {
     pub attempts: u32,
     /// Storage refusals in a row of the batches of the operation (P-DATA-102).
     pub storage_refusals: u32,
+    /// The Store refused the batch as `Invalid` after the server outcome: the batch goes again without rows (P-OUT-60).
+    pub rowless: bool,
     pub cycle_id: u64,
     pub request_id: RequestId,
     pub sequence: u64,

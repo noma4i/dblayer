@@ -289,6 +289,7 @@ impl OutboxState {
                 stage,
                 attempts: 1,
                 storage_refusals: 0,
+                rowless: false,
                 cycle_id: 1,
                 request_id: crate::owners::contract::next_request_id(),
                 sequence,
@@ -371,8 +372,7 @@ impl OutboxState {
                 .chain(Self::landing_shows_of(operation))
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
-            CommitKind::Rollback => [StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]
-                .into_iter()
+            CommitKind::Rollback => (!operation.rowless).then_some(StoreOp::RollBack { op_id }).into_iter().chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
                 .chain(((operation.pending_owned || operation.pair_in_flight) && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
                 .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],

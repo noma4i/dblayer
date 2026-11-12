@@ -9,7 +9,7 @@ use crate::owners::contract::{RejectReason, ReplyId};
 
 use crate::owners::store::{RowValue};
 use crate::owners::session::SessionInput;
-use crate::runtime::{Effect, Effects, Epoch, Outbound};
+use crate::runtime::{Effect, Effects, Epoch, Outbound, ScheduleId};
 
 
 
@@ -443,6 +443,13 @@ impl OutboxState {
 
     pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {
         self.online = on;
+        if !on {
+            let waiting: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Sending && operation.waiting_retry).map(|operation| operation.op_id).collect();
+            for op_id in waiting {
+                fx.push(Effect::Cancel(ScheduleId(op_id)));
+                self.requeue(op_id, fx);
+            }
+        }
         self.drain(now, fx);
     }
 

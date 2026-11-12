@@ -259,6 +259,7 @@ impl OutboxState {
     pub(super) fn operation_rejected(&mut self, now: u64, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
+        if !matches!(reason, RejectReason::Storage(_)) { if let Some(operation) = self.ops.get_mut(&op_id) { operation.storage_refusals = 0; } }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
             self.submit_refused(op_id, reason, fx);
             self.ops.remove(&op_id);
@@ -302,31 +303,6 @@ impl OutboxState {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
             }
-            RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.transfer_discards.contains_key(&op_id) => {
-                let Some((id, cycle)) = self.transfer_discards.remove(&op_id) else { return };
-                let fault = Fault::Rejected(RejectReason::Storage(detail));
-                let operation = &self.ops[&op_id];
-                let row = match &operation.op.origin {
-                    OpSource::TransferGroup { members, .. } => members.iter().find(|member| member.transfer_id == id && member.cycle_id == cycle).map(|member| member.row_id.as_str()),
-                    _ => Some(operation.op.row_id.as_str()),
-                };
-                if let (Some(peer), Some(row)) = (self.peers.transfer, row) {
-                    let key = format!("{}:{}:{}", operation.op.model, row, operation.op.action);
-                    let result = Err(fault.clone());
-                    fx.push(Effect::Send(Outbound::new(peer, super::transfer::TransferInput::DiscardOutcome { key, result })));
-                }
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
-                self.return_dependents(op_id);
-                for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
-            }
-            RejectReason::Storage(detail) if kind == CommitKind::Rollback && self.confirmed_discards.contains_key(&op_id) => {
-                let error = self.confirmed_discards[&op_id].1.clone();
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
-                self.return_dependents(op_id);
-                let fault = Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")));
-                self.answer_discarded_outcome(op_id, OutboxAnswer::Err(fault.clone()), fx);
-                for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
-            }
             RejectReason::Storage(_) => self.storage_retry(op_id, fx),
             RejectReason::NoSession | RejectReason::Closed if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::NoSession | RejectReason::Closed => {
@@ -343,6 +319,8 @@ impl OutboxState {
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
                 self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
+            RejectReason::Invalid(_) if stage == Stage::Landing => self.without_rows(op_id, CommitKind::Land, fx),
+            RejectReason::Invalid(_) if stage == Stage::RollingBack(Why::Rejected) => self.without_rows(op_id, CommitKind::Rollback, fx),
             RejectReason::Invalid(ref detail) => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
@@ -379,6 +357,22 @@ impl OutboxState {
                 }
             },
         }
+    }
+
+    /// The Store refused the landing or the rollback of a server outcome as invalid data: the same outcome lands by a batch without rows (R14, P-OUT-60). A second `Invalid` of that batch cannot happen (P-DATA-98).
+    fn without_rows(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
+        let Some(operation) = self.ops.get_mut(&op_id) else { return };
+        if operation.rowless { return; }
+        operation.rowless = true;
+        if kind == CommitKind::Land {
+            operation.landing.clear();
+            operation.swaps.clear();
+            operation.missing.clear();
+            operation.missing_destroy = false;
+            operation.result = None;
+            operation.landed = None;
+        }
+        self.store(op_id, kind, fx);
     }
 
     fn pending_cancelled_intents(&self, created: OpId) -> bool {
