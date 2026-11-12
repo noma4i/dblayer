@@ -36,17 +36,6 @@ fn compare_ids(left: &str, right: &str) -> Ordering {
 }
 
 pub(crate) fn is_newer(candidate: &Order<'_>, current: &Order<'_>) -> bool {
-    if let (Some(candidate_id), Some(current_id)) = (candidate.id, current.id) {
-        if candidate_id == current_id {
-            return true;
-        }
-        if is_temp_id(candidate_id) != is_temp_id(current_id) {
-            return is_temp_id(candidate_id);
-        }
-    }
-    if current.id.is_none() && current.tuple.iter().all(Option::is_none) {
-        return true;
-    }
     for (candidate, current) in candidate.tuple.iter().zip(&current.tuple) {
         if let (Some(candidate), Some(current)) = (candidate, current) {
             match compare_values(candidate, current) {
@@ -64,26 +53,15 @@ impl AssociationSpec {
         self.sets.iter().find(|(_, child)| child.as_str() == "id").map(|(parent, _)| parent.as_str())
     }
 
-    fn parent_order<'a>(&'a self, row: &'a Map<String, Value>) -> Order<'a> {
-        Order {
-            id: self.pointer_field().and_then(|field| present(row.get(field))).and_then(Value::as_str),
-            tuple: self.newer.iter().map(|newer| present(row.get(&newer.parent))).collect(),
-        }
-    }
-
     fn child_order<'a>(&'a self, row: &'a Map<String, Value>) -> Order<'a> {
         Order { id: row.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|newer| present(row.get(&newer.child))).collect() }
-    }
-
-    pub fn child_is_newer(&self, parent: &Map<String, Value>, child: &Map<String, Value>) -> bool {
-        self.newer.is_empty() || is_newer(&self.child_order(child), &self.parent_order(parent))
     }
 
     pub fn newest<'a>(&self, children: impl IntoIterator<Item = &'a Map<String, Value>>) -> Option<&'a Map<String, Value>> {
         children.into_iter().reduce(|best, child| if is_newer(&self.child_order(child), &self.child_order(best)) { child } else { best })
     }
 
-    /// P-DATA-59: the fields `sets:` from the server value of the parent and its newest child, a temporary child keeps the newer values of the newest confirmed one.
+    /// The fields `sets:` from the server value of the parent and its newest child, a temporary winner keeps the newer values of the newest confirmed child.
     pub fn derived(&self, server: &Map<String, Value>, newest: Option<&Map<String, Value>>, confirmed: Option<&Map<String, Value>>) -> Map<String, Value> {
         let mut values = self.chosen(server, newest);
         if newest.and_then(|child| child.get("id")).and_then(Value::as_str).is_some_and(is_temp_id) {
@@ -113,7 +91,6 @@ impl AssociationSpec {
 const SERVER_VALUE: &str = "server__";
 
 impl ModelSpec {
-    /// P-DATA-58: every parent field a child `sets` gets a hidden field beside it that keeps the value the server sent.
     pub fn with_server_values(models: &[ModelSpec]) -> Vec<ModelSpec> {
         let set: std::collections::BTreeSet<(&str, &str)> = models
             .iter()

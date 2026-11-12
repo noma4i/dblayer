@@ -36,7 +36,7 @@ pub(crate) fn parents_of(spec: &ModelSpec, row: &Row, parents: &mut BTreeSet<Row
     Ok(())
 }
 
-/// P-DATA-56: the one entry of `F` for the parents a write touched, the derived rows go through `apply` in the same transaction.
+/// The one entry of the derived parent fields for the parents a write touched, the derived rows go through `apply` in the same transaction.
 pub(super) fn settle_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, results: &[super::CommitResult], revision: i64, apply: impl FnOnce(super::BatchPlan) -> Result<super::CommitResult, StoreError>, generation: crate::identity::Generation) -> Result<(Option<super::CommitResult>, usize, BTreeSet<String>), StoreError> {
     let parents: BTreeSet<RowRef> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
     let (derived, read, stale) = derived_parents(reader, models, &parents, revision)?;

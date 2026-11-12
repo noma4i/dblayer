@@ -169,7 +169,6 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
         }).collect()
 }
 
-/// P-DATA-59: the order of the children `is_newer` ranks first, as SQL terms (term, descending).
 pub(crate) fn newer_order(association: &AssociationSpec) -> Vec<(String, bool)> {
     std::iter::once((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false))
         .chain(association.newer.iter().map(|newer| (sql_ident(&column_name(&newer.child)), true)))
