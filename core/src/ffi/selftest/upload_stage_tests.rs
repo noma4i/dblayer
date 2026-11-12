@@ -133,7 +133,7 @@ async fn xfer_stage_commit_early() {
     }
 }
 
-/// A process killed at any commit of `stage` -> parts -> `Held` leaves a base that the next opening cleans: no held row, no file of a transfer, no optimistic row, one abort for the multipart the image knew and no other request.
+/// A process killed at any commit of `stage` -> parts -> `Held` leaves a base that the next opening cleans: no held row, no file of a transfer, no optimistic row, one abort for the multipart the image knew; the only other requests are the saved pairs of the steps in flight, which Session sends again (D-246).
 #[tokio::test(flavor = "multi_thread")]
 async fn crash_image_held() {
     let directory = tempfile::tempdir().unwrap();
@@ -154,13 +154,20 @@ async fn crash_image_held() {
         let (secret, id) = (secret.clone(), id.clone());
         async move {
             let known = rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM (SELECT upload_id FROM sync_upload WHERE upload_id IS NOT NULL UNION SELECT upload_id FROM upload_orphan)", [], |row| row.get::<_, i64>(0)).unwrap();
-            let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS, |fresh| fresh.script.data("AbortMultipart", ABORTED)).await;
+            let pairs = rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM encrypted_pending", [], |row| row.get::<_, i64>(0)).unwrap();
+            let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS, |fresh| {
+                fresh.script.data("AbortMultipart", ABORTED);
+                fresh.script.data("InitMultipart", INIT);
+                fresh.script.data("PresignParts", PRESIGN);
+            }).await;
             let rows = || rusqlite::Connection::open(&image).unwrap().query_row("SELECT count(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap();
             let files = || std::fs::read_dir(files_of(&image).join("transfers")).map_or(0, |found| found.count());
             let aborts = usize::try_from(known).unwrap();
-            crate::test_wait::settled(&reopened, "the held transfer is gone", || rows() == 0 && files() == 0 && fresh.script.count("AbortMultipart") == aborts).await;
+            crate::test_wait::settled(&reopened, "the held transfer is gone", || { rows() == 0 && files() == 0 && fresh.script.count("AbortMultipart") == aborts }).await;
             assert!(reopened.peek_row(reopened.session_epoch(), "Moment".into(), id).unwrap().is_none(), "cut {index}: no optimistic row");
-            assert!(fresh.script.names().iter().all(|name| name == "AbortMultipart"), "cut {index}: {:?}", fresh.script.names());
+            let sent = fresh.script.names();
+            assert!(sent.iter().all(|name| matches!(name.as_str(), "AbortMultipart" | "InitMultipart" | "PresignParts")), "cut {index}: nothing completes and nothing is created: {sent:?}");
+            assert!(pairs > 0 || sent.iter().all(|name| name == "AbortMultipart"), "cut {index}: only the pair the image saved goes again: {sent:?}");
             bound(reopened.close_database()).await.unwrap();
             aborts
         }
