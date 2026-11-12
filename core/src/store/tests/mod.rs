@@ -4,6 +4,7 @@ mod atomic_tests;
 mod follow_validate_tests;
 mod cells_tests;
 mod data_sets_tests;
+mod data_sets_hidden_tests;
 mod sets_reference_tests;
 mod snapshot_world_tests;
 mod snapshot_prop_tests;
