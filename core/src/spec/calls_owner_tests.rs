@@ -661,20 +661,14 @@ fn call_closing() {
 }
 
 #[test]
-fn call_epoch_ended_close() {
-    let out = sending().feed(Input::EpochEnded(End::Close));
-    assert_eq!(out.replies, vec![(10, Err(CallError::Closed))], "an epoch ended by close answers the run with Closed");
-}
-
-#[test]
-fn call_epoch_ended_close_then_closing() {
+fn call_epoch_ended_close_answers_closed_once() {
     let mut twin = sending();
-    twin.feed(Input::EpochEnded(End::Close));
+    let out = twin.feed(Input::EpochEnded(End::Close));
+    assert_eq!(out.replies, vec![(10, Err(CallError::Closed))], "an epoch ended by close answers the run with Closed");
     let out = twin.feed(Input::Closing);
     assert!(out.replies.is_empty(), "the run has exactly one answer");
-    let answers = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 10, .. })).count();
     let drained = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Drained(_))).count();
-    assert_eq!((answers, drained), (1, 1), "one Closed answer, one Drained");
+    assert_eq!(drained, 1, "one Drained");
 }
 
 #[test]
