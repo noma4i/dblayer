@@ -87,3 +87,4 @@ mod crash_image_session_tests;
 mod crash_image_row_tests;
 mod crash_image_update_tests;
 mod crash_image_call_tests;
+mod crash_image_upload_tests;
