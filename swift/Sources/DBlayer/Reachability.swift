@@ -2,12 +2,31 @@ import Foundation
 import Network
 
 struct SystemPath {
-  /// Reports the path state at once and on every change until the returned stop runs.
-  func observe(_ changed: @escaping @Sendable (Bool) -> Void) -> @Sendable () -> Void {
+  /// Reports the path at once and on every change until the returned stop runs. The network number grows when the main interface changes.
+  func observe(_ changed: @escaping @Sendable (NetworkPath) -> Void) -> @Sendable () -> Void {
     let monitor = NWPathMonitor()
-    monitor.pathUpdateHandler = { changed($0.status == .satisfied) }
+    let network = NetworkCounter()
+    monitor.pathUpdateHandler = { path in
+      let online = path.status == .satisfied
+      let transport: NetworkTransport = !online ? .none : path.usesInterfaceType(.wifi) ? .wifi : path.usesInterfaceType(.cellular) ? .cellular : .other
+      changed(NetworkPath(online: online, transport: transport, network: network.number(of: path.availableInterfaces.first?.name)))
+    }
     monitor.start(queue: DispatchQueue(label: "com.noma4i.dblayer.reachability"))
     return { monitor.cancel() }
+  }
+}
+
+/// The number of the default network: it grows each time the name of the main interface changes.
+private final class NetworkCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var interface: String?
+  private var count: UInt64 = 0
+
+  func number(of name: String?) -> UInt64 {
+    lock.withLock {
+      if name != nil, name != interface { count += 1; interface = name }
+      return count
+    }
   }
 }
 
@@ -31,7 +50,7 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
 
 /// The observer of `NetworkStatus`: the core starts it once per process and never stops it.
 final class StatusObserver: PlatformObserver, @unchecked Sendable {
-  func start(sink: OnlineSink) { _ = SystemPath().observe { sink.setOnline(online: $0) } }
+  func start(sink: OnlineSink) { _ = SystemPath().observe { sink.setPath(path: $0) } }
 
   func stop() {}
 }
