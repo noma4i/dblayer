@@ -1046,8 +1046,10 @@ impl StateOwner for Transfers {
         if let TransferInput::WhenQuiet { reply } = input {
             state.quiet_waiters.push(reply);
         } else if state.phase == Phase::Restoring {
+            state.handled += 1;
             state.restoring(now, input, &mut fx);
         } else {
+            state.handled += 1;
             state.handle(now, input, &mut fx);
         }
         state.release_quiet(&mut fx);

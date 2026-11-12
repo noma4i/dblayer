@@ -56,7 +56,7 @@ impl TransferState {
 
     pub(super) fn release_quiet(&mut self, fx: &mut Fx) {
         if !self.quiet_waiters.is_empty() && self.is_quiet() {
-            for waiter in std::mem::take(&mut self.quiet_waiters) { reply(fx, waiter, TransferAnswer::Ok); }
+            for waiter in std::mem::take(&mut self.quiet_waiters) { reply(fx, waiter, TransferAnswer::Quiet(self.handled)); }
         }
     }
 

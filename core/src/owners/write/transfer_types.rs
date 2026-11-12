@@ -369,6 +369,7 @@ pub enum TransferAnswer {
     Receipts(Vec<Receipt>),
     Outcome(OutboxOutcome, Option<crate::store::Row>),
     Ok,
+    Quiet(u64),
     Cancelled(bool),
     Err(Fault),
 }
@@ -706,6 +707,7 @@ pub struct TransferState {
     /// The held calls replay: a start waits until all of them are classified.
     pub starts_held: bool,
     pub(super) quiet_waiters: Vec<ReplyId>,
+    pub(super) handled: u64,
     pub closing: bool,
     pub(super) ended: bool,
     pub(super) queue_error: Option<String>,
@@ -756,6 +758,7 @@ impl TransferState {
             abort_root: "abortMultipart".into(),
             starts_held: false,
             quiet_waiters: Vec::new(),
+            handled: 0,
             closing: false,
             ended: false,
             queue_error: None,

@@ -304,6 +304,15 @@ async fn xfer_writes_quiet() {
     let waits = tokio::spawn(async move { database.writes_quiet(closing_epoch).await });
     closing.database.close_now();
     bound(waits).await.unwrap();
+
+    let restart = started(MEBIBYTE).await;
+    restart.database.close_now();
+    restart.detached.finish_offline(0, Detached::ok());
+    let secret = restart.stand.rig.credentials.inner.value().unwrap();
+    let (_again, reopened) = reopen_with(&restart.live, &secret, &[CREATE_MOMENT], restart.detached.clone(), script).await;
+    bound(reopened.writes_quiet(reopened.session_epoch())).await;
+    assert!(landed(&reopened), "the answer after the opening comes after the restored transfer applied the outcome of its task");
+    reopened.close_now();
 }
 
 /// P-XFER-74: a process killed at any commit between the start of the PUT and its outcome leaves a file that never sends the PUT of the part a second time before `PutMissing`, and finishes the upload from the outcome of the same task.
