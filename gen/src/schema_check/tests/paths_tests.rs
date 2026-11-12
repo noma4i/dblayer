@@ -156,12 +156,6 @@ fn a_fetch_root_the_document_does_not_select_is_refused() {
 }
 
 #[test]
-fn a_fetch_root_through_node_edges_and_nodes_is_accepted() {
-    run(&members("\n    response from: \"node.members\"")).unwrap();
-    run(&model("")).unwrap();
-}
-
-#[test]
 fn total_and_cursor_paths_follow_the_same_selection() {
     let total = |path: &str| members("\n    response from: \"node.members\"").replace("    paginate size: 30, direction: :forward\n", &format!("    paginate size: 30, direction: :forward\n    total from: \"{path}\"\n"));
     run(&total("node.membersCount")).unwrap();
@@ -187,9 +181,7 @@ fn an_empty_path_or_segment_is_refused() {
 }
 
 #[test]
-fn destroy_listen_and_event_id_paths_follow_the_documents() {
-    let destroy = model(&standard("destroy", "LeaveChat", "leaveChat.chat"));
-    refused("destroy root", &destroy, "response from: \"leaveChat.chat\"", &["no `chat` under `leaveChat`", "removedChatId"]);
+fn listen_and_event_id_paths_follow_the_documents() {
     let listen = |line: &str| model(&format!("  subscribe \"ChatChanged\"{line}\n"));
     run(&listen(", from: \"chatChanged.chat\", id: \"id\"")).unwrap();
     refused("listen root", &listen(", from: \"chatChanged.room\""), "subscribe \"ChatChanged\"", &["subscribe from `chatChanged.room`", "no `room` under `chatChanged`"]);

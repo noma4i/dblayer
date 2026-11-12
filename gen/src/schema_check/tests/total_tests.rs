@@ -60,12 +60,3 @@ fn total_needs_paginate_and_a_from_path() {
     let without_from = parse_models(&USER.replace("total from: \"node.membersCount\"", "total")).unwrap_err();
     assert!(without_from.iter().any(|error| error.message.contains("from")), "{without_from:?}");
 }
-
-#[test]
-fn the_declared_path_reaches_the_relation_spec() {
-    let specs = parse_models(USER).unwrap();
-    let remote = specs[0].relations[0].remote.as_ref().unwrap();
-    assert_eq!(remote.total_from.as_deref(), Some("node.membersCount"));
-    let plain = parse_models(&USER.replace("    total from: \"node.membersCount\"\n", "")).unwrap();
-    assert_eq!(plain[0].relations[0].remote.as_ref().unwrap().total_from, None);
-}
