@@ -9,6 +9,7 @@ use super::value::Observation;
 use crate::ffi::{ByteProgress, CredentialStore, DbError, EncryptedReply, FakeHttp, FakeTransport, PutReply, TransportRequest};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::tests::peer_tests::CablePeer;
+use crate::server_contract::CableContract;
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 type Reply = Result<String, DbError>;
@@ -67,7 +68,9 @@ fn error_of(kind: &str) -> Option<DbError> {
 
 impl Mock {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()), arrived: tokio::sync::Notify::new() })
+        let contract = Arc::new(Mutex::new(CableContract { answer_ping: true, ..Default::default() }));
+        let peer = CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()).with_contract(contract, Arc::new(crate::runtime::ManualClock::new(std::time::Duration::ZERO)));
+        Arc::new(Self { inner: Mutex::new(Inner::default()), peer, arrived: tokio::sync::Notify::new() })
     }
 
     fn record(&self, kind: &'static str, purpose: &'static str, hold: impl FnOnce(&mut Inner, String)) {
