@@ -37,6 +37,19 @@ pub fn permanent_row_flag(column: &str) -> String {
     format!("substr({column}, 1, {}) <> '{TEMP_ID_PREFIX}'", TEMP_ID_PREFIX.len())
 }
 
+const ID_WIDTH: usize = 20;
+const ID_MAX: &str = "18446744073709551615";
+
+/// The one order of ids (P-DATA-118): the key is compared as bytes, the code compares it and `id_order_sql` gives the same key to `ORDER BY` and to indexes.
+pub fn id_order_key(id: &str) -> String {
+    let numeric = !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && (id == "0" || !id.starts_with('0')) && id.len() <= ID_WIDTH && (id.len() < ID_WIDTH || id <= ID_MAX);
+    if numeric { format!("0{id:0>ID_WIDTH$}") } else { format!("1{id}") }
+}
+
+pub fn id_order_sql(column: &str) -> String {
+    format!("CASE WHEN {column} <> '' AND {column} NOT GLOB '*[^0-9]*' AND ({column} = '0' OR {column} NOT GLOB '0*') AND (length({column}) < {ID_WIDTH} OR (length({column}) = {ID_WIDTH} AND {column} <= '{ID_MAX}')) THEN '0' || substr('{zeros}' || {column}, -{ID_WIDTH}) ELSE '1' || {column} END", zeros = "0".repeat(ID_WIDTH))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     #[error("row id must not be blank")]

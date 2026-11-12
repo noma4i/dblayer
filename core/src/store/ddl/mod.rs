@@ -135,7 +135,7 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     let table = table_name(model.key.as_str());
     let mut indexes: Vec<Vec<(String, bool)>> = promoted_columns(model).map(|(name, _)| vec![(sql_ident(&name), false)]).collect();
     indexes.extend(model.indexes.iter().map(|fields| fields.iter().map(|field| (sql_ident(&column_name(field)), false)).collect()));
-    for association in model.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty() && !association.newer.is_empty()) {
+    for association in model.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty()) {
         indexes.push(std::iter::once((sql_ident(&column_name(&association.foreign_key)), false)).chain(newer_order(association)).collect());
     }
     for relation in &model.relations {
@@ -172,7 +172,7 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
 pub(crate) fn newer_order(association: &AssociationSpec) -> Vec<(String, bool)> {
     std::iter::once((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false))
         .chain(association.newer.iter().map(|newer| (sql_ident(&column_name(&newer.child)), true)))
-        .chain(std::iter::once((sql_ident("id"), true)))
+        .chain(std::iter::once((format!("({})", crate::identity::id_order_sql(&sql_ident("id"))), true)))
         .collect()
 }
 

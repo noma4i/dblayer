@@ -22,17 +22,8 @@ fn compare_values(left: &Value, right: &Value) -> Ordering {
     }
 }
 
-fn numeric_id(id: &str) -> Option<u64> {
-    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && (id == "0" || !id.starts_with('0'))).then(|| id.parse().ok()).flatten()
-}
-
 fn compare_ids(left: &str, right: &str) -> Ordering {
-    match (numeric_id(left), numeric_id(right)) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => left.as_bytes().cmp(right.as_bytes()),
-    }
+    crate::identity::id_order_key(left).cmp(&crate::identity::id_order_key(right))
 }
 
 pub(crate) fn is_newer(candidate: &Order<'_>, current: &Order<'_>) -> bool {
