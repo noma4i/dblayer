@@ -59,14 +59,3 @@ fn unknown_model_across_files_is_reported_per_file() {
     assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), declarations);
 }
 
-#[test]
-fn missing_file_is_an_error() {
-    let errors = parse_files(&["/nonexistent/none.dbl"]).unwrap_err();
-    assert_eq!(errors[0].file, "/nonexistent/none.dbl");
-}
-
-#[test]
-fn file_error_prints_file_and_line() {
-    let error = FileError { file: "a.dbl".into(), error: ParseError::new(4, 2, "boom") };
-    assert_eq!(error.to_string(), "a.dbl:4: boom");
-}

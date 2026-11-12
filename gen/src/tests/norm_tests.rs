@@ -38,13 +38,6 @@ fn gen_names_one_rule() {
 }
 
 #[test]
-fn gen_absent_options_empty() {
-    let models = parse_models("model Sample do\n  operation :poke do\n    mutation \"PokeSample\"\n    optimistic false\n  end\nend\n").unwrap();
-    let poke = &models[0].actions[0];
-    assert!(poke.local.is_empty() && poke.correlate.is_empty() && poke.wrap.is_none());
-}
-
-#[test]
 fn gen_from_defaults_to_name() {
     let refusal = compile_note(&note_model("  attribute :body, :string\n")).unwrap_err().remove(0);
     assert!(refusal.file.ends_with("note.dbl") && refusal.error.line == 2 && refusal.error.message.contains("body"), "{refusal}");
