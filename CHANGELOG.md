@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add `NetworkPath` with the transport and the number of the default network to `NetworkStatus`.
+- Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
+
+### Changed
+
+- Deliver a `NetworkPath` instead of a `Bool` from `NetworkStatus.changes` and `NetworkStatus.flow`.
+
 ## 6.30.0 - 2026-11-13
 
 ### Added

@@ -191,21 +191,21 @@ Mutations, uploads and loads read the same core flag. While the network is away,
 
 ### Network status
 
-`NetworkStatus` shows the network of the phone as the platform reports it. It is the last value the OS observer gave the core, and it is `nil`/`null` before the first. The first of `NetworkStatus`, `serverConfig` and `open` starts the one network observer of the platform for the process, and it lives to the end of the process. The database and `serverConfig` read its value and start no network observer of their own. The value does not depend on the server, the cable, retries, the session, `open` or `close`. The app keeps no network observer of its own. Kotlin requires an Android `Context`: `NetworkStatus(context)`.
-`isOnline` is the current value. `changes` in Swift (an `AsyncSequence` of `Bool`) and `flow` in Kotlin (a `Flow<Boolean>`) deliver the current value first, then each change. A value equal to the current one wakes no reader. A slow reader gets the newest value. Cancelling a read ends only that reader. All `NetworkStatus` instances read the same process-wide source.
+`NetworkStatus` shows the network of the phone as the platform reports it. It is the last path the OS observer gave the core, and it is `nil`/`null` before the first. The first of `NetworkStatus`, `serverConfig` and `open` starts the one network observer of the platform for the process, and it lives to the end of the process. The database and `serverConfig` read its value and start no network observer of their own. The value does not depend on the server, the cable, retries, the session, `open` or `close`. The app keeps no network observer of its own. Kotlin requires an Android `Context`: `NetworkStatus(context)`.
+`path` is the current `NetworkPath`: `online`, `transport` (`wifi`, `cellular`, `other`, `none`, where `none` appears only while the phone is offline) and `network`. The `network` number grows each time the default network of the phone changes, and the core does not read it. A change of the default network while online gives two neighbouring elements with `online` true and different `network`, so an app sees the move from wifi to cellular or to another network of the same kind. `isOnline` is `path.online`, and it is `nil`/`null` before the first path. `changes` in Swift (an `AsyncSequence` of `NetworkPath`) and `flow` in Kotlin (a `Flow<NetworkPath>`) deliver the current path first, then each change. A path equal to the current one wakes no reader. A slow reader gets the newest path. Cancelling a read ends only that reader. All `NetworkStatus` instances read the same process-wide source.
 
 ```swift
 let network = NetworkStatus()
-let now: Bool? = network.isOnline
-for await online in network.changes {
-  print(online)
+let now: NetworkPath? = network.path
+for await path in network.changes {
+  print(path.online, path.transport, path.network)
 }
 ```
 
 ```kotlin
 val network = NetworkStatus(context)
-val now: Boolean? = network.isOnline
-network.flow.collect { online -> println(online) }
+val now: NetworkPath? = network.path
+network.flow.collect { path -> println("${path.online} ${path.transport} ${path.network}") }
 ```
 
 ## Refreshing

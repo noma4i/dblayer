@@ -39,6 +39,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `Model.create(..., in: scope)` (`account = scope` in Kotlin) returns a receipt with the optimistic value, the revision and `confirmed()`. Every write waits in the queue while the network is away, so the app handles no offline error of a write. See [writing data](writing-data.md#writing-without-a-network).
 - `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order.
 - `FileInfo.size` is `UInt64` in Swift and `ULong` in Kotlin.
+- `NetworkStatus.changes` in Swift and `NetworkStatus.flow` in Kotlin deliver a `NetworkPath` instead of a `Bool`: read `online` for the flag, `transport` and `network` for the change of network. See [sync state](sync-state.md#network-status).
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.

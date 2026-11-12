@@ -135,6 +135,24 @@ suspend fun feedLoadsAgainAfterFreshness(transport: Transport) {
 }
 ```
 
+### Failure values
+
+A test shows a failed row without a server: the test products build the values from their fields. `operationFailure` takes `kind`, `reason` and `message`, and the other fields stay empty. `syncInfo` takes a state and a failure. `uploadInfo` takes a status, the sent share in percent and a failure. Your app code does not build these values, and the app test reads no JSON for them.
+
+```swift
+import DBlayerTesting
+
+let failure = operationFailure(kind: "Invalid", reason: "the cell is empty", message: "refused")
+let sync = syncInfo(state: .failed, error: failure)
+let upload = uploadInfo(.failed, progress: 40, error: failure)
+```
+
+```kotlin
+val failure = operationFailure("Invalid", "the cell is empty", "refused")
+val sync = syncInfo(SyncState.Failed, failure)
+val upload = uploadInfo(UploadStatus.Failed, 40.0, failure)
+```
+
 Typical scenarios to cover:
 
 - first page, next page, refresh
