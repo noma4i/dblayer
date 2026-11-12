@@ -48,8 +48,13 @@ fn node_key(id: &str) -> WindowKey {
 }
 
 fn land_node(db: &Arc<Store>, batch: u64, id: &str, roots: Vec<RowValue>) {
+    let base = db.revision_seq().unwrap();
+    land_node_at(db, batch, id, roots, base);
+}
+
+fn land_node_at(db: &Arc<Store>, batch: u64, id: &str, roots: Vec<RowValue>, base_revision: i64) {
     let key = node_key(id);
-    let op = StoreOp::Window { source: crate::schema::RowSource::NodeReread, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+    let op = StoreOp::Window { source: crate::schema::RowSource::NodeReread, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision };
     write_as(db, batch, BatchAuthor::Window, Vec::new(), vec![op]);
 }
 
@@ -77,7 +82,7 @@ fn store_owe_reread_same() {
     let db = open();
     let first = owe(&db, 1, "c1");
     let again = owe(&db, 2, "c1");
-    assert_eq!(again.revision, first.revision);
+    assert!(again.revision >= first.revision);
     assert!(again.notice.rows.as_ref().is_none_or(|rows| rows.is_empty()), "no row is announced: {:?}", again.notice.rows);
 }
 
@@ -85,7 +90,7 @@ fn store_owe_reread_same() {
 #[test]
 fn store_owed_cleared_by_server_row() {
     let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "server"}).to_string() };
-    for (path, pays) in [("event", true), ("page", true), ("node", true), ("response", true), ("local", false)] {
+    for (path, pays) in [("event", true), ("page", true), ("node", true), ("response", false), ("local", false)] {
         let db = open();
         owe(&db, 1, "c1");
         if path == "local" {
@@ -114,8 +119,9 @@ fn store_read_window_node_owed_is_stale() {
     assert!(!saved_stale(&db, "c1"));
     owe(&db, 2, "c1");
     assert!(saved_stale(&db, "c1"));
-    let owing = db.read(&["Chat"], |reader| super::super::reread_owed::owed_among(reader.connection(), "Chat", &["c1".to_string(), "c2".to_string()])).unwrap();
-    assert_eq!(owing.into_iter().collect::<Vec<_>>(), ["c1".to_string()]);
+    let query = crate::store::query::Query::new("Chat");
+    let (_, _, _, read, _) = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap();
+    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(_, _, ref owed) if owed.iter().eq(["c1".to_string()].iter())), "the value of the reader names the row in debt");
     land_node(&db, 3, "c1", vec![RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() }]);
     assert!(!saved_stale(&db, "c1"));
 }
@@ -138,4 +144,19 @@ fn feed_event_debt_survives_restart() {
     let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(owed(&db, "c1"), "the row still owes the reread");
     assert!(db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale, "the saved list still owes the reread");
+}
+
+/// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does.
+#[test]
+fn store_owed_kept_by_an_answer_older_than_the_event() {
+    let db = open();
+    let issued = db.revision_seq().unwrap();
+    owe(&db, 1, "c1");
+    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "old answer"}).to_string() };
+    land_node_at(&db, 2, "c1", vec![row()], issued);
+    assert!(owed(&db, "c1"), "the answer is older than the event");
+    land_node_at(&db, 3, "c1", Vec::new(), issued);
+    assert!(owed(&db, "c1"), "a null answer of an older request pays nothing");
+    land_node(&db, 4, "c1", vec![row()]);
+    assert!(!owed(&db, "c1"), "the next load pays");
 }

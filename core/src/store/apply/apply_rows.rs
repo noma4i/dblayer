@@ -156,7 +156,10 @@ pub(super) fn apply_upsert(
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
-    let paid = matches!(envelope.source, crate::schema::RowSource::Page | crate::schema::RowSource::NodeReread | crate::schema::RowSource::Event | crate::schema::RowSource::Response) && super::super::reread_owed::clear(connection, model.as_str(), &id)?;
+    let paid = match super::super::reread_owed::Release::of(envelope.source, envelope.request_base) {
+        Some(release) => super::super::reread_owed::release(connection, model.as_str(), &id, release)?,
+        None => false,
+    };
     let existing = match prefetched.remove(&(model.to_string(), id.clone())) {
         Some(found) => found,
         None => fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id),

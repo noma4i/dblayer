@@ -1,1 +1,1 @@
-DELETE FROM reread_owed WHERE model = ?1 AND row_id = ?2
+DELETE FROM reread_owed WHERE model = ?1 AND row_id = ?2 AND (?3 IS NULL OR owed_at <= ?3)

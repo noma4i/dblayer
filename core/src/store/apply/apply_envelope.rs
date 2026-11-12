@@ -102,7 +102,7 @@ fn write_followed(
             EntityOp::Destroy { model, id, reason } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
                 let removed = remove_row(connection, info, id.as_str())?;
-                super::super::reread_owed::clear(connection, model.as_str(), id.as_str())?;
+                super::super::reread_owed::release(connection, model.as_str(), id.as_str(), super::super::reread_owed::Release::Deleted)?;
                 prefetched.insert((model.to_string(), id.to_string()), None);
                 if reason.writes_tombstone() {
                     write_tombstone(connection, model.as_str(), id.as_str(), revision, now_ms)?;

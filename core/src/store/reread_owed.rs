@@ -17,28 +17,54 @@ fn announced(model: &str, id: &str) -> Result<CommitResult, StoreError> {
     Ok(result)
 }
 
-/// The event of a `via: :node` read owes the row a reread: nothing is written when the row is not stored or the debt stands.
-pub(super) fn owe(writer: &mut RowWrite<'_>, model: &str, id: &str) -> Result<Option<CommitResult>, StoreError> {
+/// The event of a `via: :node` read owes the row a reread at the revision of its batch. `None` when the row is not stored. A debt that stands is raised to the new revision without announcing the row.
+pub(super) fn owe(writer: &mut RowWrite<'_>, model: &str, id: &str) -> Result<Option<Owed>, StoreError> {
     if writer.stored(model, id)?.is_none() { return Ok(None); }
-    if writer.connection.execute(include_str!("sql/reread_owed_insert.sql"), params![model, id])? == 0 { return Ok(None); }
-    announced(model, id).map(Some)
+    let stands = writer.connection.query_row(include_str!("sql/reread_owed_exists.sql"), params![model, id], |row| row.get::<_, bool>(0))?;
+    writer.connection.execute(include_str!("sql/reread_owed_insert.sql"), params![model, id, writer.revision])?;
+    Ok(Some(if stands { Owed::Raised } else { Owed::New(announced(model, id)?) }))
 }
 
-/// A server source wrote the row or the `node` window of the row landed: the debt is paid.
-pub(super) fn clear(connection: &Connection, model: &str, id: &str) -> Result<bool, StoreError> {
-    Ok(connection.execute(include_str!("sql/reread_owed_delete.sql"), params![model, id])? > 0)
+pub(super) enum Owed { New(CommitResult), Raised }
+
+/// What pays the debt of a row (store.md "долг строки"): the one list of the rules.
+#[derive(Clone, Copy)]
+pub(super) enum Release {
+    /// A load landed: it pays only when the request was issued at `Some(revision)` not older than the debt.
+    Landing(Option<i64>),
+    /// A payload of a later event of the row.
+    Event,
+    /// The row is gone.
+    Deleted,
+}
+
+impl Release {
+    /// The answer of a mutation and the local writes pay nothing.
+    pub(super) fn of(source: crate::schema::RowSource, request_base: Option<i64>) -> Option<Release> {
+        use crate::schema::RowSource;
+        match source {
+            RowSource::Page | RowSource::NodeReread => Some(Release::Landing(request_base)),
+            RowSource::Event => Some(Release::Event),
+            RowSource::Response | RowSource::Create | RowSource::Local | RowSource::Derived => None,
+        }
+    }
+}
+
+pub(super) fn release(connection: &Connection, model: &str, id: &str, release: Release) -> Result<bool, StoreError> {
+    let base = match release { Release::Landing(base) => base, Release::Event | Release::Deleted => None };
+    Ok(connection.execute(include_str!("sql/reread_owed_delete.sql"), params![model, id, base])? > 0)
 }
 
 pub(crate) fn is_owed(connection: &Connection, model: &str, id: &str) -> Result<bool, StoreError> {
     Ok(connection.query_row(include_str!("sql/reread_owed_exists.sql"), params![model, id], |row| row.get(0))?)
 }
 
-/// The rows of `ids` that owe a reread: one walk of the owed rows of the model.
+/// The rows of `ids` that owe a reread: one statement, one lookup of the primary key for each id.
 pub(crate) fn owed_among(connection: &Connection, model: &str, ids: &[String]) -> Result<BTreeSet<String>, StoreError> {
-    let owed = all_owed(connection, model)?;
-    if owed.is_empty() { return Ok(owed); }
-    let shown: BTreeSet<&String> = ids.iter().collect();
-    Ok(owed.into_iter().filter(|id| shown.contains(id)).collect())
+    if ids.is_empty() { return Ok(BTreeSet::new()); }
+    let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_among.sql"))?;
+    let owed = statement.query_map(params![model, serde_json::to_string(ids)?], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<String>>>()?;
+    Ok(owed)
 }
 
 impl super::Store {
@@ -61,10 +87,9 @@ impl super::Store {
             _ => return Ok(None),
         };
         Ok(Some(self.read(&[model], |reader| {
-            let all = all_owed(reader.connection(), model)?;
             match &scope {
-                None => Ok(all),
-                Some(scope) => all.into_iter().filter_map(|id| match reader.scope_has_member(model, scope.key.as_str(), &id) { Ok(true) => Some(Ok(id)), Ok(false) => None, Err(error) => Some(Err(error)) }).collect(),
+                None => all_owed(reader.connection(), model),
+                Some(scope) => members_owed(reader.connection(), model, scope.key.as_str()),
             }
         })?))
     }
@@ -74,5 +99,12 @@ impl super::Store {
 pub(crate) fn all_owed(connection: &Connection, model: &str) -> Result<BTreeSet<String>, StoreError> {
     let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_model.sql"))?;
     let owed = statement.query_map([model], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<String>>>()?;
+    Ok(owed)
+}
+
+/// The members of a scope that owe a reread: the owed rows of the model joined to `scope_member` by its row index.
+fn members_owed(connection: &Connection, model: &str, scope: &str) -> Result<BTreeSet<String>, StoreError> {
+    let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_members.sql"))?;
+    let owed = statement.query_map(params![model, scope], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<String>>>()?;
     Ok(owed)
 }

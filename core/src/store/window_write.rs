@@ -56,6 +56,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let related: Vec<_> = crate::store::coalesce_rows(related.into_iter().map(|(model, row)| (ModelKey::new(&model), row))).into_iter().map(|(model, row)| (model.to_string(), row)).collect();
     let accepted = admitted_rows(writer, model, &roots, page.base_revision)?;
     let mut envelope = BatchPlan::new(writer.generation);
+    envelope.request_base = Some(page.base_revision);
     let WindowKind::Relation { relation, params } = page.key.kind() else {
         envelope.entity_ops = related_rows(writer, &related, &BTreeSet::new(), page.base_revision)?;
         for row in accepted {
@@ -69,7 +70,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let remote = declared.remote.as_ref().ok_or_else(|| StoreError::Constraint(format!("{model}.{relation} is not remote")))?;
     envelope.source = page.source;
     if declared.node == Some(crate::schema::NodeRead::One) {
-        if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(Value::as_str) { super::reread_owed::clear(writer.connection, model, id)?; }
+        if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(Value::as_str) { super::reread_owed::release(writer.connection, model, id, super::reread_owed::Release::Landing(Some(page.base_revision)))?; }
     }
     let (scope, key) = super::windows::window_identity(spec, model, &relation, remote, &params).map_err(fault)?;
     let stored = super::windows::read_window(writer.connection, &key)?;

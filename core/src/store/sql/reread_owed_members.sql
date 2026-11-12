@@ -1,0 +1,1 @@
+SELECT r.row_id FROM reread_owed r JOIN scope_member s ON s.model = r.model AND s.row_id = r.row_id AND s.scope_key = ?2 WHERE r.model = ?1

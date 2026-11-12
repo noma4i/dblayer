@@ -125,7 +125,11 @@ impl Store {
             }
             if matches!(op, crate::owners::store::StoreOp::Show { .. }) { continue; }
             if let crate::owners::store::StoreOp::OweReread { model, id } = op {
-                if let Some(result) = super::reread_owed::owe(&mut writer, model, id)? { results.push(result); writes_database = true; }
+                match super::reread_owed::owe(&mut writer, model, id)? {
+                    Some(super::reread_owed::Owed::New(result)) => { results.push(result); writes_database = true; }
+                    Some(super::reread_owed::Owed::Raised) => writes_database = true,
+                    None => {}
+                }
                 continue;
             }
             writes_database = true;
