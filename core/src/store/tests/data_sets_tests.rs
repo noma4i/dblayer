@@ -107,3 +107,61 @@ fn data_sets_missing_parent_store() {
     let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert!(written.stale_parents.is_empty(), "the parent row is there");
 }
+
+fn land(db: &Arc<Store>, source: &str) {
+    match source {
+        "parent" => {
+            let row = RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t", "lastMessageId": "m5", "lastMessageAt": 7}).to_string() };
+            write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![row] }]);
+        }
+        "answer" => write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 5)] }]),
+        "event" => {
+            let event = json!({"op": "upsert", "id": "m5", "row": {"id": "m5", "chatId": "c1", "body": "m5", "createdAt": 5}}).to_string();
+            write(db, BatchAuthor::Feed, vec![("messages".into(), event)], Vec::new());
+        }
+        "page" => {
+            let key = WindowKey::nodes("messages", &["m5"]);
+            write(db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m5", 5)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+        }
+        other => panic!("unknown source {other}"),
+    }
+}
+
+/// P-DATA-103: the row of the parent and the row of its child settle the parent fields in any order and number of landings.
+#[test]
+fn data_sets_two_sources_settle() {
+    let sources = ["parent", "answer", "event", "page"];
+    for child in &sources[1..] {
+        for first in [[*child, "parent"], ["parent", *child]] {
+            for tail in (0..16).map(|n| [sources[n % 4], sources[n / 4]]) {
+                let db = open();
+                first.iter().for_each(|source| land(&db, source));
+                assert_eq!(chat(&db), json!(["m5", 7]), "{first:?}: the parent row gives the fields at its pointer");
+                for (step, source) in tail.iter().enumerate() {
+                    land(&db, source);
+                    assert_eq!(chat(&db), json!(["m5", 7]), "{first:?} then {:?}: a landing of the same rows changes nothing", &tail[..=step]);
+                }
+            }
+        }
+    }
+}
+
+/// P-DATA-57: the child the parent points at writes its change, a prediction does not move the time back, the confirmed child replaces it.
+#[test]
+fn data_sets_pointed_child_writes_its_change() {
+    let db = open();
+    ["answer", "parent"].iter().for_each(|source| land(&db, source));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 6)] }]);
+    assert_eq!(chat(&db), json!(["m5", 6]), "a new value of the pointed child is written");
+    for (device, server) in [(9, 6), (3, 6), (3, 4)] {
+        let db = open();
+        land(&db, "answer");
+        write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", device)] }]);
+        assert_eq!(chat(&db), json!(["temp-1", device.max(5)]), "device {device}: a prediction does not move the time back");
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![
+            StoreOp::Swap { model: "messages".into(), temp: "temp-1".into(), real: "m9".into() },
+            StoreOp::Rows { model: "messages".into(), rows: vec![message("m9", server)] },
+        ]);
+        assert_eq!(chat(&db), json!(["m9", server]), "device {device}, server {server}: the confirmed child replaces the prediction");
+    }
+}
