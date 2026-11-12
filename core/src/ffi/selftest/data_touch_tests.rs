@@ -14,13 +14,17 @@ use crate::value::ScalarKind;
 const THREAD: &str = r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#;
 
 /// Message -> Chat -> Group, `touch: true` on both links; the chat keeps no derived fields of its last message, so a value of the chat stream can only come from a touch.
-fn touching(models: &mut Value) {
+fn touching(models: &mut Value, derived: bool) {
     add_chat(models);
     let models = models.as_array_mut().unwrap();
     let message = models.iter_mut().find(|model| model["key"] == "Message").unwrap();
     message["associations"].as_array_mut().unwrap().retain(|association| association["name"] != "chat");
     let mut chat_link = AssociationSpec::new("chat", AssociationKind::BelongsTo, "Chat", "chatId");
     chat_link.touches_parent = true;
+    if derived {
+        chat_link.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastSequenceNumber", "seq")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
+        chat_link.newer = vec!["seq".to_string(), "at".to_string()];
+    }
     message["associations"].as_array_mut().unwrap().push(serde_json::to_value(chat_link).unwrap());
     let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
     chat["fields"].as_array_mut().unwrap().push(serde_json::to_value(FieldSpec::scalar("groupId", ScalarKind::Id).nullable().optional().indexed()).unwrap());
@@ -44,8 +48,8 @@ struct Chain {
 }
 
 /// The chain c1 -> g1 is resident and watched, `with_message` also holds the message m1 of the chat.
-async fn chain(with_message: bool) -> Chain {
-    let rig = Rig::signed_as(World::new("server", "A", true), false, events(touching)).await;
+async fn chain(with_message: bool, derived: bool) -> Chain {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| touching(models, derived))).await;
     rig.land("Group", json!({"id": "g1", "name": "group", "left": false, "membership": null})).await;
     let mut chat = chat_row("c1", 0);
     chat["groupId"] = json!("g1");
@@ -58,12 +62,12 @@ async fn chain(with_message: bool) -> Chain {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Path { Create, EventChange, EventSameValues, EventDelete, OperationValue, Page }
+enum Path { Create, EventChange, EventSameValues, EventDelete, OperationValue, Page, EventWithDerivedParent }
 
 /// P-DATA-115: the parent gets 1 new value per batch of a child change, whatever the path of the change; a write of equal child values gives it none.
 #[tokio::test(flavor = "multi_thread")]
 async fn data_touch_once_any_path() {
-    // path, whether the message m1 exists first, new values of the chat stream (a create is 2 batches: the optimistic row and the answer)
+    // path, whether the message m1 exists first, new values of the chat stream (a create is 2 batches: the optimistic row and the answer; the derived parent is written by the batch of its child)
     let cases = [
         (Path::Create, false, 2),
         (Path::EventChange, true, 1),
@@ -71,9 +75,10 @@ async fn data_touch_once_any_path() {
         (Path::EventDelete, true, 1),
         (Path::OperationValue, true, 2),
         (Path::Page, false, 1),
+        (Path::EventWithDerivedParent, false, 1),
     ];
     for (path, existing, expected) in cases {
-        let Chain { rig, chat, .. } = chain(existing).await;
+        let Chain { rig, chat, .. } = chain(existing, matches!(path, Path::EventWithDerivedParent)).await;
         let epoch = rig.database.session_epoch();
         let before = values(&chat);
         match path {
@@ -85,6 +90,7 @@ async fn data_touch_once_any_path() {
                 assert_eq!(values(&chat), before + 1, "{path:?}: the optimistic create is 1 batch");
                 hold.release();
             }
+            Path::EventWithDerivedParent => rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "first", "at": 1, "seq": 1})).await,
             Path::EventChange => rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "changed", "at": 1})).await,
             Path::EventSameValues => rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "first", "at": 1})).await,
             Path::EventDelete => rig.land_removed("Message", "m1").await,
@@ -114,7 +120,7 @@ async fn data_touch_once_any_path() {
 /// P-DATA-115: a touch goes up the chain, the chat and then the group each get 1 new value per batch, also for a page of several children, and a write of equal values gives none.
 #[tokio::test(flavor = "multi_thread")]
 async fn data_touch_chain_reaches_every_ancestor_once() {
-    let Chain { rig, chat, group } = chain(true).await;
+    let Chain { rig, chat, group } = chain(true, false).await;
     let seen = || (values(&chat), values(&group));
 
     let before = seen();
