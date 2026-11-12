@@ -114,40 +114,13 @@ async fn feed_listen_events(listen: serde_json::Value) -> (Arc<Database>, Arc<Fe
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn feed_payload_lands() {
+async fn a_record_payload_lands_then_a_delete_removes_it() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     let value = bound(stream.pull_next()).await.unwrap();
     assert!(matches!(value, ReadValue::Event { position: 1, area, kind, id, before: None, after: Some(row) } if area == "MESSAGE" && kind == "UPDATED" && id == "c1" && crate::ffi::tests::lifecycle_tests::named(&row, "after")));
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_payload_incomplete() {
-    let (database, transport, stream, token) = feed_events().await;
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1"}}]}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_payload_removes() {
-    let (database, transport, stream, token) = feed_events().await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":2,"lists":["PRIMARY"]}}]}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { after: Some(_), .. })));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"DELETED","recordId":"c1"}]}}})));
     assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_changes_not_list() {
-    let (database, transport, stream, token) = feed_events().await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":{}}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
 
@@ -176,30 +149,12 @@ async fn feed_changes_area_fanout() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn feed_event_without_id() {
-    let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item"})).await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"title":"missing","revision":1,"lists":[]}}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn feed_composite_id() {
     let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
     for (revision, title) in [(1, "first"), (2, "second")] {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","entry":"e1","title":title,"revision":revision,"lists":[]}}}})));
         assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::tests::lifecycle_tests::named(&row, title)));
     }
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_composite_id_missing() {
-    let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","title":"missing","revision":1,"lists":[]}}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
 
@@ -258,14 +213,34 @@ async fn feed_conditional_delete(listen: serde_json::Value, field: &'static str,
     bound(database.close_database()).await.unwrap();
 }
 
+/// An event whose payload cannot be turned into a record is lost for the reader and counted as refused; nothing is delivered for it.
 #[tokio::test(flavor = "multi_thread")]
-async fn feed_apply_delete_if() {
-    feed_conditional_delete(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_by":"gone", "apply":{"effect":"upsert"}}), "gone", json!(true)).await;
+async fn a_malformed_event_is_lost_to_the_reader_and_counted_refused() {
+    let item = json!({"subscription":"RecordEvents", "root":"recordEvents.item"});
+    let cases = [
+        (None, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1"}}]}}})),
+        (None, json!({"data":{"recordEvents":{"entries":{}}}})),
+        (Some(item.clone()), json!({"data":{"recordEvents":{"item":{"title":"missing","revision":1,"lists":[]}}}})),
+        (Some(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})), json!({"data":{"recordEvents":{"item":{"group":"g1","title":"missing","revision":1,"lists":[]}}}})),
+        (Some(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}})), json!({"data":{"recordEvents":{"item":{"id":"c1"}}}})),
+    ];
+    for (index, (listen, payload)) in cases.into_iter().enumerate() {
+        let (database, transport, stream, token) = match listen { Some(listen) => feed_listen_events(listen).await, None => feed_events().await };
+        assert!(transport.cable.event(&token, payload));
+        assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })), "case {index}");
+        assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1, "case {index}");
+        bound(database.close_database()).await.unwrap();
+    }
 }
 
+/// A record the listener's condition marks as deleted (`deleted_by` a true field, `deleted_unless` a false one) removes the stored row.
 #[tokio::test(flavor = "multi_thread")]
-async fn feed_apply_delete_unless() {
-    feed_conditional_delete(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_unless":"active", "apply":{"effect":"upsert"}}), "active", json!(false)).await;
+async fn a_conditional_delete_event_removes_the_row() {
+    let cases = [
+        (json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_by":"gone", "apply":{"effect":"upsert"}}), "gone", json!(true)),
+        (json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_unless":"active", "apply":{"effect":"upsert"}}), "active", json!(false)),
+    ];
+    for (listen, field, value) in cases { feed_conditional_delete(listen, field, value).await; }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -282,16 +257,6 @@ async fn feed_apply_ephemeral() {
     let rows = crate::ffi::RowEdit::carried(&edits);
     assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::tests::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
-    bound(database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_apply_ephemeral_missing() {
-    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
-    let (database, transport, stream, token) = feed_listen_events(listen).await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1"}}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Lost { first: 1, last: 1 })));
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
 
