@@ -64,7 +64,7 @@ pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> 
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
         AuthorOutcome::Error { error: crate::owners::session::SessionError::NotSent, .. } => CallsInput::TransportError { call_id, error: CallError::NotSent },
         AuthorOutcome::Error { error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true, .. } => CallsInput::TransportError { call_id, error: CallError::Failed(crate::ffi::DbError::ResponseTooLarge { limit }) },
-        AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, pending_retained: true, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
+        AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, pending_retained: true, .. } => CallsInput::Dropped { call_id },
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: call_error(crate::ffi::session_failure(error)) },
     }
 }

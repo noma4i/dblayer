@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A call with a sent pair answers `dropped`, not `network`, on a network failure.
+
 ## 6.27.1 - 2026-11-12
 
 ### Fixed
