@@ -705,6 +705,7 @@ pub struct TransferState {
     pub(super) next_timer: u64,
     pub put_timeout: std::time::Duration,
     pub sizing: super::upload::Sizing,
+    pub put_executor: bool,
     pub drained: bool,
     /// The root of the answer of the abort operation.
     pub abort_root: String,
@@ -759,7 +760,8 @@ impl TransferState {
             next_attempt: 1,
             next_timer: 1,
             put_timeout: super::upload::UploadConfig::default().put_timeout,
-            sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size, detached: false },
+            sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size },
+            put_executor: false,
             drained: false,
             abort_root: "abortMultipart".into(),
             init_root: "initMultipart".into(),

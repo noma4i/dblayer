@@ -163,7 +163,7 @@ impl Database {
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::default();
-        let upload_config = crate::owners::write::upload::UploadConfig { detached_put: put.is_some(), ..Default::default() };
+        let upload_config = crate::owners::write::upload::UploadConfig::default();
         let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), put.clone(), &upload_config)?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;

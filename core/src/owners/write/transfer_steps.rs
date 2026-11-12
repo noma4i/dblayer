@@ -67,7 +67,7 @@ impl TransferState {
 
     /// Who runs the PUT of the next step: a multipart upload outside the process creates the upload first and starts the PUT with the next step, which has the recorded `upload_id`.
     fn put_mode(&self, transfer: &Transfer) -> PutMode {
-        match (detached_put(self.sizing.detached, transfer.steps.as_ref(), transfer.source.as_ref()) && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
+        match (detached_put(self.put_executor, transfer.steps.as_ref(), transfer.source.as_ref()) && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
             (false, _) => PutMode::Live,
             (true, false) => PutMode::InitOnly,
             (true, true) => PutMode::Detached { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) },

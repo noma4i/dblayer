@@ -56,7 +56,7 @@ async fn opened() -> Started { opened_with(false).await.0 }
 
 async fn opened_with(holds: bool) -> (Started, Option<(Arc<Hold>, Arc<Hold>)>) {
     let detached = Arc::new(Detached::default());
-    let stand = Stand::new().detached_through(detached.clone());
+    let stand = Stand::new().multipart_only().detached_through(detached.clone());
     let held = script_with(&stand, holds);
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
@@ -81,7 +81,7 @@ async fn started(length: u64) -> Started {
     run
 }
 
-/// A file below the multipart threshold still goes as one part as large as the file, `Init` first, the PUT started with the presigned target by the executor and not by the transport, and no timer ends it.
+/// A file of one part of a multipart-only declaration, `Init` first, the PUT started with the presigned target by the executor and not by the transport, and no timer ends it.
 /// Observable: the calls to the server, the start the executor got, the PUTs of the transport, the status after the time of the PUT timer passed. Catches: a PUT that goes through the transport, a part cut to the part size, a second step that starts without the recorded upload, a timer that cancels the system task.
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_detached_start() {

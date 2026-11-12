@@ -165,7 +165,7 @@ impl TransferState {
 
     /// A multipart upload outside the process with a recorded attempt: the system may still run its PUT, so the transfer waits in `Uploading` for `PutEnded` or `PutMissing` after `ResumePuts`.
     fn put_waits(&self, row: &StoredTransfer) -> bool {
-        super::transfer_steps::detached_put(self.sizing.detached, row.steps.as_ref(), row.source.as_ref()) && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
+        super::transfer_steps::detached_put(self.put_executor, row.steps.as_ref(), row.source.as_ref()) && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
             && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
     }
 
@@ -296,7 +296,7 @@ impl TransferState {
         self.send_orphans(true, fx);
         self.replay_held(now, fx);
         self.release_classified(now, fx);
-        if self.sizing.detached {
+        if self.put_executor {
             run(fx, TransferEffect::ResumePuts { identities: self.waiting_puts() });
         }
     }

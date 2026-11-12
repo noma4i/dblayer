@@ -472,6 +472,7 @@ impl Life {
                 let mut transfers = TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at });
                 transfers.put_timeout = port.put_timeout;
                 transfers.sizing = port.sizing;
+                transfers.put_executor = port.put.is_some();
                 if let Some(root) = port.abort_root.clone() { transfers.abort_root = root; }
                 if let Some(root) = port.codec.init_root() { transfers.init_root = root; }
                 builder.install(address, "transfer", transfers, executor);

@@ -355,6 +355,7 @@ pub(super) struct Stand {
     /// The store the app gives instead of the memory one of the rig.
     pub(super) store: Option<Arc<dyn crate::ffi::CredentialStore>>,
     pub(super) detached: Option<Arc<Detached>>,
+    pub(super) multipart_only: bool,
 }
 
 impl Drop for Stand {
@@ -362,10 +363,12 @@ impl Drop for Stand {
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None, detached: None } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None, detached: None, multipart_only: false } }
 
 
     /// The platform runs the PUTs outside the process through `executor`.
+    pub(super) fn multipart_only(mut self) -> Self { self.multipart_only = true; self }
+
     pub(super) fn detached_through(mut self, executor: Arc<Detached>) -> Self { self.detached = Some(executor); self }
 
     /// The open does not sign in: the test signs in itself.
@@ -390,13 +393,14 @@ impl Stand {
 
     fn models(&self) -> String {
         let text = include_str!("upload_wrapper_models.json");
-        if self.root.is_none() && !self.keep_moment { return text.to_string() }
+        if self.root.is_none() && !self.keep_moment && !self.multipart_only { return text.to_string() }
         let mut models: Value = serde_json::from_str(text).unwrap();
         for model in models.as_array_mut().unwrap() {
             if self.keep_moment && model["key"] == "Moment" {
                 let action = model["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
                 action["on_failure"] = json!("keep");
             }
+            if self.multipart_only { if let Some(steps) = model["upload_steps"].as_object_mut() { steps.remove("create_blob"); } }
             let Some(root) = self.root else { continue };
             let Some(create) = model["upload_steps"].get_mut("create_blob") else { continue };
             match root {

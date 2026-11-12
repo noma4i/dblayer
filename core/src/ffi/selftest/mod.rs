@@ -116,5 +116,6 @@ mod crash_image_revoked_tests;
 mod crash_image_group_tests;
 mod crash_image_multipart_tests;
 mod xfer_detached_tests;
+mod xfer_parts_tests;
 mod crash_image_server_tests;
 mod crash_image_secret_refused_tests;
