@@ -139,6 +139,8 @@ pub enum TransferTick {
     Minted { upload_id: String, attempt_id: AttemptId },
     /// The write of the old row after a failed swap, which the Store refused, is due again.
     StagedRestore { transfer_id: TransferId },
+    /// The write of the shown value the Store refused is due again.
+    Shown { transfer_id: TransferId },
     Expire,
 }
 
