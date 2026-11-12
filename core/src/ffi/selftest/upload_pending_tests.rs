@@ -95,7 +95,7 @@ async fn pending_source_values_reach_the_row_and_rollback() {
     let path = directory.path().join("source");
     std::fs::write(&path, b"data").unwrap();
     let id = receipt.items[0].optimistic_value.id.clone();
-    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"size":42}"#.into(), variables_json: "{}".into() };
+    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"size":42}"#.into(), variables_json: "{}".into(), prepare: None };
     database.set_online(false).unwrap();
     bound(database.supply_source(epoch, "Asset".into(), id.clone(), "create_files".into(), source)).await.unwrap();
     let row = database.db.read(&["Asset"], |reader| reader.point("Asset", &id)).unwrap().unwrap();

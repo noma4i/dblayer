@@ -175,9 +175,14 @@ pub struct TransferSinks {
 }
 
 impl TransferExecutor {
-    pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
+    pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
         let TransferSinks { settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer, cache, doomed: Vec::new(), answers: Vec::new() }
+        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new() }
+    }
+
+    pub fn with_preparer(mut self, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
+        self.preparer = preparer;
+        self
     }
 
     fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool) { self.copy_into(stamp, back, (transfer_id, attempt_id), source, (staged, None)); }
