@@ -337,20 +337,6 @@ fn exec_xfer_key_path_chars() {
 }
 
 #[test]
-fn xfer_put_cancelled() {
-    let mut w = world();
-    w.codec.put.store(true, std::sync::atomic::Ordering::SeqCst);
-    w.stub.hang_puts();
-    let path = w.source(KEY, b"abc");
-    w.accept(KEY, path, 2);
-    let tokens = w.stub.put_tokens();
-    assert_eq!((tokens.len(), tokens[0].is_cancelled()), (1, false));
-    w.post(TransferInput::Online(Online(false)));
-    assert!(tokens[0].is_cancelled(), "the platform stops the PUT of the cancelled attempt");
-    assert_eq!((w.stage(KEY), w.late(&["StepOk", "StepError"])), (Some(TransferStage::Ready), 0));
-}
-
-#[test]
 fn xfer_prop_put_cancel() {
     for cause in ["offline", "saving", "discard"] {
         let mut w = world();
@@ -365,6 +351,7 @@ fn xfer_prop_put_cancel() {
             _ => w.post(TransferInput::Discard { key: KEY.into(), reply: 9 }),
         }
         assert!(token.is_cancelled(), "{cause}: the attempt stays cancelled");
+        if cause == "offline" { assert_eq!((w.stage(KEY), w.late(&["StepOk", "StepError"])), (Some(TransferStage::Ready), 0)); }
         assert!(lock(&w.shown).iter().all(|shown| !matches!(shown, Shown::Uploading { progress } if *progress > 0)), "{cause}: the bytes of a cancelled attempt raise no progress");
     }
 }
