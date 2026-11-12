@@ -89,3 +89,6 @@ mod crash_image_update_tests;
 mod crash_image_call_tests;
 mod crash_image_upload_tests;
 mod crash_image_end_tests;
+mod crash_image_pair_tests;
+mod crash_image_retry_tests;
+mod crash_image_revoked_tests;

@@ -92,6 +92,12 @@ pub(super) fn saved_work(image: &Path) -> (i64, i64) {
     (count("op"), count("encrypted_answer"))
 }
 
+/// The request id of the pair the image holds for its unanswered request.
+pub(super) fn saved_pair(image: &std::path::Path) -> Option<String> {
+    let connection = rusqlite::Connection::open(image).unwrap();
+    rusqlite::OptionalExtension::optional(connection.query_row("SELECT request_id FROM encrypted_pending", [], |row| row.get::<_, String>(0))).unwrap()
+}
+
 /// The length of the operation queue as the reader sees it now.
 pub(super) async fn queue_now(database: &crate::ffi::Database) -> usize {
     let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::Operations);
@@ -111,4 +117,35 @@ pub(super) async fn drained(database: &crate::ffi::Database) {
             other => panic!("the operation queue ended: {other:?}"),
         }
     }
+}
+
+/// A stand whose server double and database run on one manual clock, so that the waits of a retry end when the test moves the clock.
+pub(super) fn timed_stand() -> (super::upload_stand::Stand, std::sync::Arc<crate::ffi::TestClock>) {
+    let mut stand = super::upload_stand::Stand::new();
+    let clock = crate::ffi::TestClock::new(1_000_000);
+    stand.rig.server = crate::transport::encrypted::tests::fake_server_tests::FakeServer::new(clock.manual());
+    (stand, clock)
+}
+
+/// Runs the work and moves the clock over every wait it arms, until it ends.
+pub(super) async fn advancing<T>(clock: &crate::ffi::TestClock, work: impl Future<Output = T>) -> T {
+    tokio::pin!(work);
+    let mut armed = clock.armed();
+    loop {
+        tokio::select! {
+            result = &mut work => return result,
+            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(60_000); }
+        }
+    }
+}
+
+/// A fresh process on the image with a manual clock; `prepare` scripts the server double before the database opens.
+pub(super) async fn reopen_timed(image: &Path, secret: &str, operations: &[(&str, &str)], prepare: impl FnOnce(&super::upload_stand::Stand), keep_moment: bool) -> (super::upload_stand::Stand, std::sync::Arc<crate::ffi::Database>, std::sync::Arc<crate::ffi::TestClock>) {
+    let (mut fresh, clock) = timed_stand();
+    if keep_moment { fresh = fresh.keep_moment(); }
+    fresh.rig.credentials = std::sync::Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default());
+    crate::ffi::CredentialStore::set(fresh.rig.credentials.as_ref(), secret.to_string()).unwrap();
+    prepare(&fresh);
+    let database = fresh.open_with(Some(image), operations, Some(clock.clone())).await;
+    (fresh, database, clock)
 }

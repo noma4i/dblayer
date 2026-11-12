@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::crash_image_support::{copy_tree, files_of, over_images, reopen, Capture};
+use super::crash_image_support::{copy_tree, files_of, over_images, reopen, saved_pair, Capture};
 use super::rig_tests::bound;
 use super::upload_batch_shift_tests::OPERATIONS;
 use super::upload_stand::Stand;
@@ -12,11 +12,6 @@ fn copy_image(from: &std::path::Path, to: &std::path::Path) {
         if std::path::Path::new(&source).exists() { std::fs::copy(source, target).unwrap(); }
     }
     copy_tree(&files_of(from), &files_of(to));
-}
-
-fn saved_pair(image: &std::path::Path) -> Option<String> {
-    let connection = rusqlite::Connection::open(image).unwrap();
-    rusqlite::OptionalExtension::optional(connection.query_row("SELECT request_id FROM encrypted_pending", [], |row| row.get::<_, String>(0))).unwrap()
 }
 
 /// A process killed while an interactive call is in flight leaves a file that resends the same pair and hands the answer over once, and a process killed at any commit of that resend leaves a file that resends the pair when no answer was saved, sends nothing when it was, and hands the answer over once.
