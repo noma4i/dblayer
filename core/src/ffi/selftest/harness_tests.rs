@@ -107,7 +107,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
 
     let switch = super::rig_tests::Switchable::new(Some(b.clone()), false);
     let remote = rig.open_again(Some(switch as Arc<dyn Transport>)).await.expect("the opener refused the second reopen");
-    remote.register_operations(r#"[{"name":"Users","document":"query Users { users { id name } }"}]"#.into()).await.unwrap();
+    remote.register_operations(super::rig_models::with_own_operations(&r#"[{"name":"Users","document":"query Users { users { id name } }"}]"#)).await.unwrap();
     remote.set_online(true).unwrap();
     let rows = Arc::new(Rows::default());
     let live = remote.watch_query(ALL, rows.clone());

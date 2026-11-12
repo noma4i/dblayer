@@ -184,7 +184,7 @@ impl crate::ffi::FakeTransport for CancelledLoadTransport {
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
+    database.register_operations(super::rig_models::with_own_operations(&json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string())).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
@@ -198,7 +198,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
 async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
+    database.register_operations(super::rig_models::with_own_operations(&json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string())).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
@@ -223,7 +223,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);
-    let first = bound(opener.open_with_clock(config.clone(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None)).await.unwrap();
+    let first = bound(opener.open_with_clock(config.clone(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000), super::rig_models::plain_options(), None)).await.unwrap();
     first.register_operations(plain_operations()).await.unwrap();
     first.set_online(true).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
@@ -233,7 +233,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     bound(first.close_database()).await.unwrap();
     let world_b = World::new("server", "B", true);
     switch.set(Some(world_b.clone()));
-    let second = bound(opener.open_with_clock(config, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(100), crate::ffi::OpenOptions::default(), None)).await.unwrap();
+    let second = bound(opener.open_with_clock(config, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(100), super::rig_models::plain_options(), None)).await.unwrap();
     second.register_operations(plain_operations()).await.unwrap();
     second.set_online(true).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();

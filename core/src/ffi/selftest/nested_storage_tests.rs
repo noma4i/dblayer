@@ -38,7 +38,7 @@ async fn stored(index: usize) {
     let mut spec = vectors()[index].clone();
     let elements: Vec<Value> = spec["elements"].as_array().unwrap().iter().cloned().map(element).collect();
     spec["elements"] = Value::Array(elements);
-    rig.database.register_operations(json!([{"name":"ScreenNode","document":SCREEN_NODE}]).to_string()).await.unwrap();
+    rig.database.register_operations(super::rig_models::with_own_operations(&json!([{"name":"ScreenNode","document":SCREEN_NODE}]).to_string())).await.unwrap();
     rig.world.answer_with("ScreenNode", answer(json!({"spec": spec})));
     let epoch = rig.database.session_epoch();
     let row = bound(rig.database.node(epoch, "CustomScreen".into(), "node".into(), "sample".into(), false)).await.unwrap().expect("the screen was not stored");

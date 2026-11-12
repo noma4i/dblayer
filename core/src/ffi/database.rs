@@ -336,6 +336,10 @@ impl Database {
         }
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
+        let missing: Vec<String> = crate::owners::read::own_operations(&self.db).into_iter().filter(|name| !declared.iter().any(|operation| operation.name == *name)).collect();
+        if !missing.is_empty() {
+            return Err(DbError::Invalid { detail: format!("the operations the library sends by itself are not registered: {}", missing.join(", ")) });
+        }
         self.reads.declare(declared);
         self.life.register_operations(names, registered);
         Ok(())

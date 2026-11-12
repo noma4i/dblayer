@@ -244,6 +244,19 @@ pub fn channels_of(db: &Store) -> BTreeMap<String, Vec<String>> {
     }).collect()
 }
 
+/// The operations the library sends by itself with no call of the app: the change feed, each `listens` and `updates` subscription, and the read of each relation a `changed_by` event starts.
+pub fn own_operations(db: &Store) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for spec in db.specs().values() {
+        if let Some(feed) = spec.change_feed.as_ref().filter(|_| !spec.changes.is_empty()) { names.insert(feed.subscription.clone()); }
+        names.extend(spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)).map(|updates| updates.subscription.clone()));
+        for read in &spec.changes {
+            names.extend(spec.relations.iter().filter(|relation| relation.name == read.relation).filter_map(|relation| relation.remote.as_ref()).map(|remote| remote.operation.clone()));
+        }
+    }
+    names
+}
+
 pub fn scoped_channels(spec: &ModelSpec, relation: &str, params: &Map<String, Value>) -> Vec<ScopedChannel> {
     let Some(relation) = spec.relations.iter().find(|declared| declared.name == relation) else { return Vec::new() };
     let Some(remote) = relation.remote.as_ref() else { return Vec::new() };

@@ -170,12 +170,52 @@ fn member_spec() -> crate::schema::ModelSpec {
     member
 }
 
+/// The reads the wrapper models start by themselves: their events, signals and node rereads.
+const WRAPPER_OPERATIONS: [(&str, &str); 10] = [
+    ("BulletinAdded", "subscription BulletinAdded { bulletinAdded { id } }"),
+    ("ChatActionSignal", "subscription ChatActionSignal { chatActionSignal { id } }"),
+    ("PresenceChanged", "subscription PresenceChanged { presenceChanged { id } }"),
+    ("RecordEvents", "subscription RecordEvents { recordEvents { id } }"),
+    ("RecordSignal", "subscription RecordSignal { recordSignal { id } }"),
+    ("MomentEvents", "subscription MomentEvents { momentEvents { id } }"),
+    ("UserTyping", "subscription UserTyping { userTyping { id } }"),
+    ("documentUpdated", "subscription documentUpdated { documentUpdated { id } }"),
+    ("ContainerNode", "query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id } } }"),
+    ("MessageNode", "query MessageNode($id: ID!) { node(id: $id) { ... on Message { id chatId text at } } }"),
+];
+
 pub(super) fn plain_operations() -> String {
     let mut operations: Vec<Value> = serde_json::from_str(OPERATIONS).unwrap();
     operations.push(json!({"name":"RigEvents","document":"subscription RigEvents { rigEvents { id } }","rootPath":"rigEvents"}));
     operations.push(json!({"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}));
+    for (name, document) in WRAPPER_OPERATIONS { operations.push(json!({"name": name, "document": document})); }
     operations.push(json!({"name":"UsersByIds","document":"query UsersByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on User { id name } } }"}));
     json!(operations).to_string()
+}
+
+/// The operations a plain harness hands to `open`: the schema sends some of them by itself.
+const OTHER_OWN_OPERATIONS: [(&str, &str); 7] = [
+    ("Notices", "subscription Notices { notices { id } }"),
+    ("RigEvents", "subscription RigEvents { rigEvents { id } }"),
+    ("ChatNode", "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id name lists } } }"),
+    ("RecordNode", "query RecordNode($id: ID!) { node(id: $id) { ... on Record { id } } }"),
+    ("ScreenNode", "query ScreenNode($id: ID!) { node(id: $id) { ... on Screen { id } } }"),
+    ("SampleNode", "query SampleNode($id: ID!) { node(id: $id) { ... on Sample { id } } }"),
+    ("UserNode", "query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"),
+];
+
+/// The definitions of a test plus every read the stand schemas start by themselves, for the names the test leaves out.
+pub(super) fn with_own_operations(definitions: &str) -> String {
+    let mut operations: Vec<Value> = serde_json::from_str(definitions).unwrap();
+    for (name, document) in WRAPPER_OPERATIONS.iter().chain(OTHER_OWN_OPERATIONS.iter()) {
+        if !operations.iter().any(|operation| operation["name"] == *name) { operations.push(json!({"name": name, "document": document})); }
+    }
+    json!(operations).to_string()
+}
+
+pub(super) fn plain_options() -> crate::ffi::OpenOptions {
+    let operations: Vec<Value> = serde_json::from_str(&plain_operations()).unwrap();
+    crate::ffi::OpenOptions { operations: operations.into_iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect() }
 }
 
 pub(super) fn add_reactions(models: &mut Value) {
