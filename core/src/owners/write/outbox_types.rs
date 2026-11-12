@@ -334,6 +334,8 @@ pub struct QueuedOperation {
     pub cycle_id: u64,
     pub request_id: RequestId,
     pub sequence: u64,
+    /// The number of the held pair that a restart restored.
+    pub pair_sequence: Option<u64>,
     pub sends: u32,
     /// A `Mutate` of this operation left in this cycle.
     pub sent: bool,

@@ -116,7 +116,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Send { to: SESSION_AT, input } => {
             let request_id = number_after(&input, "req_id: ")?;
             let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
-            OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
+            OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.pair_sequence.unwrap_or(operation.sequence)) }
         }
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => return None,
         Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes,

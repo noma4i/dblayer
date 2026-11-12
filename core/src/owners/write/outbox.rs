@@ -292,6 +292,7 @@ impl OutboxState {
                 cycle_id: 1,
                 request_id: crate::owners::contract::next_request_id(),
                 sequence,
+                pair_sequence: None,
                 sends: 0,
                 sent: false,
                 attempt_unsent: false,
