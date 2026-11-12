@@ -16,11 +16,18 @@ async fn out_outcome_discard_storage_error() {
     let operation = receipt.operation.unwrap();
     assert!(matches!(bound(rig.database.confirmed(receipt.clone(), false)).await, Err(crate::ffi::DbError::Rejected { kept: true, .. })));
     rig.database.db.lock().connection.execute_batch("PRAGMA query_only = ON").unwrap();
-    let answer = bound(rig.database.confirmed(receipt, true)).await;
-    assert!(matches!(&answer, Err(crate::ffi::DbError::Storage { detail }) if detail.contains("422")), "the storage refusal carries the original failure: {answer:?}");
-    assert!(bound(rig.database.read_row(epoch, "Message".into(), row)).await.unwrap().is_some());
+    let waiting_before = rig.database.life.waiting_calls();
+    let waiting = { let db = rig.database.clone(); rig.spawn(async move { db.confirmed(receipt, true).await }) };
+    crate::test_wait::settled(&rig, "confirmed waits for the rollback write", || rig.database.life.waiting_calls() > waiting_before).await;
+    assert!(!waiting.is_finished(), "R17: the refused rollback write is retried by Backoff, the waiter gets no answer");
+    assert!(bound(rig.database.read_row(epoch, "Message".into(), row.clone())).await.unwrap().is_some());
     assert!(crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().any(|entry| entry.id.0 == operation));
     rig.database.db.lock().connection.execute_batch("PRAGMA query_only = OFF").unwrap();
+    rig.clock.advance(60_000);
+    let answer = bound(waiting).await.unwrap();
+    assert!(matches!(&answer, Err(crate::ffi::DbError::Rejected { failure, kept: false }) if failure.message.contains("422")), "the waiter is answered after the Committed rollback, with the original refusal and not with the storage fault: {answer:?}");
+    assert!(bound(rig.database.read_row(epoch, "Message".into(), row)).await.unwrap().is_none());
+    assert!(!crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().any(|entry| entry.id.0 == operation));
     rig.database.close_now();
 }
 
