@@ -84,3 +84,5 @@ mod typing_channel_tests;
 
 mod two_ops_tests;
 mod write_reds_tests;
+mod crash_image_support;
+mod crash_image_session_tests;
