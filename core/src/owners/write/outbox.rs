@@ -258,7 +258,10 @@ impl OutboxState {
         self.ops.values().filter(|operation| operation.stage == Stage::PersistingAttempt || (operation.stage == Stage::Sending && !operation.waiting_retry)).count()
     }
 
-    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < DRAIN_LIMIT }
+    /// Session accepts only the `Mutate` of the held pair while it is held: every other operation waits for its owner.
+    fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && other.stage != Stage::Done) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
+
+    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && !self.pair_held_by_other(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
     pub(super) fn expired(&self, now: u64, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
@@ -292,7 +295,6 @@ impl OutboxState {
                 cycle_id: 1,
                 request_id: crate::owners::contract::next_request_id(),
                 sequence,
-                pair_sequence: None,
                 sends: 0,
                 sent: false,
                 attempt_unsent: false,
@@ -579,7 +581,7 @@ impl OutboxState {
             return;
         }
         let ended = self.awaits_ended_create(operation);
-        if !ended && self.row_busy(op_id) {
+        if !ended && (self.row_busy(op_id) || self.pair_held_by_other(op_id)) {
             return;
         }
         if ended || self.expired(now, op_id) {

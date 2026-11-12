@@ -63,10 +63,9 @@ impl OutboxState {
         if attempts >= ATTEMPT_LIMIT {
             return self.fail_exhausted(op_id, fx);
         }
-        if let Some((request_id, sequence)) = pending {
+        if let Some((request_id, _)) = pending {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.request_id = request_id;
-                operation.pair_sequence = Some(sequence);
                 operation.pending_owned = true;
             }
         }
@@ -108,9 +107,8 @@ impl OutboxState {
                 operation.attempts = item.attempts;
                 operation.cycle_id = item.cycle_id.max(1);
                 if let Some((request_id, _)) = &item.answered { operation.request_id = *request_id; }
-                if let Some((request_id, sequence)) = item.pending {
+                if let Some((request_id, _)) = item.pending {
                     operation.request_id = request_id;
-                    operation.pair_sequence = Some(sequence);
                     operation.pending_owned = true;
                 }
             }
