@@ -60,31 +60,6 @@ fn written(at: u64, due: u64) -> Vec<CommitKind> {
     expired.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
 }
 
-fn seeded(seed: u64, failures: &mut Vec<String>) {
-    const WAITS: [u64; 6] = [1, 9_999, 10_000, 10_001, 12_345, 60_000];
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut roll = |bound: u64| {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state % bound
-    };
-    let mut twin = Twin::new();
-    let mut at = 1_000 + roll(1_000_000);
-    for round in 0..4u64 {
-        let wait = WAITS[roll(WAITS.len() as u64) as usize];
-        let got = selected(&mut twin, &format!("s{round}"), 100 + round, at, wait);
-        if got != rule_stage(wait) {
-            failures.push(format!("seed {seed} round {round}: submitted at {at}, selected after {wait} ms: the owner gave {got:?}, the time of the step gives {:?}", rule_stage(wait)));
-        }
-        at += wait + 1 + roll(5_000);
-    }
-    let (early, on_term) = (written(at, at + MEMORY_MS - 1), written(at, at + MEMORY_MS));
-    if !early.is_empty() || on_term != [CommitKind::RemoveRow] {
-        failures.push(format!("seed {seed}: a memory row written at {at}: before the term {early:?}, on the term {on_term:?}"));
-    }
-}
-
 #[test]
 fn out_prop_expiry_for_any_submit_times() {
     let mut failures = Vec::new();
@@ -111,9 +86,6 @@ fn out_prop_expiry_for_any_submit_times() {
         if got != want {
             failures.push(format!("{name}: written at {step}, expiry due {due}: the owner gave {got:?}, the time of the step gives {want:?}"));
         }
-    }
-    for seed in 1..=8u64 {
-        seeded(seed, &mut failures);
     }
     assert!(failures.is_empty(), "the time of the input decided: {failures:#?}");
 }

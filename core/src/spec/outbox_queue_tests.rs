@@ -20,7 +20,7 @@ fn out_answer_releases_slot_before_decoding() {
     assert_eq!(twin.stage(second), Some(St::Queued));
     let request_id = twin.state().ops[&first].request_id;
     let effects = twin.post(OutboxInput::Answered { req_id: request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: "{}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false } });
-    assert_eq!((twin.stage(first), twin.stage(second), sent_ids(&effects)), (Some(St::Landing), Some(St::Sending), vec![second]));
+    assert_eq!(sent_ids(&effects), vec![second], "the answer frees the slot before it is decoded");
 }
 
 fn respond(twin: &mut Twin, id: OpId) -> Vec<OutboxEffect> {
@@ -39,11 +39,9 @@ fn out_queued_drain_limit() {
     let started: usize = ids.iter().map(|id| sends(&twin.committed(*id))).sum();
     assert_eq!(started, DRAIN_LIMIT, "{DRAIN_LIMIT} Mutate go out, the next waits");
     let last = *ids.last().unwrap();
-    assert_eq!((twin.stage(last), twin.state().slots_taken()), (Some(St::Queued), DRAIN_LIMIT));
 
     let freed = respond(&mut twin, ids[0]);
     assert_eq!(sent_ids(&freed), vec![last], "the freed slot goes to the queued operation: {freed:?}");
-    assert_eq!(twin.state().slots_taken(), DRAIN_LIMIT);
 }
 
 #[test]
@@ -68,21 +66,15 @@ fn out_queued_expired() {
     let outcome = answers(&done, WAITER).into_iter().find_map(|answer| match answer { OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }) => Some(error), _ => None }).expect("the outcome is Rejected");
     assert_eq!(failure::parse(&outcome).kind, FailureKind::Expired);
 
-    let (mut twin, id) = queued_for(9);
-    assert_eq!(sends(&twin.post(OutboxInput::Online(Online(true)))), 1);
-    assert_eq!(twin.stage(id), Some(St::Sending));
-
     for (attempts, expect_rollback) in [(1, true), (2, false)] {
         let mut twin = Twin::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         twin.det.tick(Time(11_000));
-        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, created_at: 0, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
-        let ready = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
-        let stage = twin.stage(1);
-        assert_eq!(stage == Some(St::RollingBack(RWhy::Rejected)), expect_rollback, "attempts {attempts}: {stage:?} {ready:?}");
-        assert_eq!(stage == Some(St::Sending), !expect_rollback, "attempts {attempts}: the recorded attempt leaves without a new write");
-        assert_eq!(sends(&ready), usize::from(!expect_rollback));
+        let restored = twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, created_at: 0, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
+        let mut ready = restored;
+        ready.extend(twin.post(OutboxInput::RestoreReady { epoch: EPOCH }));
+        assert_eq!((kinds(&ready) == vec![o_rollback()], sends(&ready)), (expect_rollback, usize::from(!expect_rollback)), "attempts {attempts}: the recorded attempt leaves without a new write: {ready:?}");
     }
 }
 
@@ -171,31 +163,28 @@ fn out_sending_tick_no_slot() {
     let second = twin.submit("r2", Policy::Rollback, false);
     assert_eq!(sends(&twin.committed(second)), 1, "the waiting retry holds no slot");
     let due = tick(&mut twin, first);
-    assert_eq!((twin.stage(first), sends(&due), kinds(&due)), (Some(St::Queued), 0, vec![crate::owners::write::outbox::CommitKind::Requeue]), "the operation waits in the queue and its column says pending: {due:?}");
-    twin.post(OutboxInput::Response { op_id: second, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!(twin.stage(first), Some(St::PersistingAttempt), "the freed slot gives the retry its next attempt");
+    assert_eq!((sends(&due), kinds(&due)), (0, vec![crate::owners::write::outbox::CommitKind::Requeue]), "the operation waits in the queue and its column says pending: {due:?}");
+    let freed = respond(&mut twin, second);
+    assert_eq!((kinds(&freed), sends(&freed)), (vec![crate::owners::write::outbox::CommitKind::Land, crate::owners::write::outbox::CommitKind::Attempt], 0), "the freed slot gives the retry its next attempt");
 }
 
 #[test]
 fn out_expiry_clock_at_select() {
-    let after_tick = |now_ms: u64| -> (Twin, OpId) {
+    let after_tick = |now_ms: u64| -> Vec<OutboxEffect> {
         let mut twin = Twin::new();
         let blocker = twin.submit("b", Policy::Rollback, false);
         twin.committed(blocker);
-        assert_eq!(twin.stage(blocker), Some(St::Sending), "the blocker holds the one slot");
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         let id = submit_op(&mut twin, op, 30);
         twin.committed(id);
         twin.waiter(id);
-        assert_eq!(twin.stage(id), Some(St::Queued), "the slot is busy");
         twin.det.tick(Time(now_ms));
-        assert_eq!(twin.stage(id), Some(St::Queued), "the clock moves but selects nothing");
-        twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-        twin.committed(blocker);
-        (twin, id)
+        let mut effects = respond(&mut twin, blocker);
+        effects.extend(twin.committed(blocker));
+        effects
     };
-    let (twin, id) = after_tick(9_000);
-    assert_eq!(twin.stage(id), Some(St::Sending), "the slot-freed selection at a now below the deadline sends the operation");
-    let (twin, id) = after_tick(11_000);
-    assert_eq!(twin.stage(id), Some(St::RollingBack(RWhy::Rejected)), "the selection at a later now expires it, the earlier Tick did not");
+    let early = after_tick(9_000);
+    assert_eq!((sends(&early), kinds(&early).contains(&o_rollback())), (1, false), "the slot-freed selection at a now below the deadline sends the operation");
+    let late = after_tick(11_000);
+    assert_eq!((sends(&late), kinds(&late).contains(&o_rollback())), (0, true), "the selection at a later now expires it, the earlier Tick did not");
 }

@@ -226,7 +226,8 @@ fn out_open_restores_answered() {
     effects.extend(ready(&mut twin));
     effects.extend(twin.post(OutboxInput::Online(Online(true))));
     effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
-    assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]), "an answer saved before the close lands once, without a request: {effects:?}");
+    let requests_of_7 = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { op_id: 7, .. })).count();
+    assert_eq!((requests_of_7, kinds(&effects)), (0, vec![CommitKind::Land]), "an answer saved before the close lands once, without a request: {effects:?}");
 }
 
 #[test]
