@@ -36,6 +36,7 @@ fn store_prop_memory_model_tables() {
     seed(&store);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'row_presence'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'row_presence'"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'fingerprint:presence'"), 0);
     assert_eq!(store.row_count("presence").unwrap(), 1);
     store.read(&["presence", "messages"], |reader| {
         assert_eq!(reader.point("presence", "p1")?.unwrap().get("room"), Some(&json!("r1")));
@@ -61,20 +62,6 @@ fn memory_rows_and_their_cache_tables_do_not_survive_a_restart() {
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'presence'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM tombstone WHERE model = 'presence'"), 0);
     assert_eq!(store.row_count("messages").unwrap(), 1);
-}
-
-#[test]
-fn the_disk_file_holds_no_memory_rows_or_fingerprints() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    {
-        let store = reopen(&path);
-        seed(&store);
-    }
-    let raw = rusqlite::Connection::open(&path).unwrap();
-    let tables: i64 = raw.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'row_presence'", [], |row| row.get(0)).unwrap();
-    let fingerprints: i64 = raw.query_row("SELECT COUNT(*) FROM manifest WHERE key = 'fingerprint:presence'", [], |row| row.get(0)).unwrap();
-    assert_eq!((tables, fingerprints), (0, 0));
 }
 
 #[test]

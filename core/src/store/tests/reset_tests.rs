@@ -88,17 +88,6 @@ fn mismatched_restores_manifest_atomically() {
 }
 
 #[test]
-fn reset_advances_generation_and_the_revision_sequence() {
-    let (store, _) = booted_store();
-    seed_two_models(&store);
-    let before = store.generation();
-    let revision = store.revision_seq().unwrap();
-    store.erase_account(store.generation().next(), false).unwrap();
-    assert!(store.generation() > before);
-    assert_eq!(store.revision_seq().unwrap(), revision + 1);
-}
-
-#[test]
 fn writes_work_again_after_reset() {
     let (store, _) = booted_store();
     seed_two_models(&store);
@@ -120,7 +109,9 @@ fn resets_advance_the_revision_and_tell_the_hook() {
             sink.lock().unwrap().push((revision, models));
         }
     })).unwrap();
+    let before = store.generation();
     store.erase_account(store.generation().next(), false).unwrap();
+    assert!(store.generation() > before);
     assert_eq!(store.revision_seq().unwrap(), 2);
     assert_eq!(*seen.lock().unwrap(), vec![(2, None)]);
 }

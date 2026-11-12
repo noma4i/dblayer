@@ -57,18 +57,6 @@ fn second_boot_is_matching_and_keeps_data() {
 }
 
 #[test]
-fn committed_work_survives_dropping_the_store_without_checkpoint() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
-        store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    }
-    let (store, _) = reopen(&path, &[messages_spec()], None);
-    assert!(store.point("messages", "m1").unwrap().is_some());
-}
-
-#[test]
 fn fingerprint_change_clears_cache_and_keeps_intents() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
@@ -178,43 +166,6 @@ fn mismatched_manifests_wipe_cache_and_keep_operations() {
 }
 
 #[test]
-fn an_interrupted_session_end_wipes_the_data_at_the_next_open_and_asks_for_the_credential_clear_once() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        seed(&store);
-        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session"), 0);
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert!(report.finished_interrupted_reset);
-    assert_eq!((store.row_count("messages").unwrap(), store.row_count("items").unwrap()), (0, 0));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
-    assert_eq!(store.reset_intent().unwrap(), None);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), 0);
-}
-
-#[test]
-fn interrupted_mismatched_reset_is_completed_idempotently() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        seed(&store);
-        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'mismatched', 1)");
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert!(report.finished_interrupted_reset);
-    assert_eq!(store.row_count("items").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-    assert_eq!(store.reset_intent().unwrap(), None);
-}
-
-#[test]
 fn store_boot_journal_unknown() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("unknown.sqlite");
@@ -262,8 +213,10 @@ fn store_boot_replay_end() {
             exec(&store, "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '0000000000000001', 1)");
             exec(&store, &format!("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, '{mode}', 1)"));
         }
-        let (store, _) = reopen(&path, &models, None);
-        assert_eq!(store.row_count("messages").unwrap(), 0, "{mode}");
+        let (store, report) = reopen(&path, &models, None);
+        assert!(report.finished_interrupted_reset, "{mode}");
+        assert_eq!((store.row_count("messages").unwrap(), store.row_count("items").unwrap()), (0, 0), "{mode}");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), 0, "{mode}: pending");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0, "{mode}");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session"), session_count, "{mode}");
         assert_eq!(store.reset_intent().unwrap(), None, "{mode}");
@@ -281,7 +234,8 @@ fn store_boot_replay_reset() {
         exec(&store, "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '0000000000000001', 1)");
         exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'mismatched', 1)");
     }
-    let (store, _) = reopen(&path, &models, None);
+    let (store, report) = reopen(&path, &models, None);
+    assert!(report.finished_interrupted_reset);
     assert_eq!(store.row_count("messages").unwrap(), 0);
     assert_eq!(store.row_count("items").unwrap(), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
