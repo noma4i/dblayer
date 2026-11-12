@@ -284,3 +284,32 @@ async fn an_image_after_an_interactive_call_beside_a_mutation_opens_on_the_livin
 async fn an_image_after_a_cancelled_interactive_call_opens_on_the_living_server() { at_every_commit(Exchange::CallCancelled).await; }
 #[tokio::test(flavor = "multi_thread")]
 async fn an_image_after_an_expired_interactive_call_opens_on_the_living_server() { at_every_commit(Exchange::CallExpired).await; }
+
+/// Requirement: an interactive call and a queued mutation started together both end, at either order of the inputs, and the server executes the request of each once. Observable: the outcome of the call, the confirmation of the mutation, the executed requests of the server.
+#[test]
+fn an_interactive_call_beside_a_queued_mutation_both_end() {
+    crate::test_wait::in_own_process(module_path!(), "an_interactive_call_beside_a_queued_mutation_both_end", &["call_first", "mutation_first"], |order| {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
+            let clock = TestClock::new(1_000_000);
+            let server = server(&clock);
+            let directory = tempfile::tempdir().unwrap();
+            let live_file = directory.path().join("live.sqlite");
+            let recording = Arc::new(Recording { server: server.clone(), live: None, wires: Mutex::default(), refuse_logout: false });
+            let database = open(&live_file, recording, Arc::new(WatchedHeld::default()), clock.clone()).await;
+            quiet(&database, &clock).await;
+            let before = server.executed().len();
+            let epoch = database.session_epoch();
+            server.lose_next_answer();
+            let start_call = || tokio::spawn(call(database.clone(), epoch, "Ping"));
+            let start_mutation = || { let database = database.clone(); tokio::spawn(async move { mutate(&database, "a").await }) };
+            let (called, mutated) = if order == "call_first" { let called = start_call(); (called, start_mutation()) } else { let mutated = start_mutation(); (start_call(), mutated) };
+            stepping(&clock, 1_000, async {
+                bound(mutated).await.unwrap();
+                bound(called).await.unwrap().unwrap();
+            }).await;
+            quiet(&database, &clock).await;
+            assert_eq!(server.executed().len() - before, 2, "{order}: the request of the call and the request of the mutation executed once each");
+            database.close_now();
+        });
+    });
+}
