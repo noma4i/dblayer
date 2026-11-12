@@ -162,13 +162,13 @@ async fn xfer_prepare_runs_then_uploads() {
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_prepare_pass_through() {
     let directory = tempfile::tempdir().unwrap();
-    let source = source_file(directory.path(), "clip.jpg", SOURCE);
-    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+    let source = source_file(directory.path(), "clip.mp4", SOURCE);
+    let preparer = ScriptedPreparer::new(video_probe(&[], false), PREPARED, &[]);
     let stand = Stand::new().with_preparer(preparer.clone());
     let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
     stand.script.data("CreateBlob", BLOB);
     stand.script.data("CreateMoment", LANDED);
-    let receipt = bound(database.send(send(database.session_epoch(), &source, image(|_| {})))).await.unwrap();
+    let receipt = bound(database.send(send(database.session_epoch(), &source, video(|_| {})))).await.unwrap();
     bound(database.confirmed(receipt, false)).await.unwrap();
     assert_eq!((preparer.probes(), preparer.runs()), (vec![SOURCE.to_vec()], Vec::new()), "the plan asks for no work: the metadata is read, nothing is written");
     assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![SOURCE.to_vec()], "the copy of the source goes");
