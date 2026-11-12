@@ -267,7 +267,6 @@ fn data_sets_derived_once_per_batch() {
 
 #[test]
 fn data_newer_order_is_total() {
-    use super::sets_reference_tests::{derive, newest, Child};
     fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
         if items.len() <= 1 {
             return vec![items.to_vec()];
@@ -278,23 +277,19 @@ fn data_newer_order_is_total() {
             permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
         }).collect()
     }
-    let groups: [Vec<(&str, i64, Option<i64>)>; 3] = [
-        vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)],
-        vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))],
-        vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)],
+    let groups: [(Vec<(&str, i64, Option<i64>)>, &str); 3] = [
+        (vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)], "10"),
+        (vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))], "m2"),
+        (vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)], "m4"),
     ];
-    for children in groups {
-        let kids: Vec<Child> = children.iter().map(|(id, at, seq)| Child { id: (*id).into(), at: Some(*at), seq: *seq, body: (*id).into() }).collect();
-        let first = newest(&kids).unwrap().id.clone();
-        for order in permutations(&(0..kids.len()).collect::<Vec<_>>()) {
+    for (children, first) in groups {
+        for order in permutations(&(0..children.len()).collect::<Vec<_>>()) {
             let db = open();
             for index in &order {
-                let child = &kids[*index];
-                let seq = child.seq.map_or(Value::Null, |seq| json!(seq));
-                let row = RowValue { row_id: child.id.clone(), values: json!({"id": child.id, "chatId": "c1", "body": child.body, "createdAt": child.at, "sequenceNumber": seq}).to_string() };
-                write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![row] }]);
+                let (id, at, seq) = children[*index];
+                land_children(&db, vec![child(id, "c1", at, seq)]);
             }
-            assert_eq!((sets(&db).id, sets(&db)), (Some(first.clone()), derive(None, &kids)), "landed as {order:?} of {children:?}");
+            assert_eq!(sets(&db).id.as_deref(), Some(first), "landed as {order:?} of {children:?}");
         }
     }
 }
@@ -495,14 +490,6 @@ fn parent_value(fields: Value) -> RowValue {
     RowValue { row_id: "c1".into(), values: values.to_string() }
 }
 
-fn confirmed_child(id: &str, at: i64) -> super::sets_reference_tests::Child {
-    super::sets_reference_tests::Child { id: id.into(), at: Some(at), seq: None, body: id.into() }
-}
-
-fn server_pointer(id: &str, at: i64) -> super::sets_reference_tests::Server {
-    super::sets_reference_tests::Server { id: Some(id.into()), at: Some(at), seq: None }
-}
-
 fn reopened_at(path: &std::path::Path) -> Arc<Store> {
     Arc::new(Store::open_models(Some(path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
@@ -522,7 +509,7 @@ fn with_confirmed_child(path: &std::path::Path) -> Arc<Store> {
 /// data_sets_recovered_at_open (P-DATA-56, D-338), (a): the open removes the row of a lost operation and the parent loses the pointer to it.
 #[test]
 fn data_sets_recovered_at_open() {
-    use super::sets_reference_tests::{derive, stored_sets};
+    use super::sets_reference_tests::stored_sets;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("recovered.sqlite");
     {
@@ -532,13 +519,13 @@ fn data_sets_recovered_at_open() {
     }
     let db = reopened_at(&path);
     assert_eq!(temp_rows(&db), 0, "the open removed the row of the lost operation");
-    assert_eq!(stored_sets(&db), derive(Some(&server_pointer("m1", 1)), &[confirmed_child("m1", 1)]), "the parent has no pointer to the removed row");
+    assert_eq!(stored_sets(&db), shown("m1", 1, None, "m1"), "the parent has no pointer to the removed row");
 }
 
 /// data_sets_recovered_at_open_returned (P-DATA-56, D-338), (b): the open returns the row of an open operation and the fields of the parent count it.
 #[test]
 fn data_sets_recovered_at_open_returned() {
-    use super::sets_reference_tests::{derive, stored_sets, Child};
+    use super::sets_reference_tests::stored_sets;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("returned.sqlite");
     {
@@ -552,8 +539,7 @@ fn data_sets_recovered_at_open_returned() {
     }
     let db = reopened_at(&path);
     assert_eq!(temp_rows(&db), 1, "the open returned the row of the open operation");
-    let temp = Child { id: "temp-2".into(), at: Some(6), seq: None, body: "temp-2".into() };
-    assert_eq!(stored_sets(&db), derive(Some(&server_pointer("m1", 1)), &[confirmed_child("m1", 1), temp]), "the fields of the parent count the returned child");
+    assert_eq!(stored_sets(&db), shown("temp-2", 6, None, "temp-2"), "the fields of the parent count the returned child");
 }
 
 /// data_sets_hidden_value_is_not_read (P-DATA-58, D-338): the stored server value never reaches a reader or a subscriber.

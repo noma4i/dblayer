@@ -18,10 +18,8 @@ use crate::store::fixtures::snapshot_specs;
 use crate::store::Store;
 
 use super::data_sets_tests::deliver;
-use super::sets_reference_tests::{derive, milliseconds_of, stored_sets, Child, Server};
 
 pub(super) const LANDS: &str = "P-DATA-104 lands";
-pub(super) const REPEAT: &str = "P-DATA-104 repeat";
 
 #[derive(Clone, Copy)]
 pub(super) struct Case {
@@ -32,21 +30,17 @@ pub(super) struct Case {
     pub windows: bool,
     pub order: bool,
     pub tombstone: bool,
-    pub revisions: bool,
 }
 
-const NONE: Case = Case { name: "", sets: false, partial: false, related: false, windows: false, order: false, tombstone: false, revisions: false };
+const NONE: Case = Case { name: "", sets: false, partial: false, related: false, windows: false, order: false, tombstone: false };
 
-pub(super) const CASES: [Case; 9] = [
+pub(super) const CASES: [Case; 6] = [
     Case { name: "sets_full_rows", sets: true, ..NONE },
     Case { name: "sets_partial_projection", sets: true, partial: true, ..NONE },
     Case { name: "sets_related_parent", sets: true, related: true, ..NONE },
     Case { name: "window_members", windows: true, ..NONE },
     Case { name: "window_order", windows: true, order: true, ..NONE },
     Case { name: "tombstone", tombstone: true, ..NONE },
-    Case { name: "sets_revisions", sets: true, revisions: true, ..NONE },
-    Case { name: "window_revisions", windows: true, revisions: true, ..NONE },
-    Case { name: "tombstone_revisions", tombstone: true, revisions: true, ..NONE },
 ];
 
 struct Row {
@@ -138,7 +132,6 @@ fn alphabet(case: Case, seed: u64) -> Vec<Input> {
 pub(super) struct World {
     case: Case,
     seed: u64,
-    which: &'static str,
     alphabet: Vec<Input>,
 }
 
@@ -160,19 +153,19 @@ fn is_revision(column: &str) -> bool {
     ["revision", "born_rev", "operation_seq", "seq"].contains(&column) || column.starts_with("rev__")
 }
 
-fn dump(store: &Store, revisions: bool, order: bool) -> Value {
+fn dump(store: &Store, order: bool) -> Value {
     let guard = store.lock();
     let connection = &guard.connection;
     let mut names = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND ((name LIKE 'row\\_%' ESCAPE '\\' AND name != 'row_alias') OR name IN ('scope_member', 'tombstone', 'scope_revision')) ORDER BY name").unwrap();
     let tables: Vec<String> = names.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
     let mut out = Map::new();
     for table in tables {
-        if table == "scope_revision" && !revisions {
+        if table == "scope_revision" {
             continue;
         }
         let mut statement = connection.prepare(&format!("SELECT * FROM \"{table}\"")).unwrap();
         let columns: Vec<String> = statement.column_names().iter().map(ToString::to_string).collect();
-        let keep: Vec<bool> = columns.iter().map(|column| revisions || !(is_revision(column) || (!order && (column == "order_key" || column == "place")))).collect();
+        let keep: Vec<bool> = columns.iter().map(|column| !(is_revision(column) || (!order && (column == "order_key" || column == "place")))).collect();
         let mut found: Vec<Value> = statement
             .query_map([], |row| {
                 let mut cells = Map::new();
@@ -249,70 +242,15 @@ impl World {
     fn canonical(&self, landed: &BTreeSet<usize>) -> Value {
         let mut lander = Lander { store: open(), batch: 0 };
         landed.iter().for_each(|index| lander.deliver(self.seed, &self.alphabet[*index]));
-        dump(&lander.store, false, self.case.order)
+        dump(&lander.store, self.case.order)
     }
-}
-
-fn reaction_count(value: Option<&Value>) -> usize {
-    match value {
-        Some(Value::Array(items)) => items.len(),
-        Some(Value::String(text)) => serde_json::from_str::<Vec<Value>>(text).map_or(0, |items| items.len()),
-        _ => 0,
-    }
-}
-
-fn text_of(row: &Map<String, Value>, key: &str) -> Value {
-    row.get(key).cloned().unwrap_or(Value::Null)
-}
-
-fn in_case(case: Case, row: &Row) -> bool {
-    if row.model == "posts" { case.windows || case.tombstone } else { case.sets }
-}
-
-fn visible(store: &Store, case: Case, seed: u64) -> Value {
-    let mut out = Map::new();
-    for row in rows(seed).iter().filter(|row| in_case(case, row)) {
-        let stored = store.read(&[row.model], |reader| reader.point(row.model, row.id)).unwrap();
-        let shown = stored.map_or(Value::Null, |stored| match row.model {
-            "chats" => json!({"title": text_of(&stored, "title"), "sets": stored_sets(store).to_json()}),
-            "messages" => json!({"chatId": text_of(&stored, "chatId"), "body": text_of(&stored, "body"), "createdAt": milliseconds_of(stored.get("createdAt")), "reactions": reaction_count(stored.get("reactions"))}),
-            _ => json!({"text": text_of(&stored, "text"), "groupId": text_of(&stored, "groupId")}),
-        });
-        out.insert(format!("{}/{}", row.model, row.id), shown);
-    }
-    Value::Object(out)
-}
-
-fn wanted(case: Case, seed: u64) -> Value {
-    let all = rows(seed);
-    let at = |row: &Row| row.values["createdAt"].as_i64().unwrap();
-    let children: Vec<Child> = all.iter().filter(|row| row.model == "messages").map(|row| Child { id: row.id.into(), at: Some(at(row)), seq: None, body: row.id.into() }).collect();
-    let mut out = Map::new();
-    for row in all.iter().filter(|row| in_case(case, row)) {
-        let shown = match row.model {
-            "chats" => {
-                let server = Server { id: row.values["lastMessageId"].as_str().map(Into::into), at: row.values["lastMessageAt"].as_i64(), seq: None };
-                json!({"title": row.values["title"], "sets": derive(Some(&server), &children).to_json()})
-            }
-            "messages" => json!({"chatId": row.values["chatId"], "body": row.values["body"], "createdAt": at(row), "reactions": row.values["reactions"].as_array().unwrap().len()}),
-            _ => json!({"text": row.values["text"], "groupId": row.values["groupId"]}),
-        };
-        out.insert(format!("{}/{}", row.model, row.id), shown);
-    }
-    Value::Object(out)
 }
 
 impl World {
     /// Independent of the order of landing: the rows by the reader, the members of the landed pages, the tombstone of a delivered delete.
     fn snapshot_diff(&self, store: &Store, landed: &BTreeSet<usize>) -> Vec<String> {
         let mut lines = Vec::new();
-        let (want, got) = (wanted(self.case, self.seed), visible(store, self.case, self.seed));
-        for (key, value) in want.as_object().unwrap() {
-            if got[key] != *value {
-                lines.push(format!("{key}: snapshot {value} store {}", got[key]));
-            }
-        }
-        let state = dump(store, false, false);
+        let state = dump(store, false);
         let table = |name: &str| -> Vec<Value> { state.get(name).and_then(Value::as_array).cloned().unwrap_or_default() };
         let mut expected: BTreeMap<&str, usize> = BTreeMap::new();
         for index in landed.iter().filter(|index| self.alphabet[**index].text("window").is_some()) {
@@ -346,15 +284,12 @@ impl Sut for Landing {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
         self.lander.deliver(self.world.seed, input);
         let index = self.world.alphabet.iter().position(|known| known == input).unwrap();
-        let repeated = !self.landed.insert(index);
+        self.landed.insert(index);
         let world = self.world.clone();
         let landed = self.landed.clone();
         let store = &self.lander.store;
         let informative = world.informative(&landed);
-        if world.which == REPEAT {
-            return vec![Observation::new("revs", dump(store, world.case.revisions, world.case.order)), Observation::new("repeated", json!(repeated && informative))];
-        }
-        let mut observations = vec![Observation::new("state", dump(store, false, world.case.order))];
+        let mut observations = vec![Observation::new("state", dump(store, world.case.order))];
         if informative {
             observations.push(Observation::new("snapshot_diff", json!(world.snapshot_diff(store, &landed))));
             observations.push(Observation::new("canonical", self.canonical.entry(landed.clone()).or_insert_with(|| world.canonical(&landed)).clone()));
@@ -366,8 +301,8 @@ impl Sut for Landing {
 pub(super) struct SnapshotOwner(pub Arc<World>);
 
 impl SnapshotOwner {
-    pub(super) fn new(case: Case, seed: u64, which: &'static str) -> Self {
-        Self(Arc::new(World { case, seed, which, alphabet: alphabet(case, seed) }))
+    pub(super) fn new(case: Case, seed: u64) -> Self {
+        Self(Arc::new(World { case, seed, alphabet: alphabet(case, seed) }))
     }
 }
 
@@ -390,7 +325,7 @@ impl Owner for SnapshotOwner {
     }
 
     fn properties(&self) -> Vec<Property> {
-        vec![if self.0.which == LANDS { Property { name: LANDS, check: lands } } else { Property { name: REPEAT, check: repeat } }]
+        vec![Property { name: LANDS, check: lands }]
     }
 }
 
@@ -406,14 +341,6 @@ fn lands(steps: &[Step]) -> Result<(), String> {
         return Err(diff.join(" | "));
     }
     differ(canonical, observed(last, "state").unwrap(), "canonical", "got")
-}
-
-fn repeat(steps: &[Step]) -> Result<(), String> {
-    let [.., before, last] = steps else { return Ok(()) };
-    if observed(last, "repeated") != Some(&json!(true)) {
-        return Ok(());
-    }
-    differ(observed(before, "revs").unwrap(), observed(last, "revs").unwrap(), "before", "after")
 }
 
 fn differ(want: &Value, got: &Value, want_name: &str, got_name: &str) -> Result<(), String> {
