@@ -21,7 +21,7 @@ impl crate::ffi::FakeTransport for Cable {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
 }
 
-async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>) {
+async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::TestClock>) {
     use crate::schema::{FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut presence = ModelSpec::new("Presence", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("online", ScalarKind::Bool)]);
@@ -48,7 +48,8 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>) {
         if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.lock().unwrap() = Some(subscribed); signal.notify_one(); }
     });
     let cable = Arc::new(Cable { peer, token, opened: cable_opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![presence]).unwrap()), crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let clock = crate::ffi::TestClock::new(1_000_000);
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![presence]).unwrap()), crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
     database.register_operations(json!([
         {"name":"PresenceNode","document":"query PresenceNode($id: ID!) { node(id: $id) { ... on Presence { id online } } }"},
         {"name":"PresenceDetails","document":"query PresenceDetails($id: ID!) { presence(id: $id) { id online } }"},
@@ -56,7 +57,7 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>) {
     ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
-    (database, cable)
+    (database, cable, clock)
 }
 
 fn node_answer(online: bool) -> serde_json::Value { json!({"data":{"node":{"__typename":"Presence","id":"p1","online":online}}}) }
@@ -67,7 +68,7 @@ fn online_of(rows: &Rows) -> Option<bool> {
 
 async fn observe(loaded_by_node: bool, events_stream: bool, fetch: ReadFetch) -> (bool, usize, Option<bool>, u64) {
     let world = World::new("server", "A", true);
-    let (database, cable) = open(world.clone()).await;
+    let (database, cable, _) = open(world.clone()).await;
     let epoch = database.session_epoch();
     let stream = events_stream.then(|| database.subscribe_values(epoch, ReadRequest::Events { model: "Presence".into() }));
     if let Some(stream) = &stream { assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready))); }
@@ -107,4 +108,40 @@ async fn node_event_rereads_the_row_whichever_read_loaded_it() {
     }
     let wanted: Vec<_> = table.iter().map(|(case, _)| (case.clone(), (true, 1usize, Some(false), 0u64))).collect();
     assert_eq!(table, wanted, "(loaded by node, events stream, fetch) -> (subscription open, node requests after the event, value of the reader, refused events)");
+}
+
+/// D-361 and the reconnect rule: after the subscription is lost and opens again, the row with an open reader (`fetch: never`) is reread once by its node and the reader shows the new value. A stored row that nobody reads is not requested. The loss is the network going away, or the server closing the cable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_subscription_rereads_the_rows_with_open_readers() {
+    let mut table = Vec::new();
+    for server_closes in [false, true] {
+        let world = World::new("server", "A", true);
+        let (database, cable, clock) = open(world.clone()).await;
+        let epoch = database.session_epoch();
+        for id in ["p1", "p2"] {
+            world.answer_with("PresenceDetails", json!({"data":{"presence":{"__typename":"Presence","id":id,"online":true}}}));
+            bound(database.load(epoch, "Presence".into(), "details".into(), json!({"key":id}).to_string())).await.unwrap();
+        }
+        let rows = Arc::new(Rows::default());
+        let reader = database.watch(ReadRequest::Entity { model: "Presence".into(), id: "p1".into(), fetch: ReadFetch::Never }, rows.clone());
+        bound(reader.wait_for_initial_load()).await.unwrap();
+        crate::test_wait::signalled(&cable.opened, "the subscription opens", || cable.token.lock().unwrap().is_some()).await;
+        let token = cable.token.lock().unwrap().take().unwrap();
+        let asked = world.count("PresenceNode");
+        world.answer_with("PresenceNode", node_answer(false));
+        if server_closes {
+            assert!(cable.peer.close(&token));
+            crate::test_wait::settled(&database, "the closed cable is seen", || true).await;
+            clock.advance(120_000);
+        } else {
+            database.set_online(false).unwrap();
+            database.set_online(true).unwrap();
+        }
+        crate::test_wait::signalled(&cable.opened, "the subscription opens again", || cable.token.lock().unwrap().is_some()).await;
+        crate::test_wait::settled(&database, "the reread after the reconnect lands", || online_of(&rows) == Some(false)).await;
+        table.push((server_closes, world.count("PresenceNode") - asked, online_of(&rows)));
+        drop(reader);
+        bound(database.close_database()).await.unwrap();
+    }
+    assert_eq!(table, vec![(false, 1, Some(false)), (true, 1, Some(false))], "(the server closes the cable, node requests after the reconnect, value of the reader)");
 }
