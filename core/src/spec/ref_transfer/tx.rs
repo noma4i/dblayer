@@ -181,6 +181,12 @@ pub fn tick_retry(g: &mut G, t: &mut Transfer, aid: AttemptId, e: &mut Vec<Effec
             e.push(Effect::SelfSlotFreed);
         }
         St::Completing { .. } => row(e, "xfer_completing_stray"),
+        St::PersistingAttempt { .. } | St::PersistingPart { .. } | St::PersistingComplete | St::Removing { .. } if t.write_retry == Some(aid) => {
+            row(e, if matches!(t.st, St::PersistingAttempt { .. }) { "xfer_attempt_tick" } else { "xfer_persisting_write_tick" });
+            t.write_retry = None;
+            let ops = std::mem::take(&mut t.write_ops);
+            commit(g, t, e, ops);
+        }
         St::PersistingFailure { error: _, abort } if t.write_retry == Some(aid) => {
             row(e, "xfer_persisting_failure_tick");
             t.write_retry = None;

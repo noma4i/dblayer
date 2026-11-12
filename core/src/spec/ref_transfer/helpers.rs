@@ -127,7 +127,7 @@ pub fn new_transfer(g: &mut G, key: TransferKey, source: Source, epoch: u64, now
     Transfer {
         id, key, op_id: None, epoch, source, st: St::Reserving, seq, pos, cycle_id: 1, batch, size: 0, sha256: None, parts: 1, upload_id: None, confirmed: vec![],
         attempts: 0, complete_attempts: 0, signed_id: None, created_at: now, accepted_at: now, failed_at: None, error: None, copy_present: false, has_effects, held_step: None, round_error: None,
-        replies: Replies::default(), outcome_waiters: BTreeMap::new(), outcomes: BTreeMap::new(), intent_live: false, write_retry: None, intent_after_ready: false, local_url: false, cached: None, aborted: false, values, variables: vec![],
+        replies: Replies::default(), outcome_waiters: BTreeMap::new(), outcomes: BTreeMap::new(), intent_live: false, write_retry: None, write_ops: Vec::new(), write_failures: 0, intent_after_ready: false, local_url: false, cached: None, aborted: false, values, variables: vec![],
         stored_shown: None,
     }
 }

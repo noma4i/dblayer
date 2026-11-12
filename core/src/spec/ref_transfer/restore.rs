@@ -155,6 +155,9 @@ pub fn store_reply(s: &mut State, batch: StoreBatch, epoch: u64, res: Result<u64
                     return;
                 }
             }
+            if res == Err(Reason::Storage) && ids.len() == 1 {
+                if let Some(t) = s.transfers.get_mut(&ids[0]) { t.write_ops = ops.clone(); }
+            }
             let input = match &res { Ok(rev) => Input::Committed { batch, epoch, revision: *rev }, Err(r) => Input::Rejected { batch, epoch, reason: r.clone() } };
             for id in ids { run_on(s, id, &input, e); }
         }

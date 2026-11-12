@@ -3,7 +3,10 @@ use super::*;
 pub fn tx_store(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
     let st = t.st.clone();
     match i {
-        Input::Committed { .. } => store_committed(g, t, st, e),
+        Input::Committed { .. } => {
+            t.write_failures = 0;
+            store_committed(g, t, st, e);
+        }
         Input::Rejected { reason, .. } => store_rejected(g, t, st, reason, e),
         _ => {}
     }
@@ -16,6 +19,41 @@ pub fn end_interrupted(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, name: &
     interrupt_all(g, t, e, cause);
     let c = t.cycle_id;
     t.outcomes.entry(c).or_insert(Outcome::Ended(cause));
+}
+
+fn retry_write(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>) {
+    let attempt_id = g.next_attempt;
+    g.next_attempt += 1;
+    t.write_retry = Some(attempt_id);
+    t.write_failures += 1;
+    e.push(Effect::Schedule { kind: TickKind::Retry { transfer_id: t.id, attempt_id }, delay: Delay::Backoff { attempt: t.write_failures } });
+}
+
+fn failed_invalid(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>) {
+    t.st = St::PersistingFailure { error: fail(ErrKind::InternalInvalid, "invalid"), abort: None };
+    commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+}
+
+fn removing_invalid_outcome(g: &mut G, t: &mut Transfer, why: Why, orphan: Option<String>, e: &mut Vec<Effect>) {
+    let cancel = t.replies.cancel.take();
+    let waiters = std::mem::take(&mut t.replies.discard_waiters);
+    match why {
+        Why::Confirmed(revision) => {
+            row(e, "xfer_removing_confirmed_invalid_is_not_retried");
+            e.push(Effect::Rounds(RoundsIn::Idle { epoch: t.epoch, transfer_id: t.id }));
+            fix_outcome(t, e, Outcome::Confirmed { revision });
+        }
+        _ => {
+            row(e, "xfer_removing_confirmed_invalid_is_not_retried");
+            for r in waiters { reply(e, r, Answer::Ok); }
+            if let Some((r, c)) = cancel { reply(e, r, ans_ok(c)); }
+            fix_outcome(t, e, Outcome::Discarded);
+        }
+    }
+    t.local_url = false;
+    t.st = St::Done;
+    if let Some(u) = orphan { g.orphans.insert(u, t.key.clone()); dispatch_aborts(g, e); }
+    remove_from_group(g, t);
 }
 
 pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &mut Vec<Effect>) {
@@ -31,11 +69,14 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
         }
         St::PersistingAttempt { .. } => {
             if ended { end_interrupted(g, t, e, "xfer_attempt_ended", cause); }
-            else if matches!(reason, Reason::Storage | Reason::Invalid) {
+            else if *reason == Reason::Storage {
+                row(e, "xfer_attempt_storage_retried");
+                retry_write(g, t, e);
+            }
+            else if *reason == Reason::Invalid {
                 row(e, "xfer_attempt_rejected");
-                let error = if *reason == Reason::Storage { fail(ErrKind::Storage, "storage") } else { fail(ErrKind::InternalInvalid, "invalid") };
-                t.st = St::PersistingFailure { error, abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                free_held(t, e);
+                failed_invalid(g, t, e);
             }
         }
         St::PersistingCopy { supply: Some(back), .. } => {
@@ -57,13 +98,17 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
                 row(e, "xfer_persisting_copy_rejected");
                 let prior = t.st.clone();
                 t.st = St::Removing { why: Why::Storage, prior: Box::new(prior), orphan: None };
+                reply_accept(g, t, e, Answer::Err(Fault::Storage));
                 let mut ops = vec![Op::RemoveUpload { transfer_id: t.id }];
                 ops.extend(rollback_op(t));
                 cm(g, t, e, "rs", ops);
             } else {
-                row(e, "xfer_persisting_invalid");
-                t.st = St::PersistingFailure { error: fail(ErrKind::InternalInvalid, "invalid"), abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                row(e, "xfer_persisting_copy_invalid");
+                let prior = t.st.clone();
+                t.st = St::Removing { why: Why::Invalid, prior: Box::new(prior), orphan: None };
+                let mut ops = vec![Op::RemoveUpload { transfer_id: t.id }];
+                ops.extend(rollback_op(t));
+                cm(g, t, e, "rs", ops);
             }
         }
         St::PersistingRetry { .. } => {
@@ -73,31 +118,26 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
                 t.st = St::Failed;
                 if let Some(r) = t.replies.retry.take() { reply(e, r, Answer::Err(Fault::Storage)); }
             } else {
-                row(e, "xfer_persisting_invalid");
-                t.st = St::PersistingFailure { error: fail(ErrKind::InternalInvalid, "invalid"), abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                row(e, "xfer_persisting_retry_invalid");
+                t.st = St::Failed;
+                if let Some(r) = t.replies.retry.take() { reply(e, r, Answer::Err(Fault::Invalid)); }
             }
         }
         St::PersistingPart { .. } | St::PersistingComplete => {
             if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_storage_failure");
-                t.st = St::PersistingFailure { error: fail(ErrKind::Storage, "storage"), abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                retry_write(g, t, e);
             } else {
                 row(e, "xfer_persisting_invalid");
-                t.st = St::PersistingFailure { error: fail(ErrKind::InternalInvalid, "invalid"), abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                failed_invalid(g, t, e);
             }
         }
         St::PersistingFailure { error, abort } => {
             if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); }
             else if *reason == Reason::Storage {
                 row(e, "xfer_persisting_failure_storage");
-                let na = g.next_attempt;
-                g.next_attempt += 1;
-                t.write_retry = Some(na);
-                e.push(Effect::Schedule { kind: TickKind::Retry { transfer_id: t.id, attempt_id: na }, delay: Delay::Backoff { attempt: 1 } });
+                retry_write(g, t, e);
                 t.st = St::PersistingFailure { error, abort };
             } else {
                 row(e, "xfer_persisting_failure_invalid");

@@ -221,7 +221,7 @@ pub enum Effect {
 pub enum Back { AwaitingSource, Failed }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Why { Cancel, Confirmed(u64), Discarded, CopyFailed(String), Storage }
+pub enum Why { Cancel, Confirmed(u64), Discarded, CopyFailed(String), Storage, Invalid }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum St {
@@ -258,7 +258,7 @@ pub struct Transfer {
     pub upload_id: Option<String>, pub confirmed: Vec<(u32, Option<String>)>, pub attempts: u32, pub complete_attempts: u32, pub signed_id: Option<String>,
     pub created_at: u64, pub accepted_at: u64, pub failed_at: Option<u64>, pub error: Option<Failure>, pub copy_present: bool, pub has_effects: bool, pub held_step: Option<ReqId>,
     pub round_error: Option<String>, pub replies: Replies, pub outcome_waiters: BTreeMap<u64, Vec<ReplyId>>, pub outcomes: BTreeMap<u64, Outcome>,
-    pub intent_live: bool, pub write_retry: Option<AttemptId>, pub intent_after_ready: bool, pub local_url: bool, pub cached: Option<Cached>, pub aborted: bool, pub values: Vec<String>, pub variables: Vec<String>,
+    pub intent_live: bool, pub write_retry: Option<AttemptId>, pub write_ops: Vec<Op>, pub write_failures: u32, pub intent_after_ready: bool, pub local_url: bool, pub cached: Option<Cached>, pub aborted: bool, pub values: Vec<String>, pub variables: Vec<String>,
     pub stored_shown: Option<Shown>,
 }
 
