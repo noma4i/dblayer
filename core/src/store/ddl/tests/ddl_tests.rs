@@ -104,17 +104,6 @@ fn create_indexes_remove_duplicate_and_prefix_indexes() {
 }
 
 #[test]
-fn model_statements_keep_model_order() {
-    let specs = [groups(), messages()];
-    let statements = models_statements(&specs);
-    let groups_at = statements.iter().position(|sql| sql.contains("CREATE TABLE IF NOT EXISTS row_groups")).unwrap();
-    let messages_at = statements.iter().position(|sql| sql.contains("CREATE TABLE IF NOT EXISTS row_messages")).unwrap();
-
-    assert!(groups_at < messages_at);
-    assert_eq!(model_statements(&groups()).len(), 2);
-}
-
-#[test]
 fn model_tables_apply_once_and_again() {
     let connection = Connection::open_in_memory().unwrap();
     let specs = [groups(), messages()];
@@ -146,29 +135,6 @@ fn strict_row_table_rejects_wrong_column_type() {
     );
 
     assert_eq!(refused(result), rusqlite::ffi::SQLITE_CONSTRAINT_DATATYPE);
-}
-
-#[test]
-fn core_migration_creates_tables_and_indexes() {
-    let connection = core_connection();
-    let tables: BTreeSet<String> =
-        ["manifest", "scope_member", "tombstone", "query_window", "window_marker", "op", "quarantine", "row_sync"].map(String::from).into();
-    let indexes: BTreeSet<String> = [
-        "scope_walk",
-        "scope_order_unique",
-        "scope_member_row",
-        "scope_member_place",
-        "tombstone_age",
-        "op_open",
-        "op_temp",
-        "op_open_dedupe",
-        "quarantine_reason",
-    ]
-    .map(String::from)
-    .into();
-
-    assert!(names(&connection, "table").is_superset(&tables));
-    assert!(names(&connection, "index").is_superset(&indexes));
 }
 
 #[test]

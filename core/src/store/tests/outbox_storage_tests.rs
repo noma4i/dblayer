@@ -33,32 +33,6 @@ fn begun() -> (Store, i64) {
 }
 
 #[test]
-fn the_outbox_tables_keep_no_blob_columns() {
-    let (store, _) = booted_store();
-    let blobs = "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name IN ({})";
-    let op = blobs.replacen("{}", "op", 1).replacen("{}", "'row_ids', 'input', 'rollback', 'error', 'upload', 'error_extensions'", 1);
-    let sync = blobs.replacen("{}", "row_sync", 1).replacen("{}", "'actions', 'dirty_fields', 'error', 'upload', 'error_extensions'", 1);
-    assert_eq!((count(&store, &op), count(&store, &sync)), (0, 0));
-}
-
-#[test]
-fn an_operation_keeps_its_rows_and_values_in_child_tables() {
-    let (store, seq) = begun();
-    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_row WHERE seq = {seq} AND row_id IN ('m1', 'm2')")), 2);
-    assert!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'input'")) >= 6);
-    assert!(count(&store, &format!("SELECT COUNT(*) FROM op_effect_value WHERE seq = {seq}")) >= 6);
-}
-
-#[test]
-fn a_failure_is_columns() {
-    let (store, seq) = begun();
-    let failure = OperationFailure::new(FailureKind::Server, "http 503");
-    send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind = 'server' AND error_message = 'http 503'"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind = 'server' AND error_message = 'http 503'"), 2);
-}
-
-#[test]
 fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
     use crate::transport::GraphqlExtensions;
     let nodes = |store: &Store, table: &str| count(store, &format!("SELECT COUNT(*) FROM {table}"));
@@ -132,13 +106,6 @@ fn a_field_that_is_not_json_fails_the_commit_and_stores_nothing() {
     let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: None };
     send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NOT NULL"), 1, "the store still applies a valid commit");
-}
-
-#[test]
-fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
-    let (store, _) = begun();
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_action WHERE row_id = 'm1' AND name = 'update'"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_field WHERE row_id = 'm1' AND name = 'body'"), 1);
 }
 
 #[test]

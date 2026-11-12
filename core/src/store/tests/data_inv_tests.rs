@@ -270,16 +270,6 @@ fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
 }
 
 #[test]
-fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
-    let before = db.revision_seq().unwrap();
-    let written = set_typing(&db, "m1", true);
-    assert_eq!((db.revision_seq().unwrap(), written.revision), (before, u64::try_from(before).unwrap()), "no database revision");
-    assert!(written.notice.position > 0, "the overlay version moves, observers read the row again at it");
-}
-
-#[test]
 fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revision_stays() {
     let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));

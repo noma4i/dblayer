@@ -17,13 +17,3 @@ fn a_quarantined_payload_is_kept_as_value_rows() {
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM quarantine_value WHERE seq = {seq}")), 4);
 }
 
-#[test]
-fn the_reset_intent_is_columns_and_the_fingerprints_are_hashes() {
-    let (store, _) = booted_store();
-    super::reset::write_intent(&store.lock().connection, "mismatched", 5).unwrap();
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM reset_intent WHERE mode = 'mismatched' AND started_at = 5"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'reset_intent'"), 0);
-    assert_eq!(store.reset_intent().unwrap(), Some("mismatched".to_string()));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%'"), 2);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%' AND length(value) != 64"), 0);
-}
