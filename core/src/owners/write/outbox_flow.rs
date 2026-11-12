@@ -175,6 +175,10 @@ impl OutboxState {
             Stage::Failed => match self.ops[&op_id].error.as_deref() {
                 Some("RestoreFailed") => Self::reply(fx, reply, OutboxAnswer::Err(Fault::RestoreFailed)),
                 Some("StateLost") => Self::reply(fx, reply, OutboxAnswer::Err(Fault::StateLost)),
+                _ if self.complete && !self.declarations.contains(&(self.ops[&op_id].op.model.clone(), self.ops[&op_id].op.action.clone())) => {
+                    let text = super::failure::undeclared_message(&self.ops[&op_id].op.model, &self.ops[&op_id].op.action);
+                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(crate::owners::contract::RejectReason::Invalid(text))));
+                }
                 _ => {
                     if let Some(operation) = self.ops.get_mut(&op_id) {
                         operation.stage = Stage::MarkingRetry;

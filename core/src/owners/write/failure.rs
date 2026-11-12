@@ -84,6 +84,18 @@ pub fn protocol(message: &str) -> String { text(&OperationFailure::new(FailureKi
 /// The operation waited in the queue longer than its `expires_after`.
 pub fn expired() -> String { text(&OperationFailure::new(FailureKind::Expired, "expired")) }
 
+/// The registration of the app is complete and does not declare the operation of a saved write: the library refuses it locally.
+pub fn undeclared(model: &str, action: &str) -> String { text(&OperationFailure::new(FailureKind::Refused, &undeclared_message(model, action))) }
+
+/// The text of the refusal of `undeclared` and of the `retry` that meets it.
+pub fn undeclared_message(model: &str, action: &str) -> String { format!("the operation {model}.{action} is not declared") }
+
+/// The same for a saved upload.
+pub fn undeclared_upload(model: &str, action: &str) -> String { text(&OperationFailure::new(FailureKind::Refused, &undeclared_upload_message(model, action))) }
+
+/// The text of the refusal of `undeclared_upload` and of the `retry` that meets it.
+pub fn undeclared_upload_message(model: &str, action: &str) -> String { format!("the upload operation {model}.{action} is not declared") }
+
 const ROW_NEVER_CREATED: &str = "the row of the operation was never created";
 
 /// The row the operation acts on never reached the server: its `create` ended.

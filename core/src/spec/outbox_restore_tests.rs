@@ -183,6 +183,43 @@ fn out_register_rechecks_waiting() {
     assert_eq!(sends(&effects), 1);
 }
 
+/// out_register_complete_fails_undeclared, out_open_complete_fails_undeclared, out_open_waiting_declaration: a complete registration without the operation of a saved intent fails it with the local refusal, in either order of the open and the registration; an incomplete one leaves it waiting.
+#[test]
+fn out_complete_registration_fails_undeclared() {
+    let refusal = crate::owners::write::failure::undeclared("Moment", "update");
+    let mut after = Twin::bare();
+    restore(&mut after, vec![stored(7, "r")]);
+    ready(&mut after);
+    let incomplete = after.post(OutboxInput::RegisterOperations { declarations: Vec::new(), complete: false });
+    assert_eq!((after.stage(7), kinds(&incomplete).len()), (Some(St::WaitingDeclaration), 0), "an incomplete registration waits for the declaration");
+    let effects = after.post(OutboxInput::RegisterOperations { declarations: Vec::new(), complete: true });
+    assert_eq!((after.stage(7), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0), "registration after the open");
+    after.committed(7);
+    assert_eq!((after.stage(7), after.state().ops[&7].error.clone()), (Some(St::Failed), Some(refusal.clone())));
+    let mut before = Twin::bare();
+    before.post(OutboxInput::RegisterOperations { declarations: Vec::new(), complete: true });
+    let effects = restore(&mut before, vec![stored(7, "r")]);
+    assert_eq!((before.stage(7), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]), "registration in Restoring");
+    before.committed(7);
+    assert_eq!((before.stage(7), before.state().ops[&7].error.clone()), (Some(St::Failed), Some(refusal)));
+}
+
+/// out_failed_retry_undeclared: `retry` of an operation that failed as undeclared is refused at once with the text, and goes after a registration that declares it.
+#[test]
+fn out_failed_retry_undeclared() {
+    let mut twin = Twin::bare();
+    twin.post(OutboxInput::RegisterOperations { declarations: Vec::new(), complete: true });
+    restore(&mut twin, vec![stored(7, "r")]);
+    twin.committed(7);
+    let retry = |twin: &mut Twin| twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
+    let refused = retry(&mut twin);
+    let text = crate::owners::write::failure::undeclared_message("Moment", "update");
+    assert_eq!((answers(&refused, 41), twin.stage(7), kinds(&refused).len()), (vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid(text)))], Some(St::Failed), 0));
+    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: true });
+    let accepted = retry(&mut twin);
+    assert_eq!((twin.stage(7), kinds(&accepted)), (Some(St::MarkingRetry), vec![CommitKind::ClearMark]));
+}
+
 #[test]
 fn out_waiting_declaration_refuses() {
     let mut twin = Twin::bare();

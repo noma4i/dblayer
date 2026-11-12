@@ -23,7 +23,10 @@ impl OutboxState {
             }
             return self.restored_failed(op_id, "RestoreFailed".into(), fx);
         }
-        if !self.declarations.contains(&(model, action)) {
+        if !self.declarations.contains(&(model.clone(), action.clone())) {
+            if self.complete {
+                return self.fail_undeclared(item, pending_lost, fx);
+            }
             self.add_operation(op_id, item.op.clone(), Stage::WaitingDeclaration, item.created_at);
             self.waiting.insert(op_id, (item, pending_lost));
             return;
@@ -67,6 +70,19 @@ impl OutboxState {
         self.try_start(now, op_id, fx);
     }
 
+    /// The registration is complete and the operation of a saved intent is not in it: the intent fails with the refusal, the held pair goes to Session.
+    fn fail_undeclared(&mut self, item: StoredOp, pending_lost: bool, fx: &mut Effects<Outbox>) {
+        let StoredOp { op_id, op, created_at, pending, attempts, cycle_id, .. } = item;
+        let error = super::failure::undeclared(&op.model, &op.action);
+        self.add_operation(op_id, op, Stage::Queued, created_at);
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            operation.attempts = attempts;
+            operation.cycle_id = cycle_id.max(1);
+            if let (Some((request_id, _)), false) = (&pending, pending_lost) { operation.request_id = *request_id; operation.pending_owned = true; }
+        }
+        self.fail_with(op_id, error, fx);
+    }
+
     /// No operation owns these answers: one batch takes them out, nothing waits for its result.
     pub(super) fn remove_orphan_answers(&mut self, request_ids: Vec<crate::owners::contract::RequestId>, fx: &mut Effects<Outbox>) {
         if request_ids.is_empty() {
@@ -92,7 +108,7 @@ impl OutboxState {
         let mut stored = stored;
         stored.sort_by_key(|item| item.op_id);
         for item in stored {
-            if item.removed_rows.is_empty() || item.restore_failed.is_some() {
+            if item.removed_rows.is_empty() || item.restore_failed.is_some() || (self.complete && !self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))) {
                 self.classify(now, item, pending_lost, fx);
                 continue;
             }
@@ -119,7 +135,7 @@ impl OutboxState {
         if self.phase == Phase::Restoring {
             return;
         }
-        let ready: Vec<OpId> = self.waiting.iter().filter(|(id, (item, _))| !self.member_removals.contains_key(id) && item.removed_rows.is_empty() && self.declarations.contains(&(item.op.model.clone(), item.op.action.clone()))).map(|(op_id, _)| *op_id).collect();
+        let ready: Vec<OpId> = self.waiting.iter().filter(|(id, (item, _))| !self.member_removals.contains_key(id) && if self.declarations.contains(&(item.op.model.clone(), item.op.action.clone())) { item.removed_rows.is_empty() } else { self.complete }).map(|(op_id, _)| *op_id).collect();
         for op_id in ready {
             if let Some((item, pending_lost)) = self.waiting.remove(&op_id) {
                 self.classify(now, item, pending_lost, fx);
