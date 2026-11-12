@@ -143,7 +143,7 @@ impl Facts {
         };
         let error = match &self.outcome { LastLoad::Failed(error) => Some(error.clone()), _ => None };
         let loaded = (self.landed_revision != 0 || matches!(self.outcome, LastLoad::Fresh | LastLoad::Landed)).then_some(self.landed_revision);
-        WindowState { phase, error, loaded, has_more: self.cursor.is_some(), settled, total: None }
+        WindowState { phase, error, loaded, has_more: self.can_load_next(), settled, total: None }
     }
 
     /// An interest or a load meets a fresh window that has no outcome yet.
@@ -180,7 +180,7 @@ impl Facts {
 
     pub(super) fn page_cursor(&self, page: u32) -> Option<String> { if page > 1 { self.cursor.clone() } else { None } }
 
-    pub(super) fn page_limit_reached(&self) -> bool { self.page_count >= self.max_pages }
+    pub(super) fn can_load_next(&self) -> bool { self.cursor.is_some() && self.page_count < self.max_pages }
 
     /// A load of `page`: a request when online, `Waiting` otherwise. `announce` adds the window state.
     pub(super) fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, force: bool, announce: bool) -> Outcome<WinState> {
@@ -347,7 +347,7 @@ impl Facts {
 
     pub(super) fn idle_load(&mut self, ctx: &mut Ctx<'_>, id: InterestId, goal: Goal, force: bool) -> Outcome<WinState> {
         let fresh = self.is_fresh(ctx.now);
-        let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
+        let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.can_load_next(), fetched: false };
         let next_page = self.page + 1;
         match goal {
             Goal::First if fresh && !force => {
@@ -358,7 +358,7 @@ impl Facts {
                 if self.cursor.is_none() {
                     self.enter_fresh();
                     self.immediate(id, loaded)
-                } else if self.page_limit_reached() {
+                } else if !self.can_load_next() {
                     self.immediate(id, WindowOutcome::PageLimit)
                 } else {
                     self.waiters.insert(id, Want::All);
@@ -370,10 +370,8 @@ impl Facts {
                 self.begin(ctx, 1, force, true)
             }
             Goal::Next => {
-                if self.cursor.is_none() {
+                if !self.can_load_next() {
                     self.immediate(id, loaded)
-                } else if self.page_limit_reached() {
-                    self.immediate(id, WindowOutcome::PageLimit)
                 } else {
                     self.waiters.insert(id, Want::Next(next_page));
                     self.begin(ctx, next_page, false, true)
@@ -407,7 +405,7 @@ impl Facts {
         }
         if chain {
             if self.watched() {
-                let loaded = WindowOutcome::Loaded { revision, has_more: true, fetched: true };
+                let loaded = WindowOutcome::Loaded { revision, has_more: self.can_load_next(), fetched: true };
                 let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
                 let finished: Vec<InterestId> = self.waiters.iter().filter(|(_, want)| !wants_next(want)).map(|(id, _)| *id).collect();
                 for id in finished {
@@ -416,17 +414,17 @@ impl Facts {
                 }
                 return self.begin(ctx, page + 1, false, true);
             }
-            self.answer_all(&WindowOutcome::Loaded { revision, has_more: true, fetched: true });
+            self.answer_all(&WindowOutcome::Loaded { revision, has_more: self.can_load_next(), fetched: true });
             self.fresh = false;
             self.announce();
             return Transition(WinState::idle());
         }
         let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
-        let loaded = WindowOutcome::Loaded { revision, has_more: self.cursor.is_some(), fetched: true };
+        let loaded = WindowOutcome::Loaded { revision, has_more: self.can_load_next(), fetched: true };
         if self.cursor.is_some() && self.waiters.values().any(wants_next) {
-            if self.page_limit_reached() {
+            if !self.can_load_next() {
                 for (id, want) in std::mem::take(&mut self.waiters) {
-                    self.answer(id, if wants_next(&want) { WindowOutcome::PageLimit } else { loaded.clone() });
+                    self.answer(id, if matches!(want, Want::All) { WindowOutcome::PageLimit } else { loaded.clone() });
                 }
                 self.announce();
                 self.fresh = true;
