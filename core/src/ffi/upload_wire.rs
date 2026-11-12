@@ -2,24 +2,32 @@ use serde_json::{Map, Value};
 
 use super::DbError;
 use crate::owners::write::upload::{UploadBatchInput, UploadFile, UploadItem};
+use crate::prepare::{ImageFormat, PhotoEdit, VideoLimits};
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireUploadRequest {
     pub source: WireSource,
     pub variables_json: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireUploadItem {
     pub values_json: String,
     pub source: WireSource,
     pub variables_json: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WireSource {
-    File { path: String, name: Option<String>, mime: Option<String> },
+    File { path: String, name: Option<String>, mime: Option<String>, prepare: Option<WirePrepare> },
     Pending,
+}
+
+/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum WirePrepare {
+    Video { limits: Option<VideoLimits>, mirror: bool },
+    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat },
 }
 
 impl WireSource {
@@ -33,6 +41,13 @@ impl WireSource {
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
             Self::File { name, .. } => name.as_deref(),
+            Self::Pending => None,
+        }
+    }
+
+    pub(crate) fn prepare(&self) -> Option<&WirePrepare> {
+        match self {
+            Self::File { prepare, .. } => prepare.as_ref(),
             Self::Pending => None,
         }
     }

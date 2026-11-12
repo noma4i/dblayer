@@ -40,6 +40,8 @@ pub(super) const CORE_STATEMENTS: [&str; 39] = [
     include_str!("../sql/ddl/sync_upload_batch.sql"),
     include_str!("../sql/ddl/upload_orphan.sql"),
     include_str!("../sql/ddl/sync_upload_part.sql"),
+    include_str!("../sql/ddl/sync_upload_prepare.sql"),
+    include_str!("../sql/ddl/sync_upload_prepare_step.sql"),
     include_str!("../sql/ddl/sync_action.sql"),
     include_str!("../sql/ddl/sync_field.sql"),
     include_str!("../sql/ddl/op_open.sql"),

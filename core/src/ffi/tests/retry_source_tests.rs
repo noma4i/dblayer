@@ -56,7 +56,7 @@ async fn xfer_retry_source_swap_reopen() {
     let created = within(database.create(epoch, "Moment".into(), r#"{"text":"original"}"#.into(), "{}".into())).await.unwrap();
     assert_eq!(within(database.confirmed(created, false)).await.unwrap().value.unwrap().id, "r1");
     rig.server.refuse_next("FORBIDDEN", true);
-    let source = WireSource::File { path: original.to_string_lossy().into_owned(), name: None, mime: None };
+    let source = WireSource::File { path: original.to_string_lossy().into_owned(), name: None, mime: None, prepare: None };
     let receipt = within(database.upload(epoch, "Moment".into(), "r1".into(), "upload".into(), WireUploadRequest { source, variables_json: "{}".into() })).await.unwrap();
     assert!(matches!(within(database.confirmed(receipt, false)).await, Err(DbError::Rejected { kept: true, .. })));
     let failed = failed_uploads(&database).await;

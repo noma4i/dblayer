@@ -70,7 +70,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "nodes" => database.nodes(epoch, model, "nodes".into(), vec![row]).await.map(|_| ()),
         "refresh" => database.refresh(epoch, model, Some("profile".into()), "{}".into()).await,
         "edge_values" => database.edge_values(epoch, model, Some("profile".into()), "{}".into(), vec![row]).await.map(|_| ()),
-        "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: args.source_path.clone(), name: None, mime: None }, variables_json: "{}".into() }).await.map(|_| ()),
+        "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: args.source_path.clone(), name: None, mime: None, prepare: None }, variables_json: "{}".into() }).await.map(|_| ()),
         "supply_source" => database.supply_source(epoch, model, row, args.action.clone(), WireUploadSource { path: args.source_path.clone(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() }).await.map(|_| ()),
         "fail_source" => database.fail_source(epoch, model, row, args.action.clone(), "preparation".into()).await,
         _ => return None,
@@ -147,7 +147,7 @@ async fn every_row_call_answers_the_first_violated_admission_step() {
     let cancel_source = directory.path().join("cancel.bin");
     std::fs::write(&cancel_source, b"clip").unwrap();
     let _blob_gate = rig.world.hold_next("CreateBlob");
-    let _ = bound(rig.database.upload(epoch, "Message".into(), cancel_row.clone(), "upload".into(), WireUploadRequest { source: WireSource::File { path: cancel_source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() })).await;
+    let _ = bound(rig.database.upload(epoch, "Message".into(), cancel_row.clone(), "upload".into(), WireUploadRequest { source: WireSource::File { path: cancel_source.to_string_lossy().into_owned(), name: None, mime: None, prepare: None }, variables_json: "{}".into() })).await;
     let target = |name: &str, closed: bool| -> (Arc<Database>, Args) {
         let (database, epoch, row) = match (FILE_CALLS.contains(&name), closed) {
             (true, false) => (files.clone(), files_epoch, files_row.clone()),
@@ -266,7 +266,7 @@ async fn an_upload_on_a_missing_row_leaves_the_database_open() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
-    let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() };
+    let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None, prepare: None }, variables_json: "{}".into() };
     let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
     matrix.cell("upload(missing row)", "first call", "missing_row", "admitted", observed(&first.map(|_| ())));
     let next = database.peek_row(epoch, "Moment".into(), row.clone());

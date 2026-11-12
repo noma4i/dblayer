@@ -405,7 +405,7 @@ impl DatabaseSut {
                 let name = text_or(input, "as", &format!("{row}:{action}"));
                 let path = std::env::temp_dir().join(format!("corpus_{}.bin", std::process::id()));
                 if std::fs::write(&path, b"corpus").is_err() { return Some(error("file")); }
-                let request = WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()) }, variables_json: "{}".into() };
+                let request = WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()), prepare: None }, variables_json: "{}".into() };
                 self.launch(async move { Self::receipt_done(name, row, "upload", database.upload(epoch, "Moment".into(), id, action, request).await) });
             }
             "cancel_upload" => {
@@ -518,7 +518,7 @@ impl DatabaseSut {
                 let (Some(name), Some(count), Some(operation)) = (text("as"), input.number("count"), text("operation")) else { return Some(error("arguments")) };
                 let path = std::env::temp_dir().join(format!("corpus_batch_{}.bin", std::process::id()));
                 if std::fs::write(&path, b"corpus").is_err() { return Some(error("file")); }
-                let items: Vec<WireUploadItem> = (0..count).map(|index| WireUploadItem { values_json: json!({ "text": format!("{name}{}", index + 1) }).to_string(), source: crate::ffi::upload_wire::WireSource::File { path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()) }, variables_json: "{}".into() }).collect();
+                let items: Vec<WireUploadItem> = (0..count).map(|index| WireUploadItem { values_json: json!({ "text": format!("{name}{}", index + 1) }).to_string(), source: crate::ffi::upload_wire::WireSource::File { path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()), prepare: None }, variables_json: "{}".into() }).collect();
                 let request = WireUploadBatch { operation, variables_json: "{}".into() };
                 self.launch(async move {
                     match database.upload_create_batch(epoch, "Moment".into(), items, request).await {

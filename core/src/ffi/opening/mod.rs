@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crate::transport::{HttpRequest, RawOutcome};
 use super::open_slot::OpenSlot;
 use super::transport::ObserverStop;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, TestClock, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, TestClock, Transport};
 
 /// A GraphQL operation the app declares: its name and its document.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -34,6 +34,9 @@ pub struct OpenPorts {
     /// Android below API 34 runs the upload round in a foreground service of type `dataSync`: `Some(declared)` says whether the manifest of the app declares its permission. `None` where the platform needs no declaration.
     #[uniffi(default = None)]
     pub data_sync_declared: Option<bool>,
+    /// The platform reader and writer of the prepare step: a source with `prepare` is refused without it.
+    #[uniffi(default = None)]
+    pub preparer: Option<Arc<dyn Preparer>>,
 }
 
 struct ExecutorHttp(Arc<dyn Transport>);

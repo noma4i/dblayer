@@ -159,7 +159,7 @@ pub fn clear_sync(connection: &Connection, model: Option<&str>) -> rusqlite::Res
             None => connection.execute(&format!(include_str!("../sql/sync_state/clear_sync_delete_table_2.sql"), table = table), [])?,
         };
     }
-    Ok(())
+    crate::store::prepare_rows::clear_prepare_without_upload(connection)
 }
 
 fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::Result<()> {

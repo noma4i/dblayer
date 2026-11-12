@@ -81,7 +81,7 @@ impl UploadKind {
 }
 
 /// The columns of a row of `sync_upload`: the whole value of a transfer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UploadRow {
     pub key: String,
     pub seq: u64,
@@ -121,6 +121,8 @@ pub struct UploadRow {
     pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).
     pub etags: Vec<Option<String>>,
+    /// The settings of the prepare step: written with the row (`sync_upload_prepare`).
+    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,7 +133,7 @@ pub enum IntentOrigin {
 }
 
 /// One write of a batch, by value (R3). The writer executor turns it into SQL.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StoreOp {
     /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
     Pending { pending: PendingCall, credential_digest: String, wire_id: String, response_key: String },
@@ -201,6 +203,8 @@ pub enum StoreOp {
     ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    /// Remove the prepare settings of the transfer.
+    RemovePrepare { key: String },
     RemoveUploadByTransferId { transfer_id: u64 },
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.

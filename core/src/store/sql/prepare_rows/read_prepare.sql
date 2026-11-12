@@ -1,0 +1,1 @@
+SELECT transfer_id, kind, mirror, max_long_side, min_frame_rate, max_frame_rate, source_bitrate_cap_percent, audio_bitrate, audio_channels, audio_sample_rate, max_width, max_height, enlarge, crop_x, crop_y, crop_width, crop_height, output_width, output_height, rotation_degrees, quality, format FROM sync_upload_prepare

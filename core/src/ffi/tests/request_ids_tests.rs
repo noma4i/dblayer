@@ -124,7 +124,7 @@ async fn wire_prop_retry_progress_one_source() {
     assert!(matches!(failed, Err(crate::ffi::DbError::Rejected { kept: true, .. })), "the fatal attempt of the queue ends the operation before the network recovers: {failed:?}");
 
     http.fatal.store(false, std::sync::atomic::Ordering::SeqCst);
-    let uploaded = database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None }, variables_json: "{}".into() }).await.unwrap();
+    let uploaded = database.upload(epoch, "Moment".into(), row_id, "upload".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_str().unwrap().to_string(), name: None, mime: None, prepare: None }, variables_json: "{}".into() }).await.unwrap();
     let transfer = loop {
         let snapshot = crate::test_wait::within(reader.next()).await.unwrap();
         if snapshot.waiting.len() == 1 { break snapshot; }

@@ -1,0 +1,1 @@
+SELECT transfer_id, from_long_side, min_bps, max_bps FROM sync_upload_prepare_step ORDER BY rowid

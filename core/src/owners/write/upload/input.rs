@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 use crate::ffi::upload_wire::WireSource;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UploadItem {
     pub values: Map<String, Value>,
     pub source: WireSource,
@@ -16,7 +16,7 @@ pub struct UploadBatchInput {
     pub variables: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UploadFile {
     pub source: WireSource,
     pub variables: Map<String, Value>,
@@ -24,7 +24,7 @@ pub struct UploadFile {
 
 impl UploadFile {
     pub fn new(path: &str) -> Self {
-        Self { source: WireSource::File { path: path.to_string(), name: None, mime: None }, variables: Map::new() }
+        Self { source: WireSource::File { path: path.to_string(), name: None, mime: None, prepare: None }, variables: Map::new() }
     }
 
     pub fn variable(mut self, name: &str, value: Value) -> Self {

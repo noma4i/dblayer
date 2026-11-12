@@ -18,7 +18,7 @@ pub(in super::super) fn note_parse_failure(error: &serde_json::Error) {
 type Call = Box<dyn FnOnce(std::sync::Arc<super::Database>, String) -> std::pin::Pin<Box<dyn Future<Output = Result<(), super::DbError>>>> + Send>;
 
 fn request(variables_json: String) -> WireUploadRequest {
-    WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None }, variables_json }
+    WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None, prepare: None }, variables_json }
 }
 
 fn json_calls() -> Vec<(&'static str, Call)> {
@@ -27,7 +27,7 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         ("upload", Box::new(move |db, bad| Box::pin(async move { db.upload(db.session_epoch(), moment(), "r1".into(), "upload".into(), request(bad)).await.map(drop) }))),
         ("upload_create_batch", Box::new(move |db, bad| {
             Box::pin(async move {
-                let item = WireUploadItem { values_json: bad, source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None }, variables_json: "{}".into() };
+                let item = WireUploadItem { values_json: bad, source: crate::ffi::upload_wire::WireSource::File { path: "p".into(), name: None, mime: None, prepare: None }, variables_json: "{}".into() };
                 let batch = WireUploadBatch { operation: "o".into(), variables_json: "{}".into() };
                 db.upload_create_batch(db.session_epoch(), moment(), vec![item], batch).await.map(drop)
             })

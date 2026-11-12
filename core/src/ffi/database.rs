@@ -121,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -164,7 +164,7 @@ impl Database {
         let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, jobs, wires: Arc::new(wires) }))
+        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer: Arc::default(), jobs, wires: Arc::new(wires) }))
     }
 
     pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
@@ -176,7 +176,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, .. } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, .. } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -195,6 +195,7 @@ impl Database {
                     Self::start(config, models_json, transport, endpoint, clock)?
                 }
             };
+            if let Some(preparer) = preparer { let _ = database.preparer.set(preparer); }
             super::transport::follow_life(&database.life);
             Ok(database)
         }).await

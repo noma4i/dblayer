@@ -1,5 +1,6 @@
 use super::{check, CropFractions, PhotoEdit, PixelSize};
-use crate::ffi::{DbError, WirePrepare};
+use crate::ffi::upload_wire::WirePrepare;
+use crate::ffi::DbError;
 
 fn invalid(detail: &str) -> DbError { DbError::Invalid { detail: detail.to_string() } }
 

@@ -26,7 +26,7 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     assert!(refused(bound(rig.database.update(old, "User".into(), "user".into(), json!({"name":"hijacked"}).to_string(), "{}".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.destroy(old, "User".into(), "user".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.set_local(old, "User".into(), "user".into(), "name".into(), "\"x\"".into())).await));
-    assert!(refused(bound(rig.database.upload(old, "User".into(), "user".into(), "n".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "/nowhere".into(), name: None, mime: None }, variables_json: "{}".into() })).await.map(|_| ())));
+    assert!(refused(bound(rig.database.upload(old, "User".into(), "user".into(), "n".into(), crate::ffi::upload_wire::WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: "/nowhere".into(), name: None, mime: None, prepare: None }, variables_json: "{}".into() })).await.map(|_| ())));
     let seen = bound(rig.database.read_row(current, "User".into(), "user".into())).await.unwrap().expect("the row of B");
     assert!(named(&seen, "B"), "the row of B changed");
 

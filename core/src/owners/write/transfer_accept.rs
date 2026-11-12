@@ -56,12 +56,13 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, fields, urgent, source, mutation, steps, .. } = item;
+        let BatchItem { key, fields, urgent, source, prepare, mutation, steps, .. } = item;
         let transfer = Transfer {
             transfer_id,
             key,
             seq,
             source,
+            prepare,
             batch_id,
             epoch: self.epoch,
             stage,

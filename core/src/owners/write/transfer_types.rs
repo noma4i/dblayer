@@ -88,12 +88,13 @@ pub struct ActiveSource {
 }
 
 /// A row of `sync_upload` kept in the base.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoredTransfer {
     pub transfer_id: TransferId,
     pub key: Key,
     pub seq: u64,
     pub source: Option<Source>,
+    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub awaiting_source: bool,
     pub batch: Option<u64>,
     pub fields: serde_json::Map<String, serde_json::Value>,
@@ -216,6 +217,7 @@ pub struct BatchItem {
     /// The action asks to go on in power saving.
     pub urgent: bool,
     pub source: Option<Source>,
+    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
 }
@@ -710,6 +712,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         blob_created_at: transfer.blob_created_at.map(|at| at.0),
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
+        prepare: transfer.prepare.clone(),
     }
 }
 

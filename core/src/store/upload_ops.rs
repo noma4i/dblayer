@@ -60,6 +60,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
             on_failure, row.steps_path, row.steps_body, i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX),
             row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason, row.staged, row.failed_at.and_then(|at| i64::try_from(at).ok()), row.blob_created_at.and_then(|at| i64::try_from(at).ok())],
     )?;
+    if let Some(prepare) = &row.prepare { super::prepare_rows::put_prepare(connection, row.transfer_id, prepare)?; }
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
     for (index, etag) in row.etags.iter().enumerate() {
         connection.execute(include_str!("sql/upload_ops/put_upload_insert_sync_upload_part.sql"), params![model, id, action, index as i64 + 1, etag])?;
@@ -69,6 +70,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
 
 pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(key)?;
+    super::prepare_rows::remove_prepare_of(connection, [model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload_batch.sql"), [])?;
@@ -109,6 +111,7 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
     match op {
         StoreOp::Upload { row, kind } => put_upload(connection, row, *kind)?,
         StoreOp::RemoveUpload { key } => remove_upload(connection, key)?,
+        StoreOp::RemovePrepare { key } => super::prepare_rows::remove_prepare_of(connection, key_parts(key)?)?,
         StoreOp::UploadRoundError { key, error } => {
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;

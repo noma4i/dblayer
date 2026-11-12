@@ -1,0 +1,1 @@
+INSERT INTO sync_upload_prepare_step (transfer_id, from_long_side, min_bps, max_bps) VALUES (?1, ?2, ?3, ?4)

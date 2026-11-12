@@ -26,6 +26,7 @@ mod lookup;
 pub(crate) mod plan;
 mod restore_read;
 mod upload_rows;
+mod prepare_rows;
 pub(crate) use upload_rows::{split_transfer_key, transfer_key};
 mod window_read;
 mod db_error;

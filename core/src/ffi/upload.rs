@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use super::database::id;
 use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationReceipt};
-use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
+use super::upload_wire::{WireSource, WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
 use super::write::refused;
 use super::{Database, DbError};
 use crate::store::Planned;
@@ -62,6 +62,15 @@ impl Database {
         Ok((Source { path: path.to_string(), parts: if multipart { part_count(total, config.part_size) } else { 1 } }, multipart))
     }
 
+    /// The source of a call: the prepare settings are checked before the file is read.
+    fn checked_source(&self, source: &WireSource) -> Result<Option<(Source, bool)>, DbError> {
+        if let Some(prepare) = source.prepare() {
+            crate::prepare::check_settings(prepare)?;
+            if self.preparer.get().is_none() { return Err(invalid("a source with prepare settings needs a preparer: pass one to open")); }
+        }
+        source.path().map(|path| self.source_of(path)).transpose()
+    }
+
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
         let values = super::upload_wire::object(&source.values_json)?;
         let variables = super::upload_wire::object(&source.variables_json)?;
@@ -96,7 +105,7 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
     fn single_of(&self, model: &str, action: &str, file: &UploadFile) -> Result<Single, DbError> {
@@ -104,7 +113,7 @@ impl Database {
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).filter(|declared| declared.batch.is_none()).cloned().ok_or_else(|| invalid(format!("{model} declares no single upload action {action}")))?;
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
-        Ok(Single { declaration, mutation, source: file.source.path().map(|path| self.source_of(path)).transpose()? })
+        Ok(Single { declaration, mutation, source: self.checked_source(&file.source)? })
     }
 
     fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
@@ -139,7 +148,7 @@ impl Database {
         };
         let file = UploadFile { source: item.source.clone(), variables: Map::new() };
         let correlate = spec.actions.iter().find(|declared| declared.name == action).and_then(|declared| declared.correlate.first()).and_then(|field| item.values.get(field)).and_then(Value::as_str).unwrap_or(planned.row_id.as_str()).to_string();
-        let source = file.source.path().map(|path| self.source_of(path)).transpose()?;
+        let source = self.checked_source(&file.source)?;
         let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate), source)?;
         if let Some(name) = single_name { built.mutation.action = name; }
         Ok(built)

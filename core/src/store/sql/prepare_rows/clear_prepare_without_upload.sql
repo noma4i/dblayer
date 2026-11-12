@@ -1,0 +1,1 @@
+DELETE FROM sync_upload_prepare WHERE transfer_id NOT IN (SELECT transfer_id FROM sync_upload)
