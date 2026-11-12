@@ -17,6 +17,7 @@ fn script(stand: &Stand) {
     stand.script.data("InitMultipart", INIT);
     for _ in 0..6 { stand.script.data("PresignParts", PRESIGN); }
     stand.script.data("CompleteMultipart", COMPLETE);
+    stand.script.data("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     stand.script.data("CreateMoment", LANDED);
 }
 
@@ -50,7 +51,7 @@ async fn started(length: u64) -> Started {
     script(&stand);
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
-    let clock = TestClock::new(1_000_000);
+    let clock = TestClock::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
     let database = stand.open_with(Some(&live), &[CREATE_MOMENT], Some(clock.clone())).await;
     let epoch = database.session_epoch();
     let file = source(directory.path(), length);
@@ -151,15 +152,13 @@ async fn xfer_detached_restored() {
     let run = started(MEBIBYTE).await;
     run.database.close_now();
     run.detached.finish_offline(0, Detached::ok());
-    let mut again = Stand::new().detached_through(run.detached.clone());
-    script(&again);
-    again.rig.credentials = run.stand.rig.credentials.clone();
-    let database = again.open(Some(&run.live), &[CREATE_MOMENT]).await;
+    let secret = run.stand.rig.credentials.inner.value().unwrap();
+    let (again, database) = reopen_with(&run.live, &secret, &[CREATE_MOMENT], run.detached.clone(), script).await;
     crate::test_wait::settled(&database, "the row landed", || landed(&database)).await;
     assert_eq!(run.detached.started().len(), 1, "no second PUT");
     assert_eq!((again.script.count("InitMultipart"), again.script.count("PresignParts")), (0, 0));
-    assert_eq!(run.detached.resumed().len(), 1);
-    assert_eq!(run.detached.resumed()[0].len(), 1);
+    let lists = run.detached.resumed();
+    assert_eq!((lists.len(), lists[0].len(), lists[1].len()), (2, 0, 1), "the first open lists nothing, the open on the file lists the task once");
     database.close_now();
 }
 
@@ -170,10 +169,8 @@ async fn xfer_detached_missing() {
     let run = started(MEBIBYTE).await;
     run.database.close_now();
     run.detached.lose(0);
-    let mut again = Stand::new().detached_through(run.detached.clone());
-    script(&again);
-    again.rig.credentials = run.stand.rig.credentials.clone();
-    let database = again.open(Some(&run.live), &[CREATE_MOMENT]).await;
+    let secret = run.stand.rig.credentials.inner.value().unwrap();
+    let (again, database) = reopen_with(&run.live, &secret, &[CREATE_MOMENT], run.detached.clone(), script).await;
     crate::test_wait::settled(&database, "the PUT started again", || run.detached.started().len() == 2).await;
     assert_eq!((again.script.count("InitMultipart"), again.script.count("PresignParts")), (0, 1));
     run.detached.finish(0, Detached::ok());

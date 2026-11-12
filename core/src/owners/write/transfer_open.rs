@@ -164,10 +164,21 @@ impl TransferState {
     }
 
     /// A multipart upload outside the process with a recorded attempt: the system may still run its PUT, so the transfer waits in `Uploading` for `PutEnded` or `PutMissing` after `ResumePuts`.
+    fn put_waits(&self, row: &StoredTransfer) -> bool {
+        self.sizing.detached && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
+            && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
+            && row.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart)
+    }
+
+    /// The PUTs outside the process that the opening waits for, also those of transfers that wait for the declaration of their operation.
+    pub(super) fn waiting_puts(&self) -> Vec<crate::transport::PutIdentity> {
+        let live = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| self.put_identity(transfer));
+        let waiting = self.waiting.values().filter(|(row, _)| self.put_waits(row)).map(|(row, _)| crate::transport::PutIdentity { epoch: self.epoch, transfer_id: row.transfer_id, attempt_id: u64::from(row.attempts) });
+        live.chain(waiting).collect()
+    }
+
     fn restore_put(&mut self, id: TransferId, row: &StoredTransfer, fx: &mut Fx) -> bool {
-        let waits = self.sizing.detached && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
-            && self.transfers.get(&id).and_then(|transfer| transfer.steps.as_ref()).and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart);
-        if !waits { return false; }
+        if !self.put_waits(row) { return false; }
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return false };
         transfer.stage = TransferStage::Uploading;
@@ -273,6 +284,7 @@ impl TransferState {
             self.send_orphans(false, fx);
             if classified { self.release_classified(now, fx); }
         }
+        if self.phase == Phase::Ready && classified { self.replay_held(now, fx); }
     }
 
     /// `RestoreReady`: the network start of the restored transfers goes in the order of `seq`.
@@ -285,8 +297,7 @@ impl TransferState {
         self.replay_held(now, fx);
         self.release_classified(now, fx);
         if self.sizing.detached {
-            let identities = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| self.put_identity(transfer)).collect();
-            run(fx, TransferEffect::ResumePuts { identities });
+            run(fx, TransferEffect::ResumePuts { identities: self.waiting_puts() });
         }
     }
 

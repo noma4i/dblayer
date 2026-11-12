@@ -303,7 +303,7 @@ impl PutExecutor for Detached {
 
     fn cancel_put(&self, identity: PutIdentity) {
         self.cancelled.lock().unwrap().push(identity);
-        self.tasks.lock().unwrap().retain(|task| !same_task(&task.identity, &identity));
+        self.tasks.lock().unwrap().retain(|task| task.identity != identity);
     }
 
     fn resume_puts(&self, identities: Vec<PutIdentity>) {

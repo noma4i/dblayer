@@ -148,6 +148,7 @@ impl TransferState {
 
     /// `PutEnded`: the outcome of the system task counts once, for the attempt that started it. Any other identity gets `CancelPut`.
     pub(super) fn put_ended(&mut self, now: crate::runtime::Time, identity: PutIdentity, result: Result<Option<String>, (bool, String)>, fx: &mut Fx) {
+        if self.waiting.contains_key(&identity.transfer_id) { return self.held.push(TransferInput::PutEnded { identity, result }); }
         let Some((attempt_id, part)) = self.live_put(identity).map(|transfer| (transfer.attempt_id, transfer.confirmed_parts + 1)) else { return run(fx, TransferEffect::CancelPut { identity }) };
         let id = identity.transfer_id;
         match result {
@@ -158,6 +159,7 @@ impl TransferState {
 
     /// `PutMissing`: the system has no task for the attempt, the step starts again.
     pub(super) fn put_missing(&mut self, now: crate::runtime::Time, identity: PutIdentity, fx: &mut Fx) {
+        if self.waiting.contains_key(&identity.transfer_id) { return self.held.push(TransferInput::PutMissing { identity }); }
         if self.live_put(identity).is_none() { return; }
         let Some(transfer) = self.transfers.get_mut(&identity.transfer_id) else { return };
         transfer.next_step = NextStep::Part(transfer.confirmed_parts + 1);
