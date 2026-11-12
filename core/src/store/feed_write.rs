@@ -137,7 +137,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
                 writer.connection.execute_batch("RELEASE feed_event")?;
                 results.extend(result);
             }
-            Err(error) if matches!(error.reject_reason(), crate::owners::contract::RejectReason::Invalid) => {
+            Err(error) if matches!(error.reject_reason(), crate::owners::contract::RejectReason::Invalid(_)) => {
                 writer.connection.execute_batch("ROLLBACK TO feed_event; RELEASE feed_event")?;
                 writer.refuse_event(overlay);
                 refused.push(at);

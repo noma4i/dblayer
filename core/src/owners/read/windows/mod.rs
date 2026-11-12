@@ -200,7 +200,7 @@ impl Facts {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
             Ev::Rejected { request: got, reason } if *got == landing.request => {
                 let returns_mark = match reason {
-                    RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid => true,
+                    RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid(_) => true,
                     RejectReason::NoSession | RejectReason::Closed => false,
                 };
                 if landing.marked && returns_mark {
@@ -227,7 +227,7 @@ impl Facts {
                         self.finish(None)
                     }
                     RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
-                    RejectReason::Invalid => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
+                    RejectReason::Invalid(_) => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
                 }
             }
             Ev::InterestPassive { id } => {

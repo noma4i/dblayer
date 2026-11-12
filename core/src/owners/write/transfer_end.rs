@@ -309,7 +309,7 @@ impl TransferState {
     pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         let storage = match &reason {
             RejectReason::Storage(detail) => detail.clone(),
-            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid => {
+            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => {
                 for &id in ids {
                     self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
                 }

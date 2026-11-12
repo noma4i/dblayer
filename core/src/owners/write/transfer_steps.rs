@@ -366,7 +366,7 @@ impl TransferState {
         if let (Err(Fault::Rejected(reason)), Some((_, error))) = (&result, self.confirmed_discards.get(&id).cloned()) {
             match reason {
                 RejectReason::Storage(detail) => self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{detail}: {error}")))), fx),
-                RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid => {}
+                RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => {}
             }
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };

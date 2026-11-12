@@ -130,7 +130,8 @@ pub(super) fn end_cause(reason: &RejectReason) -> crate::ffi::EndCause {
         RejectReason::Closed => crate::ffi::EndCause::Closed,
         RejectReason::NoSession => crate::ffi::EndCause::SessionEnded,
         RejectReason::Storage(error) => crate::ffi::EndCause::Storage { error: error.clone() },
-        RejectReason::Invalid | RejectReason::StaleGeneration { .. } => crate::ffi::EndCause::Invalid { detail: format!("{reason:?}") },
+        RejectReason::Invalid(_) => crate::ffi::EndCause::Invalid { detail: "Invalid".into() },
+        RejectReason::StaleGeneration { .. } => crate::ffi::EndCause::Invalid { detail: format!("{reason:?}") },
     }
 }
 

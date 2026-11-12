@@ -233,7 +233,7 @@ impl OutboxState {
                 self.generation.extend(generations.clone());
                 true
             }
-            RejectReason::NoSession | RejectReason::Storage(_) | RejectReason::Closed | RejectReason::Invalid => false,
+            RejectReason::NoSession | RejectReason::Storage(_) | RejectReason::Closed | RejectReason::Invalid(_) => false,
         };
         match batch {
             Batch::Member { op_id } => self.member_rejected(now, op_id, rejected.reason, fx),
@@ -271,8 +271,8 @@ impl OutboxState {
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.retry_timer(op_id, fx),
-                RejectReason::Invalid if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
-                RejectReason::Invalid | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
+                RejectReason::Invalid(_) if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
+                RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
             }
             return;
         }
@@ -340,7 +340,7 @@ impl OutboxState {
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
                 self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
-            RejectReason::Invalid => match stage {
+            RejectReason::Invalid(_) => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
                     let transfer_ids = self.take_retry_uploads(op_id);

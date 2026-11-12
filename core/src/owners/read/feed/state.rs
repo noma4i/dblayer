@@ -295,7 +295,7 @@ impl FeedState {
                     self.commit_gap(models, fx);
                 }
                 Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
-                Some(RejectReason::Invalid) => Self::stale_all(&models, fx),
+                Some(RejectReason::Invalid(_)) => Self::stale_all(&models, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
                 None if !refused.is_empty() => Self::stale_all(&models, fx),
                 None => {}
@@ -321,7 +321,7 @@ impl FeedState {
                     self.commit_by_basis(rest, fx);
                 }
             }
-            Some(RejectReason::Storage(_) | RejectReason::Invalid) => {
+            Some(RejectReason::Storage(_) | RejectReason::Invalid(_)) => {
                 let lost_models = self.mark_lost(&events, fx);
                 Self::stale_all(&lost_models, fx);
             }

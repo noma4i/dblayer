@@ -598,7 +598,7 @@ impl TransferState {
         let (ends, storage) = match &rejected.reason {
             RejectReason::Closed | RejectReason::NoSession => (true, None),
             RejectReason::Storage(detail) => (false, Some(detail.clone())),
-            RejectReason::StaleGeneration { .. } | RejectReason::Invalid => (false, None),
+            RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => (false, None),
         };
         if pending.kind == StoreKind::SyncUpload {
             for id in &pending.ids {
@@ -624,7 +624,7 @@ impl TransferState {
             };
             match &rejected.reason {
                 RejectReason::Storage(_) | RejectReason::StaleGeneration { .. } => self.owe_minted(&pending, true, fx),
-                RejectReason::Invalid => self.owe_minted(&pending, false, fx),
+                RejectReason::Invalid(_) => self.owe_minted(&pending, false, fx),
                 RejectReason::Closed | RejectReason::NoSession => {
                     if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
                         let attempt_id = self.next_attempt;
@@ -648,7 +648,7 @@ impl TransferState {
                 self.generations.extend(generations.clone());
                 return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
             }
-            (RejectReason::Invalid, true) => {
+            (RejectReason::Invalid(_), true) => {
                 if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
                     self.source_rejected(pending.ids[0], Fault::Invalid, fx);
                     return;
@@ -665,7 +665,7 @@ impl TransferState {
                 self.start_in_order(now, fx);
                 return;
             }
-            (RejectReason::StaleGeneration { .. } | RejectReason::Invalid, false) | (RejectReason::NoSession | RejectReason::Closed | RejectReason::Storage(_), _) => {}
+            (RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_), false) | (RejectReason::NoSession | RejectReason::Closed | RejectReason::Storage(_), _) => {}
         }
         match (stage, storage) {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),

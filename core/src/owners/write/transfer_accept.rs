@@ -271,7 +271,7 @@ impl TransferState {
             RejectReason::NoSession => Fault::SessionEnded,
             RejectReason::StaleGeneration { .. } => Fault::Ended(crate::ffi::EndCause::SessionEnded),
             RejectReason::Closed => Fault::Closed,
-            reason @ (RejectReason::Storage(_) | RejectReason::Invalid) => Fault::Rejected(reason),
+            reason @ (RejectReason::Storage(_) | RejectReason::Invalid(_)) => Fault::Rejected(reason),
         } };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
@@ -396,7 +396,7 @@ impl TransferState {
         if !self.transfers.get(&id).is_some_and(|transfer| transfer.staged_failed.is_some()) { return; }
         match reason {
             RejectReason::Storage(_) => self.backoff_restore(id, fx),
-            RejectReason::Invalid => self.staged_restored(id, fx),
+            RejectReason::Invalid(_) => self.staged_restored(id, fx),
             RejectReason::StaleGeneration { generations, .. } => {
                 self.generations.extend(generations);
                 self.write_restored(id, fx);

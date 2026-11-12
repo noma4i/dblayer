@@ -106,7 +106,7 @@ pub enum RejectReason {
     StaleGeneration { models: Vec<String>, generations: std::collections::BTreeMap<String, u64> },
     Storage(String),
     Closed,
-    Invalid,
+    Invalid(String),
 }
 
 /// `Rejected`: the Store refused `batch`.

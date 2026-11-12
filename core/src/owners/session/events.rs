@@ -87,7 +87,7 @@ impl SessionState {
             if self.external_revoked.remove(&rejected.batch).is_some() {
                 self.phase = phase;
                 match rejected.reason {
-                    RejectReason::Storage(_) | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => fx.push(SessionEffect::ExecutorFailed),
+                    RejectReason::Storage(_) | RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. } => fx.push(SessionEffect::ExecutorFailed),
                     RejectReason::NoSession | RejectReason::Closed => {}
                 }
                 return;

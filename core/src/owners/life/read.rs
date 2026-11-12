@@ -156,7 +156,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed_reply = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
         feed_reply.to_feed(match reply {
-            StoreReply::Committed { revision, stale_parents, refused, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0, shown: Vec::new(), files_removed: 0, refused: refused.into_iter().map(|at| (at, RejectReason::Invalid)).collect() }),
+            StoreReply::Committed { revision, stale_parents, refused, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0, shown: Vec::new(), files_removed: 0, refused: refused.into_iter().map(|at| (at, RejectReason::Invalid(String::new()))).collect() }),
             StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),
         });
     });

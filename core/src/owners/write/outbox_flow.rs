@@ -300,7 +300,7 @@ impl OutboxState {
                 self.member_removals.remove(&op_id);
                 return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
-            RejectReason::Invalid => return self.member_committed(now, op_id, fx),
+            RejectReason::Invalid(_) => return self.member_committed(now, op_id, fx),
             RejectReason::Storage(_) => {}
         }
         if let Some(pending) = self.member_removals.get_mut(&op_id) {
