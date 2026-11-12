@@ -340,7 +340,7 @@ impl OutboxState {
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
                 self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
-            RejectReason::Invalid(_) => match stage {
+            RejectReason::Invalid(ref detail) => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
                     let transfer_ids = self.take_retry_uploads(op_id);
@@ -372,7 +372,7 @@ impl OutboxState {
                     for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
                         Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal));
                     }
-                    self.fail_with(op_id, "Internal(Invalid)".into(), fx);
+                    self.fail_with(op_id, format!("Internal(Invalid): {detail}"), fx);
                 }
             },
         }

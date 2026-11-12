@@ -46,7 +46,7 @@ impl From<rusqlite::Error> for StoreError {
 impl StoreError {
     pub(crate) fn reject_reason(&self) -> RejectReason {
         match self {
-            StoreError::Constraint(_) | StoreError::Plan(_) | StoreError::Json(_) | StoreError::UnknownModel(_) | StoreError::Invalid(_) => RejectReason::Invalid(String::new()),
+            StoreError::Constraint(_) | StoreError::Plan(_) | StoreError::Json(_) | StoreError::UnknownModel(_) | StoreError::Invalid(_) => RejectReason::Invalid(self.to_string()),
             StoreError::Sqlite(_)
             | StoreError::Ddl(_)
             | StoreError::Io(_)

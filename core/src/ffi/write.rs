@@ -41,7 +41,8 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::Rejected(RejectReason::NoSession) => DbError::NoSession { detail: "the session of this write ended".into() },
         Fault::Rejected(RejectReason::Closed) => super::command::closed(),
         Fault::Rejected(RejectReason::Storage(detail)) => DbError::Storage { detail },
-        Fault::Rejected(RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_)) => DbError::Invalid { detail: format!("{what}: the write was refused") },
+        Fault::Rejected(RejectReason::StaleGeneration { .. }) => DbError::Invalid { detail: format!("{what}: the write was refused") },
+        Fault::Rejected(RejectReason::Invalid(detail)) => DbError::Invalid { detail: format!("{what}: {detail}") },
     }
 }
 

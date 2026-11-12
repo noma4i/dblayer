@@ -227,7 +227,7 @@ impl Facts {
                         self.finish(None)
                     }
                     RejectReason::Storage(detail) => self.fail(crate::ffi::DbError::Storage { detail: detail.clone() }),
-                    RejectReason::Invalid(_) => self.fail(crate::ffi::DbError::Invalid { detail: "the batch has no basis for a model of its rows".into() }),
+                    RejectReason::Invalid(detail) => self.fail(crate::ffi::DbError::Invalid { detail: detail.clone() }),
                 }
             }
             Ev::InterestPassive { id } => {

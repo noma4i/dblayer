@@ -118,7 +118,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Rejected(crate::owners::contract::RejectReason::Storage(detail)) => TransportError::Storage(detail),
         Failed::Rejected(crate::owners::contract::RejectReason::NoSession | crate::owners::contract::RejectReason::Closed) => TransportError::Interrupted("the session ended while its answer was pending".into()),
         Failed::Rejected(reason @ crate::owners::contract::RejectReason::StaleGeneration { .. }) => TransportError::Internal(format!("the request was refused by the store: {reason:?}")),
-        Failed::Rejected(crate::owners::contract::RejectReason::Invalid(_)) => TransportError::Internal("the request was refused by the store: Invalid".into()),
+        Failed::Rejected(crate::owners::contract::RejectReason::Invalid(detail)) => TransportError::Internal(format!("the request was refused by the store: {detail}")),
         Failed::Session { code: SessionCode::Unauthenticated, body } => TransportError::Http { status: 401, body },
         Failed::Session { code, body } => TransportError::Session { code, detail: body },
         Failed::Graphql { code, body } => TransportError::graphql_answer(code, body),

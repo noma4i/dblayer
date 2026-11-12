@@ -302,12 +302,12 @@ impl TransferState {
     }
 
     /// `Rejected(Invalid)`: the write is wrong, no retry helps. `Failed` is written; the write of `Failed` that is invalid stays in memory.
-    pub(super) fn invalid_write(&mut self, now: crate::runtime::Time, ids: &[TransferId], marking: bool, fx: &mut Fx) {
+    pub(super) fn invalid_write(&mut self, now: crate::runtime::Time, ids: &[TransferId], marking: bool, detail: &str, fx: &mut Fx) {
         for &id in ids {
             if marking {
                 self.failure_committed(id, fx);
             } else {
-                self.begin_failure(now, id, "Internal(Invalid)".into(), false, fx);
+                self.begin_failure(now, id, format!("Internal(Invalid): {detail}"), false, fx);
             }
         }
     }

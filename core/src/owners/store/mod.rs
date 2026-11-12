@@ -211,12 +211,12 @@ impl StoreState {
                         self.writing = Some(batch.clone());
                         fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
                     } else {
-                        fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid(String::new())) });
+                        fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid("the control batch carries rows or an operation of an epoch".into())) });
                     }
                 } else if batch.stamp != crate::runtime::EpochStamp::Epoch(self.epoch) {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::NoSession) });
                 } else if batch.models().iter().any(|model| !batch.basis.contains_key(model)) {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid(String::new())) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid("the batch has no basis for a model of its rows".into())) });
                 } else if !self.stale_models(&batch).is_empty() {
                     let models = self.stale_models(&batch);
                     let generations = batch.models().into_iter().map(|model| { let generation = self.generation(&model); (model, generation) }).collect();

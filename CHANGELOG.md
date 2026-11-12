@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Carry the reason text of a refused invalid write in `Invalid` errors.
 - Fail generation when `insert_on` lists `:node` and the model has no `node` scope.
 - Fail generation when a scope without `node:` declares the parameter `nodeId`.
 - Fail generation when an operation response omits the membership field of a joined list.
