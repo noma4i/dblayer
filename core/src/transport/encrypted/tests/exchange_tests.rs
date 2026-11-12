@@ -1,18 +1,15 @@
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use super::credential::{stored_pending, Secret};
-use super::fake_server_tests::FakeServer;
 use crate::store::session_state;
 use super::vectors_tests::*;
 use super::*;
-use crate::runtime::{Clock, ManualClock};
+use crate::runtime::Clock;
 use crate::store::Store;
 use crate::transport::{NetworkPurpose, Upstream};
 
-const START: u64 = 1_800_000_000;
 
 pub(in super::super) fn config() -> EncryptedConfig {
     EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() }
@@ -68,7 +65,6 @@ pub(crate) fn memory_db() -> Arc<Store> {
     Arc::new(Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
-pub(crate) fn clock() -> Arc<ManualClock> { Arc::new(ManualClock::new(Duration::from_secs(START))) }
 
 #[test]
 fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
