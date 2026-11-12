@@ -768,6 +768,8 @@ fn in_batch_stage(stage: St, transfer: bool) -> (Twin, OpId, CommitKind) {
         St::PersistingAttempt => { let id = persisting(&mut twin, transfer); (twin, id, CommitKind::Attempt) }
         St::Landing => { let id = sending(&mut twin, Policy::Rollback, transfer); twin.post(response_of(id)); (twin, id, CommitKind::Land) }
         St::RollingBack(_) => { let id = sending(&mut twin, Policy::Rollback, transfer); twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); (twin, id, CommitKind::Rollback) }
+        St::MarkingFailed => { let id = marking_failed(&mut twin, transfer); (twin, id, CommitKind::ErrorMark) }
+        St::MarkingRetry => { let id = marking_retry(&mut twin); (twin, id, CommitKind::ClearMark) }
         other => panic!("no batch in {other:?}"),
     }
 }
@@ -776,7 +778,7 @@ fn ops_of(text: &str) -> String { text.split("ops: ").nth(1).unwrap_or_default()
 
 #[test]
 fn out_stale_generation_resends_the_same_batch_with_the_new_generation() {
-    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
         let (mut twin, id, kind) = in_batch_stage(stage, false);
         let original = ops_of(&twin.store_text);
         let effects = twin.rejected(id, RReason::StaleGeneration);
@@ -787,7 +789,7 @@ fn out_stale_generation_resends_the_same_batch_with_the_new_generation() {
 
 #[test]
 fn out_storage_refusal_sets_a_timer_and_the_timer_writes_the_same_batch_again() {
-    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed] {
         let (mut twin, id, kind) = in_batch_stage(stage, false);
         let (original, attempts) = (ops_of(&twin.store_text), twin.state().ops[&id].attempts);
         let refused = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
@@ -799,7 +801,7 @@ fn out_storage_refusal_sets_a_timer_and_the_timer_writes_the_same_batch_again() 
 
 #[test]
 fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_transfer() {
-    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed] {
         for (reason, cause) in [(RejectReason::NoSession, crate::ffi::EndCause::SessionEnded), (RejectReason::Closed, crate::ffi::EndCause::Closed)] {
             let (mut twin, id, _) = in_batch_stage(stage, true);
             let effects = refuse(&mut twin, id, reason.clone());
@@ -812,14 +814,16 @@ fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_tra
 #[test]
 fn out_discard_of_an_operation_in_flight_is_refused() {
     let discard = || OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY };
-    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::Sending] {
+    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::Sending, St::MarkingFailed, St::MarkingRetry] {
         let (mut twin, id) = if stage == St::Sending { let mut twin = Twin::new(); let id = sending(&mut twin, Policy::Rollback, false); (twin, id) } else { let (twin, id, _) = in_batch_stage(stage, false); (twin, id) };
         let effects = twin.post(discard());
         assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(stage), vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
     }
-    let (mut twin, id, _) = in_batch_stage(St::RollingBack(RWhy::Rejected), false);
-    let effects = retry(&mut twin);
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
+    for stage in [St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
+        let (mut twin, id, _) = in_batch_stage(stage, false);
+        let effects = retry(&mut twin);
+        assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(stage), vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
+    }
 }
 
 #[test]
@@ -841,12 +845,14 @@ fn out_retry_of_an_open_operation_answers_its_receipt_and_changes_nothing() {
 #[test]
 fn out_inputs_that_do_not_belong_to_the_stage_change_nothing() {
     let foreign = |id: OpId| vec![response_of(id), OutboxInput::TransportError { op_id: id, temporary: true }, OutboxInput::Dropped { op_id: id }];
-    for stage in [St::Submitting, St::Landing, St::RollingBack(RWhy::Rejected)] {
+    for stage in [St::Submitting, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
         let (mut twin, id, _) = in_batch_stage(stage, false);
         unchanged_by(&mut twin, id, stage, [vec![OutboxInput::Online(Online(true))], foreign(id)].concat());
     }
-    let (mut twin, id, _) = in_batch_stage(St::PersistingAttempt, false);
-    unchanged_by(&mut twin, id, St::PersistingAttempt, [vec![OutboxInput::Online(Online(true)), OutboxInput::RetryDue { op_id: id, cycle_id: 99 }], foreign(id)].concat());
+    for (stage, cycle_id) in [(St::PersistingAttempt, 99), (St::MarkingRetry, 2)] {
+        let (mut twin, id, _) = in_batch_stage(stage, false);
+        unchanged_by(&mut twin, id, stage, [vec![OutboxInput::Online(Online(true)), OutboxInput::RetryDue { op_id: id, cycle_id }], foreign(id)].concat());
+    }
 
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);

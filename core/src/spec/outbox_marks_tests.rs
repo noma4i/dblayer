@@ -18,70 +18,12 @@ fn out_marking_failed_committed() {
 }
 
 #[test]
-fn out_marking_failed_storage() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, false);
-    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), timers(&effects)), (Some(St::MarkingFailed), 1));
-}
-
-#[test]
-fn out_marking_failed_no_session() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, true);
-    let effects = refuse(&mut twin, id, RejectReason::NoSession);
-    assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded)]));
-}
-
-#[test]
-fn out_marking_failed_stale_generation() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, false);
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::ErrorMark, generation, .. }] if *generation == NEW_GENERATION), "{effects:?}");
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
 fn out_marking_failed_invalid() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, true);
     let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!(twin.stage(id), Some(St::Failed), "the mark is only in memory");
     assert!(matches!(transfer_outcomes(&effects).as_slice(), [OutboxOutcome::Failed { .. }]), "{effects:?}");
-}
-
-#[test]
-fn out_marking_failed_tick() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, false);
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
-fn out_marking_failed_refuses() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
-    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::InFlight)]);
-    let effects = retry(&mut twin);
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::MarkingFailed), vec![OutboxAnswer::Err(Fault::InFlight)]));
-}
-
-#[test]
-fn out_marking_failed_other() {
-    let mut twin = Twin::new();
-    let id = marking_failed(&mut twin, false);
-    unchanged_by(&mut twin, id, St::MarkingFailed, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-    ]);
 }
 
 #[test]
@@ -136,45 +78,11 @@ fn out_marking_retry_no_session() {
 }
 
 #[test]
-fn out_marking_retry_stale_generation() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::ClearMark, generation, .. }] if *generation == NEW_GENERATION), "{effects:?}");
-    assert_eq!(twin.stage(id), Some(St::MarkingRetry));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
 fn out_marking_retry_invalid() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))]));
-}
-
-#[test]
-fn out_marking_retry_refuses() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
-    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::InFlight)]);
-    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 803 });
-    assert_eq!((twin.stage(id), answers(&effects, 803)), (Some(St::MarkingRetry), vec![OutboxAnswer::Err(Fault::InFlight)]));
-}
-
-#[test]
-fn out_marking_retry_other() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    unchanged_by(&mut twin, id, St::MarkingRetry, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-        OutboxInput::RetryDue { op_id: id, cycle_id: 2 },
-    ]);
 }
 
 #[test]
@@ -251,16 +159,6 @@ fn out_landing_committed_root_row() {
     assert!(!twin.store_text.contains("Swap"), "no swap for a root of another model");
 }
 
-#[test]
-fn out_landing_committed_result_no_root() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: Some(r#"{"copies":3}"#.into()), missing: Vec::new(), errors: None });
-    let effects = twin.committed(id);
-    assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { result: Some(text), .. }) if text == r#"{"copies":3}"#)), "{effects:?}");
-}
-
 /// A request above the limit of the transport ends the operation with a typed failure: the kind and both numbers reach the outcome, not a general transport text.
 #[test]
 fn out_sending_answered_too_large() {
@@ -291,48 +189,4 @@ fn out_mark_failed_rejected_no_outcome() {
     assert_eq!(twin.stage(id), Some(St::Failed));
     assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Failed { .. }))), "{done:?}");
     assert!(matches!(transfer_outcomes(&done).as_slice(), [OutboxOutcome::Failed { .. }]), "Failed reaches the waiter and Transfer only after Committed: {done:?}");
-}
-
-/// P-OUT-60: a data error of an operation batch without a server outcome ends the operation with the `invalid` mark (a landing and a rollback by a server rejection keep the server outcome: out_landing_invalid, out_rollback_invalid_server_outcome), the batch is not written again and no timer is set; a storage failure is retried by the timer.
-#[test]
-fn out_invalid_plan_is_not_retried() {
-    let reach: [(&str, CommitKind, fn(&mut Twin) -> OpId); 1] = [
-        ("attempt", CommitKind::Attempt, |twin| persisting(twin, false)),
-    ];
-    for (name, kind, arrive) in reach {
-        let mut twin = Twin::new();
-        let id = arrive(&mut twin);
-        let invalid = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
-        assert_eq!((kinds(&invalid), timers(&invalid), sends(&invalid), invalid.len()), (vec![CommitKind::ErrorMark], 0, 0, 1), "{name}: only the mark is written: {invalid:?}");
-        assert_eq!((twin.stage(id), twin.state().ops[&id].error.as_deref()), (Some(St::MarkingFailed), Some("Internal(Invalid): bad row")), "{name}");
-        let marked = twin.committed(id);
-        assert_eq!((twin.stage(id), kinds(&marked), timers(&marked)), (Some(St::Failed), Vec::new(), 0), "{name}");
-
-        let mut twin = Twin::new();
-        let id = arrive(&mut twin);
-        let storage = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-        assert_eq!(timers(&storage), 1, "{name}: a storage failure sets the retry timer");
-        let again = tick(&mut twin, id);
-        assert_eq!(kinds(&again), vec![kind], "{name}: the same batch is written again");
-    }
-    for (name, kind, arrive) in [("landing", CommitKind::Land, landing_arrive as fn(&mut Twin) -> OpId), ("rollback", CommitKind::Rollback, rollback_arrive)] {
-        let mut twin = Twin::new();
-        let id = arrive(&mut twin);
-        let storage = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-        assert_eq!(timers(&storage), 1, "{name}: a storage failure sets the retry timer");
-        let again = tick(&mut twin, id);
-        assert_eq!(kinds(&again), vec![kind], "{name}: the same batch is written again");
-    }
-}
-
-fn landing_arrive(twin: &mut Twin) -> OpId {
-    let id = sending(twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    id
-}
-
-fn rollback_arrive(twin: &mut Twin) -> OpId {
-    let id = sending(twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    id
 }

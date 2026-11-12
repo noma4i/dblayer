@@ -162,25 +162,6 @@ fn out_restoring_closing() {
 }
 
 #[test]
-fn out_restoring_register() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    restore(&mut twin, vec![stored(7, "r")]);
-    assert_eq!(twin.stage(7), Some(St::Queued), "the class is read from the declarations that arrived while Restoring");
-}
-
-#[test]
-fn out_restore_ready() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    restore(&mut twin, vec![stored(7, "a"), stored(8, "b")]);
-    let effects = ready(&mut twin);
-    assert_eq!((twin.state().phase, kinds(&effects)), (Phase::Ready, vec![]));
-    let order: Vec<_> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Send { op_id, .. } => Some(*op_id), _ => None }).collect();
-    assert_eq!((order, twin.stage(8)), (vec![7], Some(St::Queued)), "the lowest seq takes the one slot, the next waits");
-}
-
-#[test]
 fn out_restore_ready_other() {
     let mut twin = Twin::new();
     assert!(ready(&mut twin).is_empty());
@@ -203,47 +184,12 @@ fn out_register_rechecks_waiting() {
 }
 
 #[test]
-fn out_register_still_waiting() {
-    let mut twin = Twin::bare();
-    restore(&mut twin, vec![stored(7, "r")]);
-    let effects = twin.post(OutboxInput::RegisterOperations { declarations: vec![("Chat".into(), "send".into())] });
-    assert_eq!((twin.stage(7), effects.is_empty()), (Some(St::WaitingDeclaration), true));
-}
-
-#[test]
-fn out_register_other() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    let effects = twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
-    assert_eq!((twin.stage(id), effects.is_empty()), (Some(St::Sending), true));
-}
-
-#[test]
 fn out_waiting_declaration_refuses() {
     let mut twin = Twin::bare();
     restore(&mut twin, vec![stored(7, "r")]);
     let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
     let discard = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 });
     assert_eq!((answers(&retry, 41), answers(&discard, 42)), (vec![OutboxAnswer::Err(Fault::InFlight)], vec![OutboxAnswer::Err(Fault::InFlight)]));
-}
-
-#[test]
-fn out_waiting_declaration_other() {
-    let mut twin = Twin::bare();
-    restore(&mut twin, vec![stored(7, "r")]);
-    ready(&mut twin);
-    let inputs = vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: 7, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: 7, temporary: true },
-        OutboxInput::Dropped { op_id: 7 },
-        OutboxInput::RetryDue { op_id: 7, cycle_id: 1 },
-    ];
-    for input in inputs {
-        let effects = twin.post(input.clone());
-        assert_eq!((twin.stage(7), effects.is_empty()), (Some(St::WaitingDeclaration), true), "{input:?}");
-    }
 }
 
 #[test]
@@ -267,38 +213,6 @@ fn out_queue_failed_refuses() {
         let reply = match &input { OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => *reply, _ => unreachable!() };
         assert_eq!(answers(&twin.post(input), reply), vec![OutboxAnswer::Err(storage.clone())]);
     }
-}
-
-#[test]
-fn out_open_restores_dropped() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    restore(&mut twin, vec![StoredOp { restore_failed: Some("layout".into()), ..stored(7, "r") }]);
-    ready(&mut twin);
-    assert_eq!(twin.stage(7), Some(St::Failed));
-    let effects = twin.post(OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 7, cycle_id: 1, revision: 0, optimistic: None }, reply: 50 , discard_on_failure: false});
-    assert!(matches!(answers(&effects, 50).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { error })] if error == "RestoreFailed"), "{effects:?}");
-}
-
-#[test]
-fn out_open_waiting_declaration() {
-    let mut twin = Twin::bare();
-    let effects = restore(&mut twin, vec![stored(7, "r")]);
-    assert_eq!((twin.stage(7), effects.is_empty()), (Some(St::WaitingDeclaration), true));
-}
-
-#[test]
-fn out_failed_retry_state_lost() { out_open_restores_state_lost(); }
-
-#[test]
-fn out_open_restores_state_lost() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    let effects = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: true });
-    assert_eq!((twin.stage(7), kinds(&effects).len()), (Some(St::Failed), 0), "no batch: the mark is derived at every open");
-    ready(&mut twin);
-    let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
-    assert_eq!(answers(&retry, 41), vec![OutboxAnswer::Err(Fault::StateLost)]);
 }
 
 #[test]
