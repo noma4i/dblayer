@@ -1,7 +1,0 @@
-operation :impression_track do
-  mutation "ImpressionTrack"
-  parameter :input, ImpressionTrackInput
-  returns do
-    attribute :accepted, :bool
-  end
-end

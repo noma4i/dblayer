@@ -1,5 +1,0 @@
-mutation SupportRequestCreate($input: SupportRequestCreateInput!) {
-  supportRequestCreate(input: $input) {
-    ok
-  }
-}

@@ -1,7 +1,0 @@
-operation :interaction_track do
-  mutation "InteractionTrack"
-  parameter :input, InteractionTrackInput
-  returns do
-    attribute :queued, :bool
-  end
-end

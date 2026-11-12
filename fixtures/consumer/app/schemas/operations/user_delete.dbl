@@ -1,7 +1,0 @@
-operation :user_delete do
-  mutation "UserDelete"
-  parameter :input, UserDeleteInput
-  returns do
-    attribute :deletedUserId, :id
-  end
-end

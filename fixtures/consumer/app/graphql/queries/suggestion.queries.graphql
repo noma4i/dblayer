@@ -1,8 +1,0 @@
-query messagePrompts($placement: PromptPlacement!, $locale: String!) {
-  messagePrompts(placement: $placement, locale: $locale) {
-    id
-    key
-    text
-    position
-  }
-}

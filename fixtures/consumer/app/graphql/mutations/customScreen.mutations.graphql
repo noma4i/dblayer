@@ -1,5 +1,0 @@
-mutation CustomScreenSubmit($input: CustomScreenSubmitInput!) {
-  customScreenSubmit(input: $input) {
-    ok
-  }
-}

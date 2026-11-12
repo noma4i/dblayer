@@ -1,8 +1,0 @@
-fragment UserPhotoFragment on UserPhoto {
-  createdAt
-  id
-  kind
-  reason
-  status
-  updatedAt
-}

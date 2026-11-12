@@ -1,7 +1,0 @@
-operation :moment_report do
-  mutation "MomentReport"
-  parameter :input, MomentReportInput
-  returns do
-    attribute :reported, :bool
-  end
-end

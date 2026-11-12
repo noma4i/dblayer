@@ -1,4 +1,0 @@
-operation :purchase_create do
-  mutation "PurchaseCreate"
-  parameter :input, PurchaseCreateInput
-end

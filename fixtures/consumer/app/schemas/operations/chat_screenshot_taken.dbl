@@ -1,7 +1,0 @@
-operation :chat_screenshot_taken do
-  mutation "ChatScreenshotTaken"
-  parameter :input, ChatScreenshotTakenInput
-  returns do
-    attribute :success, :bool
-  end
-end

@@ -1,7 +1,0 @@
-operation :message_report do
-  mutation "MessageReport"
-  parameter :input, MessageReportInput
-  returns do
-    attribute :reported, :bool
-  end
-end

@@ -1,7 +1,0 @@
-fragment LocationFragment on UserLocation {
-  address
-  city
-  lat
-  lng
-  name
-}

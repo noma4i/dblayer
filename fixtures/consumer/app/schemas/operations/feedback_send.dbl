@@ -1,7 +1,0 @@
-operation :feedback_send do
-  mutation "FeedbackSend"
-  parameter :input, FeedbackSendInput
-  returns do
-    attribute :sent, :bool
-  end
-end

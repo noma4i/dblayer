@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-  namespace = "com.noma4i.dblayer.consumercheck"
+  namespace = "com.noma4i.dblayer.fixturemodelscheck"
   compileSdk = 37
   defaultConfig { minSdk = 33 }
 }
@@ -19,6 +19,6 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 
 androidComponents {
   onVariants { variant ->
-    variant.sources.kotlin?.addStaticSourceDirectory(providers.gradleProperty("matrixKotlin").getOrElse("../src/test/kotlin/com/noma4i/dblayer/models"))
+    variant.sources.kotlin?.addStaticSourceDirectory("../src/test/kotlin/com/noma4i/dblayer/models")
   }
 }

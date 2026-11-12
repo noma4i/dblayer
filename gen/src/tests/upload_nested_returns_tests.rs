@@ -35,36 +35,33 @@ fn gen_upload_action_nested_returns() {
     assert!(declaration(&kotlin, "PhotoMedia").contains("val thumbUrl: String? = null"), "{}", declaration(&kotlin, "PhotoMedia"));
 }
 
-fn consumer() -> crate::Declarations {
-    let app = crate::package_dir().join("../fixtures/consumer/app");
-    let mut models: Vec<std::path::PathBuf> = std::fs::read_dir(app.join("schemas/models")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
-    models.extend(std::fs::read_dir(app.join("schemas/operations")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")));
+fn fixtures() -> crate::Declarations {
+    let mut models: Vec<std::path::PathBuf> = std::fs::read_dir(crate::package_dir().join("../fixtures")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     models.sort();
-    let documents: Vec<std::path::PathBuf> = std::fs::read_dir(app.join("graphql")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.is_dir()).collect();
-    compile_files(&models, Some(&app.join("graphql/schema.graphql")), &documents).unwrap_or_else(|errors| panic!("{errors:?}"))
+    compile_files(&models, None, &[]).unwrap_or_else(|errors| panic!("{errors:?}"))
 }
 
 /// D-287: an upload action has a call on the type of the model, so an upload needs no instance: a singleton takes no id, a model takes its id; the instance method calls the one on the type, with the same variables on both platforms.
 #[test]
 fn gen_upload_action_type_call() {
-    let found = consumer();
+    let found = fixtures();
     let (swift, kotlin) = (crate::emit_swift(&found.models, &found.operations, &found.inputs), crate::emit_kotlin(&found.models, &found.operations, &found.inputs));
     let swift_type = |name: &str| { let start = swift.find(&format!("public struct {name}:")).expect("the model"); &swift[start..start + swift[start..].find("\npublic struct ").unwrap_or(swift.len() - start)] };
     let current = swift_type("CurrentUser");
-    assert!(current.contains("public static func updatePhoto(source: String, createInitialMoment: Bool? = nil, skipAssign: Bool? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self>"), "singleton: no id");
+    assert!(current.contains("public static func updatePhoto(source: String, keepOld: Bool? = nil, skipAssign: Bool? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self>"), "singleton: no id");
     assert!(current.contains("scope_.upload(Self.self, id: \"singleton\", action: \"update_photo\", UploadRequest(path: source, variables: variables_))"));
     assert!(current.contains("public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {\n        try await scope_.upload(Self.self, id: id, action: \"update_photo\", request)"), "the instance method calls the one on the type");
-    let chat = swift_type("Chat");
-    assert!(chat.contains("public static func updatePhoto(id: String, source: String") && chat.contains("scope_.upload(Self.self, id: id, action: \"update_photo\""), "a model takes its id");
-    assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, source: String, createInitialMoment: Boolean? = null, skipAssign: Boolean? = null): MutationReceipt<CurrentUser> =\n            account.upload(this, \"singleton\", \"update_photo\", UploadRequest(source, variables = buildJsonObject { if (createInitialMoment != null) this.put(\"createInitialMoment\", jsonValue(createInitialMoment)); if (skipAssign != null) this.put(\"skipAssign\", jsonValue(skipAssign)) }))"), "kotlin singleton");
+    let container = swift_type("Container");
+    assert!(container.contains("public static func updatePhoto(id: String, source: String") && container.contains("scope_.upload(Self.self, id: id, action: \"update_photo\""), "a model takes its id");
+    assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, source: String, keepOld: Boolean? = null, skipAssign: Boolean? = null): MutationReceipt<CurrentUser> =\n            account.upload(this, \"singleton\", \"update_photo\", UploadRequest(source, variables = buildJsonObject { if (keepOld != null) this.put(\"keepOld\", jsonValue(keepOld)); if (skipAssign != null) this.put(\"skipAssign\", jsonValue(skipAssign)) }))"), "kotlin singleton");
     assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, id: String, source: String"), "kotlin model takes its id");
     assert!(kotlin.contains("suspend fun updatePhoto(account: AccountScope, request: UploadRequest): MutationReceipt<CurrentUser> = account.upload(CurrentUser, id, \"update_photo\", request)"), "kotlin instance method calls the one on the type");
 }
 
-/// A generated Swift binding that is never assigned is declared with `let`: the consumer builds with warnings as errors.
+/// A generated Swift binding that is never assigned is declared with `let`: generated code builds with warnings as errors.
 #[test]
 fn gen_swift_variables_binding_is_mutated() {
-    let found = consumer();
+    let found = fixtures();
     let swift = crate::emit_swift(&found.models, &found.operations, &found.inputs);
     let lines: Vec<&str> = swift.lines().collect();
     let never: Vec<usize> = lines.iter().enumerate().filter(|(_, line)| line.trim_start().starts_with("var variables_")).filter(|(at, _)| !lines[at + 1..].iter().take_while(|line| !line.contains("return ")).any(|line| line.contains("variables_[\""))).map(|(at, _)| at + 1).collect();

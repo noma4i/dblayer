@@ -114,6 +114,9 @@ model CurrentUser do
   operation :update_photo, upload: true do
     optimistic false
     mutation "UserPhotoUpdate"
+    parameter :keepOld, :bool, null: true
+    parameter :skipAssign, :bool, null: true
+    variables keepOld: :keepOld, skipAssign: :skipAssign
     returns do
       attribute :userPhoto, FixturePhoto do
         attribute :reason, :string

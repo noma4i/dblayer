@@ -24,19 +24,15 @@ let package = Package(
       dependencies: ["DBlayer"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
-    .target(
-      name: "ConsumerCheck",
-      dependencies: ["DBlayer"],
-      swiftSettings: [.swiftLanguageMode(.v5), .unsafeFlags(["-warnings-as-errors"])]
-    ),
     .testTarget(
       name: "DBlayerTests",
       dependencies: ["DBlayer", "DBlayerTesting"],
       linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .testTarget(
-      name: "ConsumerCheckTests",
-      dependencies: ["DBlayer"]
+      name: "FixtureModelsCompileTests",
+      dependencies: ["DBlayer"],
+      swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
     )
   ]
 )

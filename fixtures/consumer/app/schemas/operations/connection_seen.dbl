@@ -1,9 +1,0 @@
-operation :connection_seen do
-  mutation "ConnectionSeen"
-  parameter :input, ConnectionSeenInput
-  returns do
-    attribute :user, ConnectionSeenResultUser do
-      attribute :id, :id
-    end
-  end
-end

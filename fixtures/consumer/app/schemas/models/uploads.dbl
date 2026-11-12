@@ -1,4 +1,0 @@
-uploads do
-  create_blob :CreateBlob, root: "directUploadCreate.directUpload"
-  multipart initiate: :MultipartUploadInit, presign: :MultipartUploadPresignParts, complete: :MultipartUploadComplete, abort: :MultipartUploadAbort, roots: { initiate: "multipartUploadInit.multipartUpload" }
-end
