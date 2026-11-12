@@ -5,6 +5,8 @@ import Testing
 
 @Suite
 struct BridgeProbeTests {
+  init() { _ = StatusProbe.status() }
+
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)

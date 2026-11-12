@@ -26,4 +26,17 @@ class NetworkObserverOnceTest {
         assertTrue(runCatching { DBlayer.open(context, modelsJson = "invalid", uploadNotification = UploadNotification("Uploading", "Files are on their way", 1)) }.exceptionOrNull() is DbException.Invalid)
         assertEquals(registered, shadow.networkCallbacks.size)
     }
+
+    /** net_status_observer_starts_once: the second and third `NetworkStatus(context)` start no new observer of the platform. */
+    @Test
+    fun net_status_kotlinFurtherStatusesStartNoSecondObserver() = bounded {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val shadow = org.robolectric.Shadows.shadowOf(manager)
+        NetworkStatus(context)
+        val registered = shadow.networkCallbacks.size
+        NetworkStatus(context)
+        NetworkStatus(context)
+        assertEquals(registered, shadow.networkCallbacks.size)
+    }
 }

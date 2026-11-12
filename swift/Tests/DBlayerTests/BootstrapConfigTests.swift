@@ -157,8 +157,12 @@ final class BootstrapListener: @unchecked Sendable {
 }
 
 struct BootstrapConfigTests {
+  init() { _ = StatusProbe.status() }
+
   @Test
   func nativeHttpCancellationClosesTheConnectionDuringResponseBody() async throws {
+    StatusProbe.shared.set(true)
+    defer { StatusProbe.shared.set(false) }
     let peer = try BootstrapPeer()
     let server = try BootstrapListener(holdBody: true)
     let origin = try await server.start()
@@ -173,6 +177,8 @@ struct BootstrapConfigTests {
 
   @Test
   func taskCancellationReachesTheCoreAndCancelsForeignHttp() async throws {
+    StatusProbe.shared.set(true)
+    defer { StatusProbe.shared.set(false) }
     let peer = try BootstrapPeer()
     let (events, signal) = AsyncStream<String>.makeStream()
     let cursor = Cursor(events)
@@ -187,6 +193,8 @@ struct BootstrapConfigTests {
 
   @Test
   func bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() async throws {
+    StatusProbe.shared.set(true)
+    defer { StatusProbe.shared.set(false) }
     let peer = try BootstrapPeer()
     let http = BootstrapHttp(peer, "timeout")
     let retries = RetryProgress()
@@ -204,6 +212,8 @@ struct BootstrapConfigTests {
   /// bridge_prop_bootstrap_reader (P-BR-10): a reader that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between.
   @Test
   func bridge_prop_bootstrap_reader_aSlowReaderGetsTheFinalSnapshotAndNothingIsBuffered() async throws {
+    StatusProbe.shared.set(true)
+    defer { StatusProbe.shared.set(false) }
     let peer = try BootstrapPeer()
     let http = BootstrapHttp(peer, "timeout")
     let retries = RetryProgress()
@@ -222,6 +232,8 @@ struct BootstrapConfigTests {
 
   @Test(arguments: [AppPlatform.ios, .android], ["ok", "http", "pin"])
   func configBeforeDatabaseUsesTheCoreAndKeepsTheClassOfEveryOutcomeTheWrapperTypes(platform: AppPlatform, kind: String) async throws {
+    StatusProbe.shared.set(true)
+    defer { StatusProbe.shared.set(false) }
     let peer = try BootstrapPeer()
     let http = BootstrapHttp(peer, kind)
     var encrypted = peer.encrypted

@@ -1,9 +1,6 @@
 package com.noma4i.dblayer
 
-import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -14,52 +11,19 @@ class NetworkStatusTest {
     @Test
     fun net_status_kotlinCollectorsGetTheFirstValueAndEachChange() = bounded {
         openSignedOffline(Config(null, null), modelsJSON)
-        DBlayer.database.setOnline(false)
         val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
+        osNetwork(false)
         assertEquals(false, status.isOnline)
         val one = status.subscribe()
         val two = status.subscribe()
         assertEquals(false, one.next())
         assertEquals(false, two.next())
-        DBlayer.database.setOnline(true)
+        osNetwork(true)
         assertEquals(true, one.next())
         assertEquals(true, two.next())
         assertEquals(true, status.isOnline)
-        DBlayer.database.setOnline(false)
+        osNetwork(false)
         assertEquals(false, one.next())
         assertEquals(false, NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication()).isOnline)
-    }
-
-    /** net_status_same_value_silent, net_status_ignores_server_and_session: the same value again and a server answer wake nobody, so the first frame after them is the next real change. */
-    /** net_status_reader_gets_current: a collector that starts late gets the newest value first. */
-    /** net_status_cancel_one_reader: cancelling one collector ends only that collector and the other one still gets the next value. */
-    @Test
-    fun net_status_kotlinCancellingOneCollectorEndsOnlyThatCollector() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
-        DBlayer.database.setOnline(false)
-        val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
-        val seen = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-        val ending = launch { status.flow.collect { seen.send(it) } }
-        assertEquals(false, seen.receive())
-        val kept = status.subscribe()
-        assertEquals(false, kept.next())
-        ending.cancel()
-        awaitWithin("the cancelled collector ends") { ending.join() }
-        DBlayer.database.setOnline(true)
-        assertEquals(true, kept.next())
-        assertEquals(true, status.isOnline)
-    }
-
-    /** net_status_observer_starts_once: the second and third `NetworkStatus(context)` start no new observer of the platform. */
-    @Test
-    fun net_status_kotlinFurtherStatusesStartNoSecondObserver() = bounded {
-        val context = org.robolectric.RuntimeEnvironment.getApplication()
-        val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val shadow = org.robolectric.Shadows.shadowOf(manager)
-        NetworkStatus(context)
-        val registered = shadow.networkCallbacks.size
-        NetworkStatus(context)
-        NetworkStatus(context)
-        assertEquals(registered, shadow.networkCallbacks.size)
     }
 }

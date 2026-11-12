@@ -32,7 +32,10 @@ impl Twin {
     fn replies(&self) -> Vec<bool> { self.history.iter().filter_map(|effect| match effect { NetworkEffect::Reply { closed, .. } => Some(*closed), _ => None }).collect() }
 }
 
-fn online(online: bool) -> NetworkInput { NetworkInput::SetOnline { online, reply: 1 } }
+fn online(online: bool) -> NetworkInput {
+    static STAMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NetworkInput::SetOnline { online, stamp: STAMP.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1, reply: 1 }
+}
 fn saving(saving: bool) -> NetworkInput { NetworkInput::PowerSaving { saving, reply: 1 } }
 fn foreground() -> NetworkInput { NetworkInput::Foreground { reply: 1 } }
 fn snapshot(owner: Peer, epoch: u64) -> NetworkInput { NetworkInput::SnapshotRequest { owner, epoch } }
@@ -161,29 +164,12 @@ fn net_prop_snapshot_after_create() {
 }
 
 #[test]
-fn net_prop_status_equals_the_owner_value() {
-    crate::test_wait::in_own_process(module_path!(), "net_prop_status_equals_the_owner_value", &["trace"], |_| {
-        let sink = crate::ffi::OnlineSink::of_connectivity(crate::transport::Connectivity::new(false));
-        let status = crate::ffi::NetworkStatus::new(std::sync::Arc::new(Idle));
-        for seed in 1..=40 {
-            let mut twin = Twin::new();
-            for input in random_inputs(seed, 30) {
-                if input == NetworkInput::Closing { break; }
-                let platform_value = if let NetworkInput::SetOnline { online, .. } = input { Some(online) } else { None };
-                twin.feed(input);
-                if let Some(value) = platform_value {
-                    sink.set_online(value);
-                    assert_eq!(status.current(), Some(value), "seed {seed}: the public value equals the owner value after SetOnline({value})");
-                }
-            }
-        }
-    });
-}
-
-/// A status observer that reports nothing: the trace gives the values through the connectivity sink.
-struct Idle;
-
-impl crate::ffi::PlatformObserver for Idle {
-    fn start(&self, _: std::sync::Arc<crate::ffi::OnlineSink>) {}
-    fn stop(&self) {}
+fn net_set_online_stale_stamp() {
+    let mut twin = Twin::new();
+    let stamped = |online: bool, stamp: u64| NetworkInput::SetOnline { online, stamp, reply: 1 };
+    assert_eq!(twin.feed(stamped(true, 2)), vec![broadcast(true, 1)]);
+    assert!(twin.feed(stamped(false, 1)).is_empty(), "a value older than the applied one changes nothing");
+    assert!(twin.feed(stamped(false, 2)).is_empty(), "the applied stamp again changes nothing");
+    assert_eq!(twin.feed(snapshot(Peer::Outbox, 1)), vec![NetworkEffect::Snapshot { owner: Peer::Outbox, epoch: 1, online: true, online_seq: 1, saving: None }]);
+    assert_eq!(twin.replies(), vec![false, false, false], "each call is answered with its step");
 }

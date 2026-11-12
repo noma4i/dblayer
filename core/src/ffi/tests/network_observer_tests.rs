@@ -125,3 +125,33 @@ fn net_status_feeds_database_and_config() {
         within(database.close_database()).await.unwrap();
     }));
 }
+
+/// Requirement D-355: a call of `set_online` of the database is no value of the process. Input: the status of the process, a database, its `set_online(true)`, a close, a second database, a call that needs the network. Observable: the public value and the requests of the second database. Assert: the value stays `None` and the second database sends nothing.
+#[test]
+fn net_database_input_keeps_the_process_value() {
+    in_own_process(module_path!(), "net_database_input_keeps_the_process_value", &["direct"], |_| run(async {
+        let (status, _os) = process();
+        let first = open_database(&Rig::new()).await;
+        first.set_online(true).unwrap();
+        assert_eq!(status.current(), None, "the call of the database moved the value of the process");
+        within(first.close_database()).await.unwrap();
+        let rig = Rig::new();
+        let second = open_database(&rig).await;
+        let before = rig.server.executed().len();
+        let call = call(&second);
+        quiet(&second).await;
+        assert!(!call.is_finished(), "the second database took the value of the first one");
+        assert_eq!(rig.server.executed().len(), before, "no request leaves before a value of the process");
+        call.abort();
+        within(second.close_database()).await.unwrap();
+    }));
+}
+
+/// Requirement D-355: `Connectivity` applies only a value with a stamp above the applied one. Input: stamp 2, then stamp 1. Observable: `is_online`. Assert: the older value changes nothing.
+#[test]
+fn net_connectivity_stale_stamp() {
+    let connectivity = crate::transport::Connectivity::new(false);
+    connectivity.change(true, 2);
+    connectivity.change(false, 1);
+    assert!(connectivity.is_online(), "a value older than the applied one changed the connectivity");
+}

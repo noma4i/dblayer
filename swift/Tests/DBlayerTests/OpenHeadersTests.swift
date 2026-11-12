@@ -24,6 +24,8 @@ private final class Token: @unchecked Sendable {
 
 extension BridgeProbeTests {
 struct OpenHeadersTests {
+  init() { _ = StatusProbe.status() }
+
   @Test @MainActor
   func openReadsTheHeadersAgainForEveryRequest() async throws {
     await DB.closeForCleanup()

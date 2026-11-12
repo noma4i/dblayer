@@ -9,18 +9,18 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftReadersGetTheFirstValueAndEachChange() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
-    try DB.database.setOnline(online: false)
+    StatusProbe.shared.set(false)
     let status = StatusProbe.status()
     #expect(status.isOnline == false)
     let one = Cursor(status.changes)
     let two = Cursor(status.changes)
     #expect(await one.next("the current value of the first reader") == false)
     #expect(await two.next("the current value of the second reader") == false)
-    try DB.database.setOnline(online: true)
+    StatusProbe.shared.set(true)
     #expect(await one.next("the change for the first reader") == true)
     #expect(await two.next("the change for the second reader") == true)
     #expect(status.isOnline == true)
-    try DB.database.setOnline(online: false)
+    StatusProbe.shared.set(false)
     #expect(await one.next("the second change") == false)
     #expect(StatusProbe.status().isOnline == false)
   }
@@ -30,15 +30,15 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftAServerAnswerAndARepeatedValueGiveNoFrame() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
-    try DB.database.setOnline(online: true)
+    StatusProbe.shared.set(true)
     let status = StatusProbe.status()
     let reader = Cursor(status.changes)
     #expect(await reader.next("the current value") == true)
-    try DB.database.setOnline(online: true)
-    try DB.database.setOnline(online: true)
+    StatusProbe.shared.set(true)
+    StatusProbe.shared.set(true)
     _ = try await Moment.create(text: "answered", in: DB.account()).optimisticValue!
     #expect(status.isOnline == true)
-    try DB.database.setOnline(online: false)
+    StatusProbe.shared.set(false)
     #expect(await reader.next("the first frame after the repeats and the server work") == false)
     #expect(status.isOnline == false)
   }
@@ -48,8 +48,8 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftALateReaderGetsTheNewestValueFirst() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
-    try DB.database.setOnline(online: true)
-    try DB.database.setOnline(online: false)
+    StatusProbe.shared.set(true)
+    StatusProbe.shared.set(false)
     let late = Cursor(StatusProbe.status().changes)
     #expect(await late.next("the first frame of a late reader") == false)
   }
@@ -59,7 +59,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftCancellingTheTaskEndsOnlyThatReader() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
-    try DB.database.setOnline(online: false)
+    StatusProbe.shared.set(false)
     let status = StatusProbe.status()
     let (frames, ready) = AsyncStream<Bool>.makeStream()
     let ending = Task {
@@ -73,8 +73,9 @@ extension BridgeProbeTests {
     #expect(await seen.next("the frame the ending reader passed on") == false)
     ending.cancel()
     await ending.value
-    try DB.database.setOnline(online: true)
+    StatusProbe.shared.set(true)
     #expect(await kept.next("the change for the kept reader") == true)
+    StatusProbe.shared.set(false)
   }
 }
 

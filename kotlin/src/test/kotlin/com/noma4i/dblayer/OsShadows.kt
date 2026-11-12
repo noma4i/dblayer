@@ -26,3 +26,14 @@ class PulsingService : ShadowService() {
         TestPulse.pulse()
     }
 }
+
+/** The OS value of the network: it goes through the one callback the status of the process registered. */
+internal fun osNetwork(online: Boolean) {
+    val manager = org.robolectric.RuntimeEnvironment.getApplication().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = manager.activeNetwork!!
+    val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+    if (online) org.robolectric.Shadows.shadowOf(capabilities).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    val shadow = org.robolectric.Shadows.shadowOf(manager)
+    shadow.setNetworkCapabilities(network, capabilities)
+    shadow.networkCallbacks.single().onCapabilitiesChanged(network, capabilities)
+}

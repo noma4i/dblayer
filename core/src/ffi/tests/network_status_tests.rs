@@ -9,8 +9,8 @@ use super::{Config, Database, EncryptedConfig, NetworkStatus, OnlineSink, OpenPo
 use crate::test_wait::{in_own_process, within, within_named};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 
-/// The two platform entries of `set_online`: the database after `open` and `Connectivity` before it.
-const TARGETS: [&str; 2] = ["connectivity", "database"];
+/// The value of the process with no database and beside an open one.
+const TARGETS: [&str; 2] = ["status", "database"];
 
 type Frame = Pin<Box<dyn Future<Output = Option<bool>> + Send>>;
 
@@ -41,13 +41,14 @@ async fn open_database(rig: &Rig) -> Arc<Database> {
 
 async fn platform(target: &str) -> Platform {
     let rig = Rig::new();
-    match target {
-        "connectivity" => Platform { sink: OnlineSink::of_connectivity(crate::transport::Connectivity::new(false)), rig, database: None },
-        _ => {
-            let database = open_database(&rig).await;
-            Platform { sink: database.online_sink().unwrap(), rig, database: Some(database) }
-        }
-    }
+    let database = if target == "database" { Some(open_database(&rig).await) } else { None };
+    Platform { sink: process_sink(), rig, database }
+}
+
+/// The status input of the process: the first status of the process starts its double.
+fn process_sink() -> Arc<OnlineSink> {
+    static SINK: std::sync::OnceLock<Arc<OnlineSink>> = std::sync::OnceLock::new();
+    SINK.get_or_init(|| observed().1.sink()).clone()
 }
 
 impl Platform {
@@ -283,14 +284,6 @@ impl super::FakeHttp for Answering {
     }
 }
 
-/// Reports one value when the bootstrap starts it, like the observer of the platform does.
-struct Reporting;
-
-impl super::PlatformObserver for Reporting {
-    fn start(&self, sink: Arc<OnlineSink>) { sink.set_online(true); }
-    fn stop(&self) {}
-}
-
 /// Requirement D-340: the value follows the platform with no database and no `serverConfig`. Observable: `current` and the frames. Assert: `None` and no frame before, then each value of the status input arrives once.
 #[test]
 fn net_status_follows_without_database() {
@@ -318,9 +311,10 @@ fn net_status_follows_between_bootstrap_and_open() {
         let (status, double) = observed();
         let sink = double.sink();
         let reader = status.subscribe();
-        let ports = super::FetchPorts { http: Arc::new(Answering), retries: None, observers: Some(Arc::new(Reporting)) };
+        sink.set_online(true);
+        let ports = super::FetchPorts { http: Arc::new(Answering), retries: None, observers: None };
         within(super::fetch_server_config_with_clock(crate::transport::encrypted::tests::bootstrap_tests::configuration(), crate::transport::AppPlatform::Ios, "1.2".into(), None, ports, TestClock::new(1_800_000_000_000))).await.unwrap();
-        assert_eq!(within(reader.next()).await, Some(true), "the value of the fetch is the public value");
+        assert_eq!(within(reader.next()).await, Some(true), "the value the fetch ran on is the public value");
         let mut held = reading!(&reader);
         assert!(poll_once(&mut held).is_pending());
         sink.set_online(false);
@@ -343,7 +337,7 @@ fn net_status_follows_after_close() {
         let rig = Rig::new();
         let database = open_database(&rig).await;
         let (status, double) = observed();
-        database.online_sink().unwrap().set_online(true);
+        double.sink().set_online(true);
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, Some(true));
         let mut held = reading!(&reader);
