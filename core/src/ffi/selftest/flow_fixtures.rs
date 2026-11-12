@@ -20,12 +20,14 @@ pub(super) fn chat_spec() -> ModelSpec {
         FieldSpec::scalar("name", ScalarKind::Str).optional(),
         optional("lastMessageId", ScalarKind::Id).derived(),
         optional("lastMessageAt", ScalarKind::Int).derived(),
-        optional("lastActivityAt", ScalarKind::Int).derived(),
+        optional("lastSequenceNumber", ScalarKind::Int).derived(),
+        optional("lastActivityAt", ScalarKind::Int),
         optional("unreadCount", ScalarKind::Int),
         optional("pinned", ScalarKind::Bool),
         optional("muted", ScalarKind::Bool),
     ]);
     chat.relations.push(RelationSpec::global("all"));
+    chat.associations.push(AssociationSpec::new("lastMessage", AssociationKind::BelongsTo, "Message", "lastMessageId"));
     for (name, mutation, root, arg) in [("pin", "ChatPin", "chatPin", Some("pinned")), ("mute", "ChatMute", "chatMute", Some("muted")), ("mark_read", "ChatMarkRead", "chatMarkRead", None)] {
         let mut action = ActionDeclaration::new(name, RootShape::Upsert);
         action.mutation = Some(mutation.into());
@@ -46,9 +48,10 @@ pub(super) fn add_chat(models: &mut Value) {
     models.push(serde_json::to_value(chat_spec()).unwrap());
     let message = models.iter_mut().find(|model| model["key"] == "Message").unwrap();
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "Chat", "chatId");
-    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastActivityAt", "at")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = vec!["at".to_string()];
+    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastSequenceNumber", "seq")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
+    chat.newer = vec!["seq".to_string(), "at".to_string()];
     message["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("status", ScalarKind::Str)).unwrap());
+    message["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("seq", ScalarKind::Int)).unwrap());
     for field in [optional("authorId", ScalarKind::Id), optional("isForwarded", ScalarKind::Bool), optional("forwardedFromUserId", ScalarKind::Id)] {
         message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
     }
