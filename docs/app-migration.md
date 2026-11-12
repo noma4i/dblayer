@@ -39,7 +39,6 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `Model.create(..., in: scope)` (`account = scope` in Kotlin) returns a receipt with the optimistic value, the revision and `confirmed()`. Every write waits in the queue while the network is away, so the app handles no offline error of a write. See [writing data](writing-data.md#writing-without-a-network).
 - `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order.
 - `FileInfo.size` is `UInt64` in Swift and `ULong` in Kotlin.
-- `NetworkStatus.changes` in Swift and `NetworkStatus.flow` in Kotlin deliver a `NetworkPath` instead of a `Bool`: read `online` for the flag, `kind` and `network` for the change of network. See [sync state](sync-state.md#network-status).
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.
@@ -64,3 +63,44 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - A test opens its database and closes it. There is no reset between tests. See [testing](testing.md).
 - `MockTransport` needs one scripted reply per PUT (`enqueuePut`). A PUT without one fails like a call without a reply.
 - `DB.openTesting` and `DBlayer.openTesting` take `observers`. The test hooks live in `DBlayerTesting` (Swift) and in the `testFixtures` of the Maven artifact (Kotlin).
+
+## 8. After 6.30.0
+
+- The network of the phone is a `NetworkPath`. `NetworkStatus.changes` (Swift) and `NetworkStatus.flow` (Kotlin) deliver it instead of a `Bool`: `online` is the old flag, `kind` is `wifi`, `cellular`, `other` or `none`, and `network` grows when the default network changes. Remove the own network monitor of the app. See [sync state](sync-state.md#network-status).
+
+```swift
+// before: for await online in network.changes { ... }
+for await path in network.changes { print(path.online, path.kind, path.network) }
+```
+
+```kotlin
+// before: network.flow.collect { online -> ... }
+network.flow.collect { path -> println("${path.online} ${path.kind} ${path.network}") }
+```
+
+- A test builds a failed row with `operationFailure`, `syncInfo` and `uploadInfo` from the test products, and reads no JSON for it. Remove the JSON fixtures of failures. See [testing](testing.md#failure-values).
+
+```swift
+let failure = operationFailure(kind: "Invalid", reason: "the cell is empty", message: "refused")
+let sync = syncInfo(state: .failed, error: failure)
+```
+
+```kotlin
+val failure = operationFailure("Invalid", "the cell is empty", "refused")
+val sync = syncInfo(SyncState.Failed, failure)
+```
+
+- The library reads the source file only during the call that brought its path: `send`, `upload`, the attaching of a deferred source and `attach`. Delete the file when the call returns, and remove the directory of kept sources and its cleanup. A process that dies before the call returns leaves no upload. See [files](files.md).
+
+```swift
+let receipt = try await DB.account().send(Moment.self, values: values, upload: UploadCommand(action: "upload_clip", request: request))
+try FileManager.default.removeItem(at: url)
+```
+
+```kotlin
+val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
+file.delete()
+```
+
+- `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
+- The parents of a changed row are touched once per batch, and the queue order of restored operations is kept. The app changes nothing for these two fixes.

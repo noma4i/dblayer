@@ -7,19 +7,17 @@
 - Add `NetworkPath` with the kind and the number of the default network to `NetworkStatus`.
 - Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
 
-### Fixed
-
-- Touch the parents of a row once per batch from one place for every write path, up the `touch: true` links to the root, and not for a write that changes no value.
-
 ### Changed
 
+- Deliver `NetworkPath` instead of `Bool` from `NetworkStatus.changes` and `NetworkStatus.flow`.
 - Refuse operation definitions that lack an operation the library sends by itself.
-- Remove an upload at open when its copy was not durable, and read the file of the caller only during the call.
-- Deliver a `NetworkPath` instead of a `Bool` from `NetworkStatus.changes` and `NetworkStatus.flow`.
+- Remove an upload at open when its copy was not yet durable.
+- Read the source file only during the call that brought its path.
 
 ### Fixed
 
-- Restore the queue order of operations after a restart: a held pair of an earlier operation no longer waits behind a later operation of the same row.
+- Touch the parents of a changed row once per batch up the `touch: true` links.
+- Keep the queue order of restored operations, holding the pair of the earlier one.
 
 ## 6.30.0 - 2026-11-13
 
