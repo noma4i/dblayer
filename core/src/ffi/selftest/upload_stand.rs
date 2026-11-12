@@ -15,7 +15,7 @@ use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{Preparer, ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
+use crate::ffi::{PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
 use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
@@ -182,6 +182,7 @@ pub(super) struct Puts {
     pub(super) seen: Mutex<Vec<Put>>,
     held: Mutex<VecDeque<Arc<Hold>>>,
     pub(super) tokens: Mutex<Vec<Arc<ByteProgress>>>,
+    pub(super) bodies: Mutex<Vec<Vec<u8>>>,
 }
 
 impl Puts {
@@ -198,6 +199,8 @@ impl FakeTransport for Puts {
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.tokens.lock().unwrap().push(progress);
+        let body = std::fs::read(&file.path).unwrap_or_default();
+        self.bodies.lock().unwrap().push(body[(file.offset as usize).min(body.len())..((file.offset + file.length) as usize).min(body.len())].to_vec());
         let held = self.held.lock().unwrap().pop_front();
         self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path, offset: file.offset, length: file.length });
         if let Some(hold) = held {
@@ -316,3 +319,87 @@ pub(super) fn watched(database: &Database, model: &str, id: &str) -> Arc<Rows> {
 }
 
 pub(super) fn shows(rows: &Rows, wanted: WireSyncState) -> bool { rows.0.lock().unwrap().first().is_some_and(|row| row.sync.state == wanted) }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PrepareEvent {
+    Probe(Vec<u8>),
+    Run(u64),
+    Cancel(u64),
+}
+
+pub(super) struct ScriptedPreparer {
+    probe: ProbeOutcome,
+    bytes: Vec<u8>,
+    fractions: Vec<f64>,
+    holds: Mutex<VecDeque<Arc<Hold>>>,
+    failures: Mutex<VecDeque<String>>,
+    events: Mutex<Vec<PrepareEvent>>,
+    cancelled: Mutex<std::collections::HashSet<u64>>,
+    running: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+}
+
+impl ScriptedPreparer {
+    pub(super) fn new(probe: ProbeOutcome, bytes: &[u8], fractions: &[f64]) -> Arc<Self> {
+        Arc::new(Self { probe, bytes: bytes.to_vec(), fractions: fractions.to_vec(), holds: Mutex::default(), failures: Mutex::default(), events: Mutex::default(), cancelled: Mutex::default(), running: Default::default(), peak: Default::default() })
+    }
+
+    pub(super) fn hold_next(&self) -> Arc<Hold> {
+        let hold = Arc::new(Hold::default());
+        self.holds.lock().unwrap().push_back(hold.clone());
+        hold
+    }
+
+    pub(super) fn fail_next(&self, message: &str) { self.failures.lock().unwrap().push_back(message.into()) }
+    pub(super) fn events(&self) -> Vec<PrepareEvent> { self.events.lock().unwrap().clone() }
+    pub(super) fn probes(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(content) = event { Some(content) } else { None }).collect() }
+    pub(super) fn runs(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(attempt) = event { Some(attempt) } else { None }).collect() }
+    pub(super) fn cancels(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Cancel(attempt) = event { Some(attempt) } else { None }).collect() }
+    pub(super) fn peak_runs(&self) -> usize { self.peak.load(Ordering::SeqCst) }
+    pub(super) fn calls(&self) -> usize { self.events().iter().filter(|event| !matches!(event, PrepareEvent::Cancel(_))).count() }
+}
+
+struct Running<'a>(&'a ScriptedPreparer);
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) { self.0.running.fetch_sub(1, Ordering::SeqCst); }
+}
+
+#[async_trait]
+impl Preparer for ScriptedPreparer {
+    async fn probe(&self, path: String) -> ProbeOutcome {
+        self.events.lock().unwrap().push(PrepareEvent::Probe(std::fs::read(&path).unwrap_or_default()));
+        self.probe.clone()
+    }
+
+    async fn run(&self, job: PrepareJob, progress: Arc<PrepareProgress>) -> PrepareOutcome {
+        self.events.lock().unwrap().push(PrepareEvent::Run(job.attempt_id));
+        let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(now, Ordering::SeqCst);
+        let _running = Running(self);
+        let hold = self.holds.lock().unwrap().pop_front();
+        let (early, late) = self.fractions.split_at(if hold.is_some() { self.fractions.len().min(1) } else { self.fractions.len() });
+        for fraction in early { progress.report(*fraction); }
+        if let Some(hold) = hold {
+            hold.entered.store(true, Ordering::SeqCst);
+            crate::lock::effect(|| hold.signal.notify_waiters());
+            let _dropped = Dropped(hold.clone());
+            hold.gate.notified().await;
+        }
+        if self.cancelled.lock().unwrap().contains(&job.attempt_id) { return PrepareOutcome::Failed { message: "cancelled".into() } }
+        for fraction in late { progress.report(*fraction); }
+        if let Some(message) = self.failures.lock().unwrap().pop_front() { return PrepareOutcome::Failed { message } }
+        std::fs::write(&job.destination, &self.bytes).unwrap();
+        PrepareOutcome::Done { name: Some("ready.jpg".into()), mime: Some("image/jpeg".into()) }
+    }
+
+    fn cancel(&self, attempt_id: u64) {
+        self.cancelled.lock().unwrap().insert(attempt_id);
+        self.events.lock().unwrap().push(PrepareEvent::Cancel(attempt_id));
+    }
+}
+
+/// The source of `supply_source` that carries the prepare settings of the transfer.
+pub(super) fn source_of(path: &Path, values_json: &str, _prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
+    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into() }
+}
