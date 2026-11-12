@@ -44,14 +44,41 @@ fn xfer_pending_accepted() {
 }
 
 #[test]
-fn xfer_supply_no_transfer() {
-    let mut twin = Twin::offline();
-    let source = Source { path: "/source".into(), parts: 1 };
-    let out = twin.post(TransferInput::SupplySource { epoch: EPOCH, key: KEY.into(), source: supplied(source), reply: 9 });
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::NotFound));
-    let out = twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "failed".into(), reply: 10 });
-    assert_eq!(Twin::fault(&out, 10), Some(Fault::NotFound));
-    assert_eq!(out.writes(), 0);
+fn xfer_a_refused_supply_changes_nothing() {
+    {
+        let mut twin = Twin::offline();
+        let source = Source { path: "/source".into(), parts: 1 };
+        let out = twin.post(TransferInput::SupplySource { epoch: EPOCH, key: KEY.into(), source: supplied(source), reply: 9 });
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::NotFound));
+        let out = twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "failed".into(), reply: 10 });
+        assert_eq!(Twin::fault(&out, 10), Some(Fault::NotFound));
+        assert_eq!(out.writes(), 0);
+    }
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        let out = supply(&mut twin, EPOCH + 1, 9);
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::NoSession));
+        assert_eq!((twin.stage(id), out.copies(), out.writes()), (TransferStage::AwaitingSource, 0, 0));
+    }
+    {
+        let mut twin = Twin::offline();
+        let id = twin.accepted(KEY, 1);
+        let out = supply(&mut twin, EPOCH, 9);
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
+        assert_eq!((twin.stage(id), out.writes(), out.copies()), (TransferStage::Ready, 0, 0));
+    }
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        for source in [Source { path: String::new(), parts: 1 }, Source { path: "/source".into(), parts: 0 }] {
+            let out = twin.post(TransferInput::SupplySource { epoch: EPOCH, key: KEY.into(), source: supplied(source), reply: 9 });
+            assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
+            assert_eq!((twin.stage(id), out.copies(), out.writes()), (TransferStage::AwaitingSource, 0, 0));
+        }
+    }
 }
 
 #[test]
@@ -66,16 +93,6 @@ fn xfer_pending_retry() {
 
 fn supply(twin: &mut Twin, epoch: u64, reply: u64) -> Out {
     twin.post(TransferInput::SupplySource { epoch, key: KEY.into(), source: supplied(Source { path: "/source".into(), parts: 1 }), reply })
-}
-
-#[test]
-fn xfer_supply_stale_epoch() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    let out = supply(&mut twin, EPOCH + 1, 9);
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::NoSession));
-    assert_eq!((twin.stage(id), out.copies(), out.writes()), (TransferStage::AwaitingSource, 0, 0));
 }
 
 #[test]
@@ -118,24 +135,25 @@ fn xfer_supply_copy_failed() {
 }
 
 #[test]
-fn xfer_supply_not_awaiting() {
-    let mut twin = Twin::offline();
-    let id = twin.accepted(KEY, 1);
-    let out = supply(&mut twin, EPOCH, 9);
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
-    assert_eq!((twin.stage(id), out.writes(), out.copies()), (TransferStage::Ready, 0, 0));
-}
-
-#[test]
-fn xfer_pending_cancel() {
-    for cancel in [true, false] {
+fn xfer_cancel_of_a_pending_transfer_or_batch() {
+    {
+        for cancel in [true, false] {
+            let mut twin = Twin::offline();
+            let (id, _) = pending(&mut twin);
+            twin.commit();
+            let (reply, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+            assert_eq!((out.removed(), out.rolled_back(), out.copies(), out.steps().len()), (vec![KEY.to_string()], vec![id], 0, 0));
+            let out = twin.commit();
+            assert_eq!(out.replies(reply), vec![if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok }]);
+        }
+    }
+    {
         let mut twin = Twin::offline();
-        let (id, _) = pending(&mut twin);
-        twin.commit();
-        let (reply, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
-        assert_eq!((out.removed(), out.rolled_back(), out.copies(), out.steps().len()), (vec![KEY.to_string()], vec![id], 0, 0));
-        let out = twin.commit();
-        assert_eq!(out.replies(reply), vec![if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok }]);
+        let ids = pending_batch(&mut twin);
+        let (reply, out) = twin.cancel(KEY);
+        assert_eq!((out.removed(), out.rolled_back(), out.copies(), out.cancel_steps()), (vec![KEY.to_string()], vec![ids[0]], 0, 0));
+        assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Cancelled(true)]);
+        assert_eq!(twin.stage(ids[1]), TransferStage::AwaitingSource);
     }
 }
 
@@ -150,25 +168,25 @@ fn xfer_pending_outcome() {
 }
 
 #[test]
-fn xfer_pending_closing() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    let (reply, _) = twin.outcome(id, 1);
-    let out = twin.close();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)]);
-    assert_eq!((out.drained(), out.removed().len()), (1, 0));
-}
-
-#[test]
-fn xfer_pending_epoch_end() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    let (reply, _) = twin.outcome(id, 1);
-    let out = twin.end_epoch();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
-    assert_eq!(twin.stage(id), TransferStage::Done);
+fn xfer_a_pending_transfer_ends_with_its_epoch_or_the_close() {
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        let (reply, _) = twin.outcome(id, 1);
+        let out = twin.close();
+        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Ended(crate::ffi::EndCause::Closed), None)]);
+        assert_eq!((out.drained(), out.removed().len()), (1, 0));
+    }
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        let (reply, _) = twin.outcome(id, 1);
+        let out = twin.end_epoch();
+        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(crate::owners::write::outbox::OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded), None)]);
+        assert_eq!(twin.stage(id), TransferStage::Done);
+    }
 }
 
 #[test]
@@ -309,18 +327,6 @@ fn xfer_pending_batch_mixed() {
 }
 
 #[test]
-fn xfer_supply_invalid() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    for source in [Source { path: String::new(), parts: 1 }, Source { path: "/source".into(), parts: 0 }] {
-        let out = twin.post(TransferInput::SupplySource { epoch: EPOCH, key: KEY.into(), source: supplied(source), reply: 9 });
-        assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
-        assert_eq!((twin.stage(id), out.copies(), out.writes()), (TransferStage::AwaitingSource, 0, 0));
-    }
-}
-
-#[test]
 fn xfer_supply_end() {
     for close in [false, true] {
         for persist in [false, true] {
@@ -354,26 +360,26 @@ fn cached(twin: &mut Twin, id: u64) -> Out {
 }
 
 #[test]
-fn xfer_supply_cached() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    supply(&mut twin, EPOCH, 9);
-    let out = cached(&mut twin, id);
-    assert_eq!((twin.stage(id), out.writes()), (TransferStage::PersistingCopy, 1));
-    assert!(out.rows().iter().any(|(row, _)| row.completed && row.signed_id.as_deref() == Some("blob")));
-    assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { .. })));
-}
-
-#[test]
-fn xfer_supply_cached_committed() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
-    supply(&mut twin, EPOCH, 9);
-    cached(&mut twin, id);
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.replies(9), out.submit_ops().len()), (TransferStage::Mutating, vec![TransferAnswer::Ok], 1));
+fn xfer_a_cached_supply_skips_the_copy() {
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        supply(&mut twin, EPOCH, 9);
+        let out = cached(&mut twin, id);
+        assert_eq!((twin.stage(id), out.writes()), (TransferStage::PersistingCopy, 1));
+        assert!(out.rows().iter().any(|(row, _)| row.completed && row.signed_id.as_deref() == Some("blob")));
+        assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::Intent { .. })));
+    }
+    {
+        let mut twin = Twin::offline();
+        let (id, _) = pending(&mut twin);
+        twin.commit();
+        supply(&mut twin, EPOCH, 9);
+        cached(&mut twin, id);
+        let out = twin.commit();
+        assert_eq!((twin.stage(id), out.replies(9), out.submit_ops().len()), (TransferStage::Mutating, vec![TransferAnswer::Ok], 1));
+    }
 }
 
 fn pending_batch(twin: &mut Twin) -> [u64; 2] {
@@ -399,16 +405,6 @@ fn xfer_supply_cached_batch() {
     let out = twin.commit();
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1]), out.submit_ops().len()), (TransferStage::BatchReady, TransferStage::AwaitingSource, 0));
     assert_eq!(out.replies(9), vec![TransferAnswer::Ok]);
-}
-
-#[test]
-fn xfer_pending_batch_cancel() {
-    let mut twin = Twin::offline();
-    let ids = pending_batch(&mut twin);
-    let (reply, out) = twin.cancel(KEY);
-    assert_eq!((out.removed(), out.rolled_back(), out.copies(), out.cancel_steps()), (vec![KEY.to_string()], vec![ids[0]], 0, 0));
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Cancelled(true)]);
-    assert_eq!(twin.stage(ids[1]), TransferStage::AwaitingSource);
 }
 
 fn source_failed(twin: &mut Twin) -> u64 {
