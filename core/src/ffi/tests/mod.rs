@@ -38,3 +38,4 @@ mod event_decode_tests;
 mod retry_progress_tests;
 mod retry_source_tests;
 mod network_status_tests;
+mod network_observer_tests;
