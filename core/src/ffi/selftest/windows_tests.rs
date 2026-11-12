@@ -187,6 +187,28 @@ async fn memory_expiry_follows_the_last_write() {
     settled(&database, "the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 }
 
+/// P-DATA-124, D-367: destroy of a memory row that expired is a success without a delivery, twice; a disk model keeps NotFound.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_destroy_of_a_gone_memory_row_is_a_success() {
+    let note = ModelSpec::new("note", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    let models = vec![presence(), note];
+    let clock = TestClock::new(1_000_000);
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
+    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some());
+    clock.advance(30_000);
+    settled(&database, "the row outlived its expiry", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
+
+    for attempt in 1..=2 {
+        let answer = bound(database.destroy(database.session_epoch(), "presence".into(), "p1".into())).await;
+        assert!(answer.is_ok(), "destroy {attempt} of the expired memory row failed: {answer:?}");
+    }
+
+    let missing = bound(database.destroy(database.session_epoch(), "note".into(), "n1".into())).await;
+    assert!(matches!(missing, Err(DbError::NotFound { .. })), "a destroy of a missing disk row: {missing:?}");
+    database.close_now();
+}
+
 /// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_refresh_keeps_the_views_and_the_credential() {
