@@ -46,6 +46,8 @@ impl TransferState {
             }
             TransferStage::Uploading | TransferStage::Completing => {
                 transfer.next_step = if stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
+                self.release_step(id, fx);
+                let Some(transfer) = self.transfers.get_mut(&id) else { return };
                 if std::mem::replace(&mut transfer.in_flight, false) {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
                     self.cancel_put(id, fx);

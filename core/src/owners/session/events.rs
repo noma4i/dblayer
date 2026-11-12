@@ -232,7 +232,7 @@ impl SessionState {
     fn detach(pending: PendingCall) -> PendingCall {
         let keeps = matches!(pending.owner, Some(MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } | MutateOwner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. }))
             || (pending.owner == Some(MutateOwner::Detached) && pending.author == Some(OUTBOX_AUTHOR));
-        let author = pending.author.filter(|_| keeps);
+        let author = if matches!(pending.owner, Some(MutateOwner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. })) { Some(TRANSFER_AUTHOR) } else { pending.author.filter(|_| keeps) };
         PendingCall { author, owner: Some(MutateOwner::Detached), ..pending }
     }
 

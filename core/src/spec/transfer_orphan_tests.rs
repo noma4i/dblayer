@@ -470,3 +470,73 @@ fn xfer_orphan_remove_rejected() {
     twin.online(false);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "the refused removal keeps the debt and the abort goes again");
 }
+
+fn init_answer(twin: &mut Twin, body: &str, request_id: u64) -> Out {
+    let outcome = crate::owners::session::AuthorOutcome::Response { body: body.into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false };
+    twin.post(TransferInput::StepAnswer { request_id, outcome })
+}
+
+const INIT: &str = r#"{"data":{"initMultipart":{"key":"k","uploadId":"u1"}}}"#;
+
+fn removed_with_init_in_flight(discard: bool) -> (Twin, u64) {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let request_id = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id, crate::owners::write::upload::UploadStage::Init, 1);
+    if discard { twin.discard(KEY) } else { twin.cancel(KEY) };
+    twin.commit();
+    (twin, request_id)
+}
+
+/// xfer_released_init_answer_owes_abort: the answer of a released `Init` pair that created a multipart upload no transfer owns writes its debt like a late `UploadMinted`, then the abort goes; an answer without the upload, with errors, or for an upload that has an owner writes nothing.
+#[test]
+fn xfer_released_init_answer_owes_abort() {
+    let owed = crate::owners::write::upload_codec::multipart_id("k", "u1");
+    let (mut twin, request_id) = removed_with_init_in_flight(true);
+    let out = init_answer(&mut twin, INIT, request_id);
+    assert_eq!((out.orphans_written(), out.writes(), out.orphan_aborts().len()), (vec![(owed.clone(), "k".to_string())], 1, 0), "the debt is written, no abort before Committed");
+    assert_eq!(twin.commit().orphan_aborts(), vec![owed.clone()], "the abort goes once the debt is written");
+    assert!(Twin::quiet(&init_answer(&mut twin, INIT, request_id)), "the same answer twice owes once");
+
+    for (name, body) in [("no upload id", r#"{"data":{"initMultipart":{"key":"k"}}}"#), ("errors", r#"{"errors":[{"message":"no"}],"data":null}"#), ("another root", r#"{"data":{"other":{"key":"k","uploadId":"u1"}}}"#), ("not json", "{")] {
+        let (mut twin, request_id) = removed_with_init_in_flight(true);
+        assert!(Twin::quiet(&init_answer(&mut twin, body, request_id)), "{name}: nothing is owed");
+    }
+    let (mut twin, request_id) = removed_with_init_in_flight(true);
+    let dropped = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Dropped });
+    assert!(Twin::quiet(&dropped), "a dropped pair owes nothing");
+
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    minted(&mut twin, id, &owed);
+    let stale = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id + 5, crate::owners::write::upload::UploadStage::Init, 1);
+    assert!(Twin::quiet(&init_answer(&mut twin, INIT, stale)), "the upload of a live transfer has its owner, an answer of an older cycle owes nothing for it");
+    let mut other = Twin::new();
+    let id = other.uploading(KEY, 3);
+    let older = crate::owners::write::wire::step_request_id(id, other.t(id).cycle_id + 5, crate::owners::write::upload::UploadStage::Init, 1);
+    let out = init_answer(&mut other, INIT, older);
+    assert_eq!(out.orphans_written(), vec![(owed, "k".to_string())], "an answer of an older cycle of a live transfer, for an upload nobody owns, is a debt");
+}
+
+/// xfer_removed_with_init_in_flight_owes_abort: the removal of a transfer whose `Init` step is in flight (or was cancelled by the network and waits) releases the pair of the step once, so its answer reaches Transfer; no release when the upload is known, when the step was answered, or when a step goes back to `Ready` by the network.
+#[test]
+fn xfer_removed_with_init_in_flight_owes_abort() {
+    for discard in [true, false] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        let request_id = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id, crate::owners::write::upload::UploadStage::Init, 1);
+        let (_, out) = if discard { twin.discard(KEY) } else { twin.cancel(KEY) };
+        let removed = twin.commit();
+        assert_eq!([out.releases(), removed.releases()].concat(), vec![request_id], "discard {discard}: one Release of the Init pair");
+    }
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let request_id = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id, crate::owners::write::upload::UploadStage::Init, 1);
+    assert!(twin.online(false).releases().is_empty(), "the network sends the step back, the pair is replayed by the same id");
+    let (_, out) = twin.discard(KEY);
+    assert_eq!(out.releases(), vec![request_id], "the removal of the waiting transfer releases the cancelled pair");
+
+    let mut twin = Twin::new();
+    with_upload(&mut twin, KEY);
+    let (_, out) = twin.discard(KEY);
+    assert!(out.releases().is_empty(), "the upload is known: its debt is in the removal batch");
+}

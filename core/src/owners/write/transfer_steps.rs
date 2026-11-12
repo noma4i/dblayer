@@ -249,23 +249,30 @@ impl TransferState {
     /// The multipart upload exists on the server whatever became of the attempt that created it.
     pub(super) fn upload_minted(&mut self, id: TransferId, upload_id: String, key: String, fx: &mut Fx) {
         let owned = self.transfers.get(&id).map(|transfer| (transfer.upload_id.is_some(), transfer.stage));
-        let known = self.orphans.contains_key(&upload_id) || self.minted.contains_key(&upload_id) || self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(pending_id, _)| *pending_id == upload_id));
         match owned {
             Some((true, _)) => {}
-            _ if known => {}
+            _ if self.upload_owned(&upload_id) => {}
             Some((false, stage)) if stage != TransferStage::Removing && stage != TransferStage::Done => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
                     transfer.upload_id = Some(upload_id);
                 }
                 self.store(&[id], StoreKind::UploadId, fx);
             }
-            _ => {
-                let batch = self.commit_ops(vec![StoreOp::UploadOrphan { upload_id: upload_id.clone(), key: key.clone() }], fx);
-                if let Some(pending) = batch.and_then(|batch| self.pending.get_mut(&batch)) {
-                    pending.kind = StoreKind::LateOrphan;
-                    pending.orphan = Some((upload_id, key));
-                }
-            }
+            _ => self.owe_late_orphan(upload_id, key, fx),
+        }
+    }
+
+    /// The upload id has an owner: a transfer, a debt, a minted debt or a debt batch in flight.
+    pub(super) fn upload_owned(&self, upload_id: &str) -> bool {
+        self.transfers.values().any(|transfer| transfer.upload_id.as_deref() == Some(upload_id)) || self.orphans.contains_key(upload_id) || self.minted.contains_key(upload_id) || self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(pending_id, _)| pending_id == upload_id))
+    }
+
+    /// The one write of the debt of a multipart upload no transfer owns.
+    pub(super) fn owe_late_orphan(&mut self, upload_id: String, key: String, fx: &mut Fx) {
+        let batch = self.commit_ops(vec![StoreOp::UploadOrphan { upload_id: upload_id.clone(), key: key.clone() }], fx);
+        if let Some(pending) = batch.and_then(|batch| self.pending.get_mut(&batch)) {
+            pending.kind = StoreKind::LateOrphan;
+            pending.orphan = Some((upload_id, key));
         }
     }
 
@@ -276,6 +283,7 @@ impl TransferState {
         self.step_answered(id);
         fx.push(Effect::Cancel(put_timer(attempt_id)));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.in_flight = false;
         if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
         } else {

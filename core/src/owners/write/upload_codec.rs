@@ -52,6 +52,15 @@ struct Answered {
     label: String,
 }
 
+/// The key and the id of the multipart upload that the object of an answer of `Init` carries.
+pub(crate) fn init_created(object: &Value) -> Option<(String, String)> {
+    let text = |field: &str| object.get(field).and_then(Value::as_str).map(str::to_string);
+    Some((text("key")?, text("uploadId")?))
+}
+
+/// The id the owner keeps for a multipart upload.
+pub(crate) fn multipart_id(key: &str, id: &str) -> String { Held::Multipart { key: key.into(), id: id.into() }.text() }
+
 impl Answered {
     fn text(&self, field: &str) -> Result<String, TransportError> {
         self.data.get(field).and_then(Value::as_str).map(str::to_string).ok_or_else(|| TransportError::Decode(format!("{} has no {field}", self.label)))
@@ -112,7 +121,8 @@ impl UploadCodec {
                 let checksum = md5_base64(Path::new(&source.path), &CancelToken::new()).await.map_err(unreadable)?;
                 let variables = json!({"filename": body.name, "contentType": body.mime, "byteSize": total, "checksum": checksum});
                 let data = self.graphql(link, (&steps.initiate.name, UploadStage::Init), (operation, &body.item), variables).await?;
-                let created = Held::Multipart { key: data.text("key")?, id: data.text("uploadId")? };
+                let (key, id) = init_created(&data.data).ok_or_else(|| TransportError::Decode(format!("{} has no key or uploadId", data.label)))?;
+                let created = Held::Multipart { key, id };
                 link.minted(created.text());
                 (created.clone(), Some(created.text()))
             }
@@ -184,6 +194,10 @@ impl StepCodec for UploadCodec {
                 Ok(Some(data.text("signedId")?))
             }
         }
+    }
+
+    fn init_root(&self) -> Option<String> {
+        self.operations.multipart.as_ref().and_then(|steps| self.operations.root_of(&steps.initiate.name)).map(str::to_string)
     }
 
     async fn discard_upload(&self, link: &Link, upload_id: Option<&str>) -> Result<(), TransportError> {

@@ -704,6 +704,7 @@ pub struct TransferState {
     pub drained: bool,
     /// The root of the answer of the abort operation.
     pub abort_root: String,
+    pub init_root: String,
     /// The held calls replay: a start waits until all of them are classified.
     pub starts_held: bool,
     pub(super) quiet_waiters: Vec<ReplyId>,
@@ -756,6 +757,7 @@ impl TransferState {
             sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size, detached: false },
             drained: false,
             abort_root: "abortMultipart".into(),
+            init_root: "initMultipart".into(),
             starts_held: false,
             quiet_waiters: Vec::new(),
             handled: 0,

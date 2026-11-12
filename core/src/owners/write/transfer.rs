@@ -126,9 +126,23 @@ impl TransferState {
     }
 
     pub(super) fn release_step(&mut self, id: TransferId, fx: &mut Fx) {
-        if let Some(request_id) = self.transfers.get_mut(&id).and_then(|transfer| transfer.pending_step.take()) {
+        let closing = self.closing;
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if let Some(request_id) = transfer.pending_step.take() {
             run(fx, TransferEffect::ReleaseStep { request_id });
+        } else if !closing && (transfer.in_flight || transfer.stage == TransferStage::Ready) && transfer.attempts > 0 && transfer.confirmed_parts == 0 && transfer.upload_id.is_none() && transfer.signed_id.is_none() {
+            run(fx, TransferEffect::ReleaseStep { request_id: super::wire::step_request_id(id, transfer.cycle_id, super::upload::UploadStage::Init, 1) });
         }
+    }
+
+    /// `xfer_released_init_answer_owes_abort`: the answer of a released `Init` pair that created a multipart upload no transfer owns.
+    fn init_answer_owes_abort(&mut self, body: &str, fx: &mut Fx) {
+        let Ok(answer) = serde_json::from_str::<serde_json::Value>(body) else { return };
+        if answer.get("errors").and_then(serde_json::Value::as_array).is_some_and(|errors| !errors.is_empty()) { return; }
+        let created = answer.get("data").and_then(|data| crate::owners::read::codec::root_value(data, &self.init_root)).and_then(super::upload_codec::init_created);
+        let Some((key, id)) = created else { return };
+        let upload_id = super::upload_codec::multipart_id(&key, &id);
+        if !self.upload_owned(&upload_id) { self.owe_late_orphan(upload_id, key, fx); }
     }
 
     /// The pair of a restored step was answered by Session: the transfer may start its attempt.
@@ -152,6 +166,9 @@ impl TransferState {
         let seeded = match &outcome { crate::owners::session::AuthorOutcome::Response { body, kind, .. } => Some((request_id, Ok((body.clone(), kind.clone())))), _ => None };
         let kept = match &outcome { crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: true } => Some(super::failure::of_session(error, crate::owners::contract::ErrorClass::Permanent)), _ => None };
         let held: Vec<TransferId> = self.transfers.values().filter(|transfer| transfer.pending_step == Some(request_id)).map(|transfer| transfer.transfer_id).collect();
+        if let (true, crate::owners::session::AuthorOutcome::Response { body, .. }) = (held.is_empty(), &outcome) {
+            self.init_answer_owes_abort(body, fx);
+        }
         for id in held {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             transfer.pending_step = None;
@@ -976,7 +993,7 @@ impl TransferState {
     /// A new epoch starts a new instance of the table: the declarations of the operations and the counters of ids stay, the rest of the state of the older epoch goes.
     fn begin_epoch(&mut self, epoch: Epoch) {
         let fresh = Self::new(epoch, self.slots, self.peers);
-        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, ..fresh };
+        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), init_root: std::mem::take(&mut self.init_root),orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, ..fresh };
         *self = kept;
     }
 

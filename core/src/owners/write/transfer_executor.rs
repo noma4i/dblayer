@@ -127,6 +127,8 @@ pub(crate) trait StepCodec: Send + Sync + 'static {
     /// The answer of `complete` carries `signed_id` of the file on the server.
     async fn complete(&self, link: &Link, key: &str, upload_id: Option<&str>, parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError>;
     async fn discard_upload(&self, link: &Link, upload_id: Option<&str>) -> Result<(), TransportError>;
+    /// The root of the answer of the operation that creates a multipart upload.
+    fn init_root(&self) -> Option<String> { None }
 }
 
 /// What Life needs to install Transfer and Rounds: the codec of the steps, the platform job of the round.
