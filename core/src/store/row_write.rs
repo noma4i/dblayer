@@ -144,7 +144,6 @@ impl RowWrite<'_> {
 
     pub fn admit(&mut self, model: &str, patch: &Map<String, Value>, kind: RowKind, admission: Admission) -> Result<Option<Map<String, Value>>, StoreError> {
         let Some(id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
-        if kind == RowKind::Local { return Ok(Some(patch.clone())); }
         self.prefetch(model, &[id.to_string()], admission.closing)?;
         let mut stored = BTreeMap::new();
         if let Some(row) = self.stored(model, id.as_str())? { stored.insert(id.to_string(), row); }

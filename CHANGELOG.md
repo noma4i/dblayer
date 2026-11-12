@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the `sets:` value a local write gives to the row of a parent.
+
 ## 6.27.0 - 2026-11-12
 
 ### Added
