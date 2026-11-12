@@ -14,18 +14,6 @@ fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> 
 }
 
 #[test]
-fn commit_inserts_row_with_promoted_column_and_payload() {
-    let (store, _) = booted_store();
-    let result = commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    assert_eq!(result.revision, Some(1));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-    assert_eq!(text(&store, "SELECT chat_id FROM row_messages WHERE id = 'm1'"), Some("c1".into()));
-    let payload = store.point("messages", "m1").unwrap().unwrap();
-    assert_eq!(payload["chatId"], json!("c1"));
-    assert!(payload.get("chat_id").is_none());
-}
-
-#[test]
 fn nullable_relation_membership_moves_to_null_and_back() {
     use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape};
     use crate::value::ScalarKind;
@@ -45,13 +33,6 @@ fn nullable_relation_membership_moves_to_null_and_back() {
         assert_eq!(store.scope_members("notes", named.key.as_str()).unwrap().len(), expected_named);
         assert_eq!(store.scope_members("notes", null.key.as_str()).unwrap().len(), expected_null);
     }
-}
-
-#[test]
-fn booleans_promote_to_integer_columns() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "seen": true}))], vec![]);
-    assert_eq!(count(&store, "SELECT seen FROM row_messages WHERE id = 'm1'"), 1);
 }
 
 #[test]

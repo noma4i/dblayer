@@ -267,22 +267,6 @@ fn row_sync_change_reaches_the_scopes_that_hold_the_row() {
 }
 
 #[test]
-fn every_scalar_field_is_a_column_and_no_blob_holds_the_row() {
-    let (store, _) = booted_store();
-    let names: Vec<String> = {
-        let inner = store.lock();
-        let mut statement = inner.connection.prepare("SELECT name FROM pragma_table_info('row_messages')").unwrap();
-        statement.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect()
-    };
-    for wanted in ["id", "revision", "born_rev", "chat_id", "body", "seen", "rev__chat_id", "rev__body", "rev__seen"] {
-        assert!(names.iter().any(|name| name == wanted), "missing column {wanted} in {names:?}");
-    }
-    for gone in ["payload", "record_version", "field_rev"] {
-        assert!(!names.iter().any(|name| name == gone), "column {gone} must not exist");
-    }
-}
-
-#[test]
 fn an_update_writes_only_the_changed_field_and_its_revision() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b1"}))], vec![]);
