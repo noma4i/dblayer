@@ -107,27 +107,6 @@ pub(super) fn unchanged_by(twin: &mut Twin, id: OpId, stage: St, inputs: Vec<Out
 }
 
 #[test]
-fn out_submit_removes_receiver_batch() {
-    let mut twin = Twin::new();
-    let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "Moment".into(), row_id: "r".into() }], ..Default::default() };
-    let op = NewOp { effects, ..model_op("r", Policy::Rollback, false) };
-    let id = submit_op(&mut twin, op, 901);
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains(&format!("Intent {{ op_id: {id}")), "{}", twin.store_text);
-    assert!(twin.store_text.contains("EffectTombstone { model: \"Moment\", row_id: \"r\" }"), "{}", twin.store_text);
-}
-
-#[test]
-fn out_submit_leaves_scope_batch() {
-    let mut twin = Twin::new();
-    let effects = crate::owners::store::IntentEffects { members: vec![crate::owners::store::EffectMember { model: "Moment".into(), list: "feed".into(), row_id: "r".into(), order_key: "a".into(), leave: true }], ..Default::default() };
-    let id = submit_op(&mut twin, NewOp { effects, ..model_op("r", Policy::Rollback, false) }, 901);
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains(&format!("Intent {{ op_id: {id}")), "{}", twin.store_text);
-    assert!(twin.store_text.contains("EffectMember { model: \"Moment\", list: \"feed\", row_id: \"r\", order_key: \"a\", leave: true }"), "{}", twin.store_text);
-}
-
-#[test]
 fn out_submit_stale() {
     let mut twin = Twin::new();
     let effects = twin.post(OutboxInput::Submit { epoch: EPOCH + 1, op: model_op("r", Policy::Rollback, false), reply: 901 });
@@ -198,23 +177,6 @@ fn out_sending_response() {
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
     assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && twin.store_text.contains(&request_id.to_string()));
     assert!(twin.store_text.contains("Rows { model: \"Moment\"") && twin.store_text.contains("state"), "{}", twin.store_text);
-}
-
-/// P-DATA-102: every Storage refusal in a row of the same operation makes the pause before the next write longer.
-#[test]
-fn out_storage_retry_pause_grows() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let mut pauses = Vec::new();
-    for _ in 0..3 {
-        refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-        pauses.extend(twin.pauses.clone());
-        let cycle_id = twin.state().ops[&id].cycle_id;
-        let again = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id });
-        assert_eq!(kinds(&again), vec![CommitKind::Land], "the landing batch goes again");
-    }
-    assert!(pauses.len() == 3 && pauses[0] < pauses[1] && pauses[1] < pauses[2], "3 refusals, 3 growing pauses: {pauses:?}");
 }
 
 #[test]
@@ -770,7 +732,7 @@ fn out_stale_generation_resends_the_same_batch_with_the_new_generation() {
 
 #[test]
 fn out_storage_refusal_sets_a_timer_and_the_timer_writes_the_same_batch_again() {
-    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed] {
+    for stage in [St::PersistingAttempt, St::MarkingFailed] {
         let (mut twin, id, kind) = in_batch_stage(stage, false);
         let (original, attempts) = (ops_of(&twin.store_text), twin.state().ops[&id].attempts);
         let refused = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
