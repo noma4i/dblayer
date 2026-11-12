@@ -278,8 +278,7 @@ impl OutboxState {
 
     pub(super) fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage, created_at: u64) {
         self.bump_selection(&op);
-        let sequence = self.next_sequence;
-        self.next_sequence += 1;
+        let sequence = self.ops.get(&op_id).map_or_else(|| { let fresh = self.next_sequence; self.next_sequence += 1; fresh }, |known| known.sequence);
         self.ops.insert(
             op_id,
             QueuedOperation {
