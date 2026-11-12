@@ -25,7 +25,7 @@ impl TransferState {
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
             transfer.stored_shown = Some((u8::MAX, false));
-            transfer.pending_step = row.pending_step.filter(|_| row.saved_answer.is_none());
+            transfer.pending_step = row.pending_step;
             if let Some((request_id, answer)) = &row.saved_answer {
                 transfer.seeded = Some((*request_id, crate::owners::session::session_answer(answer.clone()).map(|body| (body, crate::transport::AnswerKind::Answered { sequence: None }))));
                 transfer.answer_saved = Some(*request_id);
@@ -37,7 +37,7 @@ impl TransferState {
             transfer.signed_id = row.signed_id.clone();
             transfer.aborted = row.aborted;
             transfer.op_id = row.op_id;
-            transfer.submitted = row.completed && !row.batch.and_then(|group| self.groups.get(&group)).is_some_and(|group| group.phase == BatchPhase::Mutating);
+            transfer.submitted = row.completed && (row.has_intent || !row.has_operation) && !row.batch.and_then(|group| self.groups.get(&group)).is_some_and(|group| group.phase == BatchPhase::Mutating);
             transfer.intent_live = row.has_intent;
             transfer.has_operation = row.has_operation;
             transfer.place = Some(row.place);
@@ -236,7 +236,7 @@ impl TransferState {
         }
         if self.phase == Phase::Ready {
             self.send_orphans(false, fx);
-            if classified { self.start_in_order(now, fx); }
+            if classified { self.release_classified(now, fx); }
         }
     }
 
@@ -248,12 +248,16 @@ impl TransferState {
         self.phase = Phase::Ready;
         self.send_orphans(true, fx);
         self.replay_held(now, fx);
+        self.release_classified(now, fx);
+    }
+
+    fn release_classified(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
         let groups: Vec<_> = self.groups.keys().copied().collect();
         for group in groups {
             if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
             else { self.batch_release(group, fx); }
         }
-        let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
+        let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent && !self.pending.values().any(|pending| pending.ids.contains(&transfer.transfer_id))).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
         self.start_in_order(now, fx);
     }
