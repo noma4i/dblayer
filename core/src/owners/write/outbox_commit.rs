@@ -139,7 +139,7 @@ impl OutboxState {
                         self.finish(now, id, OutboxOutcome::Discarded, true, fx);
                     }
                 }
-                if let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.rowless) {
+                if let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.answer_rows_dropped) {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: Self::stale_families_of(operation), revision }));
                 }
                 let created = Self::created_temps(&self.ops[&op_id]);
@@ -323,8 +323,8 @@ impl OutboxState {
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
                 self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
-            RejectReason::Invalid(_) if stage == Stage::Landing => self.without_rows(op_id, CommitKind::Land, fx),
-            RejectReason::Invalid(_) if stage == Stage::RollingBack(Why::Rejected) => self.without_rows(op_id, CommitKind::Rollback, fx),
+            RejectReason::Invalid(_) if stage == Stage::Landing && !self.rows_dropped(op_id) => self.without_rows(op_id, CommitKind::Land, fx),
+            RejectReason::Invalid(_) if stage == Stage::RollingBack(Why::Rejected) && !self.rows_dropped(op_id) => self.without_rows(op_id, CommitKind::Rollback, fx),
             RejectReason::Invalid(ref detail) => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
@@ -363,10 +363,9 @@ impl OutboxState {
         }
     }
 
-    /// The windows that owe a reread once a write landed: the refetch pairs of the answer and, after a write without rows, every window of the models the operation names (relation `""` = the whole model).
     fn stale_families_of(operation: &QueuedOperation) -> Vec<(String, String)> {
         let mut families = operation.stale.clone();
-        if !operation.rowless { return families; }
+        if !operation.answer_rows_dropped { return families; }
         let effects = &operation.op.effects;
         let models = std::iter::once(&operation.op.model).chain(effects.rows.iter().map(|row| &row.model)).chain(effects.members.iter().map(|row| &row.model)).chain(effects.tombstones.iter().map(|row| &row.model)).chain(effects.touches.iter().map(|row| &row.model));
         for model in models {
@@ -376,14 +375,13 @@ impl OutboxState {
         families
     }
 
-    /// The Store refused the landing or the rollback of a server outcome as invalid data: the same outcome lands by a batch without rows (R14, P-OUT-60). A second `Invalid` of that batch cannot happen (P-DATA-98).
+    fn rows_dropped(&self, op_id: OpId) -> bool { self.ops.get(&op_id).is_some_and(|operation| operation.answer_rows_dropped) }
+
     fn without_rows(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
-        if operation.rowless { return; }
-        operation.rowless = true;
+        operation.answer_rows_dropped = true;
         if kind == CommitKind::Land {
             operation.landing.clear();
-            operation.swaps.clear();
             operation.missing.clear();
             operation.missing_destroy = false;
             operation.result = None;

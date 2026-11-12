@@ -289,7 +289,7 @@ impl OutboxState {
                 stage,
                 attempts: 1,
                 storage_refusals: 0,
-                rowless: false,
+                answer_rows_dropped: false,
                 cycle_id: 1,
                 request_id: crate::owners::contract::next_request_id(),
                 sequence,
@@ -364,6 +364,7 @@ impl OutboxState {
             CommitKind::Land => operation
                 .swaps
                 .iter()
+                .filter(|_| !operation.answer_rows_dropped)
                 .map(|(temp, real)| StoreOp::Swap { model: operation.op.model.clone(), temp: temp.clone(), real: real.clone() })
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
                 .chain(operation.missing_destroy.then(|| StoreOp::RemoveServerRows { model: operation.op.model.clone(), ids: vec![operation.op.row_id.clone()] }))
@@ -372,7 +373,7 @@ impl OutboxState {
                 .chain(Self::landing_shows_of(operation))
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
-            CommitKind::Rollback => (!operation.rowless).then_some(StoreOp::RollBack { op_id }).into_iter().chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
+            CommitKind::Rollback => (!operation.answer_rows_dropped).then_some(StoreOp::RollBack { op_id }).into_iter().chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
                 .chain(((operation.pending_owned || operation.pair_in_flight) && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
                 .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
