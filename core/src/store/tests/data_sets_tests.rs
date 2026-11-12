@@ -8,6 +8,8 @@ use crate::owners::store::{RowValue, StoreBatch, StoreOp};
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
+use super::sets_reference_tests::{by_id, Sets};
+
 pub(super) fn write_as(db: &Arc<Store>, id: u64, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) -> crate::store::batch_write::BatchWritten {
     let batch = StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap()
@@ -103,6 +105,11 @@ fn data_sets_swap() {
 pub(super) fn intent_creating(db: &Arc<Store>, op_id: u64, row: &RowValue) {
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "messages".into(), row_id: row.row_id.clone(), values: row.values.clone() }], ..Default::default() };
     write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: "messages".into(), row_id: row.row_id.clone(), action: "react".into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+}
+
+pub(super) fn intent_hiding(db: &Arc<Store>, op_id: u64, model: &str, row_id: &str) {
+    let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: model.into(), row_id: row_id.into() }], ..Default::default() };
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: model.into(), row_id: row_id.into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
 }
 
 #[test]
@@ -328,4 +335,164 @@ fn data_sets_rollback_keeps_the_server_value() {
     assert_eq!(sets(&db).id.as_deref(), Some("temp-1"), "the open operation is newest");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 1 }, StoreOp::RemoveIntent { op_id: 1 }]);
     assert_eq!(sets(&db), sets_of("m5", 7, 3), "the fields of the server value");
+}
+
+fn child(id: &str, chat: &str, at: i64, seq: Option<i64>) -> RowValue {
+    RowValue { row_id: id.into(), values: json!({"id": id, "chatId": chat, "body": id, "createdAt": at, "sequenceNumber": seq}).to_string() }
+}
+
+fn land_children(db: &Arc<Store>, rows: Vec<RowValue>) {
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows }]);
+}
+
+fn shown(id: &str, at: i64, seq: Option<i64>, body: &str) -> Sets {
+    Sets { id: Some(id.into()), at: Some(at), seq, body: Some(body.into()) }
+}
+
+/// P-DATA-118, P-DATA-57: whatever the order of landing, with equal times the pointer is the greatest id by the order of the spec, and the order of 2 ids seen through the pointer has no cycle.
+#[test]
+fn data_id_order_is_total() {
+    let ids = ["0", "7", "9", "10", "007", "+5", "-3", "m1", "m2", "1a", "Z", "18446744073709551615", "18446744073709551616", "99999999999999999999"];
+    let winner = |first: &str, second: &str| {
+        let db = open();
+        land_children(&db, vec![child(first, "c1", 5, None)]);
+        land_children(&db, vec![child(second, "c1", 5, None)]);
+        sets(&db).id.unwrap()
+    };
+    let mut beats = std::collections::BTreeSet::new();
+    for (index, a) in ids.iter().enumerate() {
+        for b in &ids[index + 1..] {
+            let (forward, backward) = (winner(a, b), winner(b, a));
+            let expected = if by_id(a, b) == std::cmp::Ordering::Greater { a } else { b };
+            assert_eq!((forward.as_str(), backward.as_str()), (*expected, *expected), "{a} against {b}");
+            beats.insert((if expected == a { *b } else { *a }, *expected));
+        }
+    }
+    for (a, b) in &beats {
+        for (c, d) in &beats {
+            if b == c {
+                assert!(beats.contains(&(*a, *d)), "{a} < {b} < {d} but not {a} < {d}");
+            }
+        }
+    }
+    for group in [["9", "10", "m1", "007"], ["18446744073709551615", "18446744073709551616", "99999999999999999999", "7"], ["+5", "-3", "1a", "Z"]] {
+        let first = group.iter().max_by(|a, b| by_id(a, b)).unwrap();
+        for order in permutations(&[0, 1, 2, 3]) {
+            let db = open();
+            order.iter().for_each(|index| land_children(&db, vec![child(group[*index], "c1", 5, None)]));
+            assert_eq!(sets(&db).id.as_deref(), Some(*first), "landed as {order:?} of {group:?}");
+        }
+    }
+}
+
+fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
+    if items.len() <= 1 {
+        return vec![items.to_vec()];
+    }
+    (0..items.len()).flat_map(|at| {
+        let mut rest = items.to_vec();
+        let head = rest.remove(at);
+        permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
+    }).collect()
+}
+
+/// P-DATA-59 (д): the destroy of the child the server value names leaves the value out of F and marks the parent stale until the next row of the parent.
+#[test]
+fn data_sets_destroy_of_the_named_child_marks_the_parent_stale() {
+    for remaining in [false, true] {
+        let db = open();
+        parent_row(&db, server_row("m1", 3, 1));
+        land_children(&db, if remaining { vec![child("m1", "c1", 3, None), child("m0", "c1", 1, None)] } else { vec![child("m1", "c1", 3, None)] });
+        assert_eq!(sets(&db), shown("m1", 3, Some(1), "m1"), "remaining {remaining}: the value of the server names the newest child");
+        let written = write_as(&db, 1, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m1".into()] }]);
+        assert_eq!(written.stale_parents, ["chats".to_string()], "remaining {remaining}: the windows of the parent are stale");
+        let expected = if remaining { shown("m0", 1, None, "m0") } else { Sets::default() };
+        assert_eq!(sets(&db), expected, "remaining {remaining}: the value naming the destroyed child is left out");
+        parent_row(&db, server_row("m6", 9, 2));
+        let expected = if remaining { Sets { body: Some("m0".into()), ..sets_of("m6", 9, 2) } } else { sets_of("m6", 9, 2) };
+        assert_eq!(sets(&db), expected, "remaining {remaining}: the next row of the parent gives the value again");
+    }
+}
+
+/// P-DATA-59 (в): the winner lacks a field, the second side gives it, also when the server value wins.
+#[test]
+fn data_sets_server_winner_takes_the_empty_field_of_the_second() {
+    let server = |values: Value| {
+        let mut row = json!({"id": "c1", "title": "t"});
+        row.as_object_mut().unwrap().extend(values.as_object().unwrap().clone());
+        row
+    };
+    let cases = [
+        ("the server names the newest child, no sequence", json!({"lastMessageId": "m5", "lastMessageAt": 7}), child("m5", "c1", 5, Some(2)), shown("m5", 7, Some(2), "m5")),
+        ("the server value is not older, no sequence", json!({"lastMessageId": "m5", "lastMessageAt": 7}), child("m6", "c1", 5, Some(4)), shown("m5", 7, Some(4), "m6")),
+        ("the server names the newest child, no time", json!({"lastMessageId": "m5", "lastSequenceNumber": 3}), child("m5", "c1", 5, Some(3)), shown("m5", 5, Some(3), "m5")),
+    ];
+    for (name, values, newest, expected) in cases {
+        let db = open();
+        land_children(&db, vec![newest]);
+        parent_row(&db, server(values));
+        assert_eq!(sets(&db), expected, "{name}");
+    }
+}
+
+/// P-DATA-56: the parent of a child changes, the old and the new parent are derived again.
+#[test]
+fn data_sets_child_moves_to_another_parent() {
+    let db = open();
+    put(&db, "chats", json!({"id": "c2", "title": "t"}));
+    let sets_of_chat = |chat: &str| super::sets_reference_tests::stored_sets_of(&db, chat);
+    land_children(&db, vec![child("m1", "c1", 1, None), child("m2", "c1", 2, None)]);
+    land_children(&db, vec![child("m2", "c2", 2, None)]);
+    assert_eq!((sets_of_chat("c1"), sets_of_chat("c2")), (shown("m1", 1, None, "m1"), shown("m2", 2, None, "m2")), "the old parent takes its other child, the new parent takes the moved one");
+    land_children(&db, vec![child("m1", "c2", 1, None)]);
+    assert_eq!((sets_of_chat("c1"), sets_of_chat("c2")), (Sets::default(), shown("m2", 2, None, "m2")), "the old parent has no child left");
+}
+
+/// P-DATA-57: a child hidden by an open operation is not newest, a rollback of the operation shows it again.
+#[test]
+fn data_sets_hidden_child_does_not_count() {
+    let db = open();
+    land_children(&db, vec![child("m1", "c1", 1, None), child("m2", "c1", 2, None)]);
+    intent_hiding(&db, 1, "messages", "m2");
+    assert_eq!(sets(&db), shown("m1", 1, None, "m1"), "the hidden child is left out");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 1 }, StoreOp::RemoveIntent { op_id: 1 }]);
+    assert_eq!(sets(&db), shown("m2", 2, None, "m2"), "the child is back after the rollback");
+}
+
+/// P-DATA-61: a rejected edit of a stored child gives the fields of the parent back.
+#[test]
+fn data_sets_rollback_of_an_edit_of_a_stored_child() {
+    let db = open();
+    land_children(&db, vec![child("m1", "c1", 1, None), child("m2", "c1", 5, None)]);
+    intent_creating(&db, 7, &child("m1", "c1", 9, None));
+    assert_eq!(sets(&db), shown("m1", 9, None, "m1"), "the edit makes m1 the newest");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 7 }, StoreOp::RemoveIntent { op_id: 7 }]);
+    assert_eq!(sets(&db), shown("m2", 5, None, "m2"), "the fields of the parent follow the stored rows");
+}
+
+/// P-DATA-58: the server value is accepted like a server field: a lower server revision of the parent row is dropped, a page with an early `base_revision` leaves the later fields.
+#[test]
+fn data_sets_server_value_is_accepted_like_a_server_field() {
+    let mut specs = crate::store::fixtures::all_specs();
+    specs[3] = crate::store::fixtures::revisioned_chats_spec();
+    let db = Arc::new(Store::open_models(None, specs, None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    put(&db, "chats", json!({"id": "c1", "title": "t", "rev": 1}));
+    let parent = |rev: i64, id: &str, at: i64, seq: i64| RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t", "rev": rev, "lastMessageId": id, "lastMessageAt": at, "lastSequenceNumber": seq}).to_string() };
+    let answer = |row: RowValue| write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![row] }]);
+    let page = |row: RowValue, base_revision: u64| {
+        let key = WindowKey::nodes("chats", &["c1"]);
+        let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision };
+        write(&db, BatchAuthor::Window, Vec::new(), vec![op]);
+    };
+    answer(parent(5, "m5", 7, 3));
+    assert_eq!(sets(&db), sets_of("m5", 7, 3));
+    answer(parent(3, "m9", 50, 9));
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "a row with a lower server revision is dropped");
+    let early = db.revision_seq().unwrap();
+    answer(parent(6, "m6", 8, 4));
+    assert_eq!(sets(&db), sets_of("m6", 8, 4));
+    page(parent(7, "m7", 9, 5), early);
+    assert_eq!(sets(&db), sets_of("m6", 8, 4), "a page asked before the later row does not change the fields of the later row");
+    page(parent(7, "m7", 9, 5), db.revision_seq().unwrap());
+    assert_eq!(sets(&db), sets_of("m7", 9, 5), "a page asked after the later row lands");
 }
