@@ -63,6 +63,7 @@ mod upload_progress_tests;
 mod upload_expiry_tests;
 mod upload_batch_shift_tests;
 mod upload_pending_tests;
+mod upload_stage_tests;
 mod upload_missing_file_release_tests;
 mod upload_release_tests;
 mod retry_no_identity_tests;

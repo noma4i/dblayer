@@ -55,6 +55,7 @@ mod transfer_state_input_matrix_tests;
 mod transfer_accept_tests;
 mod transfer_time_tests;
 mod transfer_rowless_tests;
+mod transfer_stage_tests;
 mod transfer_batch_tests;
 mod transfer_batch_intent_tests;
 mod transfer_retry_tests;
