@@ -2,7 +2,7 @@
 use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
-use super::rig_tests::{Fault, Rig};
+use super::rig_tests::{bound, Fault, Rig};
 use super::upload_stand::{clip, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::DbError;
 use super::cases::Cases;
@@ -143,22 +143,29 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_answer_kind_ends_every_request_path_with_the_table_outcome() {
     let mut matrix = Cases::new("answer kind x request path");
-    for path in [Path::CallMutation, Path::CallQuery, Path::OutboxSend, Path::SessionCall, Path::WindowRead, Path::UploadStep, Path::UploadFinal, Path::Node] { cells(path, &mut matrix).await; }
+    let paths = [Path::CallMutation, Path::CallQuery, Path::OutboxSend, Path::SessionCall, Path::WindowRead, Path::UploadStep, Path::UploadFinal, Path::Node];
+    let running: Vec<_> = paths.into_iter().map(|path| tokio::spawn(async move {
+        let mut observed = Vec::new();
+        for kind in kinds() {
+            let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
+            let Some(expected) = expected else { continue };
+            observed.push((kind.name, expected, bound(drive(path, (kind.fault)())).await));
+        }
+        observed
+    })).collect();
+    for (path, handle) in paths.into_iter().zip(running) {
+        for (kind, expected, observed) in handle.await.unwrap_or_else(|error| panic!("{}: {error}", path.name())) { cell(&mut matrix, path, kind, expected, observed); }
+    }
     matrix.finish();
 }
 
-async fn cells(path: Path, matrix: &mut Cases) {
-    for kind in kinds() {
-        let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
-        let Some(expected) = expected else { continue };
-        let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
-        let wanted = if outcome_only { wanted_outbox(expected) } else { expected.to_string() };
-        let observed = tokio::time::timeout(std::time::Duration::from_millis(1500), drive(path, (kind.fault)())).await.unwrap_or_else(|_| "hangs".to_string());
-        if observed.starts_with("N/A") { continue; }
-        let observed = if outcome_only { wanted_outbox(&observed) } else { observed };
-        let observed = if let Some(prefix) = wanted.split_once('*') { if observed.starts_with(prefix.0) && observed.ends_with(prefix.1) { wanted.clone() } else { observed } } else { observed };
-        matrix.cell(path.name(), kind.name, if path.sequenced() { "sequenced" } else { "plain" }, &wanted, &observed);
-    }
+fn cell(matrix: &mut Cases, path: Path, kind: &str, expected: &str, observed: String) {
+    let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
+    let wanted = if outcome_only { wanted_outbox(expected) } else { expected.to_string() };
+    if observed.starts_with("N/A") { return; }
+    let observed = if outcome_only { wanted_outbox(&observed) } else { observed };
+    let observed = if let Some(prefix) = wanted.split_once('*') { if observed.starts_with(prefix.0) && observed.ends_with(prefix.1) { wanted.clone() } else { observed } } else { observed };
+    matrix.cell(path.name(), kind, if path.sequenced() { "sequenced" } else { "plain" }, &wanted, &observed);
 }
 
 /// An Outbox operation reports `Confirmed` or `Rejected`: the class of the error is the failure of the operation, so only Ok or Err and the sends are compared.
