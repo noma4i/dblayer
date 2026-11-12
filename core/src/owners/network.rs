@@ -27,7 +27,7 @@ pub enum NetworkEffect {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkInput {
-    SetOnline { online: bool, reply: ReplyId },
+    SetOnline { online: bool, stamp: u64, reply: ReplyId },
     Foreground { reply: ReplyId },
     PowerSaving { saving: bool, reply: ReplyId },
     SnapshotRequest { owner: Peer, epoch: Epoch },
@@ -37,6 +37,7 @@ pub enum NetworkInput {
 
 pub struct NetworkState {
     mode: NetworkMode,
+    online_stamp: u64,
 }
 
 impl Default for NetworkState {
@@ -45,7 +46,7 @@ impl Default for NetworkState {
 
 impl NetworkState {
     /// `online = false` and `saving = false` until the first input.
-    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, online_seq: 0, foreground_seq: 0, saving: false } } }
+    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, online_seq: 0, foreground_seq: 0, saving: false }, online_stamp: 0 } }
 
     pub fn mode(&self) -> NetworkMode { self.mode }
 }
@@ -63,12 +64,17 @@ impl StateOwner for Network {
         let run = |effects: Vec<NetworkEffect>| effects.into_iter().map(Effect::Run).collect();
         let reply = |id| NetworkEffect::Reply { id, closed: false };
         match (state.mode, input) {
-            (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::SetOnline { online: value, reply: id }) if value != online => {
+            (NetworkMode::Open { .. }, NetworkInput::SetOnline { stamp, reply: id, .. }) if stamp <= state.online_stamp => run(vec![reply(id)]),
+            (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::SetOnline { online: value, stamp, reply: id }) if value != online => {
+                state.online_stamp = stamp;
                 let online_seq = online_seq + u64::from(value);
                 state.mode = NetworkMode::Open { online: value, online_seq, foreground_seq, saving };
                 run(vec![reply(id), NetworkEffect::Broadcast { online: value, online_seq }])
             }
-            (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply: id, .. }) => run(vec![reply(id)]),
+            (NetworkMode::Open { .. }, NetworkInput::SetOnline { stamp, reply: id, .. }) => {
+                state.online_stamp = stamp;
+                run(vec![reply(id)])
+            }
             (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::Foreground { reply: id }) => {
                 state.mode = NetworkMode::Open { online, online_seq, foreground_seq: foreground_seq + 1, saving };
                 run(vec![reply(id), NetworkEffect::Foreground(foreground_seq + 1)])

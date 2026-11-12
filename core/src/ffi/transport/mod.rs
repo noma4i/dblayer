@@ -99,17 +99,21 @@ impl OnlineSink {
 
     /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
     pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
-        super::network_status::record_network(online);
-        if let SignalTarget::Connectivity(connectivity) = &self.target {
-            connectivity.change(online);
-            return Ok(());
+        match &self.target {
+            SignalTarget::Status => {
+                let stamp = super::network_status::record_network(online);
+                feed_followers(online, stamp);
+                Ok(())
+            }
+            SignalTarget::Connectivity(connectivity) => {
+                connectivity.change(online, super::network_status::next_stamp());
+                Ok(())
+            }
+            SignalTarget::Life(_) => {
+                let Some(life) = self.life() else { return Err(super::command::closed()) };
+                deliver_life(&life, online, super::network_status::next_stamp())
+            }
         }
-        if matches!(self.target, SignalTarget::Status) {
-            feed_followers(online);
-            return Ok(());
-        }
-        let Some(life) = self.life() else { return Err(super::command::closed()) };
-        deliver_life(&life, online)
     }
 
     pub(crate) fn registrations(&self) -> Arc<Registrations> { self.registrations.clone() }
@@ -165,7 +169,8 @@ pub(crate) fn follow_life(life: &Arc<crate::owners::life::Life>) {
     all.retain(alive);
     all.push(Follower::Life(Arc::downgrade(life)));
     drop(all);
-    if let Some(online) = *super::network_status::network_value().borrow() { let _ = deliver_life(life, online); }
+    let processed = *super::network_status::network_value().borrow();
+    if let Some(online) = processed.online { let _ = deliver_life(life, online, processed.stamp); }
 }
 
 pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectivity>) {
@@ -173,10 +178,11 @@ pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectiv
     all.retain(alive);
     all.push(Follower::Connectivity(Arc::downgrade(connectivity)));
     drop(all);
-    if let Some(online) = *super::network_status::network_value().borrow() { connectivity.change(online); }
+    let processed = *super::network_status::network_value().borrow();
+    if let Some(online) = processed.online { connectivity.change(online, processed.stamp); }
 }
 
-pub(crate) fn feed_followers(online: bool) {
+pub(crate) fn feed_followers(online: bool, stamp: u64) {
     let live: Vec<Follower> = {
         let mut all = crate::lock::lock(followers());
         all.retain(alive);
@@ -187,14 +193,14 @@ pub(crate) fn feed_followers(online: bool) {
     };
     for follower in live {
         match follower {
-            Follower::Life(life) => { if let Some(life) = life.upgrade() { let _ = deliver_life(&life, online); } }
-            Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(online); } }
+            Follower::Life(life) => { if let Some(life) = life.upgrade() { let _ = deliver_life(&life, online, stamp); } }
+            Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(online, stamp); } }
         }
     }
 }
 
-pub(super) fn deliver_life(life: &Arc<crate::owners::life::Life>, online: bool) -> Result<(), DbError> {
-    let waiter = life.set_online(online);
+pub(super) fn deliver_life(life: &Arc<crate::owners::life::Life>, online: bool, stamp: u64) -> Result<(), DbError> {
+    let waiter = life.set_online(online, stamp);
     match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
         crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
         crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),

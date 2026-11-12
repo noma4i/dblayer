@@ -5,13 +5,34 @@ use tokio::sync::watch;
 use super::reading::Reader;
 use super::{OnlineSink, PlatformObserver};
 
-pub(crate) fn network_value() -> &'static watch::Sender<Option<bool>> {
-    static VALUE: std::sync::OnceLock<watch::Sender<Option<bool>>> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| watch::channel(None).0)
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Processed { pub(crate) stamp: u64, pub(crate) online: Option<bool> }
+
+pub(crate) fn network_value() -> &'static watch::Sender<Processed> {
+    static VALUE: std::sync::OnceLock<watch::Sender<Processed>> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| watch::channel(Processed::default()).0)
 }
 
-pub(crate) fn record_network(online: bool) {
-    crate::lock::effect(|| network_value().send_if_modified(|value| std::mem::replace(value, Some(online)) != Some(online)));
+/// Writes the value of the process, only the status input of the process calls it: readers wake when the value changes, not when the stamp grows.
+pub(crate) fn record_network(online: bool) -> u64 {
+    let mut stamp = 0;
+    crate::lock::effect(|| network_value().send_if_modified(|value| {
+        value.stamp += 1;
+        stamp = value.stamp;
+        std::mem::replace(&mut value.online, Some(online)) != Some(online)
+    }));
+    stamp
+}
+
+/// The next stamp of the process for a direct input: the value of the process stays.
+pub(crate) fn next_stamp() -> u64 {
+    let mut stamp = 0;
+    crate::lock::effect(|| network_value().send_if_modified(|value| {
+        value.stamp += 1;
+        stamp = value.stamp;
+        false
+    }));
+    stamp
 }
 
 #[derive(uniffi::Object)]
@@ -30,22 +51,19 @@ impl NetworkStatus {
         Arc::new(Self)
     }
 
-    pub fn current(&self) -> Option<bool> { *network_value().borrow() }
+    pub fn current(&self) -> Option<bool> { network_value().borrow().online }
 
     pub fn subscribe(&self) -> Arc<NetworkSubscription> { Arc::new(NetworkSubscription(Reader::of(network_value().subscribe()))) }
 }
 
 #[derive(uniffi::Object)]
-pub struct NetworkSubscription(Reader<Option<bool>>);
+pub struct NetworkSubscription(Reader<Processed>);
 
 #[uniffi::export]
 impl NetworkSubscription {
     pub async fn next(&self) -> Option<bool> {
         loop {
-            match self.0.next().await? {
-                Some(online) => return Some(online),
-                None => continue,
-            }
+            if let Some(online) = self.0.next().await?.online { return Some(online); }
         }
     }
 

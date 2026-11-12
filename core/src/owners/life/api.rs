@@ -15,10 +15,10 @@ use crate::runtime::{Epoch, EpochStamp, OutcomeId, Waiter};
 
 impl Life {
     /// `set_online`: Network answers after its `step`.
-    pub fn set_online(&self, online: bool) -> Waiter<LifeReply> {
+    pub fn set_online(&self, online: bool, stamp: u64) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_network(NetworkInput::SetOnline { online, reply: waiter.id().raw() });
+        self.wiring.to_network(NetworkInput::SetOnline { online, stamp, reply: waiter.id().raw() });
         waiter
     }
 

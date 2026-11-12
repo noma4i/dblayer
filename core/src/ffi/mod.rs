@@ -62,6 +62,7 @@ pub use write::WireConfirmed;
 pub use encrypted::{fetch_server_config, fetch_server_config_with_clock, FetchPorts, CredentialStore, EncryptedHttp, RetryProgress, RetrySubscription};
 pub(crate) use encrypted::session_failure;
 pub use network_status::{NetworkStatus, NetworkSubscription};
+pub(crate) use network_status::next_stamp;
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use loading::{LoadMoreResult, LoadRequest};
