@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add `NetworkStatus` with `isOnline` and `changes` (Swift) or `flow` (Kotlin): the network of the phone as the platform reports it.
+- Add `NetworkStatus`: the network of the phone, live for the whole process.
 
 ### Changed
 

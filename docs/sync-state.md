@@ -191,7 +191,7 @@ Mutations, uploads and loads read the same core flag. While the network is away,
 
 ### Network status
 
-`NetworkStatus` shows the network of the phone as the platform reports it. It is the last value the OS observer gave the core, and it is `nil`/`null` before the first. It does not depend on the server, the cable, retries, the session or `close`. The app keeps no network observer of its own.
+`NetworkStatus` shows the network of the phone as the platform reports it. It is the last value the OS observer gave the core, and it is `nil`/`null` before the first. The first `NetworkStatus` of the process starts the network observer of the platform once, and it lives to the end of the process. The value does not depend on the server, the cable, retries, the session, `open` or `close`. The app keeps no network observer of its own. Kotlin requires an Android `Context`: `NetworkStatus(context)`.
 `isOnline` is the current value. `changes` in Swift (an `AsyncSequence` of `Bool`) and `flow` in Kotlin (a `Flow<Boolean>`) deliver the current value first, then each change. A value equal to the current one wakes no reader. A slow reader gets the newest value. Cancelling a read ends only that reader. All `NetworkStatus` instances read the same process-wide source.
 
 ```swift
@@ -203,7 +203,7 @@ for await online in network.changes {
 ```
 
 ```kotlin
-val network = NetworkStatus()
+val network = NetworkStatus(context)
 val now: Boolean? = network.isOnline
 network.flow.collect { online -> println(online) }
 ```
