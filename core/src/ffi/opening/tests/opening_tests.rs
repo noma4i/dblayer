@@ -110,6 +110,48 @@ async fn life_register_bad_preload() {
     }
 }
 
+/// Requirement life_register_missing_own_operation: `RegisterOperations` refuses definitions that lack an operation the library sends by itself (D-379). Input: a model with `changed_by` reads, a `node` relation, a relation of a second read and `listens`, registered with some operations left out. Observable: the answer and the next call. Assert: `Invalid` names every missing operation in alphabetical order in 1 error, no definition of the refused set is accepted, and the complete set is accepted.
+#[tokio::test]
+async fn life_register_missing_own_operation() {
+    use crate::ffi::tests::database_tests::Plain;
+    use crate::schema::{ChangeFeed, FieldSpec, ModelSpec, RelationSpec, RemoteShape, UpdatesSpec};
+    use crate::value::ScalarKind;
+    let documents = [
+        ("Changes", r#"{"name":"Changes","document":"subscription Changes { changes { topic action recordId } }","rootPath":"changes"}"#),
+        ("ItemNode", r#"{"name":"ItemNode","document":"query ItemNode($id: ID!) { node(id: $id) { id } }"}"#),
+        ("OwnerItems", r#"{"name":"OwnerItems","document":"query OwnerItems { ownerItems { id } }"}"#),
+        ("ItemListen", r#"{"name":"ItemListen","document":"subscription ItemListen { itemListen { id } }"}"#),
+    ];
+    let greeting = r#"{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}"#;
+    let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    let mut node = RelationSpec::new("node", &[crate::schema::NODE_PARAM]);
+    node.remote = Some(crate::schema_fixtures::remote("ItemNode", RemoteShape::Single, "1m"));
+    let mut owned = RelationSpec::new("byOwner", &[]);
+    owned.remote = Some(crate::schema_fixtures::remote("OwnerItems", RemoteShape::Single, "1m"));
+    model.relations.extend([node, owned]);
+    model.change_feed = Some(ChangeFeed { subscription: "Changes".into(), root: "changes".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
+    model.changes = vec![
+        serde_json::from_value(serde_json::json!({"area":"ITEM", "relation":"node", "parameter":"id"})).unwrap(),
+        serde_json::from_value(serde_json::json!({"area":"OWNER", "relation":"byOwner"})).unwrap(),
+    ];
+    model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new(), apply: None });
+    let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    database.set_online(true).unwrap();
+    for (left_out, expected) in [(vec!["Changes"], "Changes"), (vec!["ItemNode"], "ItemNode"), (vec!["OwnerItems"], "OwnerItems"), (vec!["ItemListen"], "ItemListen"), (vec!["ItemNode", "Changes"], "Changes, ItemNode")] {
+        let given: Vec<&str> = documents.iter().filter(|(name, _)| !left_out.contains(name)).map(|(_, text)| *text).chain([greeting]).collect();
+        match database.register_operations(format!("[{}]", given.join(","))).await {
+            Err(DbError::Invalid { detail }) => assert!(detail.ends_with(expected), "{left_out:?}: {detail}"),
+            other => panic!("{left_out:?}: {other:?}"),
+        }
+        let answer = database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await;
+        assert!(matches!(answer, Err(DbError::Invalid { .. })), "{left_out:?}: no definition of a refused set is accepted");
+    }
+    let all: Vec<&str> = documents.iter().map(|(_, text)| *text).chain([greeting]).collect();
+    database.register_operations(format!("[{}]", all.join(","))).await.unwrap();
+    assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
+    database.close_database().await.unwrap();
+}
+
 #[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
