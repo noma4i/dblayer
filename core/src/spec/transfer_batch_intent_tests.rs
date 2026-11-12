@@ -89,6 +89,7 @@ fn xfer_batch_intent_retry_storage() {
 #[test]
 fn xfer_batch_intent_other() {
     let (mut twin, ids) = persisting_joint();
+    refuses_calls(&mut twin, KEY);
     let mut inputs = twin.stray_results(ids[0]);
     inputs.push(TransferInput::MutationOutcome { transfer_id: ids[0], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false });
     twin.ignores(ids[0], inputs);

@@ -79,28 +79,6 @@ fn persisting_joint() -> (Twin, Vec<TransferId>) {
 }
 
 #[test]
-fn xfer_batch_intent_busy() {
-    let (mut twin, ids) = persisting_joint();
-    for (reply, out) in [twin.cancel(KEY), twin.discard(KEY), twin.retry(KEY, None)] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
-    }
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
-}
-
-#[test]
-fn xfer_batch_intent_rejected() {
-    let (mut twin, ids) = persisting_joint();
-    let out = twin.reject(crate::owners::contract::RejectReason::Storage("disk".into()));
-    assert_eq!(out.timers, 1);
-    assert!(out.submit_ops().is_empty());
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
-    let retry = twin.tick_retry(ids[0]);
-    assert_eq!(retry.writes(), 1);
-    assert!(retry.submit_ops().is_empty());
-    assert_eq!(twin.commit().submit_ops().len(), 1);
-}
-
-#[test]
 fn xfer_batch_intent_invalid() {
     let (mut twin, ids) = persisting_joint();
     let out = twin.reject(crate::owners::contract::RejectReason::Invalid(String::new()));
