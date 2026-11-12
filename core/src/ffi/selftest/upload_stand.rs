@@ -183,6 +183,8 @@ pub(super) struct Puts {
     held: Mutex<VecDeque<Arc<Hold>>>,
     pub(super) tokens: Mutex<Vec<Arc<ByteProgress>>>,
     pub(super) bodies: Mutex<Vec<Vec<u8>>>,
+    reports: AtomicBool,
+    failing: Mutex<VecDeque<u64>>,
 }
 
 impl Puts {
@@ -191,6 +193,8 @@ impl Puts {
         self.held.lock().unwrap().push_back(hold.clone());
         hold
     }
+
+    pub(super) fn fail_once_at(&self, offset: u64) { self.failing.lock().unwrap().push_back(offset) }
 }
 
 #[async_trait]
@@ -198,6 +202,10 @@ impl FakeTransport for Puts {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+        if self.reports.load(Ordering::SeqCst) {
+            progress.sent(file.length / 4);
+            progress.sent(file.length / 2);
+        }
         self.tokens.lock().unwrap().push(progress);
         let body = std::fs::read(&file.path).unwrap_or_default();
         self.bodies.lock().unwrap().push(body[(file.offset as usize).min(body.len())..((file.offset + file.length) as usize).min(body.len())].to_vec());
@@ -209,6 +217,8 @@ impl FakeTransport for Puts {
             let _dropped = Dropped(hold.clone());
             hold.gate.notified().await;
         }
+        let failed = { let mut failing = self.failing.lock().unwrap(); failing.iter().position(|offset| *offset == file.offset).map(|index| failing.remove(index)) };
+        if failed.is_some() { return Err(DbError::Network { detail: "the part was cut".into() }) }
         Ok(PutReply { status: 200, etag: Some("etag".into()) })
     }
 }
@@ -247,6 +257,11 @@ impl Stand {
     }
 
     pub(super) fn keep_moment(mut self) -> Self { self.keep_moment = true; self }
+
+    pub(super) fn reporting_bytes(self) -> Self {
+        self.puts.reports.store(true, Ordering::SeqCst);
+        self
+    }
 
     pub(super) fn declaring_root(mut self, root: Option<&'static str>) -> Self {
         self.root = Some(root);
@@ -333,6 +348,8 @@ pub(super) struct ScriptedPreparer {
     fractions: Vec<f64>,
     holds: Mutex<VecDeque<Arc<Hold>>>,
     failures: Mutex<VecDeque<String>>,
+    outcomes: Mutex<VecDeque<PrepareOutcome>>,
+    jobs: Mutex<Vec<PrepareJob>>,
     events: Mutex<Vec<PrepareEvent>>,
     cancelled: Mutex<std::collections::HashSet<u64>>,
     running: std::sync::atomic::AtomicUsize,
@@ -341,7 +358,7 @@ pub(super) struct ScriptedPreparer {
 
 impl ScriptedPreparer {
     pub(super) fn new(probe: ProbeOutcome, bytes: &[u8], fractions: &[f64]) -> Arc<Self> {
-        Arc::new(Self { probe, bytes: bytes.to_vec(), fractions: fractions.to_vec(), holds: Mutex::default(), failures: Mutex::default(), events: Mutex::default(), cancelled: Mutex::default(), running: Default::default(), peak: Default::default() })
+        Arc::new(Self { probe, bytes: bytes.to_vec(), fractions: fractions.to_vec(), holds: Mutex::default(), failures: Mutex::default(), outcomes: Mutex::default(), jobs: Mutex::default(), events: Mutex::default(), cancelled: Mutex::default(), running: Default::default(), peak: Default::default() })
     }
 
     pub(super) fn hold_next(&self) -> Arc<Hold> {
@@ -351,6 +368,8 @@ impl ScriptedPreparer {
     }
 
     pub(super) fn fail_next(&self, message: &str) { self.failures.lock().unwrap().push_back(message.into()) }
+    pub(super) fn outcome_next(&self, outcome: PrepareOutcome) { self.outcomes.lock().unwrap().push_back(outcome) }
+    pub(super) fn jobs(&self) -> Vec<PrepareJob> { self.jobs.lock().unwrap().clone() }
     pub(super) fn events(&self) -> Vec<PrepareEvent> { self.events.lock().unwrap().clone() }
     pub(super) fn probes(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(content) = event { Some(content) } else { None }).collect() }
     pub(super) fn runs(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(attempt) = event { Some(attempt) } else { None }).collect() }
@@ -374,6 +393,7 @@ impl Preparer for ScriptedPreparer {
 
     async fn run(&self, job: PrepareJob, progress: Arc<PrepareProgress>) -> PrepareOutcome {
         self.events.lock().unwrap().push(PrepareEvent::Run(job.attempt_id));
+        self.jobs.lock().unwrap().push(job.clone());
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
         let _running = Running(self);
@@ -388,6 +408,7 @@ impl Preparer for ScriptedPreparer {
         }
         if self.cancelled.lock().unwrap().contains(&job.attempt_id) { return PrepareOutcome::Failed { message: "cancelled".into() } }
         for fraction in late { progress.report(*fraction); }
+        if let Some(outcome) = self.outcomes.lock().unwrap().pop_front() { return outcome }
         if let Some(message) = self.failures.lock().unwrap().pop_front() { return PrepareOutcome::Failed { message } }
         std::fs::write(&job.destination, &self.bytes).unwrap();
         PrepareOutcome::Done { name: Some("ready.jpg".into()), mime: Some("image/jpeg".into()) }
@@ -402,4 +423,19 @@ impl Preparer for ScriptedPreparer {
 /// The source of `supply_source` that carries the prepare settings of the transfer.
 pub(super) fn source_of(path: &Path, values_json: &str, _prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
     crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into() }
+}
+
+/// The video the platform read: `reencode` is a source that the table of limits cannot keep as it is, `keys` are the metadata keys of the file.
+pub(super) fn video_probe(keys: &[&str], reencode: bool) -> ProbeOutcome {
+    ProbeOutcome::Video { source: crate::prepare::VideoSource { width: 1280, height: 720, rotation_degrees: if reencode { 90 } else { 0 }, frame_rate: 30.0, bitrate: Some(1_000_000), mp4_h264_aac: true }, metadata_keys: keys.iter().map(|key| key.to_string()).collect() }
+}
+
+/// The settings of a video that say what a device that cannot decode the source does: the field of the settings comes with the type.
+pub(super) fn cannot_decode_settings(_upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
+    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false }
+}
+
+/// The typed reason of a failed upload: the field of the failure comes with the type.
+pub(super) fn failure_reason(upload: &crate::ffi::wire::WireUpload) -> Option<String> {
+    upload.error.as_ref().and_then(|error| format!("{error:?}").contains("device_cannot_decode").then(|| "device_cannot_decode".to_string()))
 }
