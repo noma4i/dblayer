@@ -168,7 +168,7 @@ async fn every_row_call_answers_the_first_violated_admission_step() {
         }
         (database, args)
     };
-    for name in &calls {
+    for &name in &calls {
         for mask in 0u8..8 {
             if name == "create" && mask & 4 != 0 { continue; }
             let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0 && name != "create");
