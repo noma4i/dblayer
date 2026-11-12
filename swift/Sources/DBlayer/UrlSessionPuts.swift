@@ -261,9 +261,9 @@ final class BackgroundPutSession: PutSession, Sendable {
 }
 
 extension DB {
-  /// The app calls it from `application(_:handleEventsForBackgroundURLSession:completionHandler:)` with the identifier and the completion handler the system gave. An identifier that is not the session of the library returns `false` and the completion handler is not taken. Otherwise it returns `true` and the handler runs once on the main thread after the events of the wake and after the library has no work that runs without a new event. A call before `open` waits for the open database.
+  /// The PUT of a file in a background session is off: no identifier is the session of the library, so it returns `false` and the completion handler is not taken.
   @discardableResult
   public static func handleBackgroundEvents(identifier: String, completion: @escaping @Sendable () -> Void) -> Bool {
-    UrlSessionPuts.process?.handle(identifier: identifier, completion: completion) ?? false
+    false
   }
 }

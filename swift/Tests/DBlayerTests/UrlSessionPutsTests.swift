@@ -272,6 +272,14 @@ struct UrlSessionPutsTests {
     #expect(await inputs.inputs(1) == ["missing 7.2.2"])
     #expect(pastCycle.cancelled)
   }
+
+  /// The PUT in a background session is off: even the identifier of the library session is not taken, the answer is `false` and the completion handler stays with the app.
+  @Test
+  func theWakeOfTheBackgroundSessionIsNotTaken() {
+    let called = Locked(0)
+    let taken = DB.handleBackgroundEvents(identifier: UrlSessionPuts.sessionIdentifier ?? sessionIdentifier) { called.update { $0 += 1 } }
+    #expect((taken, called.value) == (false, 0))
+  }
 }
 
 private final class Locked<Value>: @unchecked Sendable {
