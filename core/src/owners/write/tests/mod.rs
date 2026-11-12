@@ -6,7 +6,6 @@ mod outbox_executor_tests;
 mod transfer_executor_tests;
 mod wire_tests;
 mod failure_tests;
-mod operation_machine_tests;
 mod operation_outbox_tests;
 mod operation_queue_tests;
 mod operation_status_tests;

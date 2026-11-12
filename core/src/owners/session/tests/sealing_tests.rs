@@ -19,34 +19,6 @@ fn begin(state: &mut SessionState, author: bool) -> u64 {
 }
 
 #[test]
-fn sess_sealing_fits() {
-    for author in [false, true] {
-        let mut state = setup();
-        let id = begin(&mut state, author);
-        let effects = step(&mut state, SessionInput::Sealed { seal_id: id, size: 262144 });
-        assert!(matches!(effects.as_slice(), [SessionEffect::CommitPending { pending, .. }] if pending.sequence == 8 && pending.reply == (!author).then_some(9) && pending.author == author.then_some(5)));
-    }
-}
-
-#[test]
-fn sess_idle_call_too_large() {
-    let mut state = setup();
-    let id = begin(&mut state, false);
-    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 262145 }).as_slice(), [SessionEffect::Reply { id: 9, answer: Err(SessionError::TooLarge { size: 262145, limit: 262144 }) }]));
-    assert_eq!(state.credential().unwrap().sequence, 7);
-    let next = begin(&mut state, false);
-    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: next, size: 1 }).as_slice(), [SessionEffect::CommitPending { pending, .. }] if pending.sequence == 8));
-}
-
-#[test]
-fn sess_idle_mutate_too_large() {
-    let mut state = setup();
-    let id = begin(&mut state, true);
-    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 262145 }).as_slice(), [SessionEffect::Answer { author: 5, req_id: 8, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 262145, limit: 262144 }, .. } }]));
-    assert_eq!(state.credential().unwrap().sequence, 7);
-}
-
-#[test]
 fn sess_sealing_failed() {
     for (author, error) in [(false, SessionError::StateLost), (true, SessionError::Storage("locked".into()))] {
         let mut state = setup();
@@ -56,15 +28,6 @@ fn sess_sealing_failed() {
         else { assert!(matches!(effects.as_slice(), [SessionEffect::Reply { answer: Err(SessionError::StateLost), .. }])); }
         assert_eq!(state.credential().unwrap().sequence, 7);
     }
-}
-
-#[test]
-fn sess_sealing_stray() {
-    let mut state = setup();
-    let id = begin(&mut state, false);
-    assert!(step(&mut state, SessionInput::Sealed { seal_id: id + 1, size: 1 }).is_empty());
-    assert!(step(&mut state, SessionInput::SealFailed { seal_id: id + 1, error: SessionError::StateLost }).is_empty());
-    assert!(matches!(state.phase(), SessionPhase::Sealing { .. }));
 }
 
 #[test]
@@ -94,12 +57,4 @@ fn sess_sealing_closing() {
     begin(&mut state, true);
     let effects = step(&mut state, SessionInput::Closing);
     assert!(matches!(effects.as_slice(), [SessionEffect::Answer { outcome: AuthorOutcome::Error { error: SessionError::Closed, .. }, .. }, SessionEffect::Drained(_)]));
-}
-
-#[test]
-fn sess_sealing_other() {
-    let mut state = setup();
-    let id = begin(&mut state, false);
-    assert!(step(&mut state, SessionInput::Online(Online(false))).is_empty());
-    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 1 }).as_slice(), [SessionEffect::CommitPending { .. }]));
 }

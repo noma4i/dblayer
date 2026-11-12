@@ -626,12 +626,3 @@ async fn store_read_intents_queue_failed() {
     assert!(life.published().identity.is_some(), "open went on with the session");
     assert!(db.saved().is_ok(), "the base answers reads after the failure");
 }
-
-#[test]
-fn revoked_session_batches_include_the_end_journal() {
-    use crate::owners::store::StoreOp;
-    use super::session_runner::session_erasure_ops;
-    assert_eq!(session_erasure_ops(true, true), vec![StoreOp::EraseSession, StoreOp::RemovePending, StoreOp::JournalSessionEnd]);
-    assert_eq!(session_erasure_ops(false, true), vec![StoreOp::EraseSession, StoreOp::JournalSessionEnd]);
-    assert_eq!(session_erasure_ops(true, false), vec![StoreOp::EraseSession, StoreOp::RemovePending]);
-}

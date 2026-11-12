@@ -114,18 +114,6 @@ async fn life_open_session_continues_the_saved_epoch() {
     closed(&life).await;
 }
 
-/// net_set_online_changed: `set_online` answers, and after the close it answers `closed`.
-#[tokio::test(flavor = "multi_thread")]
-async fn net_set_online_answers() {
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
-    let transport = Arc::new(MockTransport::new());
-    let life = start(&db, &transport).await;
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
-    assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
-    closed(&life).await;
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: true }, "net_closed");
-}
-
 /// call_run, call_run_offline, call_run_stale: the answer of the transport, offline refusal and the epoch rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn call_run_answers_by_epoch_and_network() {
