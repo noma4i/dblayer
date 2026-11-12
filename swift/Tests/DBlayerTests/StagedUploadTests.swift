@@ -18,10 +18,10 @@ private func stagedFile() throws -> URL {
 }
 
 private func untilHeld(_ status: Cursor<UploadStatusStream>) async -> Bool {
-  while let item = await status.next("the held status") {
-    if case let .progress(progress) = item, progress.progress >= 0.99 { return true }
-  }
-  return false
+  await status.first("the held status") { item in
+    if case let .progress(progress) = item { return progress.progress >= 0.99 }
+    return false
+  } != nil
 }
 
 extension BridgeProbeTests {
@@ -61,11 +61,7 @@ extension BridgeProbeTests {
     let status = Cursor(scope.uploadStatus(staged))
     #expect(await untilHeld(status))
     #expect(try await staged.discard())
-    var ended = false
-    while let item = await status.next("the end of the status") {
-      if case .ended = item { ended = true; break }
-    }
-    #expect(ended)
+    #expect(await status.first("the end of the status") { if case .ended = $0 { return true } else { return false } } != nil)
     #expect(try await Moment.find(staged.id).current() == nil)
     await DB.closeForCleanup()
   }
