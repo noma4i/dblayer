@@ -295,7 +295,7 @@ async fn call_prop_mutation_against_end_any_order_public() {
             gate.entered().await;
             match action {
                 "cancel" => { call.abort(); assert!(bound(call).await.unwrap_err().is_cancelled()); }
-                "deadline" => { rig.clock.advance(30_000); assert!(matches!(bound(call).await.unwrap(), Err(DbError::Network { .. }))); }
+                "deadline" => { rig.clock.advance(30_000); assert!(matches!(bound(call).await.unwrap(), Err(DbError::Dropped { .. })), "D-335 (1): the pair exists, the outcome is unknown"); }
                 _ => { rig.database.set_online(false).unwrap(); bound(rig.database.session_reset()).await.unwrap(); assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. }))); }
             }
             if action != "offline" { bound(rig.database.session_reset()).await.unwrap(); }

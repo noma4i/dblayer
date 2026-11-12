@@ -856,13 +856,13 @@ fn call_prop_single_request() {
             }
         }
     }
-    for operation in ["Op", "Change"] {
+    for (operation, answers) in [("Op", 1), ("Change", 0)] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 91 });
         twin.det.tick(crate::runtime::Time(30_000));
         twin.det.run_until_quiet(100).unwrap();
         let effects = take(&twin.log);
-        assert_eq!(effects.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 91, .. })).count(), 1, "deadline for {operation}: {effects:?}");
+        assert_eq!(effects.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 91, .. })).count(), answers, "deadline for {operation} (a mutation with attempt 0 goes to Releasing, call_deadline_expired_mutate_first): {effects:?}");
     }
     let _: CallAnswer = Ok(String::new());
 }
