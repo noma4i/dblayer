@@ -18,7 +18,7 @@ async fn crash_image_prepare() {
     let live = directory.path().join("live.sqlite");
     let file = directory.path().join("clip.jpg");
     std::fs::write(&file, SOURCE).unwrap();
-    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
     let stand = Stand::new().with_preparer(preparer.clone());
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
@@ -48,7 +48,7 @@ async fn crash_image_prepare() {
         let secret = secret.clone();
         async move {
             let (saved, _) = saved_work(&image);
-            let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+            let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
             let (fresh, reopened) = reopen_preparing(&image, &secret, &operations, Some(fresh_preparer.clone() as Arc<dyn crate::ffi::Preparer>), |fresh| {
                 fresh.script.data("CreateBlob", BLOB);
                 fresh.script.data("CreateMoment", LANDED);
