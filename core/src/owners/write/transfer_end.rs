@@ -14,7 +14,7 @@ impl TransferState {
         self.remove_with(id, Removal::Cancel, fx);
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.cancel_reply = cancel;
-            transfer.prior = prior.filter(|_| transfer.batch_id.is_none());
+            transfer.prior = prior;
         }
         self.store(&[id], StoreKind::Removed, fx);
     }
