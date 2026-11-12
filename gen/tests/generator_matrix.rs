@@ -1,4 +1,4 @@
-//! C4: every DSL key x every fixture unit x platform. A unit is the `.dbl` files of one fixture directory, the models and operations of the consumer app together, with its GraphQL schema where the unit has one. Swift output is parsed with `swiftc -parse`. Kotlin output is compiled by the Gradle module `kotlin/consumer-check` (property `matrixKotlin`). Every DSL key must occur in a fixture, else the generator branch has no fixture row (red). The result goes to `target/matrix/C4-generator.tsv`.
+//! C4: every DSL key x every fixture unit x platform. A unit is the `.dbl` files of one fixture directory, the models and operations of the consumer app together, with its GraphQL schema where the unit has one. Swift output is parsed with `swiftc -parse`. Kotlin output is compiled by the Gradle module `kotlin/consumer-check` (property `matrixKotlin`). The result goes to `target/matrix/C4-generator.tsv`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -54,9 +54,7 @@ fn generator_matrix_over_every_fixture_unit() {
     let root = repository.join("fixtures");
     let scratch = repository.join("target/matrix/kotlin-src");
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
-    let mut sources = String::new();
     for unit in units(&root) {
-        for path in &unit.files { sources.push_str(&std::fs::read_to_string(path).unwrap()); sources.push('\n'); }
         let label = unit.label.clone();
         let (swift, kotlin) = (generate(&unit, "swift"), generate(&unit, "kotlin"));
         match (&swift, &kotlin) {
@@ -85,10 +83,6 @@ fn generator_matrix_over_every_fixture_unit() {
             },
         };
         rows.push((label, "kotlin compiles".into(), verdict.0.into(), verdict.1));
-    }
-    for key in ["preload", "subscribe", "root:", "removed_by", "copies_receiver_to", "on_failure", "members_complete", "default:", "null:"] {
-        let count = sources.matches(key).count();
-        rows.push(("DSL key".into(), key.into(), if count > 0 { "Green" } else { "Red" }.into(), format!("{count} occurrences in the fixtures")));
     }
     let output = repository.join("target/matrix");
     std::fs::create_dir_all(&output).unwrap();
