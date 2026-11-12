@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add `DB.handleBackgroundEvents(identifier:completion:)` (returns `Bool`) and the PUT of a file in a background `URLSession` on iOS: an upload ends with the app in the background.
+
 ### Fixed
 
 - Write the refused session record again at the next online or foreground event.
@@ -26,7 +30,6 @@
 
 ### Added
 
-- Add `DB.handleBackgroundEvents` and the PUT of a file in a background `URLSession` on iOS: an upload ends with the app in the background.
 - Add `NetworkPath` with the kind and the number of the default network to `NetworkStatus`.
 - Add `stage` and `StagedUpload` to both platforms: a file goes up before its row exists, and `commit` or `discard` ends it.
 - Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
