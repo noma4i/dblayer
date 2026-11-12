@@ -704,6 +704,7 @@ Missing declarations, duplicate subscriptions and empty paths produce generator 
 
 A node read uses the declared change ID. The `via` scope declared with `node: :one` has 1 parameter. The parameter name `nodeId` belongs to the node read: another scope that declares it fails generation.
 A singleton read needs no parameter: `changed_by "TOTALS", via: :current`.
+A reader of one row follows the events of its row whatever its `fetch`: `never` sends no request on open, an event or a lost subscription rereads the row through `node`.
 `via: :observed` rereads every observed read of the model, parameterized ones included, with the same reread that follows a reconnect. It takes no parameter and no `removes_on`, and the model needs a remote read. A read that nobody observes is not requested.
 
 ```ruby

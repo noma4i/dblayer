@@ -82,9 +82,9 @@ impl Delivery {
             fx.push(Emit::WantPlus);
             self.wants = true;
         }
-        let watches = self.view.remote && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
+        let watches = self.view.remote && matches!(kind, Kind::List | Kind::Count | Kind::Entity { .. });
         if watches {
-            fx.push(if kind == (Kind::Entity { fetch: Fetch::IfMissing }) { Emit::InterestPassive } else { Emit::InterestPlus });
+            fx.push(if matches!(kind, Kind::Entity { fetch: Fetch::IfMissing | Fetch::Never }) { Emit::InterestPassive } else { Emit::InterestPlus });
             if self.view.reload { fx.push(Emit::ReloadOnConnect); }
             self.interested = true;
             if kind == (Kind::Entity { fetch: Fetch::Force }) {

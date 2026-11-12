@@ -402,7 +402,8 @@ impl Database {
                 let row = self.db.resolve(model, &row)?;
                 let id = row.as_str();
                 let waits = row.is_temp() && fetch != Fetch::Never;
-                let remote = fetch != Fetch::Never && !waits;
+                let follows = fetch == Fetch::Never && !row.is_temp() && !spec.is_local() && node.is_some_and(|relation| spec.changes.iter().any(|change| change.relation == relation.name));
+                let remote = (fetch != Fetch::Never || follows) && !waits;
                 let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.to_string()))]);
                 let window = match node {
                     Some(relation) if remote => WindowKey::relation(model, &relation.name, &params),
