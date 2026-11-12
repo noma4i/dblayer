@@ -272,9 +272,9 @@ async fn library_matches_reference_after_reopen() {
 }
 
 /// Requirement: library.md sections 7 and 11.4: the network return rereads the watched window of a subscribed model whatever the size of its page, and the stored pair of a login that met `close` goes out after `open`.
-/// Observable: the requests after `set_online`. Assert: the saved programs of the rules I12 and I13 show what the reference shows.
+/// Observable: the requests after `set_online`. Assert: the saved programs of the rules I12 and I13 and the join of a load to a running one show what the reference shows.
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_on_saved_session_and_network_programs() {
     let traces = crate::check::corpus::read_dir(&crate::check::corpus::shared_dir().join("library")).unwrap();
-    assert_matches(traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_")).map(|trace| trace.inputs()).collect()).await;
+    assert_matches(traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect()).await;
 }

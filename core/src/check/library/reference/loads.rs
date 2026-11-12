@@ -109,7 +109,7 @@ impl LibraryRef {
         let now = self.now;
         let (fresh, running) = {
             let window = self.win(key);
-            (window.fresh(now), window.load.as_ref().map(|run| run.page))
+            (window.load.is_none() && window.fresh(now), window.load.as_ref().map(|run| run.page))
         };
         if forced && self.online == Some(false) {
             self.win(key).refuse_offline();

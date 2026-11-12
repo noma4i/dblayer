@@ -1,0 +1,8 @@
+{"trace":"begin_load_joins_running_refresh_of_fresh_window"}
+{"in":"open","args":{"encrypted":true}}
+{"in":"set_online","args":{"online":true}}
+{"in":"login"}
+{"in":"begin_load_all","args":{"as":"la","named":true,"relation":"feed"}}
+{"in":"answer_page","args":{"more":false,"rows":0}}
+{"in":"refresh","args":{"as":"rf","named":true,"relation":"feed"}}
+{"in":"begin_load","args":{"as":"l1","named":true,"relation":"feed"}}
