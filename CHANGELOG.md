@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Remove an upload or an operation with `discard` or `cancelUpload` in any stage instead of `InFlight`.
 - Abort the multipart that the server creates for an upload removed while its first request is in flight.
 - Write the refused session record again at the next online or foreground event.
 - Repeat the erase of the account data after a refused disk write at the next online or foreground event.

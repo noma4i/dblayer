@@ -22,7 +22,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Rejected` | The server refused the operation of a receipt `confirmed()` (`failure`: an `OperationFailure`, `kept`). `kept` is true when the failed change stays for `retry` or `discard`. |
 | `Interrupted` | The wait was cancelled. The detail identifies the cause. A call deadline returns its last error or `Network`. |
 | `Dropped` | The request left and its answer did not come. |
-| `InFlight` | The operation is on its way and cannot be dropped or cancelled now. |
+| `InFlight` | The request of the operation or the final mutation of an upload already left and cannot be dropped or cancelled now. A step of the library never causes it. |
 | `Storage` | The database could not save its state. |
 | `Copy` | A copy step failed (`detail`). |
 | `Runtime`, `Internal` | A task of the library failed, or it met a state it cannot serve, such as a damaged model event (`detail`). |

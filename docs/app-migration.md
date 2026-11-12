@@ -164,3 +164,5 @@ when (upload.status) {
     UploadStatus.Waiting, UploadStatus.Preparing, UploadStatus.Queued, UploadStatus.Uploading, UploadStatus.Sending, UploadStatus.Done, UploadStatus.Failed -> Unit
 }
 ```
+
+- `discard()` of a staged upload, `discard(action)` and `cancelUpload(action)` work in any stage of the transfer. Remove a repeat of the call after `InFlight`: a second call gets the same outcome as the first.

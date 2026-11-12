@@ -398,11 +398,11 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - One record has one upload in progress per declared action. A new upload replaces a failed upload of that action.
 - `upload` on a row that does not exist is accepted: it opens a transfer with no optimistic value and the answer of the final mutation writes the row. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action or variables). A missing row is no refusal.
 - `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
-- `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
+- `cancelUpload(action)` returns `true` when it stopped the transfer, in any stage of the transfer: a call that meets a step of the library waits for the end of that step and gets the outcome of the removal, so the call is never repeated. It returns `false` once the final mutation left. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
 
 ## Upload before the final mutation
 
-A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`.
+A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`. `discard` works in any stage of the file, also while its parts go up: it aborts the multipart and removes the copy, and it throws `InFlight` only after the final mutation left.
 
 ```swift
 let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: path, prepare: prepare))
