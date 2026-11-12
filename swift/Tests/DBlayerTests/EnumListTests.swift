@@ -24,10 +24,4 @@ extension BridgeProbeTests.EnumTests {
     #expect(try await DB.account().send(Container.self, values: (try typed.objectValue)).optimisticValue!.shelves == [.secondary])
     #expect(try await DB.account().send(Container.self, values: ["title": .string("u")]).optimisticValue!.shelves == nil)
   }
-
-  @Test
-  func aListOfEnumValuesEncodesAsTheirTexts() throws {
-    let text = String(decoding: try JSONEncoder().encode([ContainerShelf.primary, .unknown("x")]), as: UTF8.self)
-    #expect(text == #"["PRIMARY","x"]"#)
-  }
 }

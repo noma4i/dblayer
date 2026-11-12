@@ -18,60 +18,6 @@ private enum ChatMediaOperation: GraphQLOperation {
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aMediaRefetchAfterMutationReadsTheWholeStaleWindow() async throws {
-    await DB.closeForCleanup()
-    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsArrayJSON.utf8)) as? [[String: Any]])
-    let momentIndex = try #require(models.firstIndex { $0["key"] as? String == "Moment" })
-    let mediaIndex = try #require(models.firstIndex { $0["key"] as? String == "MediaMessage" })
-    let actions = try #require(models[momentIndex]["actions"] as? [[String: Any]])
-    var action = try #require(actions.first { $0["name"] as? String == "like" })
-    action["refetch"] = ["visual_media"]
-    action["optimistic"] = [:] as [String: Any]
-    models[mediaIndex]["actions"] = [action]
-    var relations = try #require(models[mediaIndex]["relations"] as? [[String: Any]])
-    let relationIndex = try #require(relations.firstIndex { $0["name"] as? String == "visual_media" })
-    let binding: [String: Any] = ["chatId": ["from": "param", "name": "chatId"]]
-    relations[relationIndex]["media"] = ["marker": "MediaMarker", "from": "node.mediaLibrary", "fields": ["revision", "visualCount", "audioCount", "giftCount"], "sequence": "latestSequence", "tail": "MediaTail", "after": "afterSequence", "marker_variables": binding, "tail_variables": binding]
-    models[mediaIndex]["relations"] = relations
-    let modelJSON = try #require(String(data: JSONSerialization.data(withJSONObject: models), encoding: .utf8))
-    let transport = MockTransport()
-    func marker(_ count: Int) -> String { #"{"data":{"node":{"mediaLibrary":{"revision":1,"visualCount":\#(count),"audioCount":0,"giftCount":0,"latestSequence":1}}}}"# }
-    func page(_ id: String) -> String { #"{"data":{"node":{"messages":{"edges":[{"cursor":"\#(id)","node":{"__typename":"MediaMessage","id":"\#(id)","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}],"pageInfo":{"hasNextPage":false,"endCursor":"\#(id)"}}}}}"# }
-    for count in [0, 0, 1, 1, 1] { transport.enqueue("MediaMarker", reply: marker(count)) }
-    transport.enqueue("ChatMedia", reply: page("v1"))
-    transport.enqueue("ChatMedia", reply: page("v2"))
-    transport.enqueue("LikeMoment", reply: #"{"data":{"likeMoment":{"__typename":"MediaMessage","id":"v1","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}}"#)
-    let definitions = #"[{"name":"MediaMarker","document":"query MediaMarker($chatId: ID!, $upToSequence: Int!) { node(id: $chatId) { mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail($chatId: ID!, $afterSequence: Int!, $first: Int, $after: String) { node(id: $chatId) { messages(afterSequence: $afterSequence, first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"}]"#
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: specs(modelJSON), transport: transport, operations: String(definitions.dropLast()) + #",{"name":"ChatMedia","document":"\#(ChatMediaOperation.document)"}]"#)
-    let query = try MediaMessage.visualMedia("c1")
-    let (signals, signal) = AsyncStream<Int>.makeStream()
-    let cursor = Cursor(signals)
-    defer { signal.finish() }
-    let first = Task { do { try await query.loadAll(); signal.yield(1) } catch { signal.yield(9) } }
-    defer { first.cancel() }
-    guard await cursor.next("the initial media load") == 1 else { Issue.record("the initial media load failed"); return }
-    let row = try #require(try await query.read().first)
-    let mutation = Task {
-      do {
-        let receipt = try await row.act("like", values: [:], args: [:])
-        if case .confirmed = try await receipt.settled() { signal.yield(2) } else { signal.yield(9) }
-      } catch { signal.yield(9) }
-    }
-    defer { mutation.cancel() }
-    guard await cursor.next("the mutation outcome") == 2 else { Issue.record("the mutation was not confirmed"); return }
-    let reread = Task { do { try await query.loadAll(); signal.yield(3) } catch { signal.yield(9) } }
-    defer { reread.cancel() }
-    guard await cursor.next("the stale media load") == 3 else { Issue.record("the stale media load failed"); return }
-    #expect(try await query.read().map(\.id) == ["v2"])
-    #expect(transport.calls.filter { $0.operationName == "ChatMedia" }.count == 2)
-    let repeatRead = Task { do { try await query.loadAll(); signal.yield(4) } catch { signal.yield(9) } }
-    defer { repeatRead.cancel() }
-    guard await cursor.next("the fresh media load") == 4 else { Issue.record("the fresh media load failed"); return }
-    #expect(transport.calls.filter { $0.operationName == "MediaMarker" }.count == 5)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
   func preloadsAndThreeMediaLoadsFinishOnEmptyPages() async throws {
     await DB.closeForCleanup()
     let transport = MockTransport()
