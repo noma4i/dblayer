@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 const PART_SUFFIX: &str = ".part";
 const COPY_CHUNK: usize = 1024 * 1024;
 
+/// The text of the refusal of an empty source: at the call and at the copy of a file that was emptied after the call read its size.
+pub(crate) const EMPTY_SOURCE: &str = "the source file is empty";
+
 static COPY_ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) enum CopiedSource {
@@ -137,7 +140,10 @@ impl FileDirectories {
     }
 
     pub(crate) fn copy_source(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
-        self.copy_admitted(id, source, false)
+        match self.copy_admitted(id, source, false)? {
+            CopiedSource::Ready { size: 0, .. } => Ok(CopiedSource::Unreadable(EMPTY_SOURCE.into())),
+            copied => Ok(copied),
+        }
     }
 
     /// The copy of an attached file: a large file stays in `<id>.partial` until the batch that names it commits (`finish`) or fails (`discard_partial`).

@@ -6,6 +6,7 @@
 
 - Write the refused session record again at the next online or foreground event.
 - Show no `localUrl` for a failed upload row without a copy.
+- Refuse the copy of a source file that was emptied after the call read its size.
 
 ## 6.31.1 - 2026-11-13
 

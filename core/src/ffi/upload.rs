@@ -55,7 +55,7 @@ impl Database {
     fn source_of(&self, path: &str, held: bool) -> Result<(Source, bool), DbError> {
         #[cfg(test)] self.db.files().record_source_read();
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
-        if total == 0 { return Err(invalid("the source file is empty")); }
+        if total == 0 { return Err(invalid(crate::store::files::EMPTY_SOURCE)); }
         let config = self.upload_config();
         let sizing = self.upload_operations()?.sizing(&config);
         if held && !sizing.multipart_declared { return Err(invalid("a staged upload needs the multipart steps")); }

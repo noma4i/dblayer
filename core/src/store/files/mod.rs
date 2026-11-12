@@ -5,7 +5,7 @@ mod directories;
 
 pub use descriptor::FileDescriptor;
 pub(crate) use descriptor::sha256_hex;
-pub(crate) use directories::{CopiedSource, FileDirectories};
+pub(crate) use directories::{CopiedSource, FileDirectories, EMPTY_SOURCE};
 
 pub(crate) const TABLE_LIMIT: usize = 256 * 1024;
 

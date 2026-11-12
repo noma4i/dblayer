@@ -134,3 +134,17 @@ fn mem_file_attach_is_chunked() {
     assert_eq!(copied.len() as u64, SIZE);
     assert_eq!(copy.sha256, crate::store::files::sha256_hex(&copied));
 }
+
+/// A source emptied after the call read its size is refused at the copy with the text of the refusal at the call, and leaves no file.
+#[test]
+fn a_copy_of_a_source_emptied_after_its_size_was_read_is_refused() {
+    let (root, directories) = beside_database();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"bytes").unwrap();
+    std::fs::File::create(&source).unwrap();
+    match directories.copy_source("upload", &source).unwrap() {
+        super::super::directories::CopiedSource::Unreadable(error) => assert_eq!(error, crate::store::files::EMPTY_SOURCE),
+        super::super::directories::CopiedSource::Ready { size, .. } => panic!("an empty source was copied, size {size}"),
+    }
+    assert!(directories.directory_entries().unwrap().is_empty());
+}
