@@ -96,7 +96,7 @@ fn xfer_prop_abort_rule() {
     let mut expired = Twin::new();
     let id = expired.uploading(KEY, 3);
     expired.step_ok(id, 1, Some("u1"));
-    expired.reject(RejectReason::Storage("disk".into()));
+    expired.reject(RejectReason::Invalid("bad row".into()));
     expired.commit();
     expired.det.tick(Time(8 * DAY));
     let out = expired.post(TransferInput::Tick { kind: TransferTick::Expire });
@@ -445,4 +445,67 @@ fn xfer_prop_persist_before_step() {
     assert_eq!(out.steps().len(), 0, "the repeat starts after the write of `Retrying`");
     assert_eq!(failed.commit().steps().len(), 0);
     assert_eq!(failed.commit().steps().len(), 1);
+}
+
+fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
+
+/// Items 5 and 6 of the release: any number of `Storage` refusals in a row, the network gone and back between them, never fail the transfer, never send a confirmed part or `complete` a second time.
+#[test]
+fn xfer_prop_storage_refusal_never_fails_an_upload() {
+    for refusals in 1..=5 {
+        let mut part = Twin::new();
+        let id = part.uploading(KEY, 3);
+        let mut seen = part.step_ok(id, 1, Some("u1"));
+        let mut complete = Twin::new();
+        let complete_id = complete.completing(KEY);
+        let mut seen_complete = complete.completed(complete_id);
+        for (name, twin, id, stage, seen) in [("part", &mut part, id, TransferStage::PersistingPart, &mut seen), ("complete", &mut complete, complete_id, TransferStage::PersistingComplete, &mut seen_complete)] {
+            let written = seen.batches[0].ops.clone();
+            let mut sent = Vec::new();
+            for round in 1..=refusals {
+                let refused = twin.reject(storage());
+                let flap = [twin.online(false), twin.online(true), twin.tick_retry(id)];
+                assert_eq!((twin.stage(id), refused.all_replies(), refused.kinds().len()), (stage, 0, 0), "{name} {round}/{refusals}");
+                assert_eq!(flap[2].batches[0].ops, written, "{name} {round}/{refusals}: the same write goes again");
+                for out in [&refused, &flap[0], &flap[1], &flap[2]] {
+                    sent.extend(out.steps());
+                    assert_eq!((out.completes(), out.aborts(), out.submits(), out.shows().len()), (0, 0, 0, 0), "{name} {round}/{refusals}");
+                }
+            }
+            assert!(sent.is_empty(), "{name} {refusals}: the network sees nothing while the write is refused: {sent:?}");
+            let committed = twin.commit();
+            if name == "part" {
+                assert_eq!(twin.stage(id), TransferStage::PersistingAttempt, "{refusals}");
+                assert_eq!(twin.commit().steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(2)], "{refusals}: part 1 is not sent twice");
+            } else {
+                assert_eq!((twin.stage(id), committed.submits(), committed.completes()), (TransferStage::Mutating, 1, 0), "{refusals}: the mutation goes once");
+            }
+        }
+    }
+}
+
+/// Item 7 of the release: the outcome of the server survives any number of `Storage` refusals of the removal, and the server hears nothing again.
+#[test]
+fn xfer_prop_confirmed_outcome_survives_store_refusal() {
+    for refusals in 1..=5 {
+        for confirmed in [true, false] {
+            let mut twin = Twin::new();
+            let id = twin.mutating(KEY);
+            let waiter = if confirmed { None } else { Some(twin.discard(KEY).0) };
+            let verdict = if confirmed { OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None } } else { OutboxOutcome::Discarded };
+            twin.mutation_outcome(KEY, verdict.clone());
+            assert_eq!(twin.stage(id), TransferStage::Removing);
+            for round in 1..=refusals {
+                let refused = twin.reject(storage());
+                let flap = [twin.online(false), twin.online(true), twin.tick_retry(id)];
+                assert_eq!((twin.stage(id), refused.all_replies(), refused.outbox.len(), refused.deletes(), refused.shows().len()), (TransferStage::Removing, 0, 0, 0, 0), "{confirmed} {round}/{refusals}");
+                assert_eq!((flap[2].writes(), flap[2].removed().len(), flap[2].submits(), flap[2].outbox_discards()), (1, 1, 0, 0), "{confirmed} {round}/{refusals}");
+            }
+            let done = twin.commit();
+            assert_eq!(twin.stage(id), TransferStage::Done, "{confirmed} {refusals}");
+            let (reply, out) = twin.outcome(id, 1);
+            assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(verdict, None)], "{confirmed} {refusals}: not Failed");
+            if let Some(waiter) = waiter { assert_eq!(done.replies(waiter), vec![TransferAnswer::Ok], "{refusals}"); }
+        }
+    }
 }

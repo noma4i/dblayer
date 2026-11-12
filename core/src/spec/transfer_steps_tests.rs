@@ -85,14 +85,12 @@ fn xfer_attempt_busy() {
 
 #[test]
 fn xfer_attempt_rejected() {
-    for (reason, error) in [(RejectReason::Storage("disk".into()), "disk"), (RejectReason::Invalid("bad row".into()), "Internal(Invalid): bad row")] {
-        let (mut twin, id) = ready(2);
-        twin.online(true);
-        let out = twin.reject(reason);
-        assert_eq!(twin.stage(id), TransferStage::PersistingFailure);
-        assert!(out.steps().is_empty());
-        assert_eq!(out.rows()[0].0.failed.as_deref(), Some(error));
-    }
+    let (mut twin, id) = ready(2);
+    twin.online(true);
+    let out = twin.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!(twin.stage(id), TransferStage::PersistingFailure);
+    assert!(out.steps().is_empty());
+    assert_eq!(out.rows()[0].0.failed.as_deref(), Some("Internal(Invalid): bad row"));
 }
 
 #[test]
@@ -504,18 +502,62 @@ fn xfer_persisting_other() {
     copying.ignores(id, vec![TransferInput::SlotFreed, TransferInput::Online(Online(true))]);
 }
 
+fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
+
+/// The owner stays in `stage`, answers nobody, shows nothing, sends nothing to the network and sets one timer.
+fn assert_write_retried(twin: &Twin, id: TransferId, stage: TransferStage, out: &Out, name: &str) {
+    assert_eq!((twin.stage(id), out.timers, out.writes(), out.all_replies(), out.shows().len()), (stage, 1, 0, 0, 0), "{name}");
+    assert_eq!((out.steps().len(), out.completes(), out.aborts(), out.submits(), out.kinds().len()), (0, 0, 0, 0, 0), "{name}: no network, no Failed, no mutation");
+}
+
+#[test]
+fn xfer_attempt_storage_retried() {
+    let (mut twin, id) = ready(2);
+    let first = twin.online(true);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    let out = twin.reject(storage());
+    assert_write_retried(&twin, id, TransferStage::PersistingAttempt, &out, "attempt");
+    let again = twin.tick_retry(id);
+    assert_eq!((again.writes(), twin.stage(id)), (1, TransferStage::PersistingAttempt));
+    assert_eq!(again.batches[0].ops, first.batches[0].ops, "the same value of the attempt is written again");
+    assert_eq!(twin.commit().steps().len(), 1, "the step starts after the write");
+    assert_eq!(twin.stage(id), TransferStage::Uploading);
+}
+
+#[test]
+fn xfer_attempt_tick() {
+    let (mut twin, id) = ready(2);
+    let first = twin.online(true);
+    twin.reject(storage());
+    let stale = twin.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1000 } });
+    assert!(Twin::quiet(&stale), "{stale:?}");
+    let again = twin.tick_retry(id);
+    assert_eq!((again.writes(), again.steps().len(), again.rows().len()), (1, 0, 1));
+    assert_eq!(again.rows()[0].0.attempts, first.rows()[0].0.attempts, "attempts + 1 of the same value");
+}
+
 #[test]
 fn xfer_persisting_storage_failure() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.step_ok(id, 1, None);
-    let out = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), out.kinds(), out.shows().len()), (TransferStage::PersistingFailure, vec![UploadKind::Failed], 0));
-    assert_eq!(twin.t(id).error.as_deref(), Some("disk"));
+    let mut part = Twin::new();
+    let id = part.uploading(KEY, 3);
+    let first = part.step_ok(id, 1, Some("u1"));
+    let out = part.reject(storage());
+    assert_write_retried(&part, id, TransferStage::PersistingPart, &out, "part");
+    let again = part.tick_retry(id);
+    assert_eq!((again.writes(), again.steps().len()), (1, 0));
+    assert_eq!(again.batches[0].ops, first.batches[0].ops, "the confirmed part is written again");
+    let committed = part.commit();
+    assert_eq!((part.stage(id), committed.steps().len()), (TransferStage::PersistingAttempt, 0));
+    assert_eq!(part.commit().steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(2)], "the next part goes, the confirmed one does not");
     let mut complete = Twin::new();
-    let id = complete.persisting_complete(KEY);
-    let out = complete.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((complete.stage(id), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]));
+    let id = complete.completing(KEY);
+    let first = complete.completed(id);
+    let out = complete.reject(storage());
+    assert_write_retried(&complete, id, TransferStage::PersistingComplete, &out, "complete");
+    let again = complete.tick_retry(id);
+    assert_eq!(again.batches[0].ops, first.batches[0].ops, "completed and the intent are written again together");
+    let committed = complete.commit();
+    assert_eq!((complete.stage(id), committed.submits(), committed.completes()), (TransferStage::Mutating, 1, 0));
 }
 
 #[test]

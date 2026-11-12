@@ -69,7 +69,7 @@ fn xfer_persisting_stale_generation() {
 
 #[test]
 fn xfer_persisting_invalid() {
-    for name in ["PersistingCopy", "PersistingRetry", "PersistingPart", "PersistingComplete", "Removing"] {
+    for name in ["PersistingPart", "PersistingComplete"] {
         let mut twin = Twin::new();
         let id = stage_in(name, &mut twin);
         let out = twin.reject(RejectReason::Invalid(String::new()));

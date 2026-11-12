@@ -28,12 +28,12 @@ fn missing_file() -> (Twin, TransferId) {
     (twin, 1)
 }
 
-/// `Failed` with one confirmed part of three and an upload id, `abort` not called: the write of the second part was refused by the base.
+/// `Failed` with one confirmed part of three and an upload id, `abort` not called: the write of the first part was refused by the base as invalid.
 fn failed_with_upload() -> (Twin, TransferId) {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
-    let failure = twin.reject(RejectReason::Storage("disk".into()));
+    let failure = twin.reject(RejectReason::Invalid("bad row".into()));
     assert!(!failure.batches.iter().flat_map(|batch| &batch.ops).any(|op| matches!(op, crate::owners::store::StoreOp::UploadShown { shown, .. } if !matches!(shown, Shown::Failed { .. }))), "the failure batch must not restore the previous status");
     twin.commit();
     assert_eq!((twin.stage(id), twin.t(id).aborted), (TransferStage::Failed, false));
@@ -172,7 +172,23 @@ fn xfer_storage_retry_pause_grows() {
         let out = twin.online(false);
         (id, Some(out.shown_batches()[0]))
     }, |twin, batch| twin.reject_shown(batch), |id| TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } });
-    for (name, arrive, refuse, due) in [failure, restore, shown] {
+    let attempt: Path = ("the mark of the attempt", |twin| (twin.accepted(KEY, 2), None), |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: 0 } });
+    let part: Path = ("the confirmed part", |twin| {
+        let id = twin.uploading(KEY, 3);
+        twin.step_ok(id, 1, Some("u1"));
+        (id, None)
+    }, |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: 0 } });
+    let complete: Path = ("completed", |twin| {
+        let id = twin.completing(KEY);
+        twin.completed(id);
+        (id, None)
+    }, |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: 0 } });
+    let removal: Path = ("the removal", |twin| {
+        let id = twin.uploading(KEY, 2);
+        twin.cancel(KEY);
+        (id, None)
+    }, |twin, _| twin.reject(RejectReason::Storage("disk".into())), |id| TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: 0 } });
+    for (name, arrive, refuse, due) in [failure, restore, shown, attempt, part, complete, removal] {
         let mut twin = Twin::new();
         let (id, mut held) = arrive(&mut twin);
         let mut pauses = Vec::new();
@@ -281,18 +297,160 @@ fn xfer_removing_committed_copy_failed() {
     assert!(!twin.state().completed.contains_key(&id), "a transfer that was never accepted has no outcome");
 }
 
+fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
+
+/// `Removing` of the transfer and the checks of its end: the removal in each reason, the answer that waits for the write and what the caller sees after it.
+type Removal = (&'static str, fn() -> (Twin, TransferId, Option<u64>), fn(&mut Twin, TransferId, Option<u64>, &Out));
+
+fn removals() -> Vec<Removal> {
+    let cancel: Removal = ("Cancel", || {
+        let mut twin = Twin::offline();
+        let id = twin.accepted(KEY, 2);
+        let (reply, _) = twin.cancel(KEY);
+        (twin, id, Some(reply))
+    }, |_, _, reply, out| assert_eq!(out.replies(reply.unwrap()), vec![TransferAnswer::Cancelled(true)]));
+    let expiry: Removal = ("Cancel without a caller (expiry)", || {
+        let mut twin = Twin::new();
+        let id = twin.failed(KEY);
+        twin.det.tick(Time(8 * DAY));
+        twin.post(TransferInput::Tick { kind: TransferTick::Expire });
+        (twin, id, None)
+    }, |twin, id, _, _| {
+        let (reply, out) = twin.outcome(id, 1);
+        assert_eq!(out.replies(reply), vec![failed_outcome(&refusal())], "the outcome of the failed cycle stays");
+    });
+    let confirmed: Removal = ("Confirmed", || {
+        let mut twin = Twin::new();
+        let id = twin.mutating(KEY);
+        twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
+        (twin, id, None)
+    }, |twin, id, _, _| {
+        let (reply, out) = twin.outcome(id, 1);
+        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None }, None)], "the outcome of the server stays");
+    });
+    let discarded: Removal = ("Discarded", || {
+        let mut twin = Twin::new();
+        let id = twin.mutating(KEY);
+        let (reply, _) = twin.discard(KEY);
+        twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
+        (twin, id, Some(reply))
+    }, |_, _, reply, out| assert_eq!(out.replies(reply.unwrap()), vec![TransferAnswer::Ok]));
+    let copy_failed: Removal = ("CopyFailed", || {
+        let mut twin = Twin::new();
+        let (id, reply, _) = twin.accepting(KEY, 2);
+        twin.commit();
+        twin.copy_failed(id);
+        (twin, id, Some(reply))
+    }, |_, _, reply, out| assert_eq!(Twin::fault(out, reply.unwrap()), Some(Fault::Copy("unreadable".into()))));
+    let by_storage: Removal = ("Storage", || {
+        let mut twin = Twin::new();
+        let (id, reply, _) = twin.accepting(KEY, 2);
+        twin.commit();
+        twin.copy_done(id);
+        twin.reject(storage());
+        (twin, id, Some(reply))
+    }, |_, _, reply, out| assert!(matches!(Twin::fault(out, reply.unwrap()), Some(Fault::Rejected(RejectReason::Storage(_))))));
+    let by_invalid: Removal = ("Invalid", || {
+        let mut twin = Twin::new();
+        let (id, reply, _) = twin.accepting(KEY, 2);
+        twin.commit();
+        twin.copy_done(id);
+        twin.reject(RejectReason::Invalid("bad row".into()));
+        (twin, id, Some(reply))
+    }, |_, _, reply, out| assert_eq!(Twin::fault(out, reply.unwrap()), Some(Fault::Rejected(RejectReason::Invalid("bad row".into())))));
+    vec![cancel, expiry, confirmed, discarded, copy_failed, by_storage, by_invalid]
+}
+
 #[test]
-fn xfer_removing_rejected() {
+fn xfer_removing_storage_retried() {
+    for (name, build, ends) in removals() {
+        let (mut twin, id, reply) = build();
+        assert_eq!(twin.stage(id), TransferStage::Removing, "{name}");
+        let out = twin.reject(storage());
+        assert_eq!((twin.stage(id), out.timers, out.writes(), out.all_replies(), out.shows().len(), out.deletes()), (TransferStage::Removing, 1, 0, 0, 0, 0), "{name}: the removal waits for its write");
+        assert_eq!((out.outbox.len(), out.submits(), out.aborts()), (0, 0, 0), "{name}: nothing goes to the server again");
+        let again = twin.tick_retry(id);
+        assert_eq!((again.writes(), again.removed().len()), (1, 1), "{name}: the same removal is written again");
+        let done = twin.commit();
+        assert_eq!(twin.stage(id), TransferStage::Done, "{name}");
+        ends(&mut twin, id, reply, &done);
+    }
+}
+
+#[test]
+fn xfer_persisting_write_tick() {
+    let mut part = Twin::new();
+    let id = part.uploading(KEY, 3);
+    part.step_ok(id, 1, Some("u1"));
+    let mut complete = Twin::new();
+    let complete_id = complete.completing(KEY);
+    complete.completed(complete_id);
+    let mut removing = Twin::offline();
+    let removing_id = removing.accepted(KEY, 2);
+    removing.cancel(KEY);
+    for (name, twin, id, stage) in [("part", &mut part, id, TransferStage::PersistingPart), ("complete", &mut complete, complete_id, TransferStage::PersistingComplete), ("removing", &mut removing, removing_id, TransferStage::Removing)] {
+        let first = twin.reject(storage());
+        assert_eq!(first.timers, 1, "{name}");
+        let stray = twin.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1000 } });
+        assert!(Twin::quiet(&stray), "{name}: a timer of another attempt writes nothing: {stray:?}");
+        let again = twin.tick_retry(id);
+        assert_eq!((twin.stage(id), again.writes()), (stage, 1), "{name}");
+    }
+}
+
+#[test]
+fn xfer_removing_invalid_cancel() {
     let mut twin = Twin::offline();
     let id = twin.accepted(KEY, 2);
     let (reply, _) = twin.cancel(KEY);
-    let out = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
-    assert_eq!((twin.stage(id), out.shows(), out.deletes()), (TransferStage::Ready, vec![Shown::Queued], 0), "the file stays, durable Failed is not declared");
-    let (mut failed, id) = failed_with_upload();
-    let (reply, _) = failed.discard(KEY);
-    let out = failed.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((Twin::fault(&out, reply).is_some(), failed.stage(id)), (true, TransferStage::Failed));
+    let out = twin.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Invalid("bad row".into()))));
+    assert_eq!((twin.stage(id), out.shows(), out.deletes(), out.timers, out.writes()), (TransferStage::Ready, vec![Shown::Queued], 0, 0, 0), "the file stays, the transfer is as before the cancel");
+}
+
+#[test]
+fn xfer_removing_confirmed_invalid_is_not_retried() {
+    let mut confirmed = Twin::new();
+    let id = confirmed.mutating(KEY);
+    confirmed.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
+    let out = confirmed.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!((confirmed.stage(id), out.shows(), out.timers, out.writes(), out.deletes()), (TransferStage::Done, vec![Shown::Gone], 0, 0, 0), "the outcome of the server ends the transfer, the open removes the row");
+    let (reply, out) = confirmed.outcome(id, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None }, None)]);
+    let mut discarded = Twin::new();
+    let id = discarded.mutating(KEY);
+    let (reply, _) = discarded.discard(KEY);
+    discarded.mutation_outcome(KEY, OutboxOutcome::Discarded);
+    let out = discarded.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!((discarded.stage(id), out.replies(reply), out.timers, out.writes()), (TransferStage::Done, vec![TransferAnswer::Ok], 0, 0));
+}
+
+#[test]
+fn xfer_removing_expiry_invalid() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    twin.det.tick(Time(8 * DAY));
+    twin.post(TransferInput::Tick { kind: TransferTick::Expire });
+    assert_eq!(twin.stage(id), TransferStage::Removing);
+    let out = twin.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!((twin.stage(id), out.all_replies(), out.timers, out.writes(), out.deletes()), (TransferStage::Failed, 0, 0, 0, 0), "the transfer stays failed in memory");
+}
+
+#[test]
+fn xfer_removing_accept_invalid() {
+    let mut copy_failed = Twin::new();
+    let (id, reply, _) = copy_failed.accepting(KEY, 2);
+    copy_failed.commit();
+    copy_failed.copy_failed(id);
+    let out = copy_failed.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!((Twin::fault(&out, reply), copy_failed.stage(id), out.deletes(), out.timers), (Some(Fault::Copy("unreadable".into())), TransferStage::Done, 0, 0), "as after Committed, the open removes the row and the file");
+    let mut invalid = Twin::new();
+    let (id, reply, _) = invalid.accepting(KEY, 2);
+    invalid.commit();
+    invalid.copy_done(id);
+    invalid.reject(RejectReason::Invalid("first".into()));
+    let out = invalid.reject(RejectReason::Invalid("second".into()));
+    assert_eq!((Twin::fault(&out, reply), invalid.stage(id), out.timers), (Some(Fault::Rejected(RejectReason::Invalid("first".into()))), TransferStage::Done, 0));
 }
 
 #[test]
