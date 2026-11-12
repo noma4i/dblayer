@@ -488,3 +488,107 @@ fn data_sets_server_value_is_accepted_like_a_server_field() {
     page(parent(7, "m7", 9, 5), db.revision_seq().unwrap());
     assert_eq!(sets(&db), sets_of("m7", 9, 5), "a page asked after the later row lands");
 }
+
+fn parent_value(fields: Value) -> RowValue {
+    let mut values = json!({"id": "c1", "title": "t"});
+    values.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+    RowValue { row_id: "c1".into(), values: values.to_string() }
+}
+
+fn confirmed_child(id: &str, at: i64) -> super::sets_reference_tests::Child {
+    super::sets_reference_tests::Child { id: id.into(), at: Some(at), seq: None, body: id.into() }
+}
+
+fn server_pointer(id: &str, at: i64) -> super::sets_reference_tests::Server {
+    super::sets_reference_tests::Server { id: Some(id.into()), at: Some(at), seq: None }
+}
+
+fn reopened_at(path: &std::path::Path) -> Arc<Store> {
+    Arc::new(Store::open_models(Some(path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
+}
+
+fn temp_rows(db: &Store) -> i64 {
+    crate::store::fixtures::count(db, "SELECT COUNT(*) FROM row_messages WHERE id LIKE 'temp-%'")
+}
+
+fn with_confirmed_child(path: &std::path::Path) -> Arc<Store> {
+    let db = reopened_at(path);
+    put(&db, "chats", json!({"id": "c1", "title": "t"}));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![parent_value(json!({"lastMessageId": "m1", "lastMessageAt": 1}))] }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m1", 1)] }]);
+    db
+}
+
+/// data_sets_recovered_at_open (P-DATA-56, D-338), (a): the open removes the row of a lost operation and the parent loses the pointer to it.
+#[test]
+fn data_sets_recovered_at_open() {
+    use super::sets_reference_tests::{derive, stored_sets};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("recovered.sqlite");
+    {
+        let db = with_confirmed_child(&path);
+        write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", 5)] }]);
+        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-1"), "the prediction moved the pointer before the process was killed");
+    }
+    let db = reopened_at(&path);
+    assert_eq!(temp_rows(&db), 0, "the open removed the row of the lost operation");
+    assert_eq!(stored_sets(&db), derive(Some(&server_pointer("m1", 1)), &[confirmed_child("m1", 1)]), "the parent has no pointer to the removed row");
+}
+
+/// data_sets_recovered_at_open_returned (P-DATA-56, D-338), (b): the open returns the row of an open operation and the fields of the parent count it.
+#[test]
+fn data_sets_recovered_at_open_returned() {
+    use super::sets_reference_tests::{derive, stored_sets, Child};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("returned.sqlite");
+    {
+        let db = with_confirmed_child(&path);
+        intent_creating(&db, 7, &message("temp-2", 6));
+        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-2"), "the operation predicts the child");
+        crate::store::fixtures::exec(&db, "DELETE FROM row_messages WHERE id = 'temp-2'");
+        crate::store::fixtures::exec(&db, "UPDATE op SET temp_id = 'temp-2' WHERE seq = 7");
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![parent_value(json!({"lastMessageId": "m1", "lastMessageAt": 1}))] }]);
+        assert_eq!(stored_sets(&db).id.as_deref(), Some("m1"), "the parent counts the children that are stored");
+    }
+    let db = reopened_at(&path);
+    assert_eq!(temp_rows(&db), 1, "the open returned the row of the open operation");
+    let temp = Child { id: "temp-2".into(), at: Some(6), seq: None, body: "temp-2".into() };
+    assert_eq!(stored_sets(&db), derive(Some(&server_pointer("m1", 1)), &[confirmed_child("m1", 1), temp]), "the fields of the parent count the returned child");
+}
+
+/// data_sets_hidden_value_is_not_read (P-DATA-58, D-338): the stored server value never reaches a reader or a subscriber.
+#[test]
+fn data_sets_hidden_value_is_not_read() {
+    use std::sync::Mutex;
+    let db = Arc::new(Store::open_in_memory(Arc::new(crate::runtime::SystemClock)).unwrap());
+    db.boot(&all_specs(), None).unwrap();
+    db.mark_ready();
+    let changed: Arc<Mutex<Vec<(String, Vec<String>)>>> = Arc::default();
+    let log = changed.clone();
+    db.set_hook(Box::new(move |event| {
+        if let crate::store::StoreEvent::Committed(result) = event {
+            log.lock().unwrap().extend(result.rows.iter().map(|change| (change.row.id.to_string(), change.fields.iter().cloned().collect())));
+        }
+    })).unwrap();
+    put(&db, "chats", json!({"id": "c1", "title": "t"}));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![parent_value(json!({"lastMessageId": "m5", "lastMessageAt": 7, "lastMessageBody": "hi"}))] }]);
+    deliver(&db, 2, "event", "messages", message("m6", 8), Vec::new());
+    let point = db.read(&["chats"], |reader| reader.point("chats", "c1")).unwrap().unwrap();
+    let window = db.read(&["chats"], |reader| reader.stored_rows("chats", &["c1".to_string()])).unwrap();
+    let hidden = |keys: Vec<String>| keys.into_iter().filter(|key| key.starts_with("server__")).collect::<Vec<_>>();
+    assert!(point.contains_key("lastMessageId"), "the read is not empty");
+    assert_eq!(hidden(point.keys().cloned().collect()), Vec::<String>::new(), "the point read");
+    assert_eq!(window.len(), 1);
+    assert_eq!(hidden(window["c1"].row.keys().cloned().collect()), Vec::<String>::new(), "the window read");
+    let changes = changed.lock().unwrap();
+    assert!(changes.iter().any(|(id, fields)| id == "c1" && fields.iter().any(|field| field == "lastMessageId")), "the subscriber saw the parent change");
+    assert_eq!(changes.iter().flat_map(|(_, fields)| hidden(fields.clone())).collect::<Vec<_>>(), Vec::<String>::new(), "the changed fields");
+}
+
+/// data_sets_hidden_value_is_not_read_declared (P-DATA-58): a field `server__x` of a `.dbl` model is refused when the schema is built.
+#[test]
+fn data_sets_hidden_value_is_not_read_declared() {
+    let mut declared = crate::store::fixtures::chats_spec();
+    declared.fields.push(crate::schema::FieldSpec::scalar("server__x", crate::value::ScalarKind::Str).optional());
+    assert_eq!(declared.validate(&[]), Err(crate::schema::DeclarationError::ReservedFieldName("server__x".into())), "the storage name is taken");
+}
