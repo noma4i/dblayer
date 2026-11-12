@@ -303,6 +303,14 @@ impl Database {
         Ok(WireBatchReceipt { epoch, items })
     }
 
+    /// The PUT `identity` ended outside the process: the core counts the outcome once, for the attempt that started it. Cheap and synchronous.
+    pub fn put_ended(&self, identity: crate::transport::PutIdentity, outcome: crate::transport::RawOutcome) {
+        self.life.put_ended(identity, crate::owners::write::transfer_executor::put_result(outcome));
+    }
+
+    /// The executor has no system task for `identity`: the step starts again. Cheap and synchronous.
+    pub fn put_missing(&self, identity: crate::transport::PutIdentity) { self.life.put_missing(identity); }
+
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         if self.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }

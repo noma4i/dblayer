@@ -96,7 +96,7 @@ impl TransferState {
             return;
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-        let put = self.put_mode(transfer);
+        let put = self.transfers.get(&id).map_or(PutMode::Live, |transfer| self.put_mode(transfer));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.put_detached = matches!(put, PutMode::Detached { .. });
         let Some(effect) = Self::step_effect(transfer, operation, put) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };

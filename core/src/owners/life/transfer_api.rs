@@ -17,6 +17,10 @@ impl Life {
         waiter
     }
 
+    pub fn put_ended(&self, identity: crate::transport::PutIdentity, result: Result<Option<String>, (bool, String)>) { if !self.shut.load(Ordering::SeqCst) { self.wiring.to_transfer(TransferInput::PutEnded { identity, result }); } }
+
+    pub fn put_missing(&self, identity: crate::transport::PutIdentity) { if !self.shut.load(Ordering::SeqCst) { self.wiring.to_transfer(TransferInput::PutMissing { identity }); } }
+
     pub fn accept_upload(&self, epoch: Epoch, item: BatchItem) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply }) }
 
     pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint: Box::new(joint), reply }) }
