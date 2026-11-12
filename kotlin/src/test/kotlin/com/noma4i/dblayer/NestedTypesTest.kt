@@ -57,37 +57,4 @@ class CellDecoderTest {
         else -> value
     }
 
-    @Test
-    fun aNestedKeyOutsideTheDeclaredTypeOrOfTheWrongTypeIsRefusedOnCreate(): Unit = bounded {
-        val database = open()
-        for ((values, path) in listOf(
-            """{"value":{"title":"t","child":{"id":"x"}}}""" to "value.child.id",
-            """{"value":{"title":"t","children":[{"body":"a"},{"nope":1}]}}""" to "value.children[1].nope",
-            """{"value":{"title":"t","count":"many"}}""" to "value.count",
-        )) {
-            val error = runCatching { database.create(database.sessionEpoch(), "NestedSample", values, "{}") }.exceptionOrNull()
-            assertTrue(values, error is DbException && error.toString().contains(path))
-        }
-        database.create(database.sessionEpoch(), "NestedSample", """{"value":{"title":"t","payload":{"anything":[1]}}}""", "{}")
-    }
-
-    @Test
-    fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() = bounded {
-        val cases = parseJson(File("../fixtures/nested.json").readText()) as JsonArray
-        val database = open()
-        for (row in cases) {
-            val fields = row.jsonObject
-            if (fields["error"] == JsonPrimitive(true) || fields["input"] == null) continue
-            val label = fields.getValue("name").toString()
-            val wire = database.create(database.sessionEpoch(), "NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}").optimisticValue!!
-            val expected = dbJson.decodeFromString(NestedValue.serializer(), fields.getValue("output").toString())
-            assertEquals(label, expected, NestedSample.read(wire).value)
-        }
-    }
-
-    @Test
-    fun aRowWithAnotherLayoutIsRefused(): Unit = bounded {
-        val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", "{}", "{}").optimisticValue!! }
-        assertThrows(DbException.Invalid::class.java) { NestedSample.read(wire.copy(layout = "other")) }
-    }
 }

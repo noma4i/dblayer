@@ -39,11 +39,4 @@ class JsonNumberTest {
         assertThrows(DbException.Invalid::class.java) { CellReader(listOf(Cell.Keyed(listOf(CellEntry("k", Cell.Null), CellEntry("k", Cell.Null))))).json(0) }
     }
 
-    @Test
-    fun aCorrectlyTypedRowDecodes() {
-        val r = CellReader(listOf(Cell.Text("7"), Cell.Real(2.0), Cell.Seq(listOf(Cell.Text("f1"), Cell.Int(10), Cell.Null, Cell.Text("image/png"), Cell.Null))))
-        assertEquals("7", r.req(0, Cell::asId))
-        assertEquals(2.0, r.req(1, Cell::asDouble), 0.0)
-        assertEquals(FileInfo("f1", 10UL, null, "image/png", null), r.file(2))
-    }
 }

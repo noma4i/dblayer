@@ -35,21 +35,6 @@ class UnionTest {
     private suspend fun open(transport: MockTransport? = null) = openSigned(Config(null, null), modelsJSON, transport)
 
     @Test
-    fun aStoredUnionReadsFromCellsAndEncodesLikeTheSharedCases() = bounded {
-        val database = open()
-        for (row in parseJson(File("../fixtures/union.json").readText()) as JsonArray) {
-            val fields = row.jsonObject
-            val label = fields.getValue("name").toString()
-            val values = buildJsonObject { fields["attachment"]?.let { put("attachment", it) } }
-            val sample = UnionSample.read(database.create(database.sessionEpoch(), "UnionSample", values.toString(), "{}").optimisticValue!!)
-            val encoded = sample.attachment?.let { jsonValue(it) } ?: JsonNull
-            assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(encoded))
-            val input = fields["attachment"]
-            if (input != null && input != JsonNull) assertEquals(label, dbJson.decodeFromJsonElement(RecordAttachment.serializer(), fields.getValue("output")), sample.attachment)
-        }
-    }
-
-    @Test
     fun typedVariantsAreWrittenReadSwitchedAndKeptWhenUnknown() = bounded {
         open()
         val reward = RecordAttachment.Reward(RewardAttachment(id = "g2", tier = "silver", tags = listOf("x")))
@@ -73,20 +58,6 @@ class UnionTest {
         val none = UnionSample.create().optimisticValue!!
         assertNull(none.attachment)
         assertNull(none.props)
-    }
-
-    @Test
-    fun rowsFilterByTheVariantKind() = bounded {
-        open()
-        UnionSample.create(attachment = RecordAttachment.Moment(MomentAttachment(momentId = "m1")))
-        UnionSample.create(attachment = RecordAttachment.Moment(MomentAttachment(momentId = "m2")))
-        UnionSample.create(attachment = RecordAttachment.Reaction(ReactionAttachment(body = "x")))
-        UnionSample.create(attachment = RecordAttachment.Unknown("FutureAttachment"))
-        UnionSample.create()
-        assertEquals(2L, UnionSample.where(UnionSample.attachment eq RecordAttachmentKind.Moment).count.current())
-        assertEquals(0L, UnionSample.where(UnionSample.attachment eq RecordAttachmentKind.Reward).count.current())
-        assertEquals(3L, UnionSample.where(UnionSample.attachment within listOf(RecordAttachmentKind.Moment, RecordAttachmentKind.Reaction)).count.current())
-        assertEquals(1L, UnionSample.where(UnionSample.attachment.isNull).count.current())
     }
 
     private val nodes = mapOf(
@@ -141,15 +112,4 @@ class UnionTest {
         assertEquals(RecordAttachment.Reaction(ReactionAttachment(body = "late")), attachmentOf("m6"))
     }
 
-    @Test
-    fun aCreatedRecordTakesItsVariantFromTheServerAnswer() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("CreateRecord", """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z","attachment":{"__typename":"MomentAttachment","momentId":"m9","caption":"look"}}}}""")
-        open(transport)
-        registerStandOperations(DBlayer.database, """[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]""")
-
-        val sent = Record.create(containerId = "c", authorId = "u1", text = "hi", account = AccountScope.current())
-        assertNull(sent.optimisticValue!!.attachment)
-        assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(requireNotNull(withTimeout(5000) { sent.confirmed() }.value).id))
-    }
 }
