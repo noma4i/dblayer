@@ -447,9 +447,6 @@ fn xfer_prop_persist_before_step() {
     assert_eq!(failed.commit().steps().len(), 1);
 }
 
-fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
-
-/// Items 5 and 6 of the release: any number of `Storage` refusals in a row, the network gone and back between them, never fail the transfer, never send a confirmed part or `complete` a second time.
 #[test]
 fn xfer_prop_storage_refusal_never_fails_an_upload() {
     for refusals in 1..=5 {
@@ -484,7 +481,6 @@ fn xfer_prop_storage_refusal_never_fails_an_upload() {
     }
 }
 
-/// Item 7 of the release: the outcome of the server survives any number of `Storage` refusals of the removal, and the server hears nothing again.
 #[test]
 fn xfer_prop_confirmed_outcome_survives_store_refusal() {
     for refusals in 1..=5 {

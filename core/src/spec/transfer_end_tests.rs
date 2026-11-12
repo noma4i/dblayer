@@ -28,7 +28,6 @@ fn missing_file() -> (Twin, TransferId) {
     (twin, 1)
 }
 
-/// `Failed` with one confirmed part of three and an upload id, `abort` not called: the write of the first part was refused by the base as invalid.
 fn failed_with_upload() -> (Twin, TransferId) {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
@@ -297,9 +296,6 @@ fn xfer_removing_committed_copy_failed() {
     assert!(!twin.state().completed.contains_key(&id), "a transfer that was never accepted has no outcome");
 }
 
-fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
-
-/// `Removing` of the transfer and the checks of its end: the removal in each reason, the answer that waits for the write and what the caller sees after it.
 type Removal = (&'static str, fn() -> (Twin, TransferId, Option<u64>), fn(&mut Twin, TransferId, Option<u64>, &Out));
 
 fn removals() -> Vec<Removal> {

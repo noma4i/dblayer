@@ -633,6 +633,8 @@ impl Twin {
     pub fn quiet(out: &Out) -> bool { out.runs.is_empty() && out.batches.is_empty() && out.outbox.is_empty() && out.rounds.is_empty() && out.timers == 0 }
 }
 
+pub fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
+
 pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused".into(), None) }
 
 impl From<super::ref_transfer::AbortFault> for crate::owners::write::transfer::AbortFault {

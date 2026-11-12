@@ -502,8 +502,6 @@ fn xfer_persisting_other() {
     copying.ignores(id, vec![TransferInput::SlotFreed, TransferInput::Online(Online(true))]);
 }
 
-fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
-
 /// The owner stays in `stage`, answers nobody, shows nothing, sends nothing to the network and sets one timer.
 fn assert_write_retried(twin: &Twin, id: TransferId, stage: TransferStage, out: &Out, name: &str) {
     assert_eq!((twin.stage(id), out.timers, out.writes(), out.all_replies(), out.shows().len()), (stage, 1, 0, 0, 0), "{name}");
