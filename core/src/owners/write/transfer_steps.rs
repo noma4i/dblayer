@@ -220,7 +220,7 @@ impl TransferState {
             TransferTick::Minted { upload_id, attempt_id } => self.tick_minted(&upload_id, attempt_id, fx),
             TransferTick::StagedRestore { transfer_id } => { if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.staged_failed.is_some()) { self.write_restored(transfer_id, fx); } }
             TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(now, transfer_id, attempt_id, fx),
-            TransferTick::Shown { .. } => {}
+            TransferTick::Shown { transfer_id } => self.tick_shown(transfer_id, fx),
         }
     }
 
@@ -251,15 +251,16 @@ impl TransferState {
         self.step_error(now, id, attempt_id, (true, super::failure::of_transport(&crate::transport::TransportError::Network("the upload timed out".into()))), fx);
     }
 
+    fn tick_shown(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(shown) = self.transfers.get(&id).and_then(|transfer| transfer.last_shown.clone().filter(|shown| Self::unwritten(transfer, shown))) else { return };
+        self.show(id, shown, fx);
+    }
+
     fn tick_retry(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
         if transfer.attempt_id != attempt_id {
             return;
         }
-        if let Some(shown) = transfer.last_shown.clone().filter(|shown| Self::unwritten(transfer, shown)) {
-            self.show(id, shown, fx);
-        }
-        let Some(transfer) = self.transfers.get(&id) else { return };
         match transfer.stage {
             TransferStage::Uploading | TransferStage::Completing if transfer.waiting_retry => {
                 let Some(transfer) = self.transfers.get_mut(&id) else { return };

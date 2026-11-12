@@ -75,14 +75,14 @@ impl TransferState {
         *shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != shown.columns())
     }
 
-    /// P-XFER-50: a refused write of the shown value goes again after the backoff (`Storage`) or at once with the named generations.
+    /// P-XFER-50: a refused write of the shown value goes again after the backoff of its own timer (`Storage`) or at once with the named generations.
     fn shown_rejected(&mut self, pending: &Pending, reason: RejectReason, fx: &mut Fx) {
         let Some(&id) = pending.written.keys().next() else { return };
         match reason {
             RejectReason::Storage(_) => {
-                let Some(transfer) = self.transfers.get(&id) else { return };
-                let (attempt_id, attempt) = (transfer.attempt_id, transfer.attempts);
-                fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
+                let Some(attempt) = self.transfers.get(&id).map(|transfer| transfer.attempts) else { return };
+                let timer = self.timer();
+                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } } });
             }
             RejectReason::StaleGeneration { generations, .. } => {
                 self.generations.extend(generations);
