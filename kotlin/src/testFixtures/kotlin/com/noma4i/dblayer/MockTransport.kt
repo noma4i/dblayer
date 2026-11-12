@@ -51,10 +51,6 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         testThreads.add(Thread.currentThread())
     }
 
-    fun claimUnscripted(): List<TransportRequest> {
-        missed.removeAll { it.owner === this }
-        return unscripted.toList()
-    }
     private val cableSinks = ConcurrentHashMap<String, CableEvents>()
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() { failTestThread(); return sentFrames.toList() }
