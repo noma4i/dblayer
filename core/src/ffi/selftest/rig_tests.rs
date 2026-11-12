@@ -162,6 +162,7 @@ impl World {
         self.state.lock().unwrap().group_members.insert(order.into(), ids.iter().map(|id| id.to_string()).collect());
     }
     pub(super) fn fail_next(&self, operation: &str, fault: Fault) { self.state.lock().unwrap().script.push((operation.into(), fault)); }
+    pub(super) fn pending_faults(&self) -> usize { self.state.lock().unwrap().script.len() }
     pub(super) fn hold_then(&self, operation: &str, inner: Fault) -> Arc<Gate> {
         let gate = Gate::new();
         self.fail_next(operation, Fault::HoldThen(gate.clone(), Box::new(inner)));

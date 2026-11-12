@@ -99,6 +99,7 @@ impl Delivery {
                 self.held_state = Some(state);
                 if let Some((read_id, version, data)) = self.pending_read.take().filter(|(read_id, ..)| *read_id == self.read_id) {
                     self.settle_read(read_id, version, data, fx);
+                    self.settle_debts(fx);
                 }
             }
             DeliveryStage::Live if self.view.kind.reads_rows() => {

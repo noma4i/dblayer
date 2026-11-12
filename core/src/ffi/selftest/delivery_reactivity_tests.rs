@@ -45,6 +45,12 @@ async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::
 }
 
 pub(super) async fn feed_database_joining(world: Arc<World>, listen: Option<serde_json::Value>, fanout: Option<&str>, memory: bool, changes: Vec<serde_json::Value>, joins: (bool, bool)) -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_at(None, Arc::default(), world, listen, fanout, memory, changes, joins).await
+}
+
+/// The database in the file `path` (or in memory) with the credentials `held`: a second call with the same path and credentials is the restart of the app.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn feed_database_at(path: Option<String>, held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld>, world: Arc<World>, listen: Option<serde_json::Value>, fanout: Option<&str>, memory: bool, changes: Vec<serde_json::Value>, joins: (bool, bool)) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -86,14 +92,14 @@ pub(super) async fn feed_database_joining(world: Arc<World>, listen: Option<serd
         if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
     });
     let transport = Arc::new(FeedTransport { cable, token, opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
     ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
-    bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
+    if crate::transport::CredentialSlot::get(&held.inner).unwrap().is_none() { bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
     (database, transport)
 }
 
@@ -492,5 +498,141 @@ async fn data_insert_on_node_reread() {
     crate::test_wait::settled(&database, "the event starts one node read", || world.count("ChatNode") == asked + 1).await;
     crate::test_wait::settled(&database, "the node read is done", || true).await;
     assert_eq!(list.len(), 1, "the reread row joins the window");
+    bound(database.close_database()).await.unwrap();
+}
+
+const SHOWN_LIST: &str = r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#;
+const OTHER_LIST: &str = r#"{"model":"Chat","relation":"list","params":{"list":"OTHER"}}"#;
+
+fn debt_chat(id: &str, title: &str) -> serde_json::Value { json!({"__typename":"Chat","id":id,"title":title,"revision":1,"lists":["PRIMARY"]}) }
+
+fn node_event(transport: &FeedTransport, token: &str, id: &str) {
+    assert!(transport.cable.event(token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":id}]}}})));
+}
+
+fn shows(rows: &crate::ffi::tape::Rows, title: &str) -> bool { rows.0.lock().unwrap().iter().any(|row| crate::ffi::tests::lifecycle_tests::named(row, title)) }
+
+/// A database whose list PRIMARY shows `c1` and whose list OTHER keeps the subscription open.
+async fn debt_database(path: Option<String>, held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld>, world: &Arc<World>) -> (Arc<Database>, Arc<FeedTransport>, Arc<crate::ffi::tape::Rows>, Arc<crate::ffi::tape::Watched>, String) {
+    let (database, transport) = feed_database_at(path, held, world.clone(), None, None, false, vec![json!({"area":"CHAT","relation":"node"})], (true, true)).await;
+    world.answer_with("ChatList", json!({"data":{"chats":[debt_chat("c1", "before")]}}));
+    let shown = Arc::new(crate::ffi::tape::Rows::default());
+    let window = database.watch_query(SHOWN_LIST, shown.clone());
+    bound(window.wait_for_initial_load()).await.unwrap();
+    world.answer_with("ChatList", json!({"data":{"chats":[]}}));
+    let other = database.watch_query(OTHER_LIST, Arc::new(crate::ffi::tape::Rows::default()));
+    bound(other.wait_for_initial_load()).await.unwrap();
+    bound(transport.opened.notified()).await;
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    (database, transport, shown, window, token)
+}
+
+/// feed_node_event_rereads_a_row_shown_by_a_list (D-393): the event of a row the list shows reads the row through `node` once and never reads the list; the event of a row nobody shows asks nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_node_event_rereads_a_row_shown_by_a_list() {
+    let world = World::new("server", "A", true);
+    let (database, transport, shown, _window, token) = debt_database(None, Arc::default(), &world).await;
+    assert_eq!(shown.len(), 1);
+    let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
+    world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
+    node_event(&transport, &token, "c1");
+    crate::test_wait::settled(&database, "the shown row is read through node", || shows(&shown, "after")).await;
+    assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1), "one node read, no list read");
+    node_event(&transport, &token, "c9");
+    crate::test_wait::settled(&database, "the event of a row outside the list is done", || true).await;
+    assert_eq!(world.count("ChatNode"), nodes + 1, "a row nobody shows asks nothing");
+    bound(database.close_database()).await.unwrap();
+}
+
+/// feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader (D-393): the debt waits in the file for the first reader of the row, a null answer and a refused network end it as the rule says.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("debt.sqlite").to_string_lossy().to_string();
+    let held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld> = Arc::default();
+    let world = World::new("server", "A", true);
+    let (database, transport, _shown, window, token) = debt_database(Some(path.clone()), held.clone(), &world).await;
+    window.cancel();
+    let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
+    let events = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
+    node_event(&transport, &token, "c1");
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { id, .. }) if id == "c1"), "the event landed");
+    assert_eq!(world.count("ChatNode"), nodes, "nobody shows the row: no request");
+    bound(database.close_database()).await.unwrap();
+    let (database, _transport) = feed_database_at(Some(path), held, world.clone(), None, None, false, vec![json!({"area":"CHAT","relation":"node"})], (true, true)).await;
+    world.answer_with("ChatList", json!({"data":{"chats":[debt_chat("c1", "before")]}}));
+    world.fail_next("ChatNode", Fault::Down);
+    let first = Arc::new(crate::ffi::tape::Rows::default());
+    let _reader = database.watch_query(SHOWN_LIST, first.clone());
+    crate::test_wait::settled(&database, "the first reader asks node and the network refuses it", || world.pending_faults() == 0).await;
+    assert_eq!(world.count("ChatList"), lists, "the list is fresh and is not read");
+    world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
+    world.answer_with("ChatList", json!({"data":{"chats":[debt_chat("c1", "after")]}}));
+    database.set_online(false).unwrap();
+    database.set_online(true).unwrap();
+    crate::test_wait::settled(&database, "the refused read repeats when the network returns", || shows(&first, "after")).await;
+    crate::test_wait::settled(&database, "the payment is done", || true).await;
+    assert_eq!(world.count("ChatNode"), nodes + 1, "one answered node request after the refused one, nothing after the payment");
+    bound(database.close_database()).await.unwrap();
+}
+
+/// The answer null of node ends the debt: no request follows.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_node_event_null_answer_ends_the_debt() {
+    let world = World::new("server", "A", true);
+    let (database, transport, shown, _window, token) = debt_database(None, Arc::default(), &world).await;
+    let nodes = world.count("ChatNode");
+    world.answer_with("ChatNode", json!({"data":{"node":null}}));
+    node_event(&transport, &token, "c1");
+    crate::test_wait::settled(&database, "the shown row is read once", || world.count("ChatNode") == nodes + 1).await;
+    crate::test_wait::settled(&database, "the answer is done", || true).await;
+    assert_eq!((world.count("ChatNode"), shown.len()), (nodes + 1, 1), "the null answer ends the debt, nothing repeats");
+    bound(database.close_database()).await.unwrap();
+}
+
+/// feed_prop_node_event_rereads_the_shown_row (P-FEED-42): for every order of the event and the reader, the shown row is read at most events + 1 times, the list never.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_prop_node_event_rereads_the_shown_row() {
+    for (events, reader_first) in [(1usize, true), (1, false), (2, true), (2, false)] {
+        let world = World::new("server", "A", true);
+        let (database, transport, shown, window, token) = debt_database(None, Arc::default(), &world).await;
+        let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
+        world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
+        let reader = if reader_first { Some(shown.clone()) } else { window.cancel(); None };
+        for _ in 0..events {
+            node_event(&transport, &token, "c1");
+            crate::test_wait::settled(&database, "the event is done", || true).await;
+        }
+        let reader = match reader { Some(rows) => rows, None => {
+            let late = Arc::new(crate::ffi::tape::Rows::default());
+            let _late = database.watch_query(SHOWN_LIST, late.clone());
+            std::mem::forget(_late);
+            late
+        } };
+        crate::test_wait::settled(&database, "the shown row is the server value", || shows(&reader, "after")).await;
+        crate::test_wait::settled(&database, "quiet", || true).await;
+        let asked = world.count("ChatNode") - nodes;
+        assert!(asked >= 1 && asked <= events + 1, "events {events} reader_first {reader_first}: {asked} node requests");
+        assert_eq!(world.count("ChatList"), lists, "events {events} reader_first {reader_first}: the list is never read");
+        bound(database.close_database()).await.unwrap();
+    }
+}
+
+/// feed_node_event_rereads_a_row_shown_by_a_list (count): a counter of the window with the row, event of the row: one node request, no list request.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_node_event_rereads_a_row_counted_by_a_window() {
+    let world = World::new("server", "A", true);
+    let (database, transport, _shown, window, token) = debt_database(None, Arc::default(), &world).await;
+    window.cancel();
+    let count = Arc::new(crate::ffi::tape::Rows::default());
+    database.subscribe_reading(database.session_epoch(), ReadRequest::Count { query: crate::ffi::QuerySpec::json(SHOWN_LIST) }, count.clone());
+    crate::test_wait::settled(&database, "the counter shows the window", || count.last().is_some()).await;
+    let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
+    world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
+    node_event(&transport, &token, "c1");
+    crate::test_wait::settled(&database, "the counted row is read through node", || world.count("ChatNode") == nodes + 1).await;
+    crate::test_wait::settled(&database, "quiet", || true).await;
+    assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1));
     bound(database.close_database()).await.unwrap();
 }
