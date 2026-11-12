@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_support_tests::message;
 use super::rig_events::events;
-use super::rig_tests::{bound, Rig, World};
+use super::rig_tests::{bound, Fault, Rig, World};
 use super::flow_fixtures::{add_chat, cell, chat_row, int, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
@@ -110,5 +110,75 @@ async fn flow_chat_created_on_the_device_keeps_its_own_activity_time() {
     let read = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#))).await.unwrap();
     let stored = read.iter().find(|row| row.id == shown.id).expect("the created chat is stored");
     assert_eq!(cell(&rig, "Chat", stored, "lastActivityAt"), int(5), "the stored row");
+    rig.database.close_now();
+}
+
+/// P-DATA-57, P-DATA-59 (в), (г): an own send in flight, a message of another user, then the answer or the kept refusal: the pointer follows the newest message by `newer:` and the time of the chat never decreases.
+#[tokio::test(flavor = "multi_thread")]
+async fn flow_chat_last_message_own_send_foreign_event_answer() {
+    for (own_at, newest) in [(100, "m9"), (200, "m1")] {
+        let (rig, rows) = rig_with_chat().await;
+        let hold = rig.world.hold_next("SendMessage");
+        let receipt = send(&rig, own_at).await;
+        hold.entered().await;
+        let temporary = receipt.optimistic_value.clone().unwrap().id;
+        settled(&rig, "the chat shows the own message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text(&temporary))).await;
+
+        rig.land_unsettled("Message", json!({"id":"m9","chatId":"c1","text":"foreign","at":150})).await;
+        assert_eq!(chat_cell(&rig, &rows, "lastMessageId"), Some(text(&temporary)), "own at {own_at}: the open send is newest");
+
+        hold.release();
+        assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+        let at = if newest == "m9" { 150 } else { own_at };
+        settled(&rig, "the chat shows the newest message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text(newest))).await;
+        rig.settle().await;
+        assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(at)), "own at {own_at}");
+
+        let frames: Vec<(Cell, Cell)> = rows.1.lock().unwrap().iter()
+            .filter_map(|seen| seen.rows.iter().find(|row| row.id == "c1"))
+            .map(|row| (cell(&rig, "Chat", row, "lastMessageId"), cell(&rig, "Chat", row, "lastMessageAt")))
+            .collect();
+        let mut floor = 0;
+        for (_, time) in &frames {
+            let Cell::Int { value } = *time else { panic!("own at {own_at}: a frame without the time {frames:?}") };
+            assert!(value >= floor, "own at {own_at}: the time went back {frames:?}");
+            floor = value;
+        }
+        let answered = frames.iter().skip_while(|(id, _)| *id != text(newest));
+        assert!(answered.clone().all(|(id, _)| *id != text(&temporary)), "own at {own_at}: a frame after the answer names the temporary id {frames:?}");
+        rig.database.close_now();
+    }
+
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
+        add_chat(models);
+        let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+        let create = message["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
+        create["on_failure"] = json!("keep");
+    })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
+    let rows = Arc::new(Rows::default());
+    let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, rows.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    settled(&rig, "the chat list shows c1", || chat_cell(&rig, &rows, "name").is_some()).await;
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_then("SendMessage", Fault::Http(422));
+    let receipt = send(&rig, 100).await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    hold.entered().await;
+    rig.land_unsettled("Message", json!({"id":"m9","chatId":"c1","text":"foreign","at":150})).await;
+    hold.release();
+    assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: true, .. })));
+    rig.settle().await;
+    assert_eq!(chat_cell(&rig, &rows, "lastMessageId"), Some(text(&temporary)), "kept: the open operation stays the pointer");
+    assert_eq!(chat_cell(&rig, &rows, "lastMessageAt"), Some(int(150)), "kept: the time of the foreign message");
+    bound(rig.database.discard(epoch, "Message".into(), temporary, None)).await.unwrap();
+    settled(&rig, "the chat shows the foreign message", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m9"))).await;
+    let mut floor = 0;
+    for seen in rows.1.lock().unwrap().iter() {
+        let Some(row) = seen.rows.iter().find(|row| row.id == "c1") else { continue };
+        let Cell::Int { value } = cell(&rig, "Chat", row, "lastMessageAt") else { panic!("a frame without the time") };
+        assert!(value >= floor, "kept: the time went back");
+        floor = value;
+    }
     rig.database.close_now();
 }
