@@ -215,33 +215,33 @@ fn xfer_batch_member_discard() {
 }
 
 #[test]
-fn xfer_batch_singles_member_cancel() {
-    let (mut twin, ids) = batch(&[KEY, OTHER, THIRD], 3, false);
-    twin.cancel(THIRD);
-    twin.commit();
-    file_done(&mut twin, ids[0]);
-    file_done(&mut twin, ids[1]);
-    assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
-    let (reply, out) = twin.cancel(OTHER);
-    assert_eq!((out.removed(), out.writes()), (vec![OTHER.to_string()], 1));
-    assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::RollBack { op_id } if *op_id == ids[1])), "removal and rollback share the same batch: {:?}", out.batches);
-    let out = twin.commit();
-    assert_eq!((out.replies(reply), twin.stage(ids[1]), twin.stage(ids[0])), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done, TransferStage::Mutating), "the single of the first element is not touched");
-}
-
-#[test]
-fn xfer_batch_singles_cancel() {
-    let (mut twin, ids) = batch(&[KEY, OTHER, THIRD], 3, true);
-    twin.cancel(THIRD);
-    twin.commit();
-    file_done(&mut twin, ids[0]);
-    file_done(&mut twin, ids[1]);
-    assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady), "the group dropped to singles: one runs, one waits");
-    let (reply, out) = twin.discard(OTHER);
-    assert_eq!((out.removed(), out.rolled_back()), (vec![OTHER.to_string()], vec![ids[1]]), "it goes like a single: its row and its op roll back");
-    assert!(out.numbers().is_empty(), "the dropped group is not renumbered");
-    let out = twin.commit();
-    assert_eq!((out.replies(reply), twin.stage(ids[1]), twin.stage(ids[0])), (vec![TransferAnswer::Ok], TransferStage::Done, TransferStage::Mutating), "the single of the first element keeps running");
+fn xfer_a_member_of_a_dropped_group_leaves_like_a_single() {
+    {
+        let (mut twin, ids) = batch(&[KEY, OTHER, THIRD], 3, false);
+        twin.cancel(THIRD);
+        twin.commit();
+        file_done(&mut twin, ids[0]);
+        file_done(&mut twin, ids[1]);
+        assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
+        let (reply, out) = twin.cancel(OTHER);
+        assert_eq!((out.removed(), out.writes()), (vec![OTHER.to_string()], 1));
+        assert!(out.batches[0].ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::RollBack { op_id } if *op_id == ids[1])), "removal and rollback share the same batch: {:?}", out.batches);
+        let out = twin.commit();
+        assert_eq!((out.replies(reply), twin.stage(ids[1]), twin.stage(ids[0])), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done, TransferStage::Mutating), "the single of the first element is not touched");
+    }
+    {
+        let (mut twin, ids) = batch(&[KEY, OTHER, THIRD], 3, true);
+        twin.cancel(THIRD);
+        twin.commit();
+        file_done(&mut twin, ids[0]);
+        file_done(&mut twin, ids[1]);
+        assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady), "the group dropped to singles: one runs, one waits");
+        let (reply, out) = twin.discard(OTHER);
+        assert_eq!((out.removed(), out.rolled_back()), (vec![OTHER.to_string()], vec![ids[1]]), "it goes like a single: its row and its op roll back");
+        assert!(out.numbers().is_empty(), "the dropped group is not renumbered");
+        let out = twin.commit();
+        assert_eq!((out.replies(reply), twin.stage(ids[1]), twin.stage(ids[0])), (vec![TransferAnswer::Ok], TransferStage::Done, TransferStage::Mutating), "the single of the first element keeps running");
+    }
 }
 
 #[test]
