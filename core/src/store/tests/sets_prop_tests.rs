@@ -13,7 +13,7 @@ use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 use super::data_sets_tests::{deliver, intent_creating, intent_hiding, write};
-use super::sets_reference_tests::{derive, parent_revision, red_of, stored_sets, Child, Server, Sets};
+use super::sets_reference_tests::{derive, is_red, parent_revision, red_of, stored_sets, Child, Server, Sets};
 
 const EQUALS_F: &str = "P-DATA-103 equals F";
 const SAME_REVISION: &str = "P-DATA-56 same revision";
@@ -247,18 +247,21 @@ impl Landing {
 impl Sut for Landing {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
         let (revision, children, wanted) = (parent_revision(&self.store), self.children.clone(), self.wanted());
+        let mut performed = input.name.clone();
         if input.name == "repeat" {
             if let Some(again) = self.history.len().checked_sub(1 + number(input, "back") as usize % self.history.len().max(1)).map(|at| self.history[at].clone()) {
+                performed = again.name.clone();
                 self.perform(&again);
             }
         } else {
             self.perform(input);
             self.history.push(input.clone());
         }
+        let parent_row = ["parent", "partial", "bare"].contains(&performed.as_str());
         let now = self.wanted();
         vec![
             Observation::new("sets", json!({"want": now.to_json(), "got": stored_sets(&self.store).to_json()})),
-            Observation::new("revision", json!({"before": revision, "after": parent_revision(&self.store), "children_same": children == self.children, "sets_same": wanted == now})),
+            Observation::new("revision", json!({"before": revision, "after": parent_revision(&self.store), "children_same": children == self.children, "sets_same": wanted == now, "parent_row": parent_row})),
         ]
     }
 }
@@ -310,7 +313,7 @@ fn equals_f(steps: &[Step]) -> Result<(), String> {
 
 fn same_revision(steps: &[Step]) -> Result<(), String> {
     let revision = last(steps, "revision");
-    if revision["children_same"] == json!(true) && revision["sets_same"] == json!(true) && revision["before"] != revision["after"] {
+    if revision["parent_row"] == json!(true) && revision["children_same"] == json!(true) && revision["sets_same"] == json!(true) && revision["before"] != revision["after"] {
         return Err(format!("revision of the parent moved {} -> {} while the fields and the children stayed", revision["before"], revision["after"]));
     }
     Ok(())
@@ -318,12 +321,14 @@ fn same_revision(steps: &[Step]) -> Result<(), String> {
 
 fn red() -> Vec<String> {
     std::thread::scope(|scope| {
-        let handles: Vec<_> = (1..=SEEDS).map(|seed| scope.spawn(move || red_of(&SetsOwner, seed * 7919, STEPS))).collect();
-        handles.into_iter().filter_map(|handle| handle.join().unwrap()).collect()
+        let handles: Vec<_> = (1..=SEEDS).map(|seed| scope.spawn(move || is_red(&SetsOwner, seed * 7919, STEPS).then_some(seed * 7919))).collect();
+        let seeds: Vec<u64> = handles.into_iter().filter_map(|handle| handle.join().unwrap()).collect();
+        let first = seeds.first().and_then(|seed| red_of(&SetsOwner, *seed, STEPS));
+        first.into_iter().chain(seeds.iter().skip(1).map(|seed| format!("seed {seed}: red"))).collect()
     })
 }
 
-/// P-DATA-103, P-DATA-56: after every step the fields of the parent are `F` of the server value and the stored children, and a step that leaves `F` and the children alone leaves the revision alone.
+/// P-DATA-103, P-DATA-56: after every step the fields of the parent are `F` of the server value and the stored children, and a row of the parent that leaves `F` alone leaves the revision alone.
 #[test]
 fn data_sets_property_equals_the_function() {
     let found = red();

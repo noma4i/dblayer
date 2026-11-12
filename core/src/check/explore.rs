@@ -65,21 +65,18 @@ pub async fn minimize(owner: &dyn Owner, divergence: Divergence) -> Divergence {
     current.inputs.truncate(current.step);
     loop {
         let mut shrunk = false;
-        for index in 0..current.inputs.len() {
+        let mut index = 0;
+        while index < current.inputs.len() {
             let mut candidate = current.inputs.clone();
             candidate.remove(index);
-            if candidate.is_empty() {
-                continue;
-            }
-            if let Err(smaller) = run(owner, owner.name(), &candidate).await {
-                if !same_fault(&smaller.fault, &current.fault) {
-                    continue;
-                }
-                let mut smaller = *smaller;
-                smaller.inputs.truncate(smaller.step);
-                current = smaller;
-                shrunk = true;
-                break;
+            match run(owner, owner.name(), &candidate).await {
+                Err(smaller) if !candidate.is_empty() && same_fault(&smaller.fault, &current.fault) => {
+                    let mut smaller = *smaller;
+                    smaller.inputs.truncate(smaller.step);
+                    current = smaller;
+                    shrunk = true;
+                },
+                _ => index += 1,
             }
         }
         if !shrunk {

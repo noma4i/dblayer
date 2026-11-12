@@ -119,6 +119,10 @@ pub(super) fn parent_revision(db: &Store) -> i64 {
     crate::store::fixtures::count(db, "SELECT revision FROM row_chats WHERE id = 'c1'")
 }
 
+pub(super) fn is_red(owner: &dyn Owner, seed: u64, length: usize) -> bool {
+    tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async { find(owner, 0, &[seed], length).await.is_some() })
+}
+
 pub(super) fn red_of(owner: &dyn Owner, seed: u64, length: usize) -> Option<String> {
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     runtime.block_on(async {
