@@ -3,7 +3,7 @@
 use super::transfer_harness::*;
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::UploadKind;
-use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::outbox::OutboxOutcome;
 use crate::owners::write::upload::UploadConfig;
 use crate::owners::write::transfer::{NextStep, Shown, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;

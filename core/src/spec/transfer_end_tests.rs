@@ -545,8 +545,8 @@ fn xfer_epoch_ended() {
         let (waiting, _) = twin.outcome(uploading, 1);
         let out = twin.end_epoch_by(cause);
         assert_eq!((twin.stage(copying), twin.stage(uploading)), (TransferStage::Done, TransferStage::Done), "{ended:?}");
-        assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(ended))], "{ended:?}: the accept is answered with the cause");
-        assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(ended), None)], "{ended:?}: the outcome wait carries the cause");
+        assert_eq!(out.replies(accept_reply), vec![TransferAnswer::Err(Fault::Ended(ended.clone()))], "{ended:?}: the accept is answered with the cause");
+        assert_eq!(out.replies(waiting), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(ended.clone()), None)], "{ended:?}: the outcome wait carries the cause");
         assert_eq!((out.cancel_steps(), out.all_replies()), (1, 2), "{ended:?}: each wait is answered once");
     }
 }

@@ -1,15 +1,11 @@
 //! Properties of the owner `Transfer`: they hold on any trace of the scenarios below, at the level of the owner.
 
-use std::collections::BTreeMap;
-
 use super::transfer_end_tests::{server_silence, SILENT};
 use super::transfer_harness::*;
-use crate::store::files::Location;
 use crate::owners::contract::RejectReason;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
-use crate::owners::write::transfer::{Shown, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
+use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;
-use crate::transport::NetworkPurpose;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";

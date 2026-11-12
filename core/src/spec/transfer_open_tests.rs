@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use super::transfer_harness::*;
 use crate::owners::contract::Online;
 use crate::owners::store::UploadKind;
-use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::outbox::OutboxOutcome;
 use crate::owners::write::transfer::{NextStep, Shown, StoredTransfer, TransferAnswer, TransferInput, TransferStage};
 use crate::runtime::Time;
 
