@@ -25,7 +25,7 @@ pub(super) fn chat(db: &Store) -> Value {
 
 pub(super) fn open() -> Arc<Store> {
     let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": null, "lastMessageAt": null}));
+    put(&db, "chats", json!({"id": "c1", "title": "t"}));
     db
 }
 
@@ -80,7 +80,7 @@ fn data_sets_swap() {
     assert_eq!(chat(&db), json!(["m9", 5]));
 }
 
-fn intent_creating(db: &Arc<Store>, op_id: u64, row: &RowValue) {
+pub(super) fn intent_creating(db: &Arc<Store>, op_id: u64, row: &RowValue) {
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "messages".into(), row_id: row.row_id.clone(), values: row.values.clone() }], ..Default::default() };
     write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: "messages".into(), row_id: row.row_id.clone(), action: "react".into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
 }
@@ -146,14 +146,10 @@ fn data_sets_two_sources_settle() {
     }
 }
 
-/// P-DATA-57: the child the parent points at writes its change, a prediction does not move the time back, the confirmed child replaces it.
+/// P-DATA-57, P-DATA-60: a prediction does not move the time back, the confirmed child replaces it by the order.
 #[test]
-fn data_sets_pointed_child_writes_its_change() {
-    let db = open();
-    ["answer", "parent"].iter().for_each(|source| land(&db, source));
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 6)] }]);
-    assert_eq!(chat(&db), json!(["m5", 6]), "a new value of the pointed child is written");
-    for (device, server) in [(9, 6), (3, 6), (3, 4)] {
+fn data_sets_prediction_is_replaced_by_the_confirmed_child() {
+    for (device, server, expected) in [(9, 6, ("m9", 6)), (3, 6, ("m9", 6)), (3, 4, ("m5", 5))] {
         let db = open();
         land(&db, "answer");
         write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", device)] }]);
@@ -162,7 +158,18 @@ fn data_sets_pointed_child_writes_its_change() {
             StoreOp::Swap { model: "messages".into(), temp: "temp-1".into(), real: "m9".into() },
             StoreOp::Rows { model: "messages".into(), rows: vec![message("m9", server)] },
         ]);
-        assert_eq!(chat(&db), json!(["m9", server]), "device {device}, server {server}: the confirmed child replaces the prediction");
+        assert_eq!(chat(&db), json!([expected.0, expected.1]), "device {device}, server {server}: the first child by the order of newer");
+    }
+}
+
+/// P-DATA-59: an edit of the child the server value names does not change the fields of the parent.
+#[test]
+fn data_sets_named_child_edit_keeps_the_server_value() {
+    let db = open();
+    ["answer", "parent"].iter().for_each(|source| land(&db, source));
+    for (edited, expected) in [(6, json!(["m5", 7])), (3, json!(["m5", 7]))] {
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", edited)] }]);
+        assert_eq!(chat(&db), expected, "m5 edited to {edited}: the fields come from the row of the parent");
     }
 }
 
@@ -171,7 +178,7 @@ fn data_sets_pointed_child_writes_its_change() {
 fn data_sets_predicted_edit_keeps_the_time() {
     let db = open();
     land(&db, "answer");
-    for (device, expected) in [(3, 5), (4, 5), (9, 9), (8, 9)] {
+    for (device, expected) in [(3, 5), (4, 5), (9, 9), (8, 8)] {
         write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", device)] }]);
         assert_eq!(chat(&db), json!(["temp-1", expected]), "the predicted child at {device}");
     }
@@ -204,4 +211,117 @@ fn data_sets_destroy_reads_a_bounded_number_of_children() {
     };
     let (many, few) = (read(200), read(20));
     assert!(few > 0 && many == few, "the rows read by the destroy do not depend on the number of children: {few} for 20, {many} for 200");
+}
+
+fn parent_row(db: &Arc<Store>, values: Value) {
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![RowValue { row_id: "c1".into(), values: values.to_string() }] }]);
+}
+
+fn sets(db: &Store) -> super::sets_reference_tests::Sets {
+    super::sets_reference_tests::stored_sets(db)
+}
+
+fn sets_of(id: &str, at: i64, seq: i64) -> super::sets_reference_tests::Sets {
+    super::sets_reference_tests::Sets { id: Some(id.into()), at: Some(at), seq: Some(seq), body: None }
+}
+
+fn server_row(id: &str, at: i64, seq: i64) -> Value {
+    json!({"id": "c1", "title": "t", "lastMessageId": id, "lastMessageAt": at, "lastSequenceNumber": seq})
+}
+
+/// P-DATA-56: the fields are written once for a batch, whatever the number of its writes of children.
+#[test]
+fn data_sets_derived_once_per_batch() {
+    let batches: [(&str, Vec<StoreOp>, i64); 3] = [
+        ("three children", (1..=3).map(|at| StoreOp::Rows { model: "messages".into(), rows: vec![message(&format!("m{at}"), at)] }).collect(), 1),
+        ("a child, a destroy of it", vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m4", 4)] }, StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m4".into()] }], 0),
+        ("two children and the row of the parent", vec![
+            StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 5)] },
+            StoreOp::Rows { model: "chats".into(), rows: vec![RowValue { row_id: "c1".into(), values: server_row("m6", 9, 1).to_string() }] },
+            StoreOp::Rows { model: "messages".into(), rows: vec![message("m6", 6)] },
+        ], 1),
+    ];
+    let db = open();
+    crate::store::fixtures::exec(&db, "CREATE TABLE sets_writes (n INTEGER); CREATE TRIGGER sets_written AFTER UPDATE OF lastMessageId, lastMessageAt, lastSequenceNumber, lastMessageBody ON row_chats BEGIN INSERT INTO sets_writes VALUES (1); END");
+    for (name, ops, expected) in batches {
+        write(&db, BatchAuthor::Outbox, Vec::new(), ops);
+        let writes = crate::store::fixtures::count(&db, "SELECT COUNT(*) FROM sets_writes");
+        crate::store::fixtures::exec(&db, "DELETE FROM sets_writes");
+        assert_eq!(writes, expected, "{name}: writes of the fields of the parent");
+    }
+}
+
+/// P-DATA-57: any order of landing of children with equal and absent values gives the first child by the order.
+#[test]
+fn data_newer_order_is_total() {
+    use super::sets_reference_tests::{derive, newest, Child};
+    fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        (0..items.len()).flat_map(|at| {
+            let mut rest = items.to_vec();
+            let head = rest.remove(at);
+            permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
+        }).collect()
+    }
+    let sets: [Vec<(&str, i64, Option<i64>)>; 3] = [
+        vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)],
+        vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))],
+        vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)],
+    ];
+    for children in sets {
+        let kids: Vec<Child> = children.iter().map(|(id, at, seq)| Child { id: (*id).into(), at: *at, seq: *seq, body: (*id).into() }).collect();
+        let first = newest(&kids).unwrap().id.clone();
+        for order in permutations(&(0..kids.len()).collect::<Vec<_>>()) {
+            let db = open();
+            for index in &order {
+                let child = &kids[*index];
+                let seq = child.seq.map_or(Value::Null, |seq| json!(seq));
+                let row = RowValue { row_id: child.id.clone(), values: json!({"id": child.id, "chatId": "c1", "body": child.body, "createdAt": child.at, "sequenceNumber": seq}).to_string() };
+                write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![row] }]);
+            }
+            assert_eq!((sets(&db).id, sets(&db)), (Some(first.clone()), derive(None, &kids)), "landed as {order:?} of {children:?}");
+        }
+    }
+}
+
+/// P-DATA-58: the value the server gave is kept: a destroy of children, a row of the parent without the fields and an older child do not lose it.
+#[test]
+fn data_sets_server_value_is_kept() {
+    let db = open();
+    parent_row(&db, server_row("m5", 7, 3));
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "no children");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m1", 1)] }]);
+    assert_eq!((sets(&db).id, sets(&db).at, sets(&db).seq), (Some("m5".into()), Some(7), Some(3)), "an older child");
+    parent_row(&db, json!({"id": "c1", "title": "renamed"}));
+    assert_eq!((sets(&db).id, sets(&db).at, sets(&db).seq), (Some("m5".into()), Some(7), Some(3)), "a row of the parent without the fields");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m1".into()] }]);
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "the child is destroyed");
+}
+
+/// P-DATA-60: the server value that named the real id while the operation was open wins after the swap.
+#[test]
+fn data_sets_server_value_during_pending_wins_after_swap() {
+    let db = open();
+    intent_creating(&db, 1, &message("temp-1", 9));
+    parent_row(&db, server_row("r1", 4, 2));
+    assert_eq!(sets(&db).id.as_deref(), Some("temp-1"), "the open operation is newest");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![
+        StoreOp::Swap { model: "messages".into(), temp: "temp-1".into(), real: "r1".into() },
+        StoreOp::Rows { model: "messages".into(), rows: vec![message("r1", 3)] },
+        StoreOp::RemoveIntent { op_id: 1 },
+    ]);
+    assert_eq!(sets(&db), super::sets_reference_tests::Sets { body: Some("r1".into()), ..sets_of("r1", 4, 2) }, "the value of the server for r1");
+}
+
+/// P-DATA-61: a rollback gives the fields of the server value back, the parent keeps no value from before the operation.
+#[test]
+fn data_sets_rollback_keeps_the_server_value() {
+    let db = open();
+    parent_row(&db, server_row("m5", 7, 3));
+    intent_creating(&db, 1, &message("temp-1", 9));
+    assert_eq!(sets(&db).id.as_deref(), Some("temp-1"), "the open operation is newest");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 1 }, StoreOp::RemoveIntent { op_id: 1 }]);
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "the fields of the server value");
 }
