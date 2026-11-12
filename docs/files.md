@@ -182,7 +182,7 @@ For a batch, this rule applies to each item key. A single failed upload at an it
 
 ### Android background transfer
 
-On iOS the PUT of a file runs outside the app, see [upload with the app in the background](#upload-with-the-app-in-the-background). The outbox keeps an upload that the app stopped and sends it after the next start.
+On iOS the PUT of a file runs in the app, see [upload with the app in the background](#upload-with-the-app-in-the-background). The outbox keeps an upload that the app stopped and sends it after the next start.
 
 On Android the app gives the text and the small icon of the notification to `DBlayer.open` as `uploadNotification = UploadNotification(title, text, icon)`.
 
@@ -195,26 +195,7 @@ The background job keeps the epoch of the accepted upload. A late refusal of the
 
 ### Upload with the app in the background
 
-On iOS `DB.open` runs the PUT of every file as a task of a background `URLSession` with the identifier `<bundle id>.dblayer.uploads`. The system keeps the task when the app goes to the background and when the system ends the app. A new file goes up as one part, as large as the file: `Init`, the presign of part 1, the PUT, `Complete`. A transfer made by an earlier build with more than one part goes on in the app, part by part. The server checks the size limit of the file in `Init`. The steps before and after the PUT (`Init`, presign, `Complete`, the final mutation) run while the app runs, and in the time the system gives it when a finished PUT wakes it.
-
-The app has one call to make. Pass the identifier and the completion of `application(_:handleEventsForBackgroundURLSession:completionHandler:)` to `DB.handleBackgroundEvents`. It returns `true` for the session of the library and `false` for any other identifier, and then it does not take the completion: the session is the app's own. The library gives the outcomes of the finished PUTs to the core. It runs each completion it took once on the main thread, after the system reports the end of the events and the core has no step to run without a new event (a PUT in the system, a wait for the network or for a retry are such events). A call before `open` waits for `open`.
-
-```swift
-func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-  if !DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler) {
-    // a session of the app: call its own completion
-  }
-}
-```
-
-```kotlin
-// Android has nothing to call: the upload job and its steps run the PUT, see "Android background transfer".
-DBlayer.open(context, uploadNotification = UploadNotification(title, text, icon))
-```
-
-While the app runs, the system reports the bytes it sent and `progress` follows them; after a wake the value shown does not fall.
-
-After a restart the library lists its tasks to the system. A task that ended while the app was away gives its outcome, a running task goes on, and a task the system lost starts again without a second `Init`. When the user ends the app from the app switcher, iOS cancels the tasks of the session, and the PUT starts again at the next launch. The preparation of a source (`prepare`) needs the app to run: it does not go to the background, and an interrupted preparation continues at the next launch. macOS and a host without a bundle identifier run the PUT inside the app.
+On iOS a file goes up in the app, in parts, as on Android: a file above the part size goes in several PUTs, an interrupted PUT sends again from the first part the server has not confirmed, and the parts the server has are not sent again. The PUT in a background `URLSession` is off. `DB.handleBackgroundEvents(identifier:completion:)` stays in the API and does nothing: it returns `false` and does not take the completion, so the app keeps the completion of its own sessions. The app adds no call and changes no `beginBackgroundTask` around uploads.
 
 ### Create with an upload
 

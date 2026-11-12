@@ -139,12 +139,10 @@ scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.
 
 ## 10. After 6.31.1
 
-- On iOS the PUT of a file runs in a background `URLSession` and finishes with the app in the background. Add the call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`. Remove the background task and the `beginBackgroundTask` calls around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
+- On iOS a file goes up in parts in the app, as on Android. The PUT in a background `URLSession` is off: the app adds no call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)` and changes no `beginBackgroundTask` around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
 
 ```swift
-func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-  DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
-}
+// iOS: no change, keep the beginBackgroundTask around uploads.
 ```
 
 ```kotlin

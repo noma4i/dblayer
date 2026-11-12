@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Switch off the PUT in a background session on iOS.
+
 ### Fixed
 
+- Send a file on iOS in parts again, with resume.
 - Cancel or discard a staged upload right after `commit` removes it instead of throwing `InFlight`.
 
 ## 6.32.0 - 2026-11-13
