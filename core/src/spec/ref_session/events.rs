@@ -64,8 +64,7 @@ impl Session {
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.state, &pending), (State::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(Owner::Detached) && held.owner != saved.owner));
                 if let (State::PendingHeld { pending: held }, true) = (self.state.clone(), released) {
-                    let held = Self::detached(held, out);
-                    self.start_calling(held, out);
+                    self.start_calling(Pending { author: None, owner: Some(Owner::Detached), ..held }, out);
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None => self.restored_direct = Some(Pending { epoch, ..pending }),
