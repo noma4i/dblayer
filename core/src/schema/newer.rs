@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::AssociationSpec;
+use super::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
 use crate::identity::is_temp_id;
 
 pub(crate) struct Order<'a> {
@@ -103,5 +103,38 @@ impl AssociationSpec {
                 true
             })
             .collect()
+    }
+}
+
+const SERVER_VALUE: &str = "server__";
+
+impl ModelSpec {
+    /// P-DATA-58: every parent field a child `sets` gets a hidden field beside it that keeps the value the server sent.
+    pub fn with_server_values(models: &[ModelSpec]) -> Vec<ModelSpec> {
+        let set: std::collections::BTreeSet<(&str, &str)> = models
+            .iter()
+            .flat_map(|model| model.associations.iter())
+            .filter(|association| association.kind == AssociationKind::BelongsTo)
+            .flat_map(|association| association.sets.keys().map(move |field| (association.target.as_str(), field.as_str())))
+            .collect();
+        models
+            .iter()
+            .map(|model| {
+                let mut model = model.clone();
+                let shadows: Vec<FieldSpec> = model
+                    .fields
+                    .iter()
+                    .filter(|field| set.contains(&(model.key.as_str(), field.name.as_str())))
+                    .map(|field| FieldSpec { name: format!("{SERVER_VALUE}{}", field.name), nullable: true, default: None, indexed: false, from: None, merge: None, searchable: false, ..field.clone() })
+                    .filter(|shadow| !model.fields.iter().any(|field| field.name == shadow.name))
+                    .collect();
+                model.fields.extend(shadows);
+                model
+            })
+            .collect()
+    }
+
+    pub fn server_values(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.fields.iter().filter_map(|field| field.name.strip_prefix(SERVER_VALUE).map(|declared| (declared, field.name.as_str())))
     }
 }
