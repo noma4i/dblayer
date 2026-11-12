@@ -28,8 +28,6 @@ mod feed_channel_tests;
 mod feed_gap_tests;
 mod window_gap_tests;
 
-mod ref_transfer;
-mod ref_transfer_tests;
 mod transfer_state_input_matrix_tests;
 mod rig;
 mod outbox_harness;
