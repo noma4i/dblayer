@@ -56,6 +56,9 @@ public struct Clip: DBModel {
     @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
+    @concurrent public static func stageCreateFile(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source))
+    }
 }
 
 public struct ClipCreateFileResult: Codable, Sendable {

@@ -48,6 +48,8 @@ data class Clip(
         }
         suspend fun createFile(account: AccountScope, id: String, source: String, widgets: List<StickerWidgetInput>? = null): MutationReceipt<Clip> =
             account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject { if (widgets != null) this.put("widgets", jsonValue(widgets)) }))
+        suspend fun stageCreateFile(account: AccountScope, source: String): StagedUpload<Clip> =
+            account.stage(Clip, "create_file", UploadRequest(source))
         suspend fun create(title: String? = null, account: AccountScope? = null): MutationReceipt<Clip> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 title?.let { this.put("title", jsonValue(it)) }

@@ -2,7 +2,7 @@ use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RemoteShape, RelationSpec
 use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
-use crate::naming::camel;
+use crate::naming::{camel, upper_first};
 
 mod nested;
 mod wire;
@@ -408,6 +408,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             }
             writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
             writeln!(out, "    @concurrent public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
+            writeln!(out, "    @concurrent public static func stage{}(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source))\n    }}", upper_first(&method), action.name).unwrap();
         }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
@@ -490,6 +491,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
             let variables = upload_args.iter().map(|(arg, kind)| if kind.ends_with('?') { format!("if ({printed} != null) this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) } else { format!("this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) }).collect::<Vec<_>>().join("; ");
             writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+            writeln!(out, "        suspend fun stage{}({ACCOUNT}: AccountScope, source: String): StagedUpload<{class}> =\n            {ACCOUNT}.stage({class}, \"{}\", UploadRequest(source))", upper_first(&method), action.name).unwrap();
         }
         let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);

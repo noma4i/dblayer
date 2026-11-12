@@ -321,6 +321,9 @@ public struct Asset: DBModel {
     @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
+    @concurrent public static func stageCreateFile(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source))
+    }
 }
 
 public struct AssetCreateFileResult: Codable, Sendable {
@@ -594,12 +597,18 @@ public struct Container: DBModel {
     @concurrent public func createPhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_photo", request)
     }
+    @concurrent public static func stageCreatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "create_photo", UploadRequest(path: source))
+    }
     @concurrent public static func updatePhoto(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         let variables_: [String: JSONValue] = [:]
         return try await scope_.upload(Self.self, id: id, action: "update_photo", UploadRequest(path: source, variables: variables_))
     }
     @concurrent public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "update_photo", request)
+    }
+    @concurrent public static func stageUpdatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source))
     }
 }
 
@@ -1156,6 +1165,9 @@ public struct Moment: DBModel {
     }
     @concurrent public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "upload_clip", request)
+    }
+    @concurrent public static func stageUploadClip(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "upload_clip", UploadRequest(path: source))
     }
 }
 
@@ -1808,6 +1820,9 @@ public struct CurrentUser: DBSingleton {
     }
     @concurrent public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "update_photo", request)
+    }
+    @concurrent public static func stageUpdatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source))
     }
 }
 
