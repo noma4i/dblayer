@@ -479,7 +479,7 @@ fn data_sets_server_value_is_accepted_like_a_server_field() {
     put(&db, "chats", json!({"id": "c1", "title": "t", "rev": 1}));
     let parent = |rev: i64, id: &str, at: i64, seq: i64| RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t", "rev": rev, "lastMessageId": id, "lastMessageAt": at, "lastSequenceNumber": seq}).to_string() };
     let answer = |row: RowValue| write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![row] }]);
-    let page = |row: RowValue, base_revision: u64| {
+    let page = |row: RowValue, base_revision: i64| {
         let key = WindowKey::nodes("chats", &["c1"]);
         let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision };
         write(&db, BatchAuthor::Window, Vec::new(), vec![op]);
