@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::check::corpus;
 use crate::check::explore::{all_traces, minimize, save, seeded};
-use crate::check::library::alphabet::{alphabet, prelude};
+use crate::check::library::alphabet::{alphabet, prelude, reopened};
 use crate::check::library::properties::{outcome_rules, request_rules};
 use crate::check::library::LibraryOwner;
 use crate::check::model::{run, Divergence, DivergenceKind, Property};
@@ -98,8 +98,7 @@ async fn assert_green(properties: Vec<Property>) {
 
 /// The programs `prelude ; close ; open ; <letter>` for every letter of the alphabet.
 fn reopen_programs() -> Vec<Program> {
-    let reopen = [Input::new("close"), Input::new("open").with("encrypted", true)];
-    all_traces(&alphabet(), 1).into_iter().enumerate().map(|(index, body)| Program { tag: format!("r{index}"), inputs: [prelude(false), reopen.to_vec(), body].concat() }).collect()
+    all_traces(&alphabet(), 1).into_iter().enumerate().map(|(index, body)| Program { tag: format!("r{index}"), inputs: reopened(body) }).collect()
 }
 
 /// Requirement: every program of depth 1 and 2 of the alphabet runs on the stand without a panic and without an unsupported input.

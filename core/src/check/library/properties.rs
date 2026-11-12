@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
@@ -75,6 +75,8 @@ struct Walk {
     retry_first_page: HashMap<String, bool>,
     windows: HashMap<String, Window>,
     streams: HashMap<String, Interest>,
+    /// The names of the open entity streams: they subscribe the model of the moment like the feed streams.
+    entities: HashSet<String>,
     /// Login calls not finished yet: the second one queues behind the first (library.md section 7 `login`) and sends its own request after a refusal of the first.
     logins: u32,
     /// Entity streams opened with `fetch: force` without a network: the force request goes out at the network return (`load: Waiting{page, force}`).
@@ -167,8 +169,10 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             let was_online = walk.online;
             walk.online = online.value.as_bool().unwrap_or(false);
             if was_online && !walk.online && walk.logged {
-                for interest in walk.streams.values() {
-                    walk.windows.entry(interest.operation.to_string()).or_default().gap = true;
+                if !walk.streams.is_empty() || !walk.entities.is_empty() {
+                    for operation in [ENTITY_OPERATION, "MomentsFeed"] {
+                        walk.windows.entry(operation.to_string()).or_default().gap = true;
+                    }
                 }
             }
         }
@@ -260,12 +264,14 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         if kinds(observed, "closed").next().is_some() {
             walk.is_open = false;
             walk.streams.clear();
+            walk.entities.clear();
             walk.waiting_force.clear();
             walk.logins = 0;
         }
         if kinds(observed, "reset").next().is_some() {
             walk.logged = false;
             walk.streams.clear();
+            walk.entities.clear();
             walk.waiting_force.clear();
             walk.logins = 0;
             walk.windows.values_mut().for_each(|window| window.lost = true);
@@ -294,15 +300,22 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 }
             }
         }
+        if input.name == "open_entity" && !refused_open {
+            if let Some(name) = input.text("as") {
+                walk.entities.insert(name.to_string());
+            }
+        }
         if input.name == "cancel" {
             if let Some(target) = input.text("target") {
                 walk.streams.remove(target);
+                walk.entities.remove(target);
                 walk.waiting_force.remove(target);
             }
         }
         for ended in kinds(observed, "ended") {
             if let Some(name) = ended.value["stream"].as_str() {
                 walk.streams.remove(name);
+                walk.entities.remove(name);
                 walk.waiting_force.remove(name);
             }
         }
@@ -393,7 +406,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 let exact = |operation: &str| ready && !was_held.iter().any(|held| held == operation) && walk.windows.get(operation).is_some_and(|window| !window.lost && window.landed.is_some());
                 let forced_load = match (input.name.as_str(), input.text("relation"), input.flag("force")) {
                     ("refresh", Some("feed"), _) => Some("MomentsFeed"),
-                    ("node", Some("transcode_status"), Some(true)) => Some("MomentTranscodeStatus"),
+                    ("node", Some("transcode_status"), Some(true)) => Some(ENTITY_OPERATION),
                     _ => None,
                 };
                 if let Some(operation) = forced_load.filter(|operation| rule == Rule::Fresh && exact(operation)) {

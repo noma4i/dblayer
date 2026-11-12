@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::check::explore::{all_traces, minimize, seeded};
-use crate::check::library::alphabet::{alphabet, is_stream, prelude, streams};
+use crate::check::library::alphabet::{alphabet, is_stream, prelude, reopened, streams};
 use crate::check::library::reference::{first_hole, modeled};
 use crate::check::library::LibraryOwner;
 use crate::check::model::{run, Divergence};
@@ -265,9 +265,8 @@ async fn library_matches_reference_stream_phase_without_network() {
 /// Observable: the requests, the answers, the outcomes after the first input that follows the reopening. Assert: no program `prelude ; close ; open ; <letter>` diverges.
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_after_reopen() {
-    let reopen = [Input::new("close"), Input::new("open").with("encrypted", true)];
     let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
-    let programs = all_traces(&letters, 1).into_iter().map(|body| [prelude(false), reopen.to_vec(), body].concat()).collect();
+    let programs = all_traces(&letters, 1).into_iter().map(reopened).collect();
     assert_matches(without_unpromised(programs)).await;
 }
 
@@ -276,5 +275,7 @@ async fn library_matches_reference_after_reopen() {
 #[tokio::test(flavor = "multi_thread")]
 async fn library_matches_reference_on_saved_session_and_network_programs() {
     let traces = crate::check::corpus::read_dir(&crate::check::corpus::shared_dir().join("library")).unwrap();
-    assert_matches(traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect()).await;
+    let programs: Vec<_> = traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect();
+    assert_eq!(programs.len(), 5, "the corpus programs of the rules I12, I13 and the join of a load");
+    assert_matches(programs).await;
 }

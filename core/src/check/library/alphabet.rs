@@ -16,6 +16,11 @@ pub fn prelude(anonymous: bool) -> Vec<Input> {
     vec![open, Input::new("set_online").with("online", true), Input::new("login")]
 }
 
+/// `prelude ; close ; open ; body`: the program that meets the reopening before its body.
+pub fn reopened(body: Vec<Input>) -> Vec<Input> {
+    [prelude(false), vec![Input::new("close"), Input::new("open").with("encrypted", true)], body].concat()
+}
+
 fn stream(kind: &str, name: &str) -> Input {
     Input::new(kind).with("as", name)
 }
