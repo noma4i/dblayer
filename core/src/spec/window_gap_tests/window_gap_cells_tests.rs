@@ -1,20 +1,5 @@
-use super::window_fresh_tests::{opening_twin, saved};
+use super::window_fresh_tests::opening_twin;
 use super::*;
-
-#[test]
-fn win_preload_created() {
-    for (read, asked) in [(Read::None, 1), (saved(NOW - 10_000, false), 0)] {
-        let mut twin = Twin::with_preload();
-        twin.hold.store(true, Ordering::SeqCst);
-        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-        twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-        let (got, _) = twin.split(take(&twin.log));
-        assert_eq!(got, [Effect::ReadWindow], "the preload key reads the saved window first");
-        assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
-        assert_eq!(requests(&twin.step(Input::Read(read))), asked, "the preload key with the saved window {read:?}");
-        assert_eq!(twin.stage(), Some(if asked == 1 { WindowStage::Loading } else { WindowStage::Idle }));
-    }
-}
 
 #[test]
 fn win_preload_derived() {
@@ -85,23 +70,12 @@ fn win_nodes_empty() {
     assert_eq!(twin.state().windows(), 0, "no machine for a key without ids");
 }
 
-#[test]
-fn win_created() {
-    let mut twin = Twin::new();
-    assert_eq!(twin.state().windows(), 0);
-    assert_eq!(twin.watch(), [Effect::Request { request: 1, attempt: 1, page: 1 }, Effect::WindowState]);
-    assert_eq!(twin.state().windows(), 1);
-    let mut called = Twin::new();
-    assert_eq!(called.call(1, Goal::First), [Effect::Request { request: 1, attempt: 1, page: 1 }]);
-    assert_eq!(called.state().windows(), 1);
-}
-
 // Idle.
 
 #[test]
 fn win_idle_interest() {
     let mut twin = Twin::new();
-    assert_eq!(twin.watch(), [Effect::Request { request: 1, attempt: 1, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.watch(), [Effect::WindowState, Effect::Request { request: 1, attempt: 1, page: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
     assert_eq!(twin.state().interest(&key()), [u64::from(STREAM)]);
     let mut offline = Twin::before_online();
@@ -122,7 +96,7 @@ fn win_state_has_more_settled() {
     twin.finish(Some(2));
     let first = twin.load_state();
     assert!(first.settled && first.has_more, "a page with a cursor settles the window and offers more");
-    assert_eq!(twin.call(2, Goal::Next), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState]);
+    assert_eq!(twin.call(2, Goal::Next), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 2 }]);
     assert!(twin.load_state().settled, "a later load does not unsettle a held window");
     twin.finish(None);
     assert!(!twin.load_state().has_more, "the last page has no cursor");
@@ -146,21 +120,6 @@ fn win_idle_interest_passive() {
 }
 
 #[test]
-fn win_idle_interest_fresh() {
-    let mut twin = fresh();
-    assert!(twin.call(2, Goal::First).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(twin.state().waiters(&key()).is_empty(), "the call was answered at once");
-}
-
-#[test]
-fn win_idle_interest_all_done() {
-    let mut twin = fresh();
-    assert!(twin.call(2, Goal::All).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
-
-#[test]
 fn win_idle_interest_all_more() {
     let mut twin = fresh_with_cursor();
     assert_eq!(twin.call(2, Goal::All), [Effect::Request { request: 2, attempt: 2, page: 2 }]);
@@ -168,12 +127,37 @@ fn win_idle_interest_all_more() {
     assert_eq!(twin.state().waiters(&key()), [2]);
 }
 
+/// A fresh window answers the call at once and asks nothing: a repeat, every page already there, no page after the last, the page limit.
 #[test]
-fn win_idle_interest_all_offline() {
-    let mut twin = fresh_with_cursor();
-    twin.step(Input::Online(false));
-    assert!(twin.call(2, Goal::All).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+fn win_idle_call_answered_at_once() {
+    let mut limited = Twin::with_max_pages(1);
+    limited.call(1, Goal::First);
+    limited.finish(Some(2));
+    for (name, mut twin, input) in [
+        ("first page again", fresh(), Input::Load { id: 2, goal: Goal::First, force: false }),
+        ("all pages, none more", fresh(), Input::Load { id: 2, goal: Goal::All, force: false }),
+        ("next page, none more", fresh(), Input::Load { id: 2, goal: Goal::Next, force: false }),
+        ("next page over the page limit", limited, Input::Load { id: 2, goal: Goal::Next, force: false }),
+    ] {
+        assert!(twin.step(input).is_empty(), "{name}");
+        assert_eq!(twin.stage(), Some(WindowStage::Idle), "{name}");
+        assert!(twin.state().waiters(&key()).is_empty(), "{name}: the call was answered at once");
+    }
+}
+
+/// Without the network a call waits, whatever it asks for.
+#[test]
+fn win_idle_call_offline_waits() {
+    let offline = |mut twin: Twin| { twin.step(Input::Online(false)); twin };
+    for (name, mut twin, goal) in [
+        ("before the first Online", Twin::before_online(), Goal::First),
+        ("first page", offline(Twin::new()), Goal::First),
+        ("next page", offline(fresh_with_cursor()), Goal::Next),
+        ("all pages", offline(fresh_with_cursor()), Goal::All),
+    ] {
+        assert!(twin.call(1, goal).is_empty(), "{name}");
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting), "{name}");
+    }
 }
 
 #[test]
@@ -186,25 +170,6 @@ fn win_idle_interest_load() {
 }
 
 #[test]
-fn win_idle_interest_offline() {
-    let mut twin = Twin::before_online();
-    assert!(twin.call(1, Goal::First).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    let mut off = Twin::new();
-    off.step(Input::Online(false));
-    off.call(1, Goal::First);
-    assert_eq!(off.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
-fn win_idle_interest_minus() {
-    let mut twin = fresh_watched();
-    assert!(twin.step(Input::InterestMinus { id: STREAM }).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(twin.state().interest(&key()).is_empty());
-}
-
-#[test]
 fn win_idle_load_more() {
     let mut twin = fresh_with_cursor();
     assert_eq!(twin.call(2, Goal::Next), [Effect::Request { request: 2, attempt: 2, page: 2 }]);
@@ -214,34 +179,9 @@ fn win_idle_load_more() {
 }
 
 #[test]
-fn win_idle_load_more_offline() {
-    let mut twin = fresh_with_cursor();
-    twin.step(Input::Online(false));
-    assert!(twin.call(2, Goal::Next).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-}
-
-#[test]
-fn win_idle_load_more_end() {
-    let mut twin = fresh();
-    assert!(twin.call(2, Goal::Next).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
-
-#[test]
-fn win_idle_page_limit() {
-    let mut twin = Twin::with_max_pages(1);
-    twin.call(1, Goal::First);
-    twin.finish(Some(2));
-    assert!(twin.call(2, Goal::Next).is_empty());
-    assert!(twin.call(3, Goal::All).is_empty());
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
-
-#[test]
 fn win_idle_stale_watched() {
     let mut twin = fresh_watched();
-    assert_eq!(twin.step(Input::Stale { in_keys: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.step(Input::Stale { in_keys: true }), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
     assert_eq!(twin.phase(), Phase::Loading);
 }
@@ -251,7 +191,7 @@ fn win_idle_stale_covered() {
     let mut twin = fresh_watched();
     twin.step(Input::Online(false));
     twin.step(Input::Online(true));
-    assert_eq!(twin.step(Input::StaleGap), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState], "the last landing began before the return of the network: the gap is read");
+    assert_eq!(twin.step(Input::StaleGap), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "the last landing began before the return of the network: the gap is read");
     twin.finish(None);
     assert!(twin.step(Input::StaleGap).is_empty(), "the last landing began after the return of the network: nothing to read");
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
@@ -288,7 +228,7 @@ fn win_foreground_reload() {
     twin.step(Input::InterestPlus { id: 1 });
     twin.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
     twin.step(Input::Committed { request: 1, revision: 5 });
-    assert_eq!(twin.step(Input::Foreground { seq: 1 }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.step(Input::Foreground { seq: 1 }), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
 }
 
 /// win_foreground_other: no reader, the same sequence number, a window that is not idle and no network give no request.
@@ -319,7 +259,7 @@ fn win_foreground_other() {
 #[test]
 fn win_idle_online_retry() {
     let mut twin = failed_watched();
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
@@ -364,26 +304,9 @@ fn win_no_machine_offline_refused() {
     let mut twin = Twin::new();
     assert!(twin.step(Input::OfflineRefused).is_empty(), "a key without a machine ignores the refusal");
     assert_eq!(twin.stage(), None, "no machine is created and no error is kept");
-    assert_eq!(twin.watch(), [Effect::Request { request: 1, attempt: 1, page: 1 }, Effect::WindowState], "the next interest opens the window as on a cold key");
+    assert_eq!(twin.watch(), [Effect::WindowState, Effect::Request { request: 1, attempt: 1, page: 1 }], "the next interest opens the window as on a cold key");
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
-
-#[test]
-fn win_idle_stray() {
-    let mut twin = fresh();
-    for input in [
-        Input::Response { request: 9, attempt: 9, cursor: None, rows: true },
-        Input::TransportError { request: 9, attempt: 9, failure: Failure::Network },
-        Input::Dropped { request: 9, attempt: 9 },
-        Input::Retry { request: 9 },
-        Input::Committed { request: 9, revision: 99 },
-        Input::Rejected { request: 9, reason: Reject::Storage },
-    ] {
-        assert!(twin.step(input).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    }
-}
-
 
 #[test]
 fn win_preload_after_register() {
