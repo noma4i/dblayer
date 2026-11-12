@@ -495,6 +495,9 @@ impl TransferState {
                 continue;
             }
             self.remove_with(id, Removal::Storage, fx);
+            let accept = self.transfers.get_mut(&id).and_then(|transfer| transfer.accept_reply.take());
+            let group = self.group_entry(id).and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
+            if let Some(rep) = accept.or(group) { reply(fx, rep, TransferAnswer::Err(Fault::Rejected(reason.clone()))); }
             removing.push(id);
         }
         if !removing.is_empty() { self.store(&removing, StoreKind::Removed, fx); }

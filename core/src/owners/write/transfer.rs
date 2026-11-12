@@ -641,6 +641,11 @@ impl TransferState {
 
     fn rejected(&mut self, now: Time, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        if !matches!(rejected.reason, RejectReason::Storage(_)) {
+            for id in pending.ids.iter().chain(pending.written.keys()) {
+                if let Some(transfer) = self.transfers.get_mut(id) { transfer.storage_refusals = 0; }
+            }
+        }
         let (ends, storage) = match &rejected.reason {
             RejectReason::Closed | RejectReason::NoSession => (true, None),
             RejectReason::Storage(detail) => (false, Some(detail.clone())),
@@ -691,13 +696,22 @@ impl TransferState {
                 self.generations.extend(generations.clone());
                 return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
             }
+            (RejectReason::Invalid(_), true) if stage == Some(TransferStage::Removing) && pending.kind == StoreKind::Removed => {}
             (RejectReason::Invalid(detail), true) => {
                 if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
                     self.source_rejected(pending.ids[0], Fault::Rejected(rejected.reason.clone()), fx);
                     return;
                 }
+                if stage == Some(TransferStage::PersistingCopy) {
+                    for &id in &pending.ids { self.remove_with(id, Removal::Invalid { error: detail.clone() }, fx); }
+                    self.store(&pending.ids, StoreKind::Removed, fx);
+                    return;
+                }
                 if stage == Some(TransferStage::PersistingFailure) {
                     if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Rejected(rejected.reason.clone()))); }
+                }
+                if stage == Some(TransferStage::PersistingComplete) {
+                    if let Some(transfer) = self.transfers.get_mut(&pending.ids[0]) { transfer.signed_id = None; }
                 }
                 if stage == Some(TransferStage::PersistingBatchIntent) {
                     for &id in &pending.ids { self.mark_failure(now, id, format!("Internal(Invalid): {detail}"), fx); }
@@ -717,10 +731,7 @@ impl TransferState {
             (Some(TransferStage::PersistingBatchIntent), Some(_)) => self.storage_retry(pending.ids[0], fx),
             (Some(TransferStage::PersistingFailure), Some(_)) => self.failure_rejected(pending.ids[0], fx),
             (Some(TransferStage::PersistingCopy), Some(_)) => self.copy_rejected(&pending.ids, rejected.reason, fx),
-            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(error)) => {
-                self.persist_failed(now, pending.ids[0], error, fx);
-                self.start_in_order(now, fx);
-            }
+            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(_)) => self.storage_retry(pending.ids[0], fx),
             (Some(_), None) => {
                 for id in pending.ids {
                     self.interrupt(id, super::outbox_types::end_cause(&rejected.reason), fx);

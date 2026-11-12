@@ -273,6 +273,13 @@ impl TransferState {
                 self.store(&ids, StoreKind::MixedOutcomes, fx);
             }
             TransferStage::PersistingFailure => self.store(&[id], StoreKind::Failed, fx),
+            TransferStage::PersistingAttempt => self.store(&[id], StoreKind::SyncUpload, fx),
+            TransferStage::PersistingPart => self.store(&[id], StoreKind::ConfirmedParts, fx),
+            TransferStage::PersistingComplete => self.store(&[id], StoreKind::Completed, fx),
+            TransferStage::Removing => {
+                let ids = self.group_entry(id).map(|group| self.groups[&group].ids.iter().copied().filter(|member| self.stage_of(*member) == Some(TransferStage::Removing)).collect::<Vec<_>>()).unwrap_or_else(|| vec![id]);
+                self.store(&ids, StoreKind::Removed, fx);
+            }
             TransferStage::PersistingBatchIntent => {
                 let ids = self.group_entry(id).map(|group| self.remaining(group).into_iter().filter(|member| self.stage_of(*member) == Some(TransferStage::PersistingBatchIntent)).collect::<Vec<_>>()).unwrap_or_else(|| vec![id]);
                 self.store(&ids, StoreKind::BatchIntent, fx);
@@ -300,11 +307,6 @@ impl TransferState {
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.submit_mutation(id, fx);
         self.start_in_order(now, fx);
-    }
-
-    /// `Rejected(Storage)` of a write of a part or of `completed`: durable `Failed` only by a write.
-    pub(super) fn persist_failed(&mut self, now: crate::runtime::Time, id: TransferId, error: String, fx: &mut Fx) {
-        self.begin_failure(now, id, error, false, fx);
     }
 
     /// `Rejected(Invalid)`: the write is wrong, no retry helps. `Failed` is written; the write of `Failed` that is invalid stays in memory.

@@ -259,6 +259,11 @@ impl TransferState {
                     Self::refuse(fx, rep, Fault::Rejected(RejectReason::Storage("storage".into())));
                 }
             }
+            Removal::Invalid { error } => {
+                if let Some(rep) = accept.or(group) {
+                    Self::refuse(fx, rep, Fault::Rejected(RejectReason::Invalid(error.clone())));
+                }
+            }
         }
     }
 
@@ -287,7 +292,7 @@ impl TransferState {
                     if let (Some(row), Some(cycle)) = (rows.remove(&id), self.transfers.get(&id).map(|transfer| transfer.cycle_id)) { self.landed_rows.insert((id, cycle), row); }
                     self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx)
                 }
-                Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
+                Removal::CopyFailed { .. } | Removal::Storage | Removal::Invalid { .. } => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
             if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some() || transfer.restore_element.as_ref().is_some_and(|(_, holder)| holder.is_some())) {
                 self.delete_copy(id, fx);
@@ -307,24 +312,24 @@ impl TransferState {
     }
 
     pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        let storage = match &reason {
-            RejectReason::Storage(detail) => detail.clone(),
-            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => {
-                for &id in ids {
-                    self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
-                }
-                return;
+        if let RejectReason::Storage(_) = reason {
+            if let Some(&first) = ids.first() { self.storage_retry(first, fx); }
+            return;
+        }
+        if !matches!(reason, RejectReason::Invalid(_)) {
+            for &id in ids {
+                self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
             }
-        };
+            return;
+        }
+        let mut answered = Vec::new();
         for &id in ids {
-            if let Some((_, error)) = self.confirmed_discards.get(&id).cloned() {
-                self.answer_discarded_outcome(id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(format!("{storage}: {error}")))), fx);
-            }
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
-            let removal = transfer.removal.take();
-            match (transfer.prior.take(), removal) {
-                (Some(prior), _) => {
+            match (transfer.prior, transfer.removal.clone()) {
+                (Some(prior), Some(Removal::Cancel)) => {
                     transfer.stage = prior;
+                    transfer.prior = None;
+                    transfer.removal = None;
                     if let Some((rep, _)) = transfer.cancel_reply.take() {
                         Self::refuse(fx, rep, Fault::Rejected(reason.clone()));
                     }
@@ -335,14 +340,21 @@ impl TransferState {
                         self.show(id, Shown::Uploading { progress: 100 }, fx);
                     }
                 }
-                (None, Some(Removal::Confirmed { .. } | Removal::Discarded)) => self.begin_failure(now, id, "storage".into(), false, fx),
-                (None, _) => {
-                    for rep in [transfer.cancel_reply.take().map(|(rep, _)| rep), transfer.accept_reply.take()].into_iter().flatten() {
-                        Self::refuse(fx, rep, Fault::Rejected(reason.clone()));
+                (_, Some(removal)) => {
+                    transfer.removal = None;
+                    self.removal_replies(id, &removal, fx);
+                    match removal {
+                        Removal::Cancel | Removal::Discarded => self.settle(id, OutboxOutcome::Discarded, fx),
+                        Removal::Confirmed { revision, result, row_id } => self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx),
+                        Removal::CopyFailed { .. } | Removal::Storage | Removal::Invalid { .. } => {}
                     }
-                    self.finish(id, fx);
+                    answered.push(id);
                 }
+                (_, None) => {}
             }
+        }
+        for id in answered {
+            self.finish(id, fx);
         }
         self.start_in_order(now, fx);
     }

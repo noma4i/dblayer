@@ -407,6 +407,7 @@ pub enum Removal {
     Discarded,
     CopyFailed { error: String },
     Storage,
+    Invalid { error: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
