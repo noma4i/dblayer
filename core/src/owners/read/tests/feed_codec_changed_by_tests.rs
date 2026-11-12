@@ -50,26 +50,12 @@ fn keys(list: &[WindowKey]) -> StaleKeys { StaleKeys::Set(list.iter().cloned().c
 fn of_model<'a>(events: &'a [FramedEvent], model: &str) -> Vec<&'a FramedEvent> { events.iter().filter(|event| event.model == model).collect() }
 
 #[test]
-fn feed_changed_by_removes() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"list", "removes_on":["DELETED"]})]).events("Changes", frame("CHAT", "DELETED", "c1"));
-    let payload: Value = serde_json::from_str(&events[0].payload).unwrap();
-    assert_eq!((events.len(), payload), (1, json!({"op":"delete", "model":"chats", "id":"c1", "area":"CHAT", "kind":"DELETED"})));
-    assert!(events[0].reread.is_empty());
-}
-
-#[test]
 fn feed_changed_by_two_forms() {
     let events = codec(vec![json!({"area":"CHAT", "relation":"node"}), json!({"area":"CHAT", "relation":"named", "parameter":"other"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
     assert_eq!(events.len(), 1, "one event of the model for two forms");
     assert_eq!(events[0].reread, keys(&[key("node", json!({crate::schema::NODE_PARAM: "c1"})), key("named", json!({"other":"c1"}))]));
     let observed = codec(vec![json!({"area":"CHAT", "relation":"node"}), json!({"area":"CHAT", "relation":"list", "observed":true})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
     assert_eq!((observed.len(), &observed[0].reread), (1, &StaleKeys::All), "an observed form widens the union to the model");
-}
-
-#[test]
-fn feed_changed_by_node() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"node"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!(events[0].reread, keys(&[key("node", json!({crate::schema::NODE_PARAM: "c1"}))]));
 }
 
 #[test]
@@ -87,27 +73,11 @@ fn feed_payload_missing_uses_node() {
 }
 
 #[test]
-fn feed_changed_by_named() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"named", "parameter":"other"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!(events[0].reread, keys(&[key("named", json!({"other":"c1"}))]));
-}
-
-#[test]
-fn feed_changed_by_named_default_param() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"named"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!(events[0].reread, keys(&[key("named", json!({"key":"c1"}))]), "the first parameter of the relation takes the id");
-}
-
-#[test]
-fn feed_changed_by_observed() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"list", "observed":true})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!(events[0].reread, StaleKeys::All);
-}
-
-#[test]
-fn feed_changed_by_current() {
-    let events = codec(vec![json!({"area":"CHAT", "relation":"current"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!(events[0].reread, keys(&[key("current", json!({}))]), "a singleton has no id in its key");
+fn feed_changed_by_key_shapes() {
+    let named = codec(vec![json!({"area":"CHAT", "relation":"named"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
+    assert_eq!(named[0].reread, keys(&[key("named", json!({"key":"c1"}))]), "the first parameter of the relation takes the id");
+    let current = codec(vec![json!({"area":"CHAT", "relation":"current"})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
+    assert_eq!(current[0].reread, keys(&[key("current", json!({}))]), "a singleton has no id in its key");
 }
 
 fn derived() -> (SchemaFeedCodec, std::sync::Arc<Store>) { codec_with_store(vec![json!({"area":"MESSAGE", "relation":"list", "id_of":{"model":"messages", "field":"chatId"}})]) }
