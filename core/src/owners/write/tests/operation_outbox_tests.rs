@@ -16,16 +16,11 @@ fn operation(seq: i64, model: &str, status: OperationStatus, rows: &[&str], temp
 }
 
 #[test]
-fn open_row_ids_include_pending_rows_and_temp_id() {
+fn open_row_ids_of_a_model_include_its_pending_rows_and_temp_id() {
     let queue = OutboxQueue::new(vec![
         operation(1, "messages", Pending, &["1"], Some("2")),
         operation(2, "messages", Committed, &["3"], None),
+        operation(3, "profiles", Pending, &["4"], None),
     ]);
     assert_eq!(queue.open_row_ids(&ModelKey::new("messages")), [id("1"), id("2")].into_iter().collect());
-}
-
-#[test]
-fn open_row_ids_for_other_model_is_empty() {
-    let queue = OutboxQueue::new(vec![operation(1, "profiles", Pending, &["1"], None)]);
-    assert!(queue.open_row_ids(&ModelKey::new("messages")).is_empty());
 }
