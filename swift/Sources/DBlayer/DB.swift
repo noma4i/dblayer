@@ -67,8 +67,11 @@ public enum DB {
 
   public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     _ = NetworkStatus()
-    let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil, preparer: SystemPreparer())
-    _ = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
+    let puts = UrlSessionPuts.available()
+    UrlSessionPuts.current.set(puts)
+    let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil, preparer: SystemPreparer(), detachedPut: puts != nil, putExecutor: puts)
+    let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
+    puts?.attach(database)
   }
 
   private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {
