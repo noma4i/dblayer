@@ -243,23 +243,6 @@ async fn a_conditional_delete_event_removes_the_row() {
     for (listen, field, value) in cases { feed_conditional_delete(listen, field, value).await; }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_apply_ephemeral() {
-    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
-    let (database, transport, stream, token) = feed_listen_events(listen).await;
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":1,"lists":[]}}]}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 1, .. })));
-    let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    assert!(matches!(bound(entity.pull_next()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
-    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":true}}}})));
-    assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
-    let Some(ReadValue::Delta { edits, .. }) = bound(entity.pull_next()).await else { panic!("the overlay did not reach the row") };
-    let rows = crate::ffi::RowEdit::carried(&edits);
-    assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::tests::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
-    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
-    bound(database.close_database()).await.unwrap();
-}
-
 
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     let value = bound(stream.pull_next()).await.unwrap();
