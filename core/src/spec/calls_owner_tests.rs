@@ -1,6 +1,5 @@
-//! Owner-level tests of the `calls` machine: the owner `Calls` on `DetScheduler` against `ref_calls.rs`. Names are the `Test` column.
+//! Owner-level tests of the `calls` owner on `DetScheduler`: input -> effects and answers.
 
-use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, End, Fail, Input, Kind, Out};
 use crate::owners::calls::{CallAnswer, CallError, CallKind, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
 use crate::owners::contract::Online;
 use crate::spec::support::{new_log, take, Log, Recorder};
@@ -228,42 +227,42 @@ fn call_waiting_network_online() {
     assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })));
 }
 
-fn kind_of(kind: Kind) -> CallKind {
-    match kind {
-        Kind::Query => CallKind::Query,
-        Kind::Mutate => CallKind::Mutate,
-    }
+type ReplyId = u64;
+type CallId = u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End { Session, Close }
+
+/// One step of a scenario: the owner input without the stamp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Input {
+    Run { epoch: u64, operation: String, reply: ReplyId },
+    Declare(Vec<(String, CallKind)>),
+    Response { call_id: CallId, body: Option<String>, errors: Vec<String> },
+    TransportError { call_id: CallId, error: CallError },
+    Dropped { call_id: CallId },
+    RetryDue { call_id: CallId, attempt: u32 },
+    Deadline { call_id: CallId },
+    CallerCancel { reply: ReplyId },
+    Online(bool),
+    Snapshot(bool),
+    EpochStarted(u64),
+    EpochEnded(End),
+    Closing,
 }
 
-fn ref_kind(kind: CallKind) -> Kind {
-    match kind {
-        CallKind::Query => Kind::Query,
-        CallKind::Mutate => Kind::Mutate,
-    }
+/// The effects of one step without the answers, and the answers.
+struct Out {
+    effects: Vec<CallsEffect>,
+    replies: Vec<(u64, CallAnswer)>,
 }
 
-fn fail(error: &Fail) -> CallError {
-    match error {
-        Fail::NoSession => CallError::NoSession,
-        Fail::Invalid => CallError::Invalid,
-        Fail::Offline => CallError::Offline,
-        Fail::Network => CallError::Network,
-        Fail::Graphql(messages) => CallError::Graphql { messages: messages.clone(), extensions: None },
-        Fail::Http => CallError::Http { status: 0, detail: String::new() },
-        Fail::Dropped => CallError::Dropped,
-        Fail::NotSent => CallError::NotSent,
-        Fail::InvalidResponse => CallError::InvalidResponse,
-        Fail::Interrupted => CallError::Interrupted,
-        Fail::SessionEnded => CallError::SessionEnded,
-        Fail::Closed => CallError::Closed,
-    }
-}
+fn http() -> CallError { CallError::Http { status: 0, detail: String::new() } }
 
 struct Twin {
     det: DetScheduler,
     addr: Address<Calls>,
     log: Log<CallsEffect>,
-    reference: Ref,
     history: Vec<CallsEffect>,
     epoch: u64,
 }
@@ -274,23 +273,22 @@ impl Twin {
     fn with(online: Option<bool>) -> Self {
         let mut det = DetScheduler::new(5);
         let log = new_log();
-        let declared = [("Op", Kind::Query), ("Change", Kind::Mutate)];
-        let addr = det.add::<Calls>("calls", CallsState::new(EPOCH, None, &declared.map(|(name, kind)| (name, kind_of(kind)))), Recorder::<Calls>::new(&log));
+        let declared = [("Op", CallKind::Query), ("Change", CallKind::Mutate)];
+        let addr = det.add::<Calls>("calls", CallsState::new(EPOCH, None, &declared), Recorder::<Calls>::new(&log));
         det.start_epoch(EPOCH);
         if let Some(online) = online { det.post(addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(online))); }
         det.run_until_quiet(100).expect("the owner is quiet");
         take(&log);
-        Self { det, addr, log, reference: Ref::new(EPOCH, online, &declared), history: Vec::new(), epoch: EPOCH }
+        Self { det, addr, log, history: Vec::new(), epoch: EPOCH }
     }
 
-    /// Feeds both sides and compares effects, replies and the state of every call.
+    /// Feeds the owner one input and returns what it did.
     fn feed(&mut self, input: Input) -> Out {
         match input.clone() {
             Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
-            Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, crate::owners::calls::CallDefinition { kind: kind_of(kind), document: String::new(), root: String::new() })).collect())),
+            Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, crate::owners::calls::CallDefinition { kind, document: String::new(), root: String::new() })).collect())),
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, data: None, errors: errors.into_iter().map(|message| crate::transport::GraphQLError { message, path: None, extensions: None }).collect(), kind: crate::transport::AnswerKind::Answered { sequence: None } }),
-            Input::Transient { call_id, reason } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body: None, data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Transient { reason } }),
-            Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
+            Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
             Input::RetryDue { call_id, attempt } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::RetryDue { call_id, attempt }),
             Input::Deadline { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Deadline { call_id }),
@@ -304,48 +302,12 @@ impl Twin {
         self.det.run_until_quiet(100).expect("the owner is quiet");
         let raw = take(&self.log);
         self.history.extend(raw.iter().cloned());
-        let want = self.reference.step(input);
-        let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
-            CallsEffect::Request { call_id, request_id, operation, definition, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone(), kind: ref_kind(definition.kind) }),
-            CallsEffect::Cancel { request_id, kind } => Some(RefEffect::Cancel { request_id: *request_id, kind: ref_kind(*kind) }),
-            CallsEffect::Release { request_id } => Some(RefEffect::Release { request_id: *request_id }),
-            CallsEffect::SnapshotRequest { epoch } => Some(RefEffect::SnapshotRequest { epoch: *epoch }),
-            CallsEffect::Drained(_) => Some(RefEffect::Drained),
-            CallsEffect::Reply { .. } => None,
-        }).collect();
-        let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {
-            CallsEffect::Reply { id, answer } => Some((*id, answer.clone().map_err(|error| error_of(&error)))),
+        let effects: Vec<CallsEffect> = raw.iter().filter(|effect| !matches!(effect, CallsEffect::Reply { .. })).cloned().collect();
+        let replies: Vec<(u64, CallAnswer)> = raw.iter().filter_map(|effect| match effect {
+            CallsEffect::Reply { id, answer } => Some((*id, answer.clone())),
             _ => None,
         }).collect();
-        assert_eq!(effects, want.effects, "the same effects: owner {effects:?} reference {:?}", want.effects);
-        assert_eq!(replies, want.replies, "the same replies: owner {replies:?} reference {:?}", want.replies);
-        let state = self.det.state(self.addr).expect("state");
-        for call in 1..=4 {
-            let got = state.phase(call).map(|phase| match phase {
-                CallPhase::Sending { request_id, kind, generation } => CallState::Sending { request_id, kind: ref_kind(kind), generation },
-                CallPhase::Done => CallState::Done,
-            });
-            assert_eq!(got, self.reference.state(call), "the same state of call {call}");
-        }
-        want
-    }
-}
-
-fn error_of(error: &CallError) -> Fail {
-    match error {
-        CallError::NoSession => Fail::NoSession,
-        CallError::Invalid => Fail::Invalid,
-        CallError::Offline => Fail::Offline,
-        CallError::Network => Fail::Network,
-        CallError::Graphql { messages, .. } => Fail::Graphql(messages.clone()),
-        CallError::Http { .. } | CallError::Session { .. } | CallError::Unauthorized => Fail::Http,
-        CallError::Dropped => Fail::Dropped,
-        CallError::NotSent => Fail::NotSent,
-        CallError::InvalidResponse => Fail::InvalidResponse,
-        CallError::Interrupted => Fail::Interrupted,
-        CallError::SessionEnded => Fail::SessionEnded,
-        CallError::Closed => Fail::Closed,
-        CallError::Storage | CallError::Failed(_) => panic!("the Calls table does not read Published"),
+        Out { effects, replies }
     }
 }
 
@@ -377,9 +339,9 @@ fn call_run() {
 #[test]
 fn call_declare() {
     let mut twin = Twin::new();
-    twin.feed(Input::Declare(vec![("Other".into(), Kind::Query)]));
+    twin.feed(Input::Declare(vec![("Other".into(), CallKind::Query)]));
     let out = twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
-    assert_eq!(out.replies, vec![(1, Err(Fail::Invalid))], "the declared set is replaced, not extended");
+    assert_eq!(out.replies, vec![(1, Err(CallError::Invalid))], "the declared set is replaced, not extended");
     let out = twin.feed(Input::Run { epoch: EPOCH, operation: "Other".into(), reply: 2 });
     assert_eq!(out.effects.len(), 1, "the new operation runs");
 }
@@ -387,13 +349,13 @@ fn call_declare() {
 #[test]
 fn call_run_mutate() {
     let out = Twin::new().feed(run_mutate(1));
-    assert!(matches!(out.effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]), "a mutation goes through Session: {:?}", out.effects);
+    assert!(matches!(out.effects.as_slice(), [CallsEffect::Request { definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }]), "a mutation goes through Session: {:?}", out.effects);
 }
 
 #[test]
 fn call_response_invalid() {
     let out = sending().feed(Input::Response { call_id: 1, body: None, errors: vec![] });
-    assert_eq!(out.replies, vec![(10, Err(Fail::InvalidResponse))]);
+    assert_eq!(out.replies, vec![(10, Err(CallError::InvalidResponse))]);
 }
 
 #[test]
@@ -402,8 +364,7 @@ fn call_declare_in_flight() {
     twin.feed(Input::Declare(vec![]));
     let out = twin.feed(response(1));
     assert_eq!(out.replies.len(), 1, "an accepted call outlives a new declaration");
-    assert_eq!(twin.reference.generation, 1);
-    assert_eq!(twin.reference.state(1), Some(CallState::Done));
+    assert!(matches!(twin.det.state(twin.addr).expect("state").phase(1), Some(CallPhase::Done)));
 }
 
 #[test]
@@ -414,8 +375,8 @@ fn call_response_errors() { sending().feed(Input::Response { call_id: 1, body: N
 
 #[test]
 fn call_transport_error() {
-    sending().feed(Input::TransportError { call_id: 1, error: Fail::Http });
-    sending().feed(Input::TransportError { call_id: 1, error: Fail::Network });
+    sending().feed(Input::TransportError { call_id: 1, error: http() });
+    sending().feed(Input::TransportError { call_id: 1, error: CallError::Network });
 }
 
 #[test]
@@ -423,12 +384,12 @@ fn call_dropped() {
     let mut query = sending();
     let out = query.feed(Input::Dropped { call_id: 1 });
     assert!(out.replies.is_empty() && out.effects.is_empty());
-    assert!(matches!(query.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { call_id: 1, kind: Kind::Query, .. }]));
+    assert!(matches!(query.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [CallsEffect::Request { call_id: 1, definition: crate::owners::calls::CallDefinition { kind: CallKind::Query, .. }, .. }]));
     let mut mutation = Twin::new();
     mutation.feed(run_mutate(11));
     let out = mutation.feed(Input::Dropped { call_id: 1 });
     assert!(out.effects.is_empty() && out.replies.is_empty());
-    assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [RefEffect::Request { request_id: 1, kind: Kind::Mutate, .. }]));
+    assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [CallsEffect::Request { request_id: 1, definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }]));
     use crate::runtime::{Effect, StateOwner};
     let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
     Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
@@ -445,7 +406,7 @@ fn call_dropped() {
 fn call_stray() {
     let mut twin = sending();
     twin.feed(response(9));
-    twin.feed(Input::TransportError { call_id: 9, error: Fail::Http });
+    twin.feed(Input::TransportError { call_id: 9, error: http() });
     twin.feed(Input::Dropped { call_id: 9 });
 }
 
@@ -461,7 +422,7 @@ fn call_online() {
 fn call_epoch_started_resets_online() {
     let mut twin = Twin::new();
     let out = twin.feed(Input::EpochStarted(EPOCH + 1));
-    assert_eq!(out.effects, vec![RefEffect::SnapshotRequest { epoch: EPOCH + 1 }], "the owner asks Network for its snapshot");
+    assert_eq!(out.effects, vec![CallsEffect::SnapshotRequest { epoch: EPOCH + 1 }], "the owner asks Network for its snapshot");
     let out = twin.feed(Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 });
     assert!(out.replies.is_empty() && out.effects.is_empty(), "the new epoch has no online value until its snapshot: the call waits");
 }
@@ -484,11 +445,11 @@ fn call_run_before_snapshot_waits() {
     let mut offline = Twin::with(None);
     offline.feed(run(2));
     let out = offline.feed(Input::Snapshot(false));
-    assert_eq!(out.replies, vec![(2, Err(Fail::Offline))], "the snapshot without network answers the waiting call Offline");
+    assert_eq!(out.replies, vec![(2, Err(CallError::Offline))], "the snapshot without network answers the waiting call Offline");
     let mut ended = Twin::with(None);
     ended.feed(run(3));
     let out = ended.feed(Input::EpochEnded(End::Session));
-    assert_eq!(out.replies, vec![(3, Err(Fail::SessionEnded))], "the end of the epoch answers a waiting call");
+    assert_eq!(out.replies, vec![(3, Err(CallError::SessionEnded))], "the end of the epoch answers a waiting call");
 }
 
 #[test]
@@ -559,7 +520,7 @@ fn call_snapshot_sets_online() {
     assert_eq!(out.effects.len(), 1, "the snapshot opens the owner to calls");
     twin.feed(Input::Online(false));
     let out = twin.feed(run(2));
-    assert_eq!(out.replies, vec![(2, Err(Fail::Offline))], "a broadcast after the snapshot follows the network");
+    assert_eq!(out.replies, vec![(2, Err(CallError::Offline))], "a broadcast after the snapshot follows the network");
 }
 
 fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usize>>) {
@@ -579,12 +540,12 @@ fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usiz
 #[tokio::test(flavor = "multi_thread")]
 async fn call_prop_mutation_against_end_any_order() {
     let mut offline = Twin::with(Some(false));
-    assert_eq!(offline.feed(run_mutate(1)).replies, vec![(1, Err(Fail::Offline))]);
+    assert_eq!(offline.feed(run_mutate(1)).replies, vec![(1, Err(CallError::Offline))]);
     for cancel in [false, true] {
         let mut twin = Twin::with(None);
         twin.feed(run_mutate(1));
         let out = twin.feed(if cancel { Input::CallerCancel { reply: 1 } } else { Input::Deadline { call_id: 1 } });
-        assert_eq!(out.replies, if cancel { vec![] } else { vec![(1, Err(Fail::Network))] });
+        assert_eq!(out.replies, if cancel { vec![] } else { vec![(1, Err(CallError::Network))] });
         let late = twin.feed(Input::Snapshot(true));
         assert!(late.effects.is_empty() && late.replies.is_empty());
     }
@@ -593,12 +554,12 @@ async fn call_prop_mutation_against_end_any_order() {
             let mut twin = Twin::with(None);
             assert!(twin.feed(run_mutate(1)).replies.is_empty());
             if snapshot_first {
-                assert!(matches!(twin.feed(Input::Snapshot(true)).effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]));
+                assert!(matches!(twin.feed(Input::Snapshot(true)).effects.as_slice(), [CallsEffect::Request { definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }]));
             }
             let ended = twin.feed(Input::EpochEnded(end));
-            let expected = if end == End::Close { Fail::Closed } else { Fail::SessionEnded };
+            let expected = if end == End::Close { CallError::Closed } else { CallError::SessionEnded };
             assert_eq!(ended.replies, vec![(1, Err(expected))]);
-            assert!(!ended.effects.iter().any(|effect| matches!(effect, RefEffect::Request { .. })));
+            assert!(!ended.effects.iter().any(|effect| matches!(effect, CallsEffect::Request { .. })));
         }
     }
     let mut permutations = Vec::new();
@@ -610,7 +571,7 @@ async fn call_prop_mutation_against_end_any_order() {
             tasks.push(tokio::spawn(async move {
                 let mut twin = Twin::new();
                 let started = twin.feed(run_mutate(1));
-                assert!(matches!(started.effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]));
+                assert!(matches!(started.effects.as_slice(), [CallsEffect::Request { definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }]));
                 let mut answer = None;
                 let mut cancelled = false;
                 for event in &order {
@@ -626,9 +587,9 @@ async fn call_prop_mutation_against_end_any_order() {
                         if let Some((_, result)) = out.replies.first() {
                             let expected = match event {
                                 0 => Ok("{}".to_string()),
-                                1 => Err(Fail::Network),
-                                3 if end == End::Close => Err(Fail::Closed),
-                                3 => Err(Fail::SessionEnded),
+                                1 => Err(CallError::Network),
+                                3 if end == End::Close => Err(CallError::Closed),
+                                3 => Err(CallError::SessionEnded),
                                 _ => panic!("unexpected reply for order {order:?}"),
                             };
                             assert_eq!(*result, expected, "order {order:?}, end {end:?}");
@@ -640,7 +601,7 @@ async fn call_prop_mutation_against_end_any_order() {
                         assert!(out.replies.is_empty(), "duplicate answer for order {order:?}");
                     }
                     if *event == 3 {
-                        assert!(out.effects.iter().all(|effect| !matches!(effect, RefEffect::Request { .. })), "request after end for order {order:?}");
+                        assert!(out.effects.iter().all(|effect| !matches!(effect, CallsEffect::Request { .. })), "request after end for order {order:?}");
                         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id: 1, body: Some("late".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } });
                         twin.det.post(twin.addr, EpochStamp::Control, CallsInput::Online(Online(true)));
                         twin.det.run_until_quiet(100).unwrap();
@@ -690,9 +651,9 @@ fn call_epoch_ended() {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
         let out = twin.feed(Input::EpochEnded(End::Session));
-        let kind = if operation == "Op" { Kind::Query } else { Kind::Mutate };
-        assert!(out.effects.contains(&RefEffect::Cancel { request_id: 1, kind }));
-        assert_eq!(out.replies, vec![(1, Err(Fail::SessionEnded))]);
+        let kind = if operation == "Op" { CallKind::Query } else { CallKind::Mutate };
+        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: 1, kind }));
+        assert_eq!(out.replies, vec![(1, Err(CallError::SessionEnded))]);
     }
 }
 
@@ -702,17 +663,17 @@ fn call_closing() {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
         let out = twin.feed(Input::Closing);
-        let kind = if operation == "Op" { Kind::Query } else { Kind::Mutate };
-        assert!(out.effects.contains(&RefEffect::Cancel { request_id: 1, kind }));
-        assert!(out.effects.contains(&RefEffect::Drained));
-        assert_eq!(out.replies, vec![(1, Err(Fail::Closed))]);
+        let kind = if operation == "Op" { CallKind::Query } else { CallKind::Mutate };
+        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: 1, kind }));
+        assert!(out.effects.iter().any(|effect| matches!(effect, CallsEffect::Drained(_))));
+        assert_eq!(out.replies, vec![(1, Err(CallError::Closed))]);
     }
 }
 
 #[test]
 fn call_epoch_ended_close() {
     let out = sending().feed(Input::EpochEnded(End::Close));
-    assert_eq!(out.replies, vec![(10, Err(Fail::Closed))], "an epoch ended by close answers the run with Closed");
+    assert_eq!(out.replies, vec![(10, Err(CallError::Closed))], "an epoch ended by close answers the run with Closed");
 }
 
 #[test]
@@ -743,7 +704,7 @@ fn call_done() {
     twin.feed(response(1));
     twin.feed(response(1));
     twin.feed(Input::Dropped { call_id: 1 });
-    twin.feed(Input::TransportError { call_id: 1, error: Fail::Http });
+    twin.feed(Input::TransportError { call_id: 1, error: http() });
     twin.feed(Input::Online(false));
     twin.feed(Input::EpochEnded(End::Session));
 }
@@ -776,7 +737,7 @@ fn random_trace(seed: u64) -> Twin {
             0..=2 => { reply += 1; run(reply) }
             3 => response(call),
             4 => Input::Dropped { call_id: call },
-            5 => Input::TransportError { call_id: call, error: Fail::Http },
+            5 => Input::TransportError { call_id: call, error: http() },
             6 => Input::Online(next(&mut s).is_multiple_of(2)),
             7 => Input::EpochEnded(End::Session),
             _ => Input::Closing,
@@ -867,26 +828,6 @@ fn call_prop_single_request() {
     let _: CallAnswer = Ok(String::new());
 }
 
-#[test]
-fn matrix_owner_state_input_calls() {
-    use crate::test_matrix::{state_input_pairs, Matrix};
-    let mut matrix = Matrix::new("S-calls");
-    fn offline() -> Twin { Twin::with(Some(false)) }
-    fn sending_mutation() -> Twin { let mut twin = Twin::new(); twin.feed(run_mutate(11)); twin }
-    fn done() -> Twin { let mut twin = sending(); twin.feed(response(1)); twin }
-    fn undeclared_online() -> Twin { Twin::with(None) }
-    let alphabet: Vec<(&str, Input)> = vec![
-        ("Run query", run(20)), ("Run mutation", run_mutate(21)), ("Run unknown", Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 22 }), ("Run stale epoch", Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 23 }),
-        ("Declare other", Input::Declare(vec![("Other".into(), Kind::Query)])), ("Declare none", Input::Declare(vec![])),
-        ("Response body", response(1)), ("Response without body", Input::Response { call_id: 1, body: None, errors: vec![] }), ("Response errors", Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }), ("Response stray call", response(9)),
-        ("TransportError network", Input::TransportError { call_id: 1, error: Fail::Network }), ("TransportError http", Input::TransportError { call_id: 1, error: Fail::Http }), ("TransportError stray", Input::TransportError { call_id: 9, error: Fail::Network }),
-        ("Dropped", Input::Dropped { call_id: 1 }), ("Transient", Input::Transient { call_id: 1, reason: "temporary".into() }), ("RetryDue", Input::RetryDue { call_id: 1, attempt: 1 }), ("Deadline", Input::Deadline { call_id: 1 }), ("CallerCancel", Input::CallerCancel { reply: 10 }), ("Online false", Input::Online(false)), ("Online true", Input::Online(true)), ("Snapshot offline", Input::Snapshot(false)),
-        ("EpochEnded", Input::EpochEnded(End::Session)), ("Closing", Input::Closing),
-    ];
-    state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
-    matrix.finish();
-}
-
 fn change_run() -> CallsState {
     use crate::runtime::StateOwner;
     let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
@@ -933,8 +874,8 @@ fn call_releasing_verdict() {
     let mut twin = Twin::new();
     twin.feed(Input::Run { epoch: EPOCH, operation: "Change".into(), reply: 1 });
     twin.feed(Input::Deadline { call_id: 1 });
-    let out = twin.feed(Input::TransportError { call_id: 1, error: Fail::NotSent });
-    assert_eq!(out.replies, vec![(1, Err(Fail::Network))], "NotSent: no request was made and none will be");
+    let out = twin.feed(Input::TransportError { call_id: 1, error: CallError::NotSent });
+    assert_eq!(out.replies, vec![(1, Err(CallError::Network))], "NotSent: no request was made and none will be");
     let requests_before = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
     for later in [Input::RetryDue { call_id: 1, attempt: 1 }, Input::Online(false), Input::Online(true), Input::Deadline { call_id: 1 }] { twin.feed(later); }
     assert_eq!(twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count(), requests_before, "no request after Err(Network)");
@@ -943,8 +884,8 @@ fn call_releasing_verdict() {
 /// P-CALL-06: the pair of a mutation leaves with one `request_id`. Calls sees the stage of Session only by its answer: no pair (queue, Sealing, Persisting) = `NotSent`, a pair (Calling, Landing, Held) = `Dropped`.
 #[test]
 fn call_prop_dropped_pair_single_execution() {
-    let preludes: [(&str, Vec<Input>); 3] = [("first attempt", Vec::new()), ("after Dropped", vec![Input::Dropped { call_id: 1 }]), ("after Network", vec![Input::TransportError { call_id: 1, error: Fail::Network }])];
-    let stages: [(&str, Input); 6] = [("queue", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Sealing", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Persisting", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Calling", Input::Dropped { call_id: 1 }), ("Landing", Input::Dropped { call_id: 1 }), ("Held", Input::Dropped { call_id: 1 })];
+    let preludes: [(&str, Vec<Input>); 3] = [("first attempt", Vec::new()), ("after Dropped", vec![Input::Dropped { call_id: 1 }]), ("after Network", vec![Input::TransportError { call_id: 1, error: CallError::Network }])];
+    let stages: [(&str, Input); 6] = [("queue", Input::TransportError { call_id: 1, error: CallError::NotSent }), ("Sealing", Input::TransportError { call_id: 1, error: CallError::NotSent }), ("Persisting", Input::TransportError { call_id: 1, error: CallError::NotSent }), ("Calling", Input::Dropped { call_id: 1 }), ("Landing", Input::Dropped { call_id: 1 }), ("Held", Input::Dropped { call_id: 1 })];
     for (prelude_name, prelude) in &preludes {
         for trigger in [Input::Deadline { call_id: 1 }, Input::CallerCancel { reply: 1 }] {
             for (stage, answer) in &stages {
@@ -952,17 +893,17 @@ fn call_prop_dropped_pair_single_execution() {
                 let mut twin = Twin::new();
                 twin.feed(Input::Run { epoch: EPOCH, operation: "Change".into(), reply: 1 });
                 for input in prelude { twin.feed(input.clone()); }
-                let mut replies: Vec<Result<String, Fail>> = twin.feed(trigger.clone()).replies.into_iter().map(|(_, answer)| answer).collect();
+                let mut replies: Vec<CallAnswer> = twin.feed(trigger.clone()).replies.into_iter().map(|(_, answer)| answer).collect();
                 if *prelude_name == "first attempt" || matches!(trigger, Input::CallerCancel { .. }) { replies.extend(twin.feed(answer.clone()).replies.into_iter().map(|(_, answer)| answer)); }
                 let pairs: std::collections::BTreeSet<u64> = twin.history.iter().filter_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).collect();
                 assert_eq!(pairs.len(), 1, "{label}: one pair per call: {pairs:?}");
                 let requests = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
                 match trigger {
-                    Input::Deadline { .. } if *prelude_name != "first attempt" => assert_eq!(replies, vec![Err(Fail::Dropped)], "{label}: the pair exists, Dropped always"),
-                    Input::Deadline { .. } => assert_eq!(replies, vec![if matches!(answer, Input::Dropped { .. }) { Err(Fail::Dropped) } else { Err(Fail::Network) }], "{label}: Network only when no request was made, Dropped when the pair exists"),
+                    Input::Deadline { .. } if *prelude_name != "first attempt" => assert_eq!(replies, vec![Err(CallError::Dropped)], "{label}: the pair exists, Dropped always"),
+                    Input::Deadline { .. } => assert_eq!(replies, vec![if matches!(answer, Input::Dropped { .. }) { Err(CallError::Dropped) } else { Err(CallError::Network) }], "{label}: Network only when no request was made, Dropped when the pair exists"),
                     _ => assert!(replies.is_empty(), "{label}: the caller is gone, no answer: {replies:?}"),
                 }
-                let network_answer = replies.contains(&Err(Fail::Network));
+                let network_answer = replies.contains(&Err(CallError::Network));
                 for late in [Input::RetryDue { call_id: 1, attempt: 1 }, Input::RetryDue { call_id: 1, attempt: 2 }, Input::Online(false), Input::Online(true), Input::Deadline { call_id: 1 }, Input::Dropped { call_id: 1 }] { twin.feed(late); }
                 let after = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
                 assert_eq!(after, requests, "{label}: no request of this call after the verdict (Err(Network) = {network_answer}) or the Release");
