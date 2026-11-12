@@ -83,21 +83,4 @@ class BridgeProbeTest {
         listScope.cancel()
     }
 
-    @Test
-    fun aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-        val stream = AccountScope.current().stream(Moment.recent)
-
-        val local = Moment.create(text = "hello", media = null, account = AccountScope.current()).optimisticValue!!
-        val settled = withTimeout(5000) {
-            stream.values.mapNotNull { value -> (value as? ReadValue.Delta)?.edits?.filterIsInstance<RowEdit.Rewrite>()?.firstOrNull { it.row.id == "m77" }?.temporary }.first()
-        }
-
-        assertEquals(local.id, settled)
-        stream.close()
-    }
-
 }

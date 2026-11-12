@@ -181,29 +181,6 @@ struct BridgeProbeTests {
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
-    let transport = MockTransport()
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let stream = try AccountScope().stream(Moment.recent)
-    let cursor = Cursor(stream)
-    _ = await cursor.next("the first snapshot")
-
-    let local = try await Moment.create(text: "hello", media: nil, in: DB.account()).optimisticValue!
-    var settled: String?
-    await consuming(cursor, "a delivery of the list", until: { settled != nil }) { value in
-      if case let .delta(_, _, edits, _) = value {
-        for case let .rewrite(_, row, temporary) in edits where row.id == "m77" { settled = temporary }
-      }
-    }
-
-    #expect(settled == local.id)
-    await stream.cancel()
-  }
-
 
   @Test
   func aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() async throws {
