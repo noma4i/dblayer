@@ -3,8 +3,8 @@ import Foundation
 public struct Prepare: Sendable {
   let wire: WirePrepare
 
-  public static func video(limits: VideoLimits? = nil, mirror: Bool = false, onCannotDecode: CannotDecode = .fail) -> Self { Self(wire: .video(limits: limits, mirror: mirror, onCannotDecode: onCannotDecode)) }
-  public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format)) }
+  public static func video(limits: VideoLimits? = nil, mirror: Bool = false, onCannotDecode: CannotDecode = .fail, maxBytes: UInt64? = nil) -> Self { Self(wire: .video(limits: limits, mirror: mirror, onCannotDecode: onCannotDecode, maxBytes: maxBytes)) }
+  public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg, maxBytes: UInt64? = nil) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format, maxBytes: maxBytes)) }
 }
 
 public struct UploadRequest: Sendable {

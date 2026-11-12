@@ -8,8 +8,19 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
 
   public init() {}
 
-  public func probe(path: String) async -> ProbeOutcome {
+  public func probe(path: String, kind: PrepareKind) async -> ProbeOutcome {
     let file = URL(fileURLWithPath: path)
+    if kind == .image {
+      return Self.probeImage(file) ?? .failed(message: "\(path) is not an image")
+    }
+    do {
+      return try await Self.probeVideo(file)
+    } catch {
+      return .failed(message: "\(path) is not a video: \(error.localizedDescription)")
+    }
+  }
+
+  private static func probeImage(_ file: URL) -> ProbeOutcome? {
     if let source = CGImageSourceCreateWithURL(file as CFURL, nil),
        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
        let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -20,11 +31,7 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
         format: (CGImageSourceGetType(source) as String?) == UTType.png.identifier ? .png : .jpeg
       )
     }
-    do {
-      return try await Self.probeVideo(file)
-    } catch {
-      return .failed(message: "\(path) is neither an image nor a video: \(error.localizedDescription)")
-    }
+    return nil
   }
 
   public func run(job: PrepareJob, progress: PrepareProgress) async -> PrepareOutcome {
