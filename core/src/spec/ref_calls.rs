@@ -145,7 +145,7 @@ impl Calls {
                         self.done(call_id, Err(if last == Fail::Dropped { Fail::Network } else { last }), &mut out);
                     } else if attempt > 1 {
                         out.effects.push(Effect::Release { request_id });
-                        self.done(call_id, Err(last), &mut out);
+                        self.done(call_id, Err(Fail::Dropped), &mut out);
                     } else if self.releasing.insert(call_id) {
                         out.effects.push(Effect::Release { request_id });
                     }

@@ -251,6 +251,8 @@ fn fail(error: &Fail) -> CallError {
         Fail::Graphql(messages) => CallError::Graphql { messages: messages.clone(), extensions: None },
         Fail::Http => CallError::Http { status: 0, detail: String::new() },
         Fail::Dropped => CallError::Dropped,
+        // TEXT: the owner has no `NotSent` kind yet, the closest kind it can take is `Network`.
+        Fail::NotSent => CallError::Network,
         Fail::InvalidResponse => CallError::InvalidResponse,
         Fail::Interrupted => CallError::Interrupted,
         Fail::SessionEnded => CallError::SessionEnded,
@@ -909,11 +911,11 @@ fn call_deadline_expired_mutate_first() {
 
 #[test]
 fn call_deadline_expired_mutate_sent() {
-    for (last, want) in [(CallsInput::Dropped { call_id: 1 }, CallError::Dropped), (CallsInput::TransportError { call_id: 1, error: CallError::Network }, CallError::Network)] {
+    for last in [CallsInput::Dropped { call_id: 1 }, CallsInput::TransportError { call_id: 1, error: CallError::Network }] {
         let mut state = change_run();
-        step(&mut state, last);
+        step(&mut state, last.clone());
         let effects = step(&mut state, CallsInput::Deadline { call_id: 1 });
-        assert_eq!(replies(&effects), vec![Err(want.clone())], "the pair exists: the last kind of error, the outcome is unknown: {effects:?}");
+        assert_eq!(replies(&effects), vec![Err(CallError::Dropped)], "the pair exists, the outcome is unknown, whatever the last attempt gave ({last:?}): {effects:?}");
         assert!(effects.contains(&CallsEffect::Release { request_id: 1 }) && !effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { .. })), "{effects:?}");
     }
 }
@@ -927,5 +929,44 @@ fn call_releasing_verdict() {
         let effects = step(&mut state, verdict.clone());
         assert_eq!(replies(&effects), vec![want], "{verdict:?}: {effects:?}");
         assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Request { .. })), "no retry after the Release: {effects:?}");
+    }
+    let mut twin = Twin::new();
+    twin.feed(Input::Run { epoch: EPOCH, operation: "Change".into(), reply: 1 });
+    twin.feed(Input::Deadline { call_id: 1 });
+    let out = twin.feed(Input::TransportError { call_id: 1, error: Fail::NotSent });
+    assert_eq!(out.replies, vec![(1, Err(Fail::Network))], "NotSent: no request was made and none will be");
+    let requests_before = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
+    for later in [Input::RetryDue { call_id: 1, attempt: 1 }, Input::Online(false), Input::Online(true), Input::Deadline { call_id: 1 }] { twin.feed(later); }
+    assert_eq!(twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count(), requests_before, "no request after Err(Network)");
+}
+
+/// P-CALL-06: the pair of a mutation leaves with one `request_id`. Calls sees the stage of Session only by its answer: no pair (queue, Sealing, Persisting) = `NotSent`, a pair (Calling, Landing, Held) = `Dropped`.
+#[test]
+fn call_prop_dropped_pair_single_execution() {
+    let preludes: [(&str, Vec<Input>); 3] = [("first attempt", Vec::new()), ("after Dropped", vec![Input::Dropped { call_id: 1 }]), ("after Network", vec![Input::TransportError { call_id: 1, error: Fail::Network }])];
+    let stages: [(&str, Input); 6] = [("queue", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Sealing", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Persisting", Input::TransportError { call_id: 1, error: Fail::NotSent }), ("Calling", Input::Dropped { call_id: 1 }), ("Landing", Input::Dropped { call_id: 1 }), ("Held", Input::Dropped { call_id: 1 })];
+    for (prelude_name, prelude) in &preludes {
+        for trigger in [Input::Deadline { call_id: 1 }, Input::CallerCancel { reply: 1 }] {
+            for (stage, answer) in &stages {
+                let label = format!("{prelude_name} / {trigger:?} / {stage}");
+                let mut twin = Twin::new();
+                twin.feed(Input::Run { epoch: EPOCH, operation: "Change".into(), reply: 1 });
+                for input in prelude { twin.feed(input.clone()); }
+                let mut replies: Vec<Result<String, Fail>> = twin.feed(trigger.clone()).replies.into_iter().map(|(_, answer)| answer).collect();
+                if *prelude_name == "first attempt" || matches!(trigger, Input::CallerCancel { .. }) { replies.extend(twin.feed(answer.clone()).replies.into_iter().map(|(_, answer)| answer)); }
+                let pairs: std::collections::BTreeSet<u64> = twin.history.iter().filter_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).collect();
+                assert_eq!(pairs.len(), 1, "{label}: one pair per call: {pairs:?}");
+                let requests = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
+                match trigger {
+                    Input::Deadline { .. } if *prelude_name != "first attempt" => assert_eq!(replies, vec![Err(Fail::Dropped)], "{label}: the pair exists, Dropped always"),
+                    Input::Deadline { .. } => assert_eq!(replies, vec![if matches!(answer, Input::Dropped { .. }) { Err(Fail::Dropped) } else { Err(Fail::Network) }], "{label}: Network only when no request was made, Dropped when the pair exists"),
+                    _ => assert!(replies.is_empty(), "{label}: the caller is gone, no answer: {replies:?}"),
+                }
+                let network_answer = replies.contains(&Err(Fail::Network));
+                for late in [Input::RetryDue { call_id: 1, attempt: 1 }, Input::RetryDue { call_id: 1, attempt: 2 }, Input::Online(false), Input::Online(true), Input::Deadline { call_id: 1 }, Input::Dropped { call_id: 1 }] { twin.feed(late); }
+                let after = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
+                assert_eq!(after, requests, "{label}: no request of this call after the verdict (Err(Network) = {network_answer}) or the Release");
+            }
+        }
     }
 }
