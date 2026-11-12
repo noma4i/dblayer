@@ -40,6 +40,8 @@ struct Window {
     landed: Option<i64>,
     failed: bool,
     lost: bool,
+    /// The network went off while a stream of the model held the connection: the window is not fresh until its next landing (library.md section 11.4).
+    gap: bool,
     /// Stale signs seen, and the extra first-page loads they still allow.
     signs: u32,
     allowance: u32,
@@ -111,7 +113,7 @@ fn describe(steps: &[Step], index: usize) -> String {
 
 fn fresh(window: &Window, now: i64) -> bool {
     let Some(landed) = window.landed else { return false };
-    !window.failed && !window.lost && now >= landed && now - landed < LIFETIME_MS
+    !window.failed && !window.lost && !window.gap && now >= landed && now - landed < LIFETIME_MS
 }
 
 fn session_sent(steps: &[Step], id: &str) -> bool {
@@ -158,7 +160,13 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             (walk.now, walk.back) = (walk.now - walk.back, 0);
         }
         if let Some(online) = kinds(observed, "online").next() {
+            let was_online = walk.online;
             walk.online = online.value.as_bool().unwrap_or(false);
+            if was_online && !walk.online && walk.logged {
+                for interest in walk.streams.values() {
+                    walk.windows.entry(interest.operation.to_string()).or_default().gap = true;
+                }
+            }
         }
         let fresh_now: HashMap<String, bool> = walk.windows.iter().map(|(operation, window)| (operation.clone(), fresh(window, walk.now))).collect();
 
@@ -185,6 +193,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         }
 
         let mut replied_operation: Option<String> = None;
+        if kinds(observed, "replied").any(|replied| replied.value["how"] == "page" && session_sent(steps, replied.value["id"].as_str().unwrap_or(""))) {
+            walk.logged = true;
+        }
         for replied in kinds(observed, "replied") {
             let id = replied.value["id"].as_str().unwrap_or("");
             let Some(position) = walk.held.iter().position(|(held, _)| held == id) else { continue };
@@ -209,7 +220,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             let landed_ok = how == "page" && first_page && !kinds(observed, "error").any(|item| !REFUSALS.contains(&error_kind(item)));
             if landed_ok {
                 let window = walk.windows.entry(operation).or_default();
-                (window.landed, window.failed, window.lost) = (Some(walk.now), false, false);
+                (window.landed, window.failed, window.lost, window.gap) = (Some(walk.now), false, false, false);
             } else if how != "page" {
                 let (network, server) = walk.streaks.get(&operation).copied().unwrap_or((0, 0));
                 let exhausted = network >= NETWORK_ATTEMPTS || server >= SERVER_ATTEMPTS || !matches!(how, "temporary" | "drop" | "server");

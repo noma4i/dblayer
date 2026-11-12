@@ -37,7 +37,7 @@ impl LibraryRef {
 
     /// A session call starts: its request goes out when the network is on.
     fn start_login(&mut self, call: u64, queued: Vec<u64>) {
-        self.login_call = Some(Login { call, sent: false, attempts: 0, pause: None, queued });
+        self.login_call = Some(Login { call: Some(call), sent: false, attempts: 0, pause: None, queued });
         if self.on() {
             self.send_session();
         }
@@ -79,7 +79,7 @@ impl LibraryRef {
                 let (call, queued) = (login.call, std::mem::take(&mut login.queued));
                 self.login_call = None;
                 self.identity = true;
-                self.outcomes.push((call, shapes::session()));
+                self.outcomes.extend(call.map(|call| (call, shapes::session())));
                 queued.into_iter().for_each(|id| self.outcomes.push((id, shapes::error("session"))));
             }
             Reply::Error(kind) if kind == "temporary" || kind == "server" => {
@@ -90,7 +90,7 @@ impl LibraryRef {
             Reply::Error(_) => {
                 let (call, mut queued) = (login.call, std::mem::take(&mut login.queued));
                 self.login_call = None;
-                self.outcomes.push((call, shapes::error("graphql")));
+                self.outcomes.extend(call.map(|call| (call, shapes::error("graphql"))));
                 if !queued.is_empty() {
                     let next = queued.remove(0);
                     self.start_login(next, queued);
@@ -105,9 +105,13 @@ impl LibraryRef {
         for id in ids {
             self.finish(id, Ending::Failed(kind));
         }
-        if let Some(login) = self.login_call.take() {
-            self.outcomes.push((login.call, shapes::error(kind)));
-            login.queued.into_iter().for_each(|id| self.outcomes.push((id, shapes::error(kind))));
+        if let Some(mut login) = self.login_call.take() {
+            self.outcomes.extend(login.call.take().map(|call| (call, shapes::error(kind))));
+            std::mem::take(&mut login.queued).into_iter().for_each(|id| self.outcomes.push((id, shapes::error(kind))));
+            if kind == "closed" {
+                (login.sent, login.pause) = (false, None);
+                self.login_call = Some(login);
+            }
         }
         self.held.iter_mut().for_each(|held| held.live = false);
     }
@@ -149,6 +153,19 @@ impl LibraryRef {
         Vec::new()
     }
 
+    /// Section 11.4 `set_online(false)` with a live connection: the windows of every model that a live stream subscribes are not fresh, so the network return rereads the ones that are watched.
+    fn mark_subscribed_models_unfresh(&mut self) {
+        if !self.identity {
+            return;
+        }
+        let subscribed: Vec<u8> = self.streams.values().filter(|stream| stream.live).filter_map(|stream| stream.reads.key()).map(Key::model).collect();
+        for key in [Key::Feed, Key::Node, Key::Nodes, Key::Members] {
+            if subscribed.contains(&key.model()) {
+                self.win(key).unfresh = true;
+            }
+        }
+    }
+
     fn running(&self) -> Vec<Key> {
         self.windows.iter().filter(|(_, window)| window.load.is_some()).map(|(key, _)| *key).collect()
     }
@@ -171,6 +188,7 @@ impl LibraryRef {
                 self.kill(&run);
                 *self.run_of(key) = Some(Run { phase: Phase::Waiting, ..run });
             }
+            self.mark_subscribed_models_unfresh();
         }
         if !was_on && online {
             let mut starting = usize::from(matches!(self.login_call, Some(Login { sent: false, .. })));

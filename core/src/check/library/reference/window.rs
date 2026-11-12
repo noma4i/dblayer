@@ -10,6 +10,15 @@ pub(super) enum Key {
 }
 
 impl Key {
+    /// The model of the window: the feed and the transcode status node are rows of the moment, `nodes(["m1"])` of the container, the members of the user.
+    pub(super) fn model(self) -> u8 {
+        match self {
+            Key::Feed | Key::Node => 0,
+            Key::Nodes => 1,
+            Key::Members => 2,
+        }
+    }
+
     /// The ids of the rows of a window: `m1..` for moments, `u1..` for the users of `container_members`.
     pub(super) fn row_prefix(self) -> &'static str {
         if self == Key::Members { "u" } else { "m" }

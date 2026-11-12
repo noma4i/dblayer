@@ -1,0 +1,8 @@
+{"trace":"i12_login_pair_sent_after_close_and_open"}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"login","out":[{"o":"error","v":{"kind":"no_request"}}]}
+{"in":"close","out":[{"o":"error","v":{"kind":"closed"}},{"o":"closed"}]}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true},{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r1","operation":"session/api/auth/social","variables":null}}]}
+{"in":"answer_page","args":{"more":false,"rows":0},"out":[{"o":"replied","v":{"how":"page","id":"r1"}}]}
+{"in":"open_list","args":{"as":"s3","refresh_on_connect":true,"relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r2","operation":"MomentsFeed","variables":{"first":20}}},{"o":"request","v":{"id":"r3","kind":"subscription","purpose":"standard"}}]}

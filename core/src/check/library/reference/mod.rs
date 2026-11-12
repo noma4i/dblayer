@@ -47,7 +47,8 @@ struct Call {
 
 /// The session call of `login`: its call number, whether its request is out, the refusals so far and the pause before the next send.
 struct Login {
-    call: u64,
+    /// None after `close`: the pair of the login is stored, no call waits for its end (library.md section 7 `login`).
+    call: Option<u64>,
     sent: bool,
     attempts: u32,
     pause: Option<u64>,
