@@ -93,6 +93,8 @@ fn write_followed(
         }
     };
     let mut pending = prefetch_pending(connection, models, &envelope.entity_ops, prefetched)?;
+    let mut parents = BTreeSet::new();
+    super::super::follow_pointer::affected_parents(models, &envelope.entity_ops, prefetched, &mut parents)?;
 
     for operation in &envelope.entity_ops {
         match operation {
@@ -164,6 +166,8 @@ fn write_followed(
             }
         }
     }
+    super::super::follow_pointer::affected_parents(models, &envelope.entity_ops, prefetched, &mut parents)?;
+    result.parents_affected = parents.len();
     for (model, id) in recompute_sync(connection, &synced_keys)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
         if !touched {

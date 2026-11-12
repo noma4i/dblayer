@@ -361,6 +361,7 @@ pub struct CommitResult {
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,
     pub pointer_rows_read: usize,
+    pub parents_affected: usize,
 }
 
 impl CommitResult {
@@ -382,6 +383,7 @@ impl CommitResult {
             item_snapshots: Vec::new(),
             position: 0,
             pointer_rows_read: 0,
+            parents_affected: 0,
         }
     }
 

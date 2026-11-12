@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
@@ -64,6 +64,20 @@ impl Ops<'_> {
 fn pointer_associations(models: &BTreeMap<String, ModelInfo>, model: &ModelKey) -> Result<Vec<AssociationSpec>, StoreError> {
     let spec = &models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     Ok(spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()).cloned().collect())
+}
+
+pub(super) fn affected_parents(models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], rows: &super::apply::Prefetched, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
+    for operation in operations {
+        let row = operation.row_ref();
+        let spec = &models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.to_string()))?.spec;
+        if matches!(operation, EntityOp::Upsert { .. }) && spec.server_values().next().is_some() { parents.insert(row.clone()); }
+        let Some(Some(stored)) = rows.get(&(row.model.to_string(), row.id.to_string())) else { continue };
+        for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()) {
+            let Some(parent) = stored.row.get(&association.foreign_key).and_then(read_id) else { continue };
+            parents.insert(RowRef::new(association.target.clone(), RowId::new(parent.as_str()).map_err(fault)?));
+        }
+    }
+    Ok(())
 }
 
 /// A parent row names its newest child in `sets`: a landing child advances the pointer, a replaced child renames it, a destroyed child hands it to the previous sibling.
