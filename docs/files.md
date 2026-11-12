@@ -195,13 +195,15 @@ The background job keeps the epoch of the accepted upload. A late refusal of the
 
 ### Upload with the app in the background
 
-On iOS `DB.open` runs the PUT of every file as a task of a background `URLSession` with the identifier `<bundle id>.dblayer.uploads`. The system keeps the task when the app goes to the background and when the system ends the app. A file goes up as one part, as large as the file: `Init`, the presign of part 1, the PUT, `Complete`. The server limit of the file (500 MiB) is checked by `Init`. The steps before and after the PUT (`Init`, presign, `Complete`, the final mutation) run while the app runs, and in the time the system gives it when a finished PUT wakes it.
+On iOS `DB.open` runs the PUT of every file as a task of a background `URLSession` with the identifier `<bundle id>.dblayer.uploads`. The system keeps the task when the app goes to the background and when the system ends the app. A new file goes up as one part, as large as the file: `Init`, the presign of part 1, the PUT, `Complete`. A transfer made by an earlier build with more than one part goes on in the app, part by part. The server limit of the file (500 MiB) is checked by `Init`. The steps before and after the PUT (`Init`, presign, `Complete`, the final mutation) run while the app runs, and in the time the system gives it when a finished PUT wakes it.
 
-The app has one call to make. Pass the identifier and the completion of `application(_:handleEventsForBackgroundURLSession:completionHandler:)` to `DB.handleBackgroundEvents`. The library gives the outcomes of the finished PUTs to the core and runs the completion on the main thread once no transfer waits for a PUT or for its next step. A call before `open` waits for `open`.
+The app has one call to make. Pass the identifier and the completion of `application(_:handleEventsForBackgroundURLSession:completionHandler:)` to `DB.handleBackgroundEvents`. It returns `true` for the session of the library and `false` for any other identifier, and then it does not take the completion: the session is the app's own. The library gives the outcomes of the finished PUTs to the core. It runs each completion it took once on the main thread, after the system reports the end of the events and the core has no step to run without a new event (a PUT in the system, a wait for the network or for a retry are such events). A call before `open` waits for `open`.
 
 ```swift
 func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-  DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
+  if !DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler) {
+    // a session of the app: call its own completion
+  }
 }
 ```
 

@@ -250,6 +250,7 @@ pub(super) struct Detached {
     database: Mutex<Option<std::sync::Weak<Database>>>,
     /// The answers to `resume_puts` that came while the opening database was not attached yet.
     queued: Mutex<Vec<(PutIdentity, Option<RawOutcome>)>>,
+    adopt: AtomicBool,
 }
 
 
@@ -290,8 +291,8 @@ impl Detached {
     /// The system lost the task `n`: `resume_puts` finds nothing.
     pub(super) fn lose(&self, n: usize) { self.tasks.lock().unwrap().remove(n); }
 
-    /// A task that a process started before: the identity as the platform keeps it.
-    pub(super) fn plant(&self, task: SystemTask) { self.tasks.lock().unwrap().push(task); }
+    /// The system finished every task the core lists while no process ran, which the executor never saw.
+    pub(super) fn finishing_listed(&self) { self.adopt.store(true, std::sync::atomic::Ordering::SeqCst); }
 }
 
 impl PutExecutor for Detached {
@@ -307,6 +308,10 @@ impl PutExecutor for Detached {
 
     fn resume_puts(&self, identities: Vec<PutIdentity>) {
         self.resumed.lock().unwrap().push(identities.clone());
+        if self.adopt.load(Ordering::SeqCst) {
+            let mut tasks = self.tasks.lock().unwrap();
+            for listed in &identities { if !tasks.iter().any(|task| task.identity == *listed) { tasks.push(SystemTask { identity: *listed, outcome: Some(Self::ok()) }); } }
+        }
         self.tasks.lock().unwrap().retain(|task| identities.contains(&task.identity));
         let database = self.database.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade);
         for listed in identities {

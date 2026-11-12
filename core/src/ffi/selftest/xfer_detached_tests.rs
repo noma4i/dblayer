@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_with, Capture};
 use super::rig_tests::bound;
-use super::upload_stand::{clip, Detached, Hold, Stand, SystemTask, CREATE_MOMENT};
+use super::upload_stand::{clip, Detached, Hold, Stand, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{Database, TestClock};
 use crate::owners::write::upload::MEBIBYTE;
@@ -291,25 +291,24 @@ async fn xfer_detached_prop_one_put_through_restart() {
     crate::test_wait::settled(&run.database, "the row landed", || landed(&run.database)).await;
     drained(&run.database).await;
     let (capture, _) = base.end(&run.live);
-    let temporary = run.temporary.clone();
     let cuts = over_images(&capture, &kept, |index, image| {
         let secret = secret.clone();
-        let temporary = temporary.clone();
         async move {
-            let task = recorded_task(&image, &temporary);
             let copies = [image.clone(), twin(&image)];
             for (lost, image) in [false, true].into_iter().zip(copies) {
                 let detached = Arc::new(Detached::default());
-                if let (Some(identity), false) = (task, lost) { detached.plant(SystemTask { identity, outcome: Some(Detached::ok()) }); }
+                if !lost { detached.finishing_listed(); }
                 let (fresh, reopened) = reopen_with(&image, &secret, &[CREATE_MOMENT], detached.clone(), script).await;
-                if task.is_some() && !lost { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
+                drained(&reopened).await;
+                let listed: usize = detached.resumed().iter().map(Vec::len).sum();
                 let new_starts = detached.started().len();
-                match (task.is_some(), lost) {
-                    (true, false) => assert_eq!((new_starts, landed(&reopened)), (0, true), "cut {index}: a recorded attempt with a finished task starts no second PUT and lands"),
-                    (true, true) => assert_eq!(new_starts, 1, "cut {index}: after PutMissing the part starts once"),
-                    (false, _) => assert!(new_starts <= 1, "cut {index}: a part starts at most once"),
+                match (listed, lost) {
+                    (0, _) => assert!(new_starts <= 1, "cut {index}: a part starts at most once"),
+                    (1, false) => assert_eq!((new_starts, landed(&reopened)), (0, true), "cut {index}: a listed attempt with a finished task starts no second PUT and lands"),
+                    (1, true) => assert_eq!(new_starts, 1, "cut {index}: after PutMissing the part starts once"),
+                    (many, _) => panic!("cut {index}: {many} tasks listed for one part"),
                 }
-                assert!(task.is_none() || fresh.script.count("InitMultipart") == 0, "cut {index}: the recorded upload is not created twice");
+                assert!(listed == 0 || fresh.script.count("InitMultipart") == 0, "cut {index}: the recorded upload is not created twice");
                 bound(reopened.close_database()).await.unwrap();
             }
             index
@@ -326,12 +325,6 @@ async fn xfer_detached_prop_one_put_through_restart() {
     crate::test_wait::settled(&database, "the row landed", || landed(&database)).await;
     assert_eq!((running.detached.started().len(), again.script.count("InitMultipart"), again.script.count("CompleteMultipart")), (1, 0, 1), "a task that runs at the opening and ends later with the identity of the old process lands the row without a second PUT");
     database.close_now();
-}
-
-/// The id of the task a file records: the transfer and the count of attempts, when the attempt has the upload recorded and no presign waits for its answer, so the executor may hold a task of it.
-fn recorded_task(image: &std::path::Path, _temporary: &str) -> Option<PutIdentity> {
-    let connection = rusqlite::Connection::open(image).unwrap();
-    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, cycle_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending) AND (SELECT count(*) FROM sync_upload_part WHERE etag IS NOT NULL) < total", [], |row| Ok(PutIdentity { transfer_id: row.get::<_, i64>(0)? as u64, cycle_id: row.get::<_, i64>(1)? as u64, attempt: row.get::<_, i64>(2)? as u64 }))).unwrap()
 }
 
 /// P-XFER-75: the outcome of a task counts once. A repeat of the outcome, an outcome after the part is confirmed and an outcome after the transfer was cancelled change nothing: `Complete` and the final mutation go once.
