@@ -72,7 +72,7 @@ fn xfer_persisting_invalid() {
     for name in ["PersistingCopy", "PersistingRetry", "PersistingPart", "PersistingComplete", "Removing"] {
         let mut twin = Twin::new();
         let id = stage_in(name, &mut twin);
-        let out = twin.reject(RejectReason::Invalid);
+        let out = twin.reject(RejectReason::Invalid(String::new()));
         assert_eq!(twin.stage(id), TransferStage::PersistingFailure, "{name}");
         assert_eq!(out.kinds(), vec![UploadKind::Failed], "{name}: nothing is observable before Committed");
         assert!(out.shows().is_empty(), "{name}");
@@ -87,7 +87,7 @@ fn xfer_persisting_failure_invalid() {
     let id = twin.persisting_failure(KEY);
     let error = twin.t(id).error.clone().expect("the failure has a cause");
     let (waiter, _) = twin.outcome(id, 1);
-    let out = twin.reject(RejectReason::Invalid);
+    let out = twin.reject(RejectReason::Invalid(String::new()));
     assert_eq!(twin.stage(id), TransferStage::Failed);
     assert!(matches!(out.shows().as_slice(), [Shown::Failed { error: found }] if *found == error), "{:?}", out.shows());
     assert!(matches!(out.replies(waiter).as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { error: found }, None)] if *found == error));

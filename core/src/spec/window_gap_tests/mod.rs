@@ -279,7 +279,7 @@ impl Twin {
                     Reject::NoSession => RejectReason::NoSession,
                     Reject::Closed => RejectReason::Closed,
                     Reject::Storage => RejectReason::Storage("disk".into()),
-                    Reject::Invalid => RejectReason::Invalid,
+                    Reject::Invalid => RejectReason::Invalid(String::new()),
                 };
                 self.post(w::WindowsInput::Rejected(Rejected { batch: *request, reason }));
             }

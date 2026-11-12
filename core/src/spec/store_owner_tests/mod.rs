@@ -32,7 +32,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
                 RejectReason::StaleGeneration { models, .. } => Reason::StaleGeneration(models.clone()),
                 RejectReason::Storage(_) => Reason::Storage,
                 RejectReason::Closed => Reason::Closed,
-                RejectReason::Invalid => Reason::Invalid,
+                RejectReason::Invalid(_) => Reason::Invalid,
             },
         },
         StoreEffect::Write { batch, .. } => Action::Write(batch.id),

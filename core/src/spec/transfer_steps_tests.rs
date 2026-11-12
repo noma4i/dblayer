@@ -85,7 +85,7 @@ fn xfer_attempt_busy() {
 
 #[test]
 fn xfer_attempt_rejected() {
-    for (reason, error) in [(RejectReason::Storage("disk".into()), "disk"), (RejectReason::Invalid, "Internal(Invalid)")] {
+    for (reason, error) in [(RejectReason::Storage("disk".into()), "disk"), (RejectReason::Invalid(String::new()), "Internal(Invalid)")] {
         let (mut twin, id) = ready(2);
         twin.online(true);
         let out = twin.reject(reason);

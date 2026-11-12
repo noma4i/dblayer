@@ -315,7 +315,7 @@ fn out_local_write_committed() {
 
 #[test]
 fn out_local_write_rejected() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid] {
+    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid(String::new())] {
         let mut twin = Twin::new();
         twin.det.tick(Time(100));
         twin.post(write(LocalWriteKind::SetLocal));

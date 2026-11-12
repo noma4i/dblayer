@@ -135,7 +135,7 @@ fn xfer_invalid_batch_is_not_retried() {
     };
     let (_, _, storage) = mixed(RejectReason::Storage("disk".into()));
     assert_eq!(storage.timers, 1, "a storage refusal of the mixed outcomes is retried by the Backoff");
-    let (mut twin, ids, invalid) = mixed(RejectReason::Invalid);
+    let (mut twin, ids, invalid) = mixed(RejectReason::Invalid(String::new()));
     assert_eq!(invalid.timers, 0, "a data error of the mixed outcomes has no Backoff: {invalid:?}");
     while twin.stage(ids[1]) != TransferStage::Failed {
         assert!(twin.state().transfers.contains_key(&ids[1]) && twin.stage(ids[1]) != TransferStage::Done, "the member waits for a write");
@@ -154,6 +154,6 @@ fn xfer_invalid_batch_is_not_retried() {
         twin.reject(reason)
     };
     assert_eq!(restore(RejectReason::Storage("disk".into())).timers, 1, "a storage refusal of the restore of the old row is retried");
-    let invalid = restore(RejectReason::Invalid);
+    let invalid = restore(RejectReason::Invalid(String::new()));
     assert_eq!((invalid.timers, invalid.batches.len()), (0, 0), "a data error of the restore is not retried: {invalid:?}");
 }

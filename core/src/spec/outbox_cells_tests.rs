@@ -528,7 +528,7 @@ fn out_queued_stray() {
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
         OutboxInput::RetryDue { op_id: id, cycle_id: 1 },
-        OutboxInput::Rejected(Rejected { batch, reason: RejectReason::Invalid }),
+        OutboxInput::Rejected(Rejected { batch, reason: RejectReason::Invalid(String::new()) }),
     ]);
 }
 
@@ -844,7 +844,7 @@ fn out_removed_row_invalid_is_not_retried() {
         let ctx = if stage == St::Queued { offline() } else { ready() };
         let (mut twin, id) = reach(stage, &ctx);
         twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 });
-        let effects = refuse(&mut twin, id, RejectReason::Invalid);
+        let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
         let answered = if stage == St::Failed {
             let receipt = twin.receipt(id, EPOCH);
             answers(&twin.post(OutboxInput::Outcome { receipt, reply: WAITER, discard_on_failure: false }), WAITER)
@@ -862,7 +862,7 @@ fn out_removed_row_invalid_is_not_retried() {
 fn out_persisting_attempt_invalid() {
     let mut twin = Twin::new();
     let id = persisting(&mut twin, false);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert_eq!(twin.state().ops[&id].error.as_deref(), Some("Internal(Invalid)"));
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
@@ -941,7 +941,7 @@ fn out_landing_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = refuse(&mut twin, id, RejectReason::Invalid);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
 }
@@ -951,7 +951,7 @@ fn out_rollback_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let effects = refuse(&mut twin, id, RejectReason::Invalid);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid)\")")), "{}", twin.store_text);
 }
@@ -1029,7 +1029,7 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
     let rollback = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
     assert_eq!(kinds(&rollback), vec![CommitKind::Rollback], "the destroy takes the create back");
     let [(rollback_batch, _)] = twin.stores.clone().try_into().expect("one Store batch");
-    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: rollback_batch, reason: RejectReason::Invalid }));
+    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: rollback_batch, reason: RejectReason::Invalid(String::new()) }));
     assert_eq!(answers(&refused, 22), vec![OutboxAnswer::Err(Fault::Invalid)], "Rejected(Invalid) of the in-flight chain batch answers the waiting destroy the refusal reason, not Internal: {refused:?}");
 }
 

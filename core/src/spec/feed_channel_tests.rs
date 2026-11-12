@@ -261,7 +261,7 @@ fn feed_live_rejected_invalid() {
     assert_eq!(rig.event("A", "Chat", "second"), ["commit"]);
     let first = rig.batches[0];
     let second = rig.batches[1];
-    assert_eq!(rig.post(FeedInput::Rejected(Rejected { batch: second, reason: RejectReason::Invalid })), ["stale:Chat"]);
+    assert_eq!(rig.post(FeedInput::Rejected(Rejected { batch: second, reason: RejectReason::Invalid(String::new()) })), ["stale:Chat"]);
     let emitted = rig.post(FeedInput::Committed(Committed { batch: first, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(emitted, ["modelevent:1", "modellost:1"]);
     assert_eq!(rig.state().mode(), f::Mode::Live);

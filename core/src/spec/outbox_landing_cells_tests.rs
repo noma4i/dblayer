@@ -8,7 +8,7 @@ use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, Outbo
 
 #[test]
 fn out_submitting_rejected() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid] {
+    for reason in [RejectReason::NoSession, RejectReason::Closed, RejectReason::Storage("disk".into()), RejectReason::Invalid(String::new())] {
         let mut twin = Twin::new();
         let id = twin.submit("r", Policy::Rollback, false);
         let effects = refuse(&mut twin, id, reason.clone());

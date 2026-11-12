@@ -117,7 +117,7 @@ fn xfer_batch_intent_rejected() {
 #[test]
 fn xfer_batch_intent_invalid() {
     let (mut twin, ids) = persisting_joint();
-    let out = twin.reject(crate::owners::contract::RejectReason::Invalid);
+    let out = twin.reject(crate::owners::contract::RejectReason::Invalid(String::new()));
     assert_eq!((out.writes(), out.rows().len()), (1, 2));
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingFailure));
     assert!(out.submit_ops().is_empty());

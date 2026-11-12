@@ -35,11 +35,11 @@ async fn store_error_kinds_are_classified_once() {
         ("unknown event operation", feed(r#"{"op":"bogus","id":"a"}"#), Ok(vec![0])),
         ("refused event", feed(r#"{"op":"invalid","reason":"bad"}"#), Ok(vec![0])),
         ("event without a row", feed(r#"{"op":"upsert","id":"a"}"#), Ok(vec![0])),
-        ("row without an object", rows(r#""text""#), Err(RejectReason::Invalid)),
-        ("empty id", batch(BatchAuthor::Outbox, vec![("moments", r#"{"id":""}"#)], Vec::new()), Err(RejectReason::Invalid)),
-        ("unreadable json", rows("not json"), Err(RejectReason::Invalid)),
-        ("unknown model", batch(BatchAuthor::Outbox, vec![("nowhere", r#"{"id":"a"}"#)], Vec::new()), Err(RejectReason::Invalid)),
-        ("plan fault", batch(BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"b"}"#.into() }] }]), Err(RejectReason::Invalid)),
+        ("row without an object", rows(r#""text""#), Err(RejectReason::Invalid(String::new()))),
+        ("empty id", batch(BatchAuthor::Outbox, vec![("moments", r#"{"id":""}"#)], Vec::new()), Err(RejectReason::Invalid(String::new()))),
+        ("unreadable json", rows("not json"), Err(RejectReason::Invalid(String::new()))),
+        ("unknown model", batch(BatchAuthor::Outbox, vec![("nowhere", r#"{"id":"a"}"#)], Vec::new()), Err(RejectReason::Invalid(String::new()))),
+        ("plan fault", batch(BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"b"}"#.into() }] }]), Err(RejectReason::Invalid(String::new()))),
     ];
     let mut wrong = Vec::new();
     for (case, batch, want) in data {
@@ -60,7 +60,7 @@ async fn store_error_kinds_are_classified_once() {
 #[test]
 fn store_sqlite_codes_are_classified() {
     use rusqlite::ffi;
-    let invalid = |reason: &RejectReason| matches!(reason, RejectReason::Invalid);
+    let invalid = |reason: &RejectReason| matches!(reason, RejectReason::Invalid(_));
     let data = [("CONSTRAINT", ffi::SQLITE_CONSTRAINT), ("MISMATCH", ffi::SQLITE_MISMATCH), ("TOOBIG", ffi::SQLITE_TOOBIG), ("RANGE", ffi::SQLITE_RANGE)];
     let storage = [("IOERR", ffi::SQLITE_IOERR), ("BUSY", ffi::SQLITE_BUSY), ("LOCKED", ffi::SQLITE_LOCKED), ("FULL", ffi::SQLITE_FULL), ("READONLY", ffi::SQLITE_READONLY), ("CORRUPT", ffi::SQLITE_CORRUPT), ("CANTOPEN", ffi::SQLITE_CANTOPEN), ("NOTADB", ffi::SQLITE_NOTADB)];
     let mut wrong = Vec::new();

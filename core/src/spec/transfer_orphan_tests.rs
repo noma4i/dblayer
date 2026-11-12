@@ -445,7 +445,7 @@ fn xfer_minted_write_invalid() {
     twin.online(false);
     let out = minted(&mut twin, id, "u1");
     assert_eq!(out.writes(), 1);
-    let refused = twin.reject(RejectReason::Invalid);
+    let refused = twin.reject(RejectReason::Invalid(String::new()));
     assert_eq!((refused.writes(), refused.timers, refused.orphan_aborts().len(), twin.t(id).upload_id.as_deref()), (0, 0, 0, Some("u1")), "nothing is written again or scheduled: {refused:?}");
     assert_eq!(twin.end_epoch_by(crate::runtime::Cause::Close).orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt of the upload that is not complete is written when the epoch ends");
 }
@@ -458,7 +458,7 @@ fn xfer_minted_write_invalid() {
 /// that keeps uploading.
 #[test]
 fn xfer_minted_write_other_no_abort() {
-    for (reason, timers) in [(RejectReason::Invalid, 0), (RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, 1)] {
+    for (reason, timers) in [(RejectReason::Invalid(String::new()), 0), (RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, 1)] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = minted(&mut twin, id, "u1");

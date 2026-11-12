@@ -246,7 +246,7 @@ fn win_change_after_commit_marks_the_next_load() {
         ("e: Stale(Change) of a list window", key(), vec![Stale, Load], vec![Page]),
         ("f: the marked batch meets a moved generation, the window reads again", node.clone(), vec![Stale, Load, Reject(moved())], vec![NodeReread, NodeReread]),
         ("g: the Store fails the marked batch, a new load", node.clone(), vec![Stale, Load, Reject(Storage("disk".into())), Load], vec![NodeReread, NodeReread]),
-        ("h: the Store refuses the data of the marked batch, a new load", node.clone(), vec![Stale, Load, Reject(Invalid), Load], vec![NodeReread, NodeReread]),
+        ("h: the Store refuses the data of the marked batch, a new load", node.clone(), vec![Stale, Load, Reject(Invalid(String::new())), Load], vec![NodeReread, NodeReread]),
         ("i: a batch without the mark meets a moved generation", node.clone(), vec![Load, Reject(moved())], vec![Page, Page]),
     ];
     let mut wrong = Vec::new();

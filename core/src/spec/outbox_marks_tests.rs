@@ -47,7 +47,7 @@ fn out_marking_failed_stale_generation() {
 fn out_marking_failed_invalid() {
     let mut twin = Twin::new();
     let id = marking_failed(&mut twin, true);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!(twin.stage(id), Some(St::Failed), "the mark is only in memory");
     assert!(matches!(transfer_outcomes(&effects).as_slice(), [OutboxOutcome::Failed { .. }]), "{effects:?}");
 }
@@ -150,7 +150,7 @@ fn out_marking_retry_stale_generation() {
 fn out_marking_retry_invalid() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid);
+    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
     assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Internal)]));
 }
 
@@ -312,7 +312,7 @@ fn out_invalid_plan_is_not_retried() {
     for (name, kind, arrive) in reach {
         let mut twin = Twin::new();
         let id = arrive(&mut twin);
-        let invalid = refuse(&mut twin, id, RejectReason::Invalid);
+        let invalid = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
         assert_eq!((kinds(&invalid), timers(&invalid), sends(&invalid), invalid.len()), (vec![CommitKind::ErrorMark], 0, 0, 1), "{name}: only the mark is written: {invalid:?}");
         assert_eq!((twin.stage(id), twin.state().ops[&id].error.as_deref()), (Some(St::MarkingFailed), Some("Internal(Invalid)")), "{name}");
         let marked = twin.committed(id);

@@ -164,7 +164,7 @@ impl Twin {
         match reason {
             Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generations: models.iter().cloned().map(|model| (model, 4)).collect() },
             Reject::Storage => RejectReason::Storage("disk".into()),
-            Reject::Invalid => RejectReason::Invalid,
+            Reject::Invalid => RejectReason::Invalid(String::new()),
             Reject::NoSession => RejectReason::NoSession,
             Reject::Closed => RejectReason::Closed,
         }
@@ -230,7 +230,7 @@ impl Twin {
             }
             Input::CommittedRefused(places) => {
                 let batch = self.batch();
-                let refused = places.iter().map(|place| (*place, RejectReason::Invalid)).collect();
+                let refused = places.iter().map(|place| (*place, RejectReason::Invalid(String::new()))).collect();
                 vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused })]
             }
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })],

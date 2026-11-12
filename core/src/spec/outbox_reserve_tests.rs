@@ -334,7 +334,7 @@ fn out_group_member_removal_invalid_is_not_retried() {
     group_sending(&mut twin, group);
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
     let first = twin.stores[0].0;
-    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Invalid }));
+    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Invalid(String::new()) }));
     assert_eq!(
         (twin.stores.len(), timers(&refused), transfer_outcomes(&refused), twin.stage(group)),
         (0, 0, vec![crate::owners::write::outbox_types::OutboxOutcome::Discarded], Some(St::Sending)),
