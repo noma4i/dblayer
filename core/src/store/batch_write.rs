@@ -137,9 +137,8 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
-        let parents: std::collections::BTreeSet<_> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
-        let (derived, pointer_rows, named_gone) = super::follow_pointer::derived_parents(&Reader::new(&transaction, &inner.models), &inner.models, &parents, revision)?;
-        if !derived.is_empty() { results.push(writer.apply(&super::BatchPlan { entity_ops: derived, ..super::BatchPlan::new(inner.generation) })?); }
+        let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, revision, |plan| writer.apply(&plan), inner.generation)?;
+        results.extend(derived);
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {

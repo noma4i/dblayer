@@ -1,15 +1,5 @@
 use super::*;
 
-pub(crate) fn apply_envelope(
-    connection: &Connection,
-    models: &BTreeMap<String, ModelInfo>,
-    envelope: &BatchPlan,
-    (now_ms, generation): (i64, Generation),
-) -> Result<CommitResult, StoreError> {
-    let revision = Reader::new(connection, models).revision_seq()? + 1;
-    apply_envelope_at(connection, models, envelope, (now_ms, revision, generation), None, None)
-}
-
 pub(in super::super) fn apply_envelope_at(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
@@ -165,6 +155,7 @@ fn write_followed(
         }
     }
     super::super::follow_pointer::affected_parents(&Reader::new(connection, models), models, &envelope.entity_ops, prefetched, &mut parents)?;
+    parents.extend(envelope.parents.iter().cloned());
     result.parents = parents;
     for (model, id) in recompute_sync(connection, &synced_keys)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);

@@ -170,7 +170,7 @@ impl Store {
 }
 
 fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -> Result<(), StoreError> {
-    let rebuilt = {
+    let (rebuilt, parents) = {
         let inner = store.lock();
         let operations = open_operations(&inner.connection)?;
         let known: HashSet<String> = models.iter().map(|spec| spec.key.as_str().to_string()).collect();
@@ -194,23 +194,23 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
         }
         let plan = fsck_plan(&operations, &temp_rows, &temp_rows, &open_row_ids);
         let mut orphans = Orphans::new();
+        let mut parents = std::collections::BTreeSet::new();
         for row in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(row) => Some(row), _ => None }) {
             if let Some(stored) = reader.stored_row(row.model.as_str(), row.id.as_str())? {
                 let payload = serde_json::Value::Object(stored.row.clone());
                 let info = inner.models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.as_str().to_string()))?;
                 let tables = info.layout.child_tables().into_iter().chain([table_name(row.model.as_str())]).collect();
                 let search = (!info.search.is_empty()).then(|| crate::store::ddl::fts_name(row.model.as_str()));
+                super::follow_pointer::parents_of(&info.spec, &stored.row, &mut parents)?;
                 orphans.insert(row.clone(), Orphan { tables, search, payload });
             }
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;
         rebuild_sync(&inner.connection)?;
-        if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }
+        (if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }, parents)
     };
-    if rebuilt.is_empty() {
-        return Ok(());
-    }
     let mut envelope = BatchPlan::new(store.generation());
+    envelope.parents = parents;
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
     store.commit(envelope)?;
     Ok(())

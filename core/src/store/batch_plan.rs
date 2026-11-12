@@ -202,6 +202,7 @@ pub struct BatchPlan {
     pub source: crate::schema::RowSource,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
+    pub parents: BTreeSet<RowRef>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -244,13 +245,14 @@ impl BatchPlan {
             source: crate::schema::RowSource::Page,
             pending_locals: Vec::new(),
             network: None,
+            parents: BTreeSet::new(),
         }
     }
 
     pub fn from_source(generation: Generation, source: crate::schema::RowSource) -> Self { Self { source, ..Self::new(generation) } }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty() && self.parents.is_empty()
     }
 
     /// P-DATA-98: the one check of the final plan, after the follow operations and the reduced repeats.

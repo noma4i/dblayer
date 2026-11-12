@@ -23,16 +23,28 @@ pub(super) fn affected_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mo
         let spec = &models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.to_string()))?.spec;
         if matches!(operation, EntityOp::Upsert { .. }) && spec.server_values().next().is_some() { parents.insert(row.clone()); }
         let stored = match rows.get(&(row.model.to_string(), row.id.to_string())) { Some(stored) => stored.as_ref().map(|stored| stored.row.clone()), None => reader.point(row.model.as_str(), row.id.as_str())? };
-        let Some(stored) = stored else { continue };
-        for association in setting(spec) {
-            let Some(parent) = stored.get(&association.foreign_key).and_then(read_id) else { continue };
-            parents.insert(RowRef::new(association.target.clone(), RowId::new(parent.as_str()).map_err(fault)?));
-        }
+        if let Some(stored) = stored { parents_of(spec, &stored, parents)?; }
     }
     Ok(())
 }
 
-pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>, revision: i64) -> Result<(Vec<EntityOp>, usize, BTreeSet<String>), StoreError> {
+pub(crate) fn parents_of(spec: &ModelSpec, row: &Row, parents: &mut BTreeSet<RowRef>) -> Result<(), StoreError> {
+    for association in setting(spec) {
+        let Some(parent) = row.get(&association.foreign_key).and_then(read_id) else { continue };
+        parents.insert(RowRef::new(association.target.clone(), RowId::new(parent.as_str()).map_err(fault)?));
+    }
+    Ok(())
+}
+
+/// P-DATA-56: the one entry of `F` for the parents a write touched, the derived rows go through `apply` in the same transaction.
+pub(super) fn settle_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, results: &[super::CommitResult], revision: i64, apply: impl FnOnce(super::BatchPlan) -> Result<super::CommitResult, StoreError>, generation: crate::identity::Generation) -> Result<(Option<super::CommitResult>, usize, BTreeSet<String>), StoreError> {
+    let parents: BTreeSet<RowRef> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
+    let (derived, read, stale) = derived_parents(reader, models, &parents, revision)?;
+    let written = if derived.is_empty() { None } else { Some(apply(super::BatchPlan { entity_ops: derived, ..super::BatchPlan::new(generation) })?) };
+    Ok((written, read, stale))
+}
+
+fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>, revision: i64) -> Result<(Vec<EntityOp>, usize, BTreeSet<String>), StoreError> {
     let mut derived = Vec::new();
     let mut read = 0;
     let mut stale = BTreeSet::new();
