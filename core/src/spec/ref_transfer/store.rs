@@ -7,7 +7,10 @@ pub fn tx_store(g: &mut G, t: &mut Transfer, i: &Input, e: &mut Vec<Effect>) {
             t.write_failures = 0;
             store_committed(g, t, st, e);
         }
-        Input::Rejected { reason, .. } => store_rejected(g, t, st, reason, e),
+        Input::Rejected { reason, .. } => {
+            if *reason != Reason::Storage { t.write_failures = 0; }
+            store_rejected(g, t, st, reason, e)
+        }
         _ => {}
     }
 }

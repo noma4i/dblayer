@@ -43,6 +43,23 @@ fn out_landing_invalid() {
     assert_eq!(twin.stage(id), Some(St::Done));
 }
 
+/// D-336 (3): a `create` answer with a swap whose batch is refused as Invalid: the batch has no rows and no swap, the open operations of the row keep the temporary id.
+#[test]
+fn out_landing_invalid_create_swap_not_applied() {
+    let mut twin = Twin::new();
+    let created = sending(&mut twin, Policy::Rollback, false);
+    let follower = twin.submit("r", Policy::Rollback, false);
+    twin.committed(follower);
+    twin.waiter(created);
+    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![("r".into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert!(twin.store_text.contains("Swap"), "the first landing batch swaps: {}", twin.store_text);
+    let refused = refuse(&mut twin, created, RejectReason::Invalid("bad row".into()));
+    assert!(!twin.store_text.contains("Swap") && !twin.store_text.contains("Rows { model: \"Moment\"") && twin.store_text.contains("RemoveIntent"), "the batch without rows has no swap: {}", twin.store_text);
+    assert_eq!((twin.stage(created), refused.iter().filter(|effect| matches!(effect, OutboxEffect::Store { .. })).count()), (Some(St::Landing), 1));
+    twin.committed(created);
+    assert_eq!(twin.state().ops[&follower].op.row_id, "r", "no swap: the row keeps its id, the real row comes with the re-read");
+}
+
 #[test]
 fn out_rollback_invalid_server_outcome() {
     let mut twin = Twin::new();
@@ -82,6 +99,29 @@ fn out_prop_write_storage_keeps_server_outcome() {
             if landing_stage { assert!(matches!(outcome.as_slice(), [OutboxOutcome::Confirmed { .. }]), "landing refusals={refusals}: {done:?}"); }
             else { assert!(matches!(outcome.as_slice(), [OutboxOutcome::Rejected { .. }]), "rollback refusals={refusals}: {done:?}"); }
         }
+    }
+}
+
+/// P-DATA-102, D-336 (7): any outcome of the write except `Storage` resets the count of refusals: the next `Storage` pause starts from the first again.
+#[test]
+fn out_prop_write_storage_count_reset_by_other_outcome() {
+    for landing_stage in [true, false] {
+        let mut twin = Twin::new();
+        let (id, stage) = if landing_stage { (landing(&mut twin), St::Landing) } else { (rolling_back(&mut twin), St::RollingBack(RWhy::Rejected)) };
+        let mut first = Vec::new();
+        for round in 0..3 {
+            refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+            if round == 0 { first = twin.pauses.clone(); }
+            tick(&mut twin, id);
+        }
+        refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        assert!(twin.pauses[0] > first[0], "landing={landing_stage}: the pause grew with the count: {:?} against {first:?}", twin.pauses);
+        tick(&mut twin, id);
+        let stale = RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() };
+        refuse(&mut twin, id, stale);
+        assert_eq!(twin.stage(id), Some(stage));
+        refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        assert_eq!(twin.pauses, first, "landing={landing_stage}: an outcome other than Storage reset the count");
     }
 }
 

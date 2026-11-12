@@ -182,6 +182,8 @@ pub struct Op {
     pub stage: Stage,
     pub waiting_retry: bool,
     pub rowless: bool,
+    /// Refusals `Storage` in a row of this operation (P-DATA-102, D-336 (7)): any other outcome of its writes resets it.
+    pub write_failures: u32,
     pub keep: bool,
     pub effects_empty: bool,
     pub destroy: bool,

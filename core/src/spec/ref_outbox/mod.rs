@@ -80,6 +80,11 @@ fn expected_kind(st: Stage) -> Option<Kind> {
 /// The row of one operation for an input.
 pub(crate) fn op_input(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
     match i {
+        Input::Rejected { reason: Reason::Storage, .. } => op.write_failures += 1,
+        Input::Rejected { .. } | Input::Committed { .. } | Input::EpochEnded(..) => op.write_failures = 0,
+        _ => {}
+    }
+    match i {
         Input::Outcome { receipt } => return ops_late::outcome(op, receipt, e),
         Input::EpochEnded(_, cause) => return ops_late::epoch_ended(op, *cause, e),
         Input::Closing => return ops_late::closing(op, e),

@@ -229,14 +229,14 @@ pub fn sending(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
         Input::Tick { cycle_id, .. } if *cycle_id == op.cycle_id => {
             if !slot_free(s) {
                 row(e, "out_sending_tick_no_slot");
-                requeue(op, e);
+                op.stage = Stage::Queued;
+                op.waiting_retry = false;
             } else if s.online_now() {
                 row(e, "out_sending_tick");
                 persist_attempt(op, e);
             } else {
                 row(e, "out_sending_tick_offline");
-                op.stage = Stage::Queued;
-                op.waiting_retry = false;
+                requeue(op, e);
             }
         }
         Input::Tick { .. } => foreign(e),

@@ -223,6 +223,27 @@ fn xfer_copy_done_batch_last() {
     assert_eq!((out.writes(), out.rows().len(), out.all_replies()), (1, 2, 0), "one common write of the acceptance");
 }
 
+/// PersistingCopy x Rejected(Storage) of a batch of 2 -> Removing{Storage} for both; the refused removal is written again as one batch of both RemoveUpload.
+#[test]
+fn xfer_persisting_copy_rejected_batch_removal_retried() {
+    let mut twin = Twin::new();
+    let (ids, reply) = copying_batch(&mut twin, &[KEY, OTHER]);
+    twin.copy_done(ids[0]);
+    twin.copy_done(ids[1]);
+    let out = twin.reject(storage());
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Removing), "{:?}", ids.iter().map(|id| twin.stage(*id)).collect::<Vec<_>>());
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::Storage), "the call is answered at once");
+    assert_eq!((out.writes(), out.removed().len()), (1, 2), "one batch removes both uploads");
+    let first = out.batches[0].ops.clone();
+    let refused = twin.reject(storage());
+    assert_eq!((refused.timers, refused.writes(), refused.all_replies()), (1, 0, 0), "one retry for the batch, not one per transfer");
+    let again = twin.tick_retry(ids[0]);
+    assert_eq!((again.writes(), again.removed().len()), (1, 2), "the same batch of both RemoveUpload in one transaction");
+    assert_eq!(again.batches[0].ops, first);
+    twin.commit();
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
+}
+
 #[test]
 fn xfer_copy_failed_batch() {
     let mut twin = Twin::new();
