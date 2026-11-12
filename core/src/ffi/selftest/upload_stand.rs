@@ -237,8 +237,6 @@ impl FakeTransport for Puts {
 #[derive(Clone)]
 pub(super) struct SystemTask {
     pub(super) identity: PutIdentity,
-    pub(super) target: PutTarget,
-    pub(super) file: PutFile,
     pub(super) outcome: Option<RawOutcome>,
 }
 
@@ -299,8 +297,8 @@ impl Detached {
 
 impl PutExecutor for Detached {
     fn start_put(&self, identity: PutIdentity, target: PutTarget, file: PutFile) {
-        self.started.lock().unwrap().push((identity, target.clone(), file.clone()));
-        self.tasks.lock().unwrap().push(SystemTask { identity, target, file, outcome: None });
+        self.started.lock().unwrap().push((identity, target, file));
+        self.tasks.lock().unwrap().push(SystemTask { identity, outcome: None });
     }
 
     fn cancel_put(&self, identity: PutIdentity) {

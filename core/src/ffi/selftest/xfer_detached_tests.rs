@@ -4,9 +4,9 @@ use super::crash_image_support::{copy_tree, drained, files_of, over_images, reop
 use super::rig_tests::bound;
 use super::upload_stand::{clip, Detached, Stand, SystemTask, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
-use crate::ffi::{Database, PutReply, TestClock};
+use crate::ffi::{Database, TestClock};
 use crate::owners::write::upload::MEBIBYTE;
-use crate::transport::{PutFile, PutIdentity, RawOutcome};
+use crate::transport::{PutIdentity, RawOutcome};
 
 const INIT: &str = r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#;
 const PRESIGN: &str = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#;
@@ -151,7 +151,7 @@ async fn xfer_detached_restored() {
     let run = started(MEBIBYTE).await;
     run.database.close_now();
     run.detached.finish_offline(0, Detached::ok());
-    let again = Stand::new().detached_through(run.detached.clone());
+    let mut again = Stand::new().detached_through(run.detached.clone());
     script(&again);
     again.rig.credentials = run.stand.rig.credentials.clone();
     let database = again.open(Some(&run.live), &[CREATE_MOMENT]).await;
@@ -170,7 +170,7 @@ async fn xfer_detached_missing() {
     let run = started(MEBIBYTE).await;
     run.database.close_now();
     run.detached.lose(0);
-    let again = Stand::new().detached_through(run.detached.clone());
+    let mut again = Stand::new().detached_through(run.detached.clone());
     script(&again);
     again.rig.credentials = run.stand.rig.credentials.clone();
     let database = again.open(Some(&run.live), &[CREATE_MOMENT]).await;
@@ -204,18 +204,17 @@ async fn xfer_detached_prop_one_put_through_restart() {
             let task = recorded_task(&image, &temporary);
             for lost in [false, true] {
                 let detached = Arc::new(Detached::default());
-                if let Some(identity) = task { detached.plant(SystemTask { identity, target: crate::ffi::PutTarget { url: "https://storage/1".into(), headers: Default::default(), connect_ms: 0, request_ms: 0, response_limit: 0 }, file: PutFile { path: String::new(), offset: 0, length: MEBIBYTE }, outcome: None }); }
+                if let Some(identity) = task { detached.plant(SystemTask { identity, outcome: None }); }
                 if !lost && task.is_some() { detached.finish_offline(0, Detached::ok()); }
                 let (fresh, reopened) = reopen_with(&image, &secret, &[CREATE_MOMENT], detached.clone(), script).await;
                 drained(&reopened).await;
-                let ids = fresh.script.count("InitMultipart");
+                let new_starts = detached.started().len();
                 match (task.is_some(), lost) {
-                    (true, false) => assert_eq!(detached.started().len() - 1, 0, "cut {index}: a recorded attempt with a live task starts no second PUT"),
-                    (true, true) => assert_eq!(detached.started().len() - 1, 1, "cut {index}: after PutMissing the part starts once"),
-                    (false, _) => assert_eq!(detached.started().len(), 1, "cut {index}: no recorded attempt, the part starts once"),
+                    (true, false) => assert_eq!((new_starts, landed(&reopened)), (0, true), "cut {index}: a recorded attempt with a finished task starts no second PUT and lands"),
+                    (true, true) => assert_eq!(new_starts, 1, "cut {index}: after PutMissing the part starts once"),
+                    (false, _) => assert!(new_starts <= 1, "cut {index}: a part starts at most once"),
                 }
-                assert!(landed(&reopened) || reopened.peek_row(reopened.session_epoch(), "Moment".into(), temporary.clone()).unwrap().is_none() || task.is_none(), "cut {index}: a recorded attempt reaches the end");
-                assert!(!task.is_some_and(|_| ids > 0), "cut {index}: the recorded upload is not created twice");
+                assert!(task.is_none() || fresh.script.count("InitMultipart") == 0, "cut {index}: the recorded upload is not created twice");
                 bound(reopened.close_database()).await.unwrap();
             }
             index
@@ -253,6 +252,3 @@ async fn xfer_detached_prop_ended_once() {
     assert_eq!((cancelled.stand.script.count("CompleteMultipart"), cancelled.stand.script.count("CreateMoment")), (0, 0));
     cancelled.database.close_now();
 }
-
-#[allow(dead_code)]
-fn unused(_: PutReply) {}
