@@ -33,6 +33,7 @@ mod id_reuse_tests;
 mod rig_events;
 mod stale_event_tests;
 mod data_event_tests;
+mod node_event_other_load_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;
