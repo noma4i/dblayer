@@ -7,7 +7,6 @@ mod lifecycle;
 mod ref_lifecycle;
 mod ref_store;
 mod ref_session;
-mod ref_network;
 mod ref_calls;
 mod store;
 mod delivery_words;
