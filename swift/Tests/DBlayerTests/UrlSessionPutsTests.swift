@@ -147,7 +147,7 @@ struct UrlSessionPutsTests {
     let session = FakeSession()
     let inputs = RecordingInputs()
     let puts = executor(session, inputs: inputs)
-    puts.startPut(identity: identity, target: target("not a url"), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
+    puts.startPut(identity: identity, target: target(""), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
     puts.feed.sent(description: PutDescription.text(identity), bytes: 1)
     #expect(await inputs.inputs(2) == ["ended 7.1.2 failed the PUT target is not a URL", "sent 7.1.2 1"])
     #expect(session.uploads.isEmpty)
