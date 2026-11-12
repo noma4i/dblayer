@@ -138,6 +138,44 @@ suspend fun feedLoadsAgainAfterFreshness(transport: Transport) {
 }
 ```
 
+### Testing a restart
+
+A test checks a restart by opening the same path twice. `openSignedClocked` with the same `path` and the same `MockTransport` closes the open database, keeps the credential of that path, opens the same files and signs in as a restored session. There is no new API: the test opens and closes the database itself.
+
+```swift
+let path = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).path
+try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: operations, path: path)
+// ... send a write and a file, then restart
+try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: operations, path: path)
+```
+
+```kotlin
+val path = kotlin.io.path.createTempDirectory().toFile().resolve("restart.sqlite").absolutePath
+openSignedClocked(modelsJSON, transport, operations, path = path)
+// ... send a write and a file, then restart
+openSignedClocked(modelsJSON, transport, operations, path = path)
+```
+
+Without the stand, `close` and `openTesting` with the same `path` do the same when `credentials` keeps the secret between the two opens.
+
+```swift
+try await DB.close()
+try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, credentials: credentials)
+```
+
+```kotlin
+DBlayer.close()
+DBlayer.openTesting(transport, modelsJSON, path = path, credentials = credentials)
+```
+
+After the second open the test sees what an app sees after a restart:
+
+- A saved write goes out again, once, in the order it was made.
+- A saved transfer with its copy continues from its last confirmed step.
+- A row with a deferred source reads `failed` with the error kind `missing_file`. `retry` without a source throws `Invalid`, and `retry` with a source starts a new cycle.
+
+A call in flight at `close` ends with an error, while the same call in a killed process never answers.
+
 ### Failure values
 
 A test shows a failed row without a server: the test products build the values from their fields. `operationFailure` takes `kind`, `reason` and `message`, and the other fields stay empty. `syncInfo` takes a state and a failure. `uploadInfo` takes a status, the sent share from 0 to 1 and a failure. Your app code does not build these values, and the app test reads no JSON for them.
