@@ -146,39 +146,6 @@ fn out_submit() {
 }
 
 #[test]
-fn out_submit_offline_queued() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let id = twin.submit("r", Policy::Rollback, false);
-    assert_eq!(twin.stage(id), Some(St::Submitting));
-    assert_eq!(kinds(&twin.last), vec![CommitKind::Intent]);
-    assert!(twin.store_text.contains("optimistic"), "intent and optimistic row: {}", twin.store_text);
-    let effects = twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Queued));
-    assert!(matches!(answers(&effects, SUBMIT_REPLY).as_slice(), [OutboxAnswer::Receipt(_)]), "{effects:?}");
-    assert_eq!(sends(&effects), 0);
-}
-
-#[test]
-fn out_submitting_stale_generation() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Intent, generation, .. }] if *generation == NEW_GENERATION));
-    assert_eq!(twin.stage(id), Some(St::Submitting));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
-fn out_submitting_discard() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
-    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(St::Submitting), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
-}
-
-#[test]
 fn out_sending_temp() {
     for dropped in [false, true] {
         let mut twin = Twin::new();
@@ -197,28 +164,6 @@ fn out_sending_tick() {
     let effects = tick(&mut twin, id);
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::PersistingAttempt), vec![CommitKind::Attempt], 1));
     assert!(twin.store_text.contains(&format!("Attempt {{ op_id: {id}, attempts: 2, cycle_id: 1")), "{}", twin.store_text);
-}
-
-#[test]
-fn out_sending_offline() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    unchanged_by(&mut twin, id, St::Sending, vec![OutboxInput::Online(Online(false))]);
-}
-
-#[test]
-fn out_sending_online() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    unchanged_by(&mut twin, id, St::Sending, vec![OutboxInput::Online(Online(true))]);
-}
-
-#[test]
-fn out_sending_discard() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
-    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(St::Sending), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
 }
 
 #[test]
@@ -245,27 +190,6 @@ fn out_sending_reject_keep() {
 }
 
 #[test]
-fn out_sending_retry() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
-    assert_eq!(twin.stage(id), Some(St::Sending));
-    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(_)]));
-    assert_eq!(effects.len(), 1);
-}
-
-#[test]
-fn out_sending_stray() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    unchanged_by(&mut twin, id, St::Sending, vec![
-        OutboxInput::Response { op_id: id + 100, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id + 100, temporary: true },
-        OutboxInput::Dropped { op_id: id + 100 },
-    ]);
-}
-
-#[test]
 fn out_sending_response() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
@@ -274,18 +198,6 @@ fn out_sending_response() {
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
     assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && twin.store_text.contains(&request_id.to_string()));
     assert!(twin.store_text.contains("Rows { model: \"Moment\"") && twin.store_text.contains("state"), "{}", twin.store_text);
-}
-
-#[test]
-fn out_landing_stale_generation() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert_eq!(twin.stage(id), Some(St::Landing));
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Land, generation, .. }] if *generation == NEW_GENERATION));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
 }
 
 /// P-DATA-102: every Storage refusal in a row of the same operation makes the pause before the next write longer.
@@ -303,35 +215,6 @@ fn out_storage_retry_pause_grows() {
         assert_eq!(kinds(&again), vec![CommitKind::Land], "the landing batch goes again");
     }
     assert!(pauses.len() == 3 && pauses[0] < pauses[1] && pauses[1] < pauses[2], "3 refusals, 3 growing pauses: {pauses:?}");
-}
-
-#[test]
-fn out_landing_storage() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), timers(&effects), effects.len()), (Some(St::Landing), 1, 1));
-}
-
-#[test]
-fn out_landing_tick() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
-fn out_landing_discard() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
-    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(St::Landing), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
 }
 
 #[test]
@@ -360,47 +243,6 @@ fn out_landing_retry() {
         let done = twin.committed(id);
         assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{done:?}");
     }
-}
-
-#[test]
-fn out_rollback_storage() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), timers(&effects), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), 1, 1));
-}
-
-#[test]
-fn out_rollback_tick() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![CommitKind::Rollback], 1));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
-fn out_rollback_stale_generation() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert_eq!(twin.stage(id), Some(St::RollingBack(RWhy::Rejected)));
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Rollback, generation, .. }] if *generation == NEW_GENERATION));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
-}
-
-#[test]
-fn out_rollback_retry() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
 }
 
 #[test]
@@ -483,31 +325,6 @@ fn out_submitting_retry() {
 }
 
 #[test]
-fn out_submitting_other() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    unchanged_by(&mut twin, id, St::Submitting, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-    ]);
-}
-
-#[test]
-fn out_landing_other() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    unchanged_by(&mut twin, id, St::Landing, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-    ]);
-}
-
-#[test]
 fn out_unknown_operation() {
     let mut twin = Twin::new();
     for input in [
@@ -544,57 +361,6 @@ fn out_queued_discard() {
 }
 
 #[test]
-fn out_queued_wait() {
-    let mut twin = Twin::new();
-    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
-    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(true))]);
-}
-
-#[test]
-fn out_queued_stray() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    let batch = twin.batches[&id];
-    unchanged_by(&mut twin, id, St::Queued, vec![
-        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-        OutboxInput::RetryDue { op_id: id, cycle_id: 1 },
-        OutboxInput::Rejected(Rejected { batch, reason: RejectReason::Invalid(String::new()) }),
-    ]);
-}
-
-#[test]
-fn out_landing_no_session() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed] {
-        let mut twin = Twin::new();
-        let id = sending(&mut twin, Policy::Rollback, true);
-        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-        let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
-        let effects = refuse(&mut twin, id, reason);
-        assert_eq!(twin.stage(id), Some(St::Done));
-        assert!(format!("{:?}", twin.state().ops[&id].outcome).contains(cause));
-        assert!(format!("{:?}", transfer_outcomes(&effects)).contains(cause));
-    }
-}
-
-#[test]
-fn out_rollback_no_session() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed] {
-        let mut twin = Twin::new();
-        let id = sending(&mut twin, Policy::Rollback, true);
-        twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-        let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
-        let effects = refuse(&mut twin, id, reason);
-        assert_eq!(twin.stage(id), Some(St::Done));
-        assert!(format!("{:?}", twin.state().ops[&id].outcome).contains(cause));
-        assert!(format!("{:?}", transfer_outcomes(&effects)).contains(cause));
-    }
-}
-
-#[test]
 fn out_rollback_discard() {
     let mut twin = Twin::new();
     twin.post(OutboxInput::Online(Online(false)));
@@ -628,19 +394,6 @@ fn out_submitting_committed() {
 }
 
 #[test]
-fn out_rollback_other() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-    unchanged_by(&mut twin, id, St::RollingBack(RWhy::Rejected), vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-    ]);
-}
-
-#[test]
 fn out_submit_after_closing() {
     let mut twin = Twin::new();
     twin.det.close();
@@ -660,33 +413,6 @@ fn out_done_closing() {
     twin.run();
     let effects = take_fx(&twin.log, state_of(&twin.det));
     assert_eq!((twin.stage(id), effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), effects.len()), (Some(St::Done), 1, 1));
-}
-
-#[test]
-fn out_sending_tick_not_waiting() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), effects.len()), (Some(St::Sending), 0));
-}
-
-#[test]
-fn out_queued_offline() {
-    let mut twin = Twin::new();
-    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
-    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(false))]);
-}
-
-#[test]
-fn out_queued_retry() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
-    assert_eq!(twin.stage(id), Some(St::Queued));
-    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id && receipt.cycle_id == twin.state().ops[&id].cycle_id));
-    assert_eq!(effects.len(), 1);
 }
 
 #[test]
@@ -751,16 +477,6 @@ fn out_queued_exhausted() {
 }
 
 #[test]
-fn out_queued_blocked() {
-    let mut twin = Twin::new();
-    failed(&mut twin);
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Queued));
-    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(true))]);
-}
-
-#[test]
 fn out_sending_response_temporary() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
@@ -799,45 +515,6 @@ fn out_persisting_attempt_committed_offline() {
     assert_eq!((twin.stage(id), sends(&effects)), (Some(St::Queued), 0));
     assert_eq!(kinds(&effects), vec![CommitKind::Requeue]);
     assert!(twin.store_text.contains(&format!("Requeue {{ op_id: {id} }}")), "{}", twin.store_text);
-}
-
-#[test]
-fn out_persisting_attempt_storage() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), timers(&effects), sends(&effects), twin.state().ops[&id].attempts), (Some(St::PersistingAttempt), 1, 0, 1));
-}
-
-#[test]
-fn out_persisting_attempt_tick() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let effects = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::PersistingAttempt), vec![CommitKind::Attempt]));
-    assert!(twin.store_text.contains(&format!("Attempt {{ op_id: {id}, attempts: 2, cycle_id: 1")), "{}", twin.store_text);
-}
-
-#[test]
-fn out_persisting_attempt_stale_generation() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let effects = twin.rejected(id, RReason::StaleGeneration);
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::Attempt, generation, .. }] if *generation == NEW_GENERATION), "{effects:?}");
-    assert_eq!(twin.stage(id), Some(St::PersistingAttempt));
-    assert!(twin.store_text.contains(&format!("Attempt {{ op_id: {id}, attempts: 2, cycle_id: 1")), "{}", twin.store_text);
-}
-
-#[test]
-fn out_persisting_attempt_no_session() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed] {
-        let mut twin = Twin::new();
-        let id = persisting(&mut twin, true);
-        let cause = if reason == RejectReason::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
-        let effects = refuse(&mut twin, id, reason);
-        assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Ended(cause.clone())]));
-        assert_eq!(twin.state().ops[&id].outcome, Some(OutboxOutcome::Ended(cause)));
-    }
 }
 
 #[test]
@@ -922,37 +599,6 @@ fn out_persisting_attempt_invalid() {
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert_eq!(twin.state().ops[&id].error.as_deref(), Some("Internal(Invalid): bad row"));
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
-}
-
-#[test]
-fn out_persisting_attempt_discard() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
-    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY)), (Some(St::PersistingAttempt), vec![OutboxAnswer::Err(Fault::InFlight)]));
-}
-
-#[test]
-fn out_persisting_attempt_retry() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let effects = retry(&mut twin);
-    assert_eq!(twin.stage(id), Some(St::PersistingAttempt));
-    assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(_)]), "{effects:?}");
-}
-
-#[test]
-fn out_persisting_attempt_other() {
-    let mut twin = Twin::new();
-    let id = persisting(&mut twin, false);
-    let foreign_cycle = OutboxInput::RetryDue { op_id: id, cycle_id: 99 };
-    unchanged_by(&mut twin, id, St::PersistingAttempt, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-        foreign_cycle,
-    ]);
 }
 
 #[test]
@@ -1110,4 +756,117 @@ fn out_closing_end_cause() {
     assert!(answers(&landed, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "the answer that arrived before Closing lands Confirmed first: {landed:?}");
     let after = input_of(&mut twin, id, &ready(), In::Closing);
     assert_eq!((twin.stage(id), answers(&after, WAITER), transfer_outcomes(&after)), (Some(St::Done), Vec::new(), Vec::new()), "Closing after the applied answer changes nothing: {after:?}");
+}
+
+fn response_of(op_id: OpId) -> OutboxInput { OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None } }
+
+/// An operation of the row `r` waiting for the answer of its own Store batch, and the kind of that batch.
+fn in_batch_stage(stage: St, transfer: bool) -> (Twin, OpId, CommitKind) {
+    let mut twin = Twin::new();
+    match stage {
+        St::Submitting => { let id = twin.submit("r", Policy::Rollback, transfer); (twin, id, CommitKind::Intent) }
+        St::PersistingAttempt => { let id = persisting(&mut twin, transfer); (twin, id, CommitKind::Attempt) }
+        St::Landing => { let id = sending(&mut twin, Policy::Rollback, transfer); twin.post(response_of(id)); (twin, id, CommitKind::Land) }
+        St::RollingBack(_) => { let id = sending(&mut twin, Policy::Rollback, transfer); twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); (twin, id, CommitKind::Rollback) }
+        other => panic!("no batch in {other:?}"),
+    }
+}
+
+fn ops_of(text: &str) -> String { text.split("ops: ").nth(1).unwrap_or_default().to_string() }
+
+#[test]
+fn out_stale_generation_resends_the_same_batch_with_the_new_generation() {
+    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+        let (mut twin, id, kind) = in_batch_stage(stage, false);
+        let original = ops_of(&twin.store_text);
+        let effects = twin.rejected(id, RReason::StaleGeneration);
+        assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: sent, generation, .. }] if *sent == kind && *generation == NEW_GENERATION), "{stage:?}: {effects:?}");
+        assert_eq!((twin.stage(id), ops_of(&twin.store_text)), (Some(stage), original), "{stage:?}");
+    }
+}
+
+#[test]
+fn out_storage_refusal_sets_a_timer_and_the_timer_writes_the_same_batch_again() {
+    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+        let (mut twin, id, kind) = in_batch_stage(stage, false);
+        let (original, attempts) = (ops_of(&twin.store_text), twin.state().ops[&id].attempts);
+        let refused = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        assert_eq!((twin.stage(id), timers(&refused), refused.len(), twin.state().ops[&id].attempts), (Some(stage), 1, 1, attempts), "{stage:?}");
+        let again = tick(&mut twin, id);
+        assert_eq!((twin.stage(id), kinds(&again), ops_of(&twin.store_text)), (Some(stage), vec![kind], original), "{stage:?}");
+    }
+}
+
+#[test]
+fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_transfer() {
+    for stage in [St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected)] {
+        for (reason, cause) in [(RejectReason::NoSession, crate::ffi::EndCause::SessionEnded), (RejectReason::Closed, crate::ffi::EndCause::Closed)] {
+            let (mut twin, id, _) = in_batch_stage(stage, true);
+            let effects = refuse(&mut twin, id, reason.clone());
+            assert_eq!((twin.stage(id), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxOutcome::Ended(cause.clone())]), "{stage:?} {reason:?}");
+            assert_eq!(twin.state().ops[&id].outcome, Some(OutboxOutcome::Ended(cause)), "{stage:?} {reason:?}");
+        }
+    }
+}
+
+#[test]
+fn out_discard_of_an_operation_in_flight_is_refused() {
+    let discard = || OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY };
+    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::Sending] {
+        let (mut twin, id) = if stage == St::Sending { let mut twin = Twin::new(); let id = sending(&mut twin, Policy::Rollback, false); (twin, id) } else { let (twin, id, _) = in_batch_stage(stage, false); (twin, id) };
+        let effects = twin.post(discard());
+        assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(stage), vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
+    }
+    let (mut twin, id, _) = in_batch_stage(St::RollingBack(RWhy::Rejected), false);
+    let effects = retry(&mut twin);
+    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::RollingBack(RWhy::Rejected)), vec![OutboxAnswer::Err(Fault::InFlight)], 1));
+}
+
+#[test]
+fn out_retry_of_an_open_operation_answers_its_receipt_and_changes_nothing() {
+    let mut sent = Twin::new();
+    let sent_id = sending(&mut sent, Policy::Rollback, false);
+    let mut queued = Twin::new();
+    queued.post(OutboxInput::Online(Online(false)));
+    let queued_id = queued.submit("r", Policy::Rollback, false);
+    queued.committed(queued_id);
+    let (persisting_twin, persisting_id, _) = in_batch_stage(St::PersistingAttempt, false);
+    for (stage, mut twin, id) in [(St::Sending, sent, sent_id), (St::Queued, queued, queued_id), (St::PersistingAttempt, persisting_twin, persisting_id)] {
+        let effects = retry(&mut twin);
+        assert_eq!(twin.stage(id), Some(stage));
+        assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id), "{stage:?}: {effects:?}");
+    }
+}
+
+#[test]
+fn out_inputs_that_do_not_belong_to_the_stage_change_nothing() {
+    let foreign = |id: OpId| vec![response_of(id), OutboxInput::TransportError { op_id: id, temporary: true }, OutboxInput::Dropped { op_id: id }];
+    for stage in [St::Submitting, St::Landing, St::RollingBack(RWhy::Rejected)] {
+        let (mut twin, id, _) = in_batch_stage(stage, false);
+        unchanged_by(&mut twin, id, stage, [vec![OutboxInput::Online(Online(true))], foreign(id)].concat());
+    }
+    let (mut twin, id, _) = in_batch_stage(St::PersistingAttempt, false);
+    unchanged_by(&mut twin, id, St::PersistingAttempt, [vec![OutboxInput::Online(Online(true)), OutboxInput::RetryDue { op_id: id, cycle_id: 99 }], foreign(id)].concat());
+
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let strays = foreign(id + 100);
+    unchanged_by(&mut twin, id, St::Sending, [vec![OutboxInput::Online(Online(false)), OutboxInput::Online(Online(true)), OutboxInput::RetryDue { op_id: id, cycle_id: 1 }], strays].concat());
+
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    let batch = twin.batches[&id];
+    unchanged_by(&mut twin, id, St::Queued, [foreign(id), vec![OutboxInput::RetryDue { op_id: id, cycle_id: 1 }, OutboxInput::Rejected(Rejected { batch, reason: RejectReason::Invalid(String::new()) })]].concat());
+
+    let mut twin = Twin::new();
+    let id = queued_behind_blocker(&mut twin, model_op("r", Policy::Rollback, false));
+    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(true)), OutboxInput::Online(Online(false))]);
+
+    let mut twin = Twin::new();
+    failed(&mut twin);
+    let id = twin.submit("r", Policy::Rollback, false);
+    twin.committed(id);
+    unchanged_by(&mut twin, id, St::Queued, vec![OutboxInput::Online(Online(true))]);
 }
