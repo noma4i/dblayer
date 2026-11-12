@@ -181,7 +181,7 @@ Test conventions:
 - Rust tests own storage, synchronization and ordering rules. Swift and Kotlin tests check typed calls, decoding, callbacks and platform APIs.
 - Kotlin network tests use Robolectric because the Android OkHttp artifact requires Android APIs, including logging.
 - Keep one test per requirement at the lowest level that identifies its failure. Combine similar cases in a table.
-- Core stable-order tests own confirmed-row placement. Platform `LandsTests` and `LandsTest` check additional returned rows through the bridge.
+- Core stable-order tests own confirmed-row placement. Platform tests do not repeat it.
 - Core edge tests own connection isolation and value replacement. Platform edge tests check typed reads, nullable fields, aliases and enums.
 - Core member tests own window isolation, page accumulation, freshness and retained totals. Platform member tests check arguments and typed snapshots.
 - Core node tests own freshness, partial merges, response order and missing entries. Platform node tests check IDs, force, declared variables and typed results.
@@ -202,8 +202,8 @@ Test conventions:
 | `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit                                                                                        |
 | `windows_tests`  | Overlapping load-more and refresh in both answer orders, repeated online and power-saving signals, memory expiry on the last write                                                                                                   |
 
-`core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
+`core/src/ffi/selftest/manifest.tsv` is the fixed list of the release sequences. The `core` lane holds every sequence. The `swift` and `kotlin` lanes list only tests of behavior that the wrapper owns and the core does not have: value transfer, stream delivery, task cancellation, platform lifecycle, platform sockets and uploads. A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
 
-Swift and Kotlin run the login, exit, account switch, local-only exit, close with a held request, already-authenticated login and harness orders once through the bindings: `LifecycleSessionTests.swift`, `SwitchableHarnessTests.swift`, `LifecycleSessionTest.kt`, `SwitchableHarnessTest.kt`.
+Swift and Kotlin keep the close with a held request and the session state parity through the bindings: `LifecycleSessionTests.swift`, `LifecycleSessionTest.kt`.
 
 Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Group`, `Note`).
