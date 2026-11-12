@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::{named_params, Connection};
 
-use crate::ffi::upload_wire::WirePrepare;
+use crate::ffi::upload_wire::{CannotDecode, WirePrepare};
 use crate::prepare::{BitrateStep, CropFractions, ImageFormat, PhotoEdit, PixelSize, VideoLimits};
 
 use super::StoreError;
@@ -20,18 +20,25 @@ fn format_text(format: ImageFormat) -> &'static str {
     }
 }
 
+fn cannot_decode_text(choice: CannotDecode) -> &'static str {
+    match choice {
+        CannotDecode::Fail => "fail",
+        CannotDecode::UploadSource => "upload_source",
+    }
+}
+
 pub(super) fn put_prepare(connection: &Connection, transfer_id: u64, prepare: &WirePrepare) -> Result<(), StoreError> {
     let id = id_of(transfer_id)?;
     remove_prepare(connection, transfer_id)?;
     match prepare {
-        WirePrepare::Video { limits, mirror } => {
+        WirePrepare::Video { limits, mirror, on_cannot_decode } => {
             connection.execute(include_str!("sql/prepare_rows/put_prepare.sql"), named_params! {
                 ":transfer_id": id, ":kind": "video", ":mirror": mirror,
                 ":max_long_side": limits.as_ref().map(|limits| limits.max_long_side), ":min_frame_rate": limits.as_ref().map(|limits| limits.min_frame_rate),
                 ":max_frame_rate": limits.as_ref().map(|limits| limits.max_frame_rate), ":source_bitrate_cap_percent": limits.as_ref().map(|limits| limits.source_bitrate_cap_percent),
                 ":audio_bitrate": limits.as_ref().map(|limits| limits.audio_bitrate), ":audio_channels": limits.as_ref().map(|limits| limits.audio_channels), ":audio_sample_rate": limits.as_ref().map(|limits| limits.audio_sample_rate),
                 ":max_width": None::<u32>, ":max_height": None::<u32>, ":enlarge": None::<bool>, ":crop_x": None::<f64>, ":crop_y": None::<f64>, ":crop_width": None::<f64>, ":crop_height": None::<f64>,
-                ":output_width": None::<u32>, ":output_height": None::<u32>, ":rotation_degrees": None::<u32>, ":quality": None::<f64>, ":format": None::<&str>,
+                ":output_width": None::<u32>, ":output_height": None::<u32>, ":rotation_degrees": None::<u32>, ":quality": None::<f64>, ":format": None::<&str>, ":on_cannot_decode": cannot_decode_text(*on_cannot_decode),
             })?;
             for step in limits.iter().flat_map(|limits| &limits.corridors) {
                 connection.execute(include_str!("sql/prepare_rows/put_step.sql"), (id, step.from_long_side, step.min_bps, step.max_bps))?;
@@ -45,7 +52,7 @@ pub(super) fn put_prepare(connection: &Connection, transfer_id: u64, prepare: &W
                 ":max_width": edit.max_size.map(|size| size.width), ":max_height": edit.max_size.map(|size| size.height), ":enlarge": edit.enlarge,
                 ":crop_x": edit.crop.map(|crop| crop.x), ":crop_y": edit.crop.map(|crop| crop.y), ":crop_width": edit.crop.map(|crop| crop.width), ":crop_height": edit.crop.map(|crop| crop.height),
                 ":output_width": edit.output_size.map(|size| size.width), ":output_height": edit.output_size.map(|size| size.height), ":rotation_degrees": edit.rotation_degrees,
-                ":quality": quality, ":format": format_text(*format),
+                ":quality": quality, ":format": format_text(*format), ":on_cannot_decode": None::<&str>,
             })?;
         }
     }
@@ -90,7 +97,8 @@ pub(crate) fn read_prepares(connection: &Connection) -> rusqlite::Result<BTreeMa
                 max_long_side, corridors: corridors.remove(&id).unwrap_or_default(), min_frame_rate: row.get(4)?, max_frame_rate: row.get(5)?,
                 source_bitrate_cap_percent: row.get(6)?, audio_bitrate: row.get(7)?, audio_channels: row.get(8)?, audio_sample_rate: row.get(9)?,
             })).transpose()?;
-            return Ok((id, WirePrepare::Video { limits, mirror }));
+            let on_cannot_decode = if row.get::<_, Option<String>>(22)?.as_deref() == Some("upload_source") { CannotDecode::UploadSource } else { CannotDecode::Fail };
+            return Ok((id, WirePrepare::Video { limits, mirror, on_cannot_decode }));
         }
         let size = |width: usize, height: usize| -> rusqlite::Result<Option<PixelSize>> {
             Ok(row.get::<_, Option<u32>>(width)?.zip(row.get::<_, Option<u32>>(height)?).map(|(width, height)| PixelSize { width, height }))

@@ -10,6 +10,23 @@ pub fn scenario_for(total: u64, threshold: u64) -> UploadScenario {
     }
 }
 
+/// How a file of a size goes up: the one rule of the acceptance of a source and of the end of the prepare step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sizing {
+    pub multipart_declared: bool,
+    pub single_declared: bool,
+    pub threshold: u64,
+    pub part_size: u64,
+}
+
+impl Sizing {
+    /// The number of parts and whether the upload is multipart.
+    pub fn of(&self, total: u64) -> (u32, bool) {
+        let multipart = self.multipart_declared && (!self.single_declared || scenario_for(total, self.threshold) == UploadScenario::Multipart);
+        (if multipart { part_count(total, self.part_size) } else { 1 }, multipart)
+    }
+}
+
 pub fn part_count(total: u64, part_size: u64) -> u32 {
     u32::try_from(total.div_ceil(part_size.max(1)).max(1)).unwrap_or(u32::MAX)
 }

@@ -26,8 +26,16 @@ pub enum WireSource {
 /// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WirePrepare {
-    Video { limits: Option<VideoLimits>, mirror: bool },
+    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode },
     Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat },
+}
+
+/// What happens to a source the device cannot decode: the upload fails with a typed reason, or the source goes as it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Enum)]
+pub enum CannotDecode {
+    #[default]
+    Fail,
+    UploadSource,
 }
 
 impl WireSource {
@@ -60,13 +68,15 @@ impl WireSource {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireUploadSource {
     pub path: String,
     pub name: Option<String>,
     pub mime: Option<String>,
     pub values_json: String,
     pub variables_json: String,
+    #[uniffi(default = None)]
+    pub prepare: Option<WirePrepare>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

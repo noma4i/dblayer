@@ -16,7 +16,7 @@ use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renu
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
-use crate::owners::write::upload::{mime_of, part_count, scenario_for, UploadConfig, UploadFile, UploadScenario};
+use crate::owners::write::upload::{mime_of, UploadConfig, UploadFile};
 
 /// What one transfer is planned from.
 struct Plan<'a> {
@@ -57,9 +57,8 @@ impl Database {
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid("the source file is empty")); }
         let config = self.upload_config();
-        let operations = self.upload_operations()?;
-        let multipart = operations.multipart.is_some() && (operations.create_blob.is_none() || scenario_for(total, config.multipart_threshold) == UploadScenario::Multipart);
-        Ok((Source { path: path.to_string(), parts: if multipart { part_count(total, config.part_size) } else { 1 } }, multipart))
+        let (parts, multipart) = self.upload_operations()?.sizing(&config).of(total);
+        Ok((Source { path: path.to_string(), parts }, multipart))
     }
 
     /// The source of a call: the prepare settings are checked before the file is read.

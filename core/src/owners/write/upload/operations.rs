@@ -23,6 +23,12 @@ pub struct UploadOperations {
     pub multipart: Option<MultipartOperations>,
 }
 
+impl UploadOperations {
+    pub fn sizing(&self, config: &super::UploadConfig) -> super::Sizing {
+        super::Sizing { multipart_declared: self.multipart.is_some(), single_declared: self.create_blob.is_some(), threshold: config.multipart_threshold, part_size: config.part_size }
+    }
+}
+
 impl UploadOperation {
     pub fn new(name: &str) -> Self {
         Self { name: name.to_string(), root_path: None }
