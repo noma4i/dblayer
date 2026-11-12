@@ -418,7 +418,7 @@ fn xfer_open_copying() {
     found.copying = true;
     found.size = 0;
     let (twin, out) = Twin::opened(vec![found], Default::default());
-    assert_eq!((twin.stage(1), out.copies(), out.shows(), out.round_needed()), (TransferStage::Copying, 1, vec![Shown::Copying], vec![vec![1]]));
+    assert_eq!((twin.stage(1), out.copies(), out.removed(), out.shows(), out.round_needed()), (TransferStage::Removing, 0, vec![KEY.to_string()], Vec::<Shown>::new(), Vec::<Vec<u64>>::new()), "a copy the call never confirmed is removed, the path of the caller is not read");
     assert!(twin.t(1).accept_reply.is_none(), "no call waits for a restored copy");
 }
 
