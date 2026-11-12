@@ -64,7 +64,8 @@ impl Session {
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.state, &pending), (State::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(Owner::Detached) && held.owner != saved.owner));
                 if let (State::PendingHeld { pending: held }, true) = (self.state.clone(), released) {
-                    self.start_calling(Pending { author: None, owner: Some(Owner::Detached), ..held }, out);
+                    let held = Self::detached(held, out);
+                    self.start_calling(held, out);
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None => self.restored_direct = Some(Pending { epoch, ..pending }),
@@ -89,20 +90,13 @@ impl Session {
             }
             Input::Cancel { req_id } => {
                 self.state = state;
-                if let Some(at) = self.queue.iter().position(|queued| matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id)) {
-                    if let Some(removed) = self.queue.remove(at) { Self::refuse(out, removed, Fail::Interrupted); }
-                }
+                self.unqueue(req_id, out);
             }
-            Input::Release { req_id } => match state {
-                State::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(Pending { author: None, owner: Some(Owner::Detached), ..pending }, out),
-                State::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.state = State::Landing { pending: Pending { author: None, owner: Some(Owner::Detached), ..pending }, batch, answer, identity, sequence, server_ended },
-                State::Blocked { pending: Some(pending), reason, landing } if pending.request_id == req_id => self.state = State::Blocked { pending: Some(Pending { author: None, owner: Some(Owner::Detached), ..pending }), reason, landing },
-                State::Idle if !self.restored => {
-                    self.released.insert(req_id);
-                    self.state = State::Idle;
-                }
-                state => self.state = state,
-            },
+            Input::Release { req_id } => {
+                self.state = state;
+                if self.unqueue(req_id, out) { return; }
+                self.release(req_id, out);
+            }
             Input::EpochEnded { epoch, cause } => {
                 if epoch != self.epoch { self.state = state; return; }
                 self.restored_direct = None;
@@ -131,6 +125,52 @@ impl Session {
                 self.state = state;
             }
             input => self.by_state(state, input, out),
+        }
+    }
+
+    fn unqueue(&mut self, req_id: RequestId, out: &mut Out) -> bool {
+        let Some(at) = self.queue.iter().position(|queued| matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id)) else { return false };
+        if let Some(removed) = self.queue.remove(at) { Self::refuse(out, removed, Fail::NotSent); }
+        true
+    }
+
+    fn detached(pending: Pending, out: &mut Out) -> Pending {
+        if let Some(author) = pending.author { out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Dropped }); }
+        Pending { author: None, owner: Some(Owner::Detached), ..pending }
+    }
+
+    fn release(&mut self, req_id: RequestId, out: &mut Out) {
+        let state = std::mem::replace(&mut self.state, State::Closed);
+        match state {
+            State::PendingHeld { pending } if pending.request_id == req_id => {
+                let pending = Self::detached(pending, out);
+                self.start_calling(pending, out);
+            }
+            State::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => {
+                let pending = Self::detached(pending, out);
+                self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
+            }
+            State::Blocked { pending: Some(pending), reason } if pending.request_id == req_id => {
+                let pending = Self::detached(pending, out);
+                self.state = State::Blocked { pending: Some(pending), reason };
+            }
+            State::Persisting { pending, batch } if pending.request_id == req_id => {
+                let pending = Self::detached(pending, out);
+                self.state = State::Persisting { pending, batch };
+            }
+            State::Calling { pending, attempts, phase } if pending.request_id == req_id => {
+                let pending = Self::detached(pending, out);
+                self.state = State::Calling { pending, attempts, phase };
+            }
+            State::Sealing { pending, .. } if pending.request_id == req_id && pending.author.is_some() => {
+                if let Some(author) = pending.author { out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::NotSent)); }
+                self.idle(out);
+            }
+            State::Idle if !self.restored => {
+                self.released.insert(req_id);
+                self.state = State::Idle;
+            }
+            state => self.state = state,
         }
     }
 
@@ -219,8 +259,8 @@ impl Session {
                     self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork };
                 }
             }
+            State::Calling { pending, attempts, phase: CallPhase::WaitingRetry } if !online => self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork },
             State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork } if online => self.send(pending, attempts, out),
-            State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) } if online && pending.author.is_none() => self.land_again(pending, landed, out),
             other => self.state = other,
         }
     }
@@ -228,7 +268,7 @@ impl Session {
     pub(super) fn open(&mut self, credential: Option<Credential>, pending: Option<Pending>, dropped_pending: bool, secret: Secret, out: &mut Out) {
         self.credential = credential;
         if dropped_pending {
-            self.state = State::Blocked { pending: None, reason: Block::StateLost, landing: None };
+            self.state = State::Blocked { pending: None, reason: Block::StateLost };
             return;
         }
         let secret = match secret {
@@ -396,40 +436,40 @@ impl Session {
                 self.state = State::PendingHeld { pending };
                 self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (State::Blocked { pending, reason, landing }, Input::SessionCall { reply, .. }) => {
-                self.state = State::Blocked { pending, reason, landing };
+            (State::Blocked { pending, reason }, Input::SessionCall { reply, .. }) => {
+                self.state = State::Blocked { pending, reason };
                 out.replies.push((reply, Err(Fail::StateLost)));
             }
-            (State::Blocked { pending, reason, landing }, Input::Mutate { author, req_id, .. }) => {
+            (State::Blocked { pending, reason }, Input::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
-                match (same, pending, reason, landing) {
-                    (true, Some(pending), Block::Storage, Some(landed)) if pending.author.is_some() => self.land_again(pending, landed, out),
-                    (true, pending, reason, landing) => {
-                        out.effects.push(author_error_retained(author, req_id, Kind::Permanent, blocked_fail(reason), true));
-                        self.state = State::Blocked { pending, reason, landing };
-                    }
-                    (false, Some(pending), reason, landing) => {
-                        out.effects.push(author_error(author, req_id, Kind::Permanent, blocked_fail(reason)));
-                        self.state = State::Blocked { pending: Some(pending), reason, landing };
-                    }
-                    (false, None, reason, landing) => {
-                        out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::StateLost));
-                        self.state = State::Blocked { pending: None, reason, landing };
-                    }
+                match (same, pending.is_some()) {
+                    (true, _) => out.effects.push(author_error_retained(author, req_id, Kind::Permanent, blocked_fail(reason), true)),
+                    (false, true) => out.effects.push(author_error(author, req_id, Kind::Permanent, blocked_fail(reason))),
+                    (false, false) => out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::StateLost)),
                 }
+                self.state = State::Blocked { pending, reason };
             }
-            (State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, Input::Tick) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, out),
             (State::Persisting { pending, batch }, Input::Committed(committed)) if committed == batch => {
+                self.write_failures = 0;
                 if let Some(error) = self.detach_error.take() {
                     Self::finish_retained(out, &pending, Err(error), true);
                     out.effects.push(Effect::ScheduleTick { attempts: 0 });
                     self.state = State::Calling { pending: Pending { reply: None, ..pending }, attempts: 0, phase: CallPhase::WaitingRetry };
                 } else { self.start_calling(pending, out); }
             }
-            (State::Persisting { pending, batch }, Input::Rejected(rejected, reason)) if rejected == batch => {
+            (State::Persisting { pending, batch }, Input::Rejected(rejected, Reason::Storage)) if rejected == batch => {
+                self.state = State::Persisting { pending, batch };
+                self.write_refused(out);
+            }
+            (State::Persisting { pending, batch }, Input::Rejected(rejected, Reason::Invalid)) if rejected == batch => {
                 self.detach_error = None;
-                Self::finish(out, &pending, Err(Fail::Reason(reason)));
+                Self::finish(out, &pending, Err(Fail::Invalid));
                 self.idle(out);
+            }
+            (State::Persisting { pending, batch }, Input::Tick) if !self.write_in_flight => {
+                self.write_in_flight = true;
+                out.effects.push(Effect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session: self.write_session });
+                self.state = State::Persisting { pending, batch };
             }
             (state @ (State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 let current = pending_of(&state).is_some_and(|pending| pending.request_id == req_id);
@@ -442,6 +482,7 @@ impl Session {
             }
             (State::Calling { pending, attempts, phase }, input) => self.calling(pending, attempts, phase, input, out),
             (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Committed(committed)) if committed == batch => {
+                self.write_failures = 0;
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
@@ -471,9 +512,19 @@ impl Session {
                 }
                 self.idle(out);
             }
-            (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Rejected(rejected, reason)) if rejected == batch => {
-                Self::finish_retained(out, &pending, Err(Fail::Reason(reason)), true);
-                self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::Storage, landing: Some(Landed { answer, identity, sequence, server_ended }) };
+            (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Rejected(rejected, Reason::Storage)) if rejected == batch => {
+                self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
+                self.write_refused(out);
+            }
+            (State::Landing { pending, batch, answer, .. }, Input::Rejected(rejected, Reason::Invalid)) if rejected == batch => {
+                Self::finish_retained(out, &pending, answer, true);
+                self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::Invalid };
+            }
+            (State::Landing { pending, answer, identity, sequence, server_ended, .. }, Input::Tick) if !self.write_in_flight => {
+                let batch = self.batch();
+                self.write_in_flight = true;
+                self.landing_commit(batch, &pending, &answer, identity, sequence, server_ended, out);
+                self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
             }
             (state, _) => self.state = state,
         }
@@ -520,7 +571,7 @@ impl Session {
                     self.land(pending, Ok(body), None, None, false, out);
                 } else {
                     Self::finish_retained(out, &pending, Err(Fail::SequenceConflict), true);
-                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::SequenceConflict, landing: None };
+                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::SequenceConflict };
                 }
             }
             Input::Revoked { request_id, attempt_id, body, .. } if mine(request_id, attempt_id) => {

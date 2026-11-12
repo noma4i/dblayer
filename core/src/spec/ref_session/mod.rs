@@ -34,6 +34,7 @@ pub enum EndCause {
 pub enum Reason {
     NoSession,
     Storage,
+    Invalid,
     Closed,
 }
 
@@ -56,6 +57,7 @@ pub enum Fail {
     Http,
     Network,
     Interrupted,
+    NotSent,
     NoSession,
     Closed,
 }
@@ -181,6 +183,7 @@ pub enum Effect {
     HttpRequest { pending: Pending, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
     ScheduleTick { attempts: u64 },
+    ScheduleSessionTick { failures: u64 },
     GenerateCredential { op: SecretOpId },
     StoreSecret { credential: Digest, op: SecretOpId },
     ClearSecret { op: SecretOpId },
@@ -204,7 +207,7 @@ pub enum CallPhase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Block {
-    Storage,
+    Invalid,
     SequenceConflict,
     StateLost,
 }
@@ -235,16 +238,8 @@ pub enum State {
     Persisting { pending: Pending, batch: BatchId },
     Calling { pending: Pending, attempts: u64, phase: CallPhase },
     Landing { pending: Pending, batch: BatchId, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
-    Blocked { pending: Option<Pending>, reason: Block, landing: Option<Landed> },
+    Blocked { pending: Option<Pending>, reason: Block },
     Closed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Landed {
-    pub answer: Answer,
-    pub identity: Option<Digest>,
-    pub sequence: Option<u64>,
-    pub server_ended: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -280,6 +275,9 @@ pub struct Session {
     restore_floor: u64,
     adopt: bool,
     held: Option<State>,
+    write_failures: u64,
+    write_in_flight: bool,
+    write_session: Option<Digest>,
 }
 
 fn author_error(author: AuthorId, req_id: RequestId, kind: Kind, fail: Fail) -> Effect { author_error_retained(author, req_id, kind, fail, false) }
@@ -290,7 +288,7 @@ fn author_error_retained(author: AuthorId, req_id: RequestId, kind: Kind, fail: 
 
 fn blocked_fail(reason: Block) -> Fail {
     match reason {
-        Block::Storage => Fail::Storage,
+        Block::Invalid => Fail::Invalid,
         Block::SequenceConflict => Fail::SequenceConflict,
         Block::StateLost => Fail::StateLost,
     }
@@ -307,7 +305,7 @@ fn is_ended(cause: EndCause) -> bool { matches!(cause, EndCause::SessionReset | 
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, restored_direct: None, restored_active: None, restored_transfer: None, revoked_waiting: BTreeMap::new(), restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, restored_direct: None, restored_active: None, restored_transfer: None, revoked_waiting: BTreeMap::new(), restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, write_failures: 0, write_in_flight: false, write_session: None }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -453,6 +451,8 @@ impl Session {
 
     fn persist(&mut self, pending: Pending, session: Option<Digest>, out: &mut Out) {
         let batch = self.batch();
+        self.write_session = session;
+        self.write_in_flight = true;
         out.effects.push(Effect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session });
         self.state = State::Persisting { pending, batch };
     }
@@ -475,21 +475,28 @@ impl Session {
 
     fn land(&mut self, pending: Pending, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, out: &mut Out) {
         let batch = self.batch();
+        self.write_in_flight = true;
+        self.landing_commit(batch, &pending, &answer, identity, sequence, server_ended, out);
+        self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
+    }
+
+    fn landing_commit(&self, batch: BatchId, pending: &Pending, answer: &Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, out: &mut Out) {
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
         let erase_session = server_ended || pending.class == Class::Login && pending.credential.is_some() && answer.is_err();
         let resume_answer = (self.restored_active == Some(pending.request_id) && !server_ended).then(|| answer.clone());
         out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, resume_answer, erase_session, end_journal: server_ended && pending.class != Class::Login });
-        self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
+    }
+
+    fn write_refused(&mut self, out: &mut Out) {
+        self.write_failures += 1;
+        self.write_in_flight = false;
+        out.effects.push(Effect::ScheduleSessionTick { failures: self.write_failures });
     }
 
     fn clearing(&mut self, call: Option<Queued>, reason: Option<Fail>, after: AfterClear, out: &mut Out) {
         let op = self.secret_op();
         out.effects.push(Effect::ClearSecret { op });
         self.state = State::ClearingSecret { call, reason, op, after };
-    }
-
-    fn land_again(&mut self, pending: Pending, landed: Landed, out: &mut Out) {
-        self.land(pending, landed.answer, landed.identity, landed.sequence, landed.server_ended, out);
     }
 
     fn drained(&mut self, out: &mut Out) {
