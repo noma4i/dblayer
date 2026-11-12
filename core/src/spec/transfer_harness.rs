@@ -185,7 +185,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         file_present: true,
         created_at: Time(0),
         place: Location::Directory,
-        size: 1,
+        size: u64::from(parts) * 5 * 1024 * 1024,
         sha256: "h".into(),
         cycle_id: 1,
         has_intent: false,
@@ -422,7 +422,8 @@ impl Twin {
 
     pub fn copy_done(&mut self, id: TransferId) -> Out {
         let attempt_id = self.attempt(id);
-        self.post(TransferInput::CopyDone { transfer_id: id, attempt_id, size: 10, sha256: "h".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss })
+        let size = self.state().transfers.get(&id).and_then(|transfer| transfer.source.as_ref()).map_or(10, |source| u64::from(source.parts) * 5 * 1024 * 1024);
+        self.post(TransferInput::CopyDone { transfer_id: id, attempt_id, size, sha256: "h".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss })
     }
 
     pub fn copy_failed(&mut self, id: TransferId) -> Out {

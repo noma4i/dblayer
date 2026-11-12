@@ -209,7 +209,7 @@ fn xfer_copy_done() {
     let out = twin.copy_done(id);
     assert_eq!(twin.stage(id), TransferStage::PersistingCopy);
     let rows = out.rows();
-    assert_eq!((rows.len(), rows[0].1, rows[0].0.size, rows[0].0.sha256.as_str()), (1, UploadKind::SyncUpload, 10, "h"));
+    assert_eq!((rows.len(), rows[0].1, rows[0].0.size, rows[0].0.sha256.as_str()), (1, UploadKind::SyncUpload, 2 * 5 * 1024 * 1024, "h"));
     assert_eq!(out.all_replies(), 0, "the receipt waits for the write of the copy");
 }
 
