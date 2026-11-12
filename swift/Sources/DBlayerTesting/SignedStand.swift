@@ -17,9 +17,9 @@ func closePrevious() async {
   do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {} catch { fatalError("closing the previous database failed: \(error)") }
 }
 
-public func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
+public func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", preparer: Preparer? = nil) async throws -> Database {
   await closePrevious()
-  return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+  return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint, preparer: preparer), observers: nil)
 }
 
 public func withRawCalls(_ source: String, _ names: [String] = ["SessionProfile", "PurchaseCreate", "RecordAlbumSend"]) -> String {
