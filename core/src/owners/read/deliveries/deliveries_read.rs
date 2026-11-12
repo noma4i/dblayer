@@ -89,7 +89,7 @@ impl Delivery {
         if let Some(detail) = &self.read_error {
             return WindowState { phase: by_rows, error: Some(crate::ffi::DbError::Storage { detail: detail.clone() }), loaded: window.loaded, has_more: window.has_more, settled: true, total };
         }
-        if !self.view.remote {
+        if !self.view.remote || self.view.kind == (Kind::Entity { fetch: Fetch::Never }) {
             return WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total };
         }
         let phase = if window.error.is_some() && matches!(window.phase, WindowPhase::Loaded | WindowPhase::Failed) { by_rows } else { window.phase };
