@@ -119,6 +119,7 @@ impl TransferState {
         let put = self.transfers.get(&id).map_or(PutMode::Live, |transfer| self.put_mode(transfer));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.put_detached = matches!(put, PutMode::Detached { .. });
+        transfer.restored_put = false;
         let Some(effect) = Self::step_effect(transfer, operation, put) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         transfer.inflight = 0;
         let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.stage == TransferStage::Completing) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
@@ -180,12 +181,13 @@ impl TransferState {
     /// `PutMissing`: the system has no task for the attempt, the step starts again.
     pub(super) fn put_missing(&mut self, now: crate::runtime::Time, identity: PutIdentity, fx: &mut Fx) {
         if self.waiting.contains_key(&identity.transfer_id) { return self.held.push(TransferInput::PutMissing { identity }); }
-        if self.live_put(identity).is_none() { return; }
+        if !self.live_put(identity).is_some_and(|transfer| transfer.restored_put) { return; }
         let Some(transfer) = self.transfers.get_mut(&identity.transfer_id) else { return };
         transfer.next_step = NextStep::Part(transfer.confirmed_parts + 1);
         transfer.stage = TransferStage::Ready;
         transfer.in_flight = false;
         transfer.put_detached = false;
+        transfer.restored_put = false;
         transfer.waiting_retry = false;
         self.show_queued(identity.transfer_id, fx);
         self.start_in_order(now, fx);

@@ -6,7 +6,7 @@ use super::upload_stand::{clip, Detached, Hold, Stand, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{Database, TestClock};
 use crate::owners::write::upload::MEBIBYTE;
-use crate::transport::{PutIdentity, RawOutcome};
+use crate::transport::{PutIdentity, RawFailure, RawOutcome};
 
 const INIT: &str = r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#;
 const PRESIGN: &str = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#;
@@ -197,6 +197,36 @@ async fn xfer_detached_missing() {
     crate::test_wait::settled(&database, "the row landed", || landed(&database)).await;
     assert_eq!(again.script.count("CompleteMultipart"), 1);
     database.close_now();
+}
+
+/// The executor ends an attempt whose target is not a URL with a failure: the core classifies it as any failed PUT (`Io`, a temporary one) and the next attempt waits for its Backoff.
+/// Observable: the starts the executor got before and after the time of the first retry passed. Catches: an attempt that starts again at once and runs through the attempt limit without a pause.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_detached_bad_target() {
+    let run = started(MEBIBYTE).await;
+    let live = run.detached.started()[0].0;
+    run.database.put_ended(live, RawOutcome::Failed { failure: RawFailure { domain: "url".into(), code: None, message: "the PUT target is not a URL".into() } });
+    drained(&run.database).await;
+    assert_eq!(run.detached.started().len(), 1, "no attempt starts before the Backoff");
+    run.clock.advance(60 * 1000);
+    let detached = run.detached.clone();
+    crate::test_wait::settled(&run.database, "the next attempt started", || detached.started().len() == 2).await;
+    assert_ne!(run.detached.started()[1].0.attempt, live.attempt);
+    run.database.close_now();
+}
+
+/// `PutMissing` counts only for the attempt that the opening restored and listed: for an attempt this process started it changes nothing.
+/// Observable: the starts and the calls after a `PutMissing` for the live attempt. Catches: an executor input that restarts the step without a pause and without the answer of `ResumePuts`.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_detached_missing_needs_resume() {
+    let run = started(MEBIBYTE).await;
+    let live = run.detached.started()[0].0;
+    run.database.put_missing(live);
+    drained(&run.database).await;
+    assert_eq!((run.detached.started().len(), run.stand.script.count("PresignParts")), (1, 1));
+    run.detached.finish(0, Detached::ok());
+    crate::test_wait::settled(&run.database, "the row landed", || landed(&run.database)).await;
+    run.database.close_now();
 }
 
 /// A transfer of an earlier build with 3 parts, 1 of them confirmed in the process, opens on a build that runs PUTs outside the process: the other parts go on in the process with their own slices and `Complete` carries every etag.

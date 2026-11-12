@@ -183,6 +183,7 @@ impl TransferState {
         transfer.stage = TransferStage::Uploading;
         transfer.in_flight = true;
         transfer.put_detached = true;
+        transfer.restored_put = true;
         transfer.attempt_id = attempt_id;
         let Some(progress) = Self::share(transfer, self.sizing.part_size, false) else { return false };
         self.show(id, Shown::Uploading { progress }, fx);

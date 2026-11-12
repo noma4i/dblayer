@@ -537,6 +537,7 @@ pub struct Transfer {
     pub in_flight: bool,
     /// The PUT of the attempt in flight runs outside the process.
     pub put_detached: bool,
+    pub restored_put: bool,
     pub waiting_retry: bool,
     pub next_step: NextStep,
     pub upload_id: Option<String>,
