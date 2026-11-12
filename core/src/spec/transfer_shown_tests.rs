@@ -105,7 +105,9 @@ fn xfer_show_retry_keeps_the_step_timers() {
     let id = twin.uploading(KEY, 3);
     twin.online(false);
     twin.online(true);
-    let started = twin.commit();
+    let attempt = twin.attempt(id);
+    twin.commit();
+    let started = twin.put_started(id, attempt);
     let step_timers: Vec<_> = started.schedules.iter().zip(&started.timer_ids).filter(|((_, input), _)| input.contains("PutTimeout")).map(|(_, id)| *id).collect();
     assert_eq!((twin.stage(id), step_timers.len()), (TransferStage::Uploading, 1), "the step runs with its timeout armed: {started:?}");
     twin.hold_shown = true;

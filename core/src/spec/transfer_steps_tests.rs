@@ -218,11 +218,12 @@ fn xfer_stray_inputs_change_nothing_in_any_steps_stage() {
         let attempt = twin.attempt(id);
         let wrong = |transfer_id, attempt_id| TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id, attempt_id } };
         twin.det.tick(Time(1));
-        twin.ignores(id, vec![wrong(id, attempt + 1), wrong(id + 77, attempt)]);
+        let started = |transfer_id, attempt_id| TransferInput::PutStarted { transfer_id, attempt_id };
+        twin.ignores(id, vec![wrong(id, attempt + 1), wrong(id + 77, attempt), started(id, attempt + 1), started(id + 77, attempt)]);
         let mut completing = Twin::new();
         let id = completing_multipart(&mut completing, OTHER);
         let attempt = completing.attempt(id);
-        completing.ignores(id, vec![wrong(id, attempt)]);
+        completing.ignores(id, vec![wrong(id, attempt), started(id, attempt)]);
     }
     {
         let mut twin = Twin::new();
@@ -288,9 +289,10 @@ fn xfer_put_timeout() {
     let (mut twin, id) = ready(3);
     twin.online(true);
     let attempt = twin.attempt(id);
-    let armed = twin.commit();
+    assert!(twin.commit().schedules.is_empty(), "the attempt commit arms no timeout: the step may still wait for the Session slot");
+    let armed = twin.put_started(id, attempt);
     let expected = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id: attempt } };
-    assert_eq!(armed.schedules, vec![(UploadConfig::default().put_timeout, format!("{expected:?}"))], "the step arms one timeout of its attempt");
+    assert_eq!(armed.schedules, vec![(UploadConfig::default().put_timeout, format!("{expected:?}"))], "the PUT sent arms one timeout of its attempt");
     let out = twin.put_timeout(id, attempt);
     assert_eq!((twin.stage(id), twin.t(id).attempts, twin.t(id).waiting_retry, out.timers, out.cancel_steps()), (TransferStage::Uploading, 1, true, 1, 1));
     assert_ne!(twin.attempt(id), attempt, "the retry is a new physical attempt");
@@ -319,6 +321,8 @@ fn xfer_put_timeout_cancelled() {
     let in_flight = || {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
+        let attempt = twin.attempt(id);
+        twin.put_started(id, attempt);
         (twin, id)
     };
     let deadline = Time(u64::try_from(UploadConfig::default().put_timeout.as_millis()).unwrap() + 1);

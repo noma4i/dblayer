@@ -260,6 +260,8 @@ pub enum TransferInput {
     AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId },
     Restored { uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, orphans: Vec<(String, String)>, batches: BTreeMap<u64, StoredGroup>, held_orphan: Option<String> },
     ReservedFloor { transfer_id: TransferId },
+    /// The PUT of the step is sent to the network: the timer of the step starts.
+    PutStarted { transfer_id: TransferId, attempt_id: AttemptId },
     /// The answer to `abort` of a removed transfer: `Ok` when the server removed the upload or has none, else the refusal.
     AbortDone { upload_id: String, result: Result<(), AbortFault> },
     RestoreFailed { error: String },

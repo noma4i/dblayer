@@ -82,13 +82,14 @@ impl TransferState {
         transfer.inflight = 0;
         let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.stage == TransferStage::Completing) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         let shown = Shown::Uploading { progress };
-        let (uploading, attempt_id) = (transfer.stage == TransferStage::Uploading, transfer.attempt_id);
         self.show(id, shown, fx);
         run(fx, effect);
-        if uploading {
-            let input = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } };
-            fx.push(Effect::Schedule { id: put_timer(attempt_id), after: self.put_timeout, input });
-        }
+    }
+
+    pub(super) fn put_started(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
+        if !self.live(id, TransferStage::Uploading, attempt_id) { return; }
+        let input = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } };
+        fx.push(Effect::Schedule { id: put_timer(attempt_id), after: self.put_timeout, input });
     }
 
     /// `Online(false)` and `PowerSaving(true)` of a transfer that is not urgent: the steps in the network go back to `Ready`.

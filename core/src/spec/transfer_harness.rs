@@ -476,6 +476,8 @@ impl Twin {
         self.post(TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } })
     }
 
+    pub fn put_started(&mut self, id: TransferId, attempt_id: u64) -> Out { self.post(TransferInput::PutStarted { transfer_id: id, attempt_id }) }
+
     pub fn online(&mut self, on: bool) -> Out { self.post(TransferInput::Online(Online(on))) }
 
     pub fn cancel(&mut self, key: &str) -> (ReplyId, Out) {
