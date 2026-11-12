@@ -98,33 +98,6 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
 }
 
 #[test]
-fn the_exchange_requires_an_https_origin_without_a_path_and_a_pinned_key() {
-    let clock = clock();
-    let server = FakeServer::new(clock.clone());
-    let make = |origin: &str, pin: &str| {
-        let config = EncryptedConfig { origin: origin.to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
-        Exchange::new(&config, server.clone(), clock.clone()).is_ok()
-    };
-
-    assert!(make("https://api.example.com", pin()));
-    assert!(make("https://api.example.com/", pin()));
-    assert!(!make("https://api.example.com/api", pin()));
-    assert!(!make("https://api.example.com", short_key_pin()));
-}
-
-#[tokio::test]
-async fn a_request_over_256_kib_is_refused_without_being_sent() {
-    let clock = clock();
-    let server = FakeServer::new(clock.clone());
-    let exchange = Exchange::new(&config(), server.clone(), clock).unwrap();
-
-    let outcome = exchange.send_once(SendOnce { credential: Some("credential"), request_id: "request", response_key: "key", sequence: None, path: "/api/graphql", body: &json!({ "query": "q".repeat(300 * 1024) }), purpose: NetworkPurpose::Standard, wire: crate::transport::WireIds::bootstrap() }).await;
-
-    assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
-    assert!(server.seen().is_empty());
-}
-
-#[test]
 fn cable_url_is_built_by_the_core() {
     let at = |origin: &str| EncryptedConfig { origin: origin.into(), ..config() }.cable_url();
     let path = config().endpoints.cable;

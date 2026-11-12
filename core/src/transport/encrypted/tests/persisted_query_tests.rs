@@ -65,7 +65,7 @@ pub(in super::super) fn documents(requests: &[Value]) -> Vec<bool> {
 async fn a_mutation_over_the_size_limit_never_leaves_and_leaves_the_next_sequence_available() {
     let rig = Rig::signed_in().await;
     let transport = rig.transport();
-    assert!(matches!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await, Err(TransportError::RequestTooLarge { .. })));
+    assert!(matches!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(!documents(&rig.graphql_requests()).contains(&true), "the full document is refused before the send");
     assert_eq!(rig.pending_sequence(), None);
     transport.mutate(request(WRITE)).await.unwrap();

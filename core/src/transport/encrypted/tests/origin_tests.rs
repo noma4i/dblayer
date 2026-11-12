@@ -62,6 +62,7 @@ fn https_is_accepted_for_any_host_and_http_only_for_development_hosts() {
         "http://localhost:99999",
         "http://localhost:abc",
         "http://localhost/api",
+        "https://api.example.com/api",
         "http://localhost?x=1",
         "http://",
         "https://",
