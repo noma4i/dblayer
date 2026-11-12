@@ -526,12 +526,12 @@ fn data_sets_hidden_value_is_not_read() {
     assert_eq!(changes.iter().flat_map(|(_, fields)| hidden(fields.clone())).collect::<Vec<_>>(), Vec::<String>::new(), "the changed fields");
 }
 
-fn parent_operation(db: &Arc<Store>, op_id: u64, action: &str, row: &RowValue) {
+pub(super) fn parent_operation(db: &Arc<Store>, op_id: u64, action: &str, row: &RowValue) {
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "chats".into(), row_id: row.row_id.clone(), values: row.values.clone() }], ..Default::default() };
     write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: "chats".into(), row_id: row.row_id.clone(), action: action.into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
 }
 
-fn local_parent(db: &Arc<Store>, path: &str, values: Value) {
+pub(super) fn local_parent(db: &Arc<Store>, path: &str, values: Value) {
     let row = RowValue { row_id: values["id"].as_str().unwrap().into(), values: values.to_string() };
     match path {
         "rows" => write(db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "chats".into(), rows: vec![row] }]),
