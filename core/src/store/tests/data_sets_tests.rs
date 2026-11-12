@@ -165,3 +165,27 @@ fn data_sets_pointed_child_writes_its_change() {
         assert_eq!(chat(&db), json!(["m9", server]), "device {device}, server {server}: the confirmed child replaces the prediction");
     }
 }
+
+/// P-DATA-57: an edit of the predicted child the parent points at does not move the time back.
+#[test]
+fn data_sets_predicted_edit_keeps_the_time() {
+    let db = open();
+    land(&db, "answer");
+    for (device, expected) in [(3, 5), (4, 5), (9, 9), (8, 9)] {
+        write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", device)] }]);
+        assert_eq!(chat(&db), json!(["temp-1", expected]), "the predicted child at {device}");
+    }
+}
+
+/// P-DATA-59: the child taken after a destroy is the one the order of `newer` ranks first, an equal time is decided by the id.
+#[test]
+fn data_sets_destroy_takes_the_first_by_the_order() {
+    for ids in [["m1", "m2"], ["m2", "m1"]] {
+        let db = open();
+        let rows = ids.iter().map(|id| message(id, 5)).chain([message("m3", 9)]).collect();
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows }]);
+        assert_eq!(chat(&db), json!(["m3", 9]));
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m3".into()] }]);
+        assert_eq!(chat(&db), json!(["m2", 5]), "written as {ids:?}: the same child a landing of both would point at");
+    }
+}
