@@ -161,7 +161,7 @@ async fn a_cancelled_upload_sends_nothing() {
     bound(database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
     assert!(bound(database.cancel_upload(epoch, "Moment".into(), "42".into(), "upload".into())).await.unwrap());
     database.set_online(true).unwrap();
-    bound(database.operations_quiet()).await;
+    bound(database.writes_quiet(database.session_epoch())).await;
     assert!(puts.0.lock().unwrap().is_empty());
     assert!(executed(&rig, "MakeMoment").is_empty());
     database.close_now();

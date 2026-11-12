@@ -870,6 +870,7 @@ impl TransferState {
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(now, transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::InitDone { transfer_id, attempt_id, upload_id } => self.init_done(transfer_id, attempt_id, upload_id, fx),
             TransferInput::PutEnded { identity, result } => self.put_ended(now, identity, result, fx),
+            TransferInput::WhenQuiet { .. } => {}
             TransferInput::PutMissing { identity } => self.put_missing(now, identity, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(now, transfer_id, attempt_id, (temporary, error), fx),
@@ -1042,11 +1043,14 @@ impl StateOwner for Transfers {
         if let TransferInput::EpochStarted(started) = &input {
             state.begin_epoch(started.epoch);
         }
-        if state.phase == Phase::Restoring {
+        if let TransferInput::WhenQuiet { reply } = input {
+            state.quiet_waiters.push(reply);
+        } else if state.phase == Phase::Restoring {
             state.restoring(now, input, &mut fx);
         } else {
             state.handle(now, input, &mut fx);
         }
+        state.release_quiet(&mut fx);
         fx
     }
 

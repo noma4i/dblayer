@@ -235,6 +235,48 @@ async fn xfer_detached_old_multipart() {
     reopened.close_now();
 }
 
+/// P-XFER-77: `writes_quiet` answers only when the writes have no work that runs without a new external event, and always answers.
+/// Observable: when the answer comes against the held `Complete` and final mutation, the landed row at the answer, the answer with only a system task in flight, with the network away, and at `close`. Catches: an answer before the final mutation landed (the app goes back to the system with work left), an answer that waits for a system task or for the network, a wait that `close` does not end.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_writes_quiet() {
+    let (mut run, held) = opened_with(true).await;
+    let (complete, final_mutation) = held.unwrap();
+    launch(&mut run, MEBIBYTE).await;
+    let epoch = run.database.session_epoch();
+    bound(run.database.writes_quiet(epoch)).await;
+    run.detached.finish(0, Detached::ok());
+    let database = run.database.clone();
+    let quiet = tokio::spawn(async move { database.writes_quiet(epoch).await });
+    complete.entered().await;
+    assert!(!quiet.is_finished(), "Complete is on its way");
+    complete.release();
+    final_mutation.entered().await;
+    assert!(!quiet.is_finished(), "the final mutation is on its way");
+    final_mutation.release();
+    bound(quiet).await.unwrap();
+    assert!(landed(&run.database), "the answer comes after the final mutation landed");
+    run.database.close_now();
+
+    let away = opened().await;
+    let away_epoch = away.database.session_epoch();
+    away.database.set_online(false).unwrap();
+    let file = source(away.directory.path(), MEBIBYTE);
+    bound(away.database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &file, away_epoch))).await.unwrap();
+    bound(away.database.writes_quiet(away_epoch)).await;
+    assert_eq!(away.detached.started().len(), 0, "the step waits for the network");
+    away.database.close_now();
+
+    let (mut closing, held) = opened_with(true).await;
+    launch(&mut closing, MEBIBYTE).await;
+    closing.detached.finish(0, Detached::ok());
+    held.as_ref().unwrap().0.entered().await;
+    let database = closing.database.clone();
+    let closing_epoch = closing.database.session_epoch();
+    let waits = tokio::spawn(async move { database.writes_quiet(closing_epoch).await });
+    closing.database.close_now();
+    bound(waits).await.unwrap();
+}
+
 /// P-XFER-74: a process killed at any commit between the start of the PUT and its outcome leaves a file that never sends the PUT of the part a second time before `PutMissing`, and finishes the upload from the outcome of the same task.
 /// Observable: the starts of a process opened on every image and its landed row. Catches: a restart that starts the part again beside a live task, an upload created twice after the id was recorded.
 #[tokio::test(flavor = "multi_thread")]

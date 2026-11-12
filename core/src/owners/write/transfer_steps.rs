@@ -44,6 +44,22 @@ impl TransferState {
         opened && allowed && transfer.stage == TransferStage::Ready && (transfer.pending_step.is_none() || transfer.attempts >= ATTEMPT_LIMIT)
     }
 
+    /// No transfer has work that runs without a new external event. A PUT outside the process, a backoff, the network, a slot, the source, the declaration and the preparation are not such work. The final mutation belongs to Outbox.
+    fn is_quiet(&self) -> bool {
+        self.phase != Phase::Restoring && self.pending.is_empty() && self.scan().all(|transfer| match transfer.stage {
+            TransferStage::Reserving | TransferStage::Accepting | TransferStage::PersistingPrepared | TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingFailure | TransferStage::Removing | TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingCommit | TransferStage::PersistingBatchIntent => false,
+            TransferStage::Uploading | TransferStage::Completing => transfer.waiting_retry || transfer.pending_step.is_some() || (transfer.put_detached && transfer.in_flight) || !transfer.in_flight,
+            TransferStage::Ready => transfer.waiting_retry || self.starts_held || self.online != Some(true) || self.active() >= self.slots || !self.can_start(transfer),
+            TransferStage::WaitingDeclaration | TransferStage::AwaitingSource | TransferStage::Copying | TransferStage::CopyReady | TransferStage::Preparing | TransferStage::Measuring | TransferStage::Held | TransferStage::BatchReady | TransferStage::Mutating | TransferStage::Failed | TransferStage::Done => true,
+        })
+    }
+
+    pub(super) fn release_quiet(&mut self, fx: &mut Fx) {
+        if !self.quiet_waiters.is_empty() && self.is_quiet() {
+            for waiter in std::mem::take(&mut self.quiet_waiters) { reply(fx, waiter, TransferAnswer::Ok); }
+        }
+    }
+
     fn step_effect(transfer: &Transfer, operation: u64, put: PutMode) -> Option<TransferEffect> {
         let NextStep::Part(part) = transfer.next_step else { return Some(Self::complete_effect(transfer)) };
         Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place, seeded: transfer.seeded.clone(), put })

@@ -323,12 +323,6 @@ fn local_source(source: &str) -> Result<std::path::PathBuf, DbError> {
 }
 
 impl Database {
-    /// Waits until no operation of the owner Outbox is on its way; a database without a session has none.
-    #[cfg(test)]
-    pub(super) async fn operations_quiet(&self) {
-        let _ = self.await_life(self.life.operations_quiet(self.life.published().epoch)).await;
-    }
-
     /// The outcome of the owner: the value, or the error of a refusal (`kept` = the intent stays) or of the end of the wait.
     async fn settle(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> {
         self.not_closed()?;

@@ -308,6 +308,13 @@ impl Database {
         self.life.put_ended(identity, crate::owners::write::transfer_executor::put_result(outcome));
     }
 
+    /// Answers when the writes of the epoch have no work that runs without a new external event: no transfer step in the process, no batch in flight, no operation on its way. A PUT outside the process, a backoff, the network and a slot are waits for an event. The end of the epoch and `close` answer too.
+    pub async fn writes_quiet(&self, epoch: u64) {
+        let _ = self.await_life(self.life.transfers_quiet(epoch)).await;
+        let _ = self.await_life(self.life.operations_quiet(epoch)).await;
+        let _ = self.await_life(self.life.transfers_quiet(epoch)).await;
+    }
+
     /// The system task `identity` sent `sent` bytes of its file. Cheap and synchronous.
     pub fn put_progress(&self, identity: crate::transport::PutIdentity, sent: u64) { self.life.put_sent(identity, sent); }
 

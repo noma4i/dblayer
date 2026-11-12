@@ -283,6 +283,8 @@ pub enum TransferInput {
     InitDone { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String },
     /// The outcome of a PUT outside the process, classified as the answer of a PUT in the process: the etag, or `(temporary, error)`.
     PutEnded { identity: PutIdentity, result: Result<Option<String>, (bool, String)> },
+    /// Answers when no transfer has work that runs without a new external event.
+    WhenQuiet { reply: ReplyId },
     /// The executor has no system task for `identity`.
     PutMissing { identity: PutIdentity },
     UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String, key: Key },
@@ -702,6 +704,7 @@ pub struct TransferState {
     pub abort_root: String,
     /// The held calls replay: a start waits until all of them are classified.
     pub starts_held: bool,
+    pub(super) quiet_waiters: Vec<ReplyId>,
     pub closing: bool,
     pub(super) ended: bool,
     pub(super) queue_error: Option<String>,
@@ -751,6 +754,7 @@ impl TransferState {
             drained: false,
             abort_root: "abortMultipart".into(),
             starts_held: false,
+            quiet_waiters: Vec::new(),
             closing: false,
             ended: false,
             queue_error: None,
