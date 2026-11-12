@@ -165,9 +165,8 @@ impl TransferState {
 
     /// A multipart upload outside the process with a recorded attempt: the system may still run its PUT, so the transfer waits in `Uploading` for `PutEnded` or `PutMissing` after `ResumePuts`.
     fn put_waits(&self, row: &StoredTransfer) -> bool {
-        self.sizing.detached && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
+        super::transfer_steps::detached_put(self.sizing.detached, row.steps.as_ref(), row.source.as_ref()) && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
             && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
-            && row.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart)
     }
 
     /// The PUTs outside the process that the opening waits for, also those of transfers that wait for the declaration of their operation.

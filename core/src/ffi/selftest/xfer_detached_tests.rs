@@ -199,6 +199,42 @@ async fn xfer_detached_missing() {
     database.close_now();
 }
 
+/// A transfer of an earlier build with 3 parts, 1 of them confirmed in the process, opens on a build that runs PUTs outside the process: the other parts go on in the process with their own slices and `Complete` carries every etag.
+/// Observable: the PUTs of the transport with their ranges, the starts the executor got, the arguments of `CompleteMultipart`. Catches: a part sent as the whole file, a part started outside the process, an object assembled from a wrong list.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_detached_old_multipart() {
+    let directory = tempfile::tempdir().unwrap();
+    let live = directory.path().join("live.sqlite");
+    let file = source(directory.path(), 11 * MEBIBYTE);
+    let presign = |number: u32| format!(r#"{{"data":{{"presignParts":{{"parts":[{{"partNumber":{number},"url":"https://storage/{number}"}}]}}}}}}"#);
+    let earlier = Stand::new();
+    earlier.script.data("InitMultipart", INIT);
+    earlier.script.data("PresignParts", &presign(1));
+    earlier.script.data("PresignParts", &presign(2));
+    let (first_part, second_part) = (earlier.puts.hold_next(), earlier.puts.hold_next());
+    let database = earlier.open(Some(&live), &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &file, epoch))).await.unwrap();
+    first_part.entered().await;
+    first_part.release();
+    second_part.entered().await;
+    database.close_now();
+    let secret = earlier.rig.credentials.inner.value().unwrap();
+    let detached = Arc::new(Detached::default());
+    let (later, reopened) = reopen_with(&live, &secret, &[CREATE_MOMENT], detached.clone(), |stand| {
+        stand.script.data("PresignParts", &presign(2));
+        stand.script.data("PresignParts", &presign(3));
+        stand.script.data("CompleteMultipart", COMPLETE);
+        stand.script.data("CreateMoment", LANDED);
+    }).await;
+    crate::test_wait::settled(&reopened, "the row landed", || landed(&reopened)).await;
+    let ranges: Vec<(u64, u64)> = later.puts.seen.lock().unwrap().iter().map(|put| (put.offset, put.length)).collect();
+    assert_eq!(ranges, [(5 * MEBIBYTE, 5 * MEBIBYTE), (10 * MEBIBYTE, MEBIBYTE)], "the parts that are left go as slices in the process");
+    assert_eq!(detached.started().len(), 0, "no PUT outside the process");
+    assert_eq!(later.script.variables("CompleteMultipart")[0]["parts"].as_array().map(Vec::len), Some(3));
+    reopened.close_now();
+}
+
 /// P-XFER-74: a process killed at any commit between the start of the PUT and its outcome leaves a file that never sends the PUT of the part a second time before `PutMissing`, and finishes the upload from the outcome of the same task.
 /// Observable: the starts of a process opened on every image and its landed row. Catches: a restart that starts the part again beside a live task, an upload created twice after the id was recorded.
 #[tokio::test(flavor = "multi_thread")]

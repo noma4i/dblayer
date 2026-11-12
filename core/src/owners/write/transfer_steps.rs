@@ -15,6 +15,11 @@ fn put_timer(attempt_id: AttemptId) -> ScheduleId { ScheduleId(RETRY_TIMER + att
 /// The identity of the PUT outside the process, built from the numbers a transfer row records.
 pub(super) fn put_identity(transfer_id: u64, cycle_id: u64, attempts: u32) -> PutIdentity { PutIdentity { transfer_id, cycle_id, attempt: u64::from(attempts) } }
 
+/// The one rule of the mode of a PUT: it goes outside the process only in a build that can, for a multipart transfer of one part. A transfer of an earlier build with more parts goes on in the process.
+pub(super) fn detached_put(detached: bool, steps: Option<&Steps>, source: Option<&Source>) -> bool {
+    detached && source.is_some_and(|source| source.parts == 1) && steps.and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart)
+}
+
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
     pub fn active(&self) -> u32 { self.scan().filter(|transfer| transfer.in_flight).count() as u32 }
@@ -46,8 +51,7 @@ impl TransferState {
 
     /// Who runs the PUT of the next step: a multipart upload outside the process creates the upload first and starts the PUT with the next step, which has the recorded `upload_id`.
     fn put_mode(&self, transfer: &Transfer) -> PutMode {
-        let multipart = transfer.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart);
-        match (self.sizing.detached && multipart && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
+        match (detached_put(self.sizing.detached, transfer.steps.as_ref(), transfer.source.as_ref()) && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
             (false, _) => PutMode::Live,
             (true, false) => PutMode::InitOnly,
             (true, true) => PutMode::Detached { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) },
