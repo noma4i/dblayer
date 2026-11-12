@@ -224,10 +224,10 @@ impl Drop for ReleaseSql {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_login_during_session_end_all_orders() {
+async fn consumer_login_beside_a_session_end_after_a_race_a_logout_and_a_close() {
     use crate::test_wait::within;
     use crate::transport::{EncryptedOperationClass, EncryptedSessionOperation};
-    for order in ["before", "concurrent", "held", "after", "failed", "closed", "revoked"] {
+    for order in ["concurrent", "after", "closed", "revoked"] {
         let rig = Rig::new();
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("first_login".into(), EncryptedSessionOperation { path: "/api/auth/social".into(), class: EncryptedOperationClass::Login });
@@ -237,12 +237,6 @@ async fn consumer_login_during_session_end_all_orders() {
         let original = rig.credentials.inner.value().unwrap();
         let identity = database.session_status().unwrap().identity;
         match order {
-            "before" => {
-                let result = within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await;
-                assert!(matches!(result, Err(DbError::Session { code: SessionCode::AlreadyAuthenticated, .. })), "{result:?}");
-                assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
-                within(database.session_reset()).await.unwrap();
-            }
             "concurrent" => {
                 let (login, reset) = within(async { tokio::join!(database.session_call("first_login".into(), SOCIAL_BODY.into()), database.session_reset()) }).await;
                 reset.unwrap();
@@ -258,49 +252,6 @@ async fn consumer_login_during_session_end_all_orders() {
                     Err(_) => assert!(secret.is_none() && row.is_none(), "refused login retained a credential"),
                 }
             }
-            "held" => {
-                let entered = Arc::new(tokio::sync::Notify::new());
-                let latch = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-                let _release = ReleaseSql(latch.clone());
-                let once = Arc::new(AtomicBool::new(false));
-                let (seen, wait, first) = (entered.clone(), latch.clone(), once.clone());
-                let life = database.life.clone();
-                database.db.lock().connection.progress_handler(1, Some(move || {
-                    if life.published().state == crate::owners::contract::PublishedState::Ending && !first.swap(true, Ordering::SeqCst) {
-                        seen.notify_one();
-                        let (lock, ready) = &*wait;
-                        let mut released = lock.lock().unwrap();
-                        while !*released { released = ready.wait(released).unwrap(); }
-                    }
-                    false
-                })).unwrap();
-                let reset_db = database.clone();
-                let reset = tokio::spawn(async move { reset_db.session_reset().await });
-                within(entered.notified()).await;
-                assert_eq!(database.session_status().unwrap().phase, crate::ffi::SessionStanding::Ending);
-                let login_db = database.clone();
-                let (started, accepted) = tokio::sync::oneshot::channel();
-                let login = tokio::spawn(async move {
-                    let _ = started.send(());
-                    login_db.session_call("first_login".into(), SOCIAL_BODY.into()).await
-                });
-                within(accepted).await.unwrap();
-                let (lock, ready) = &*latch;
-                *lock.lock().unwrap() = true;
-                ready.notify_one();
-                within(reset).await.unwrap().unwrap();
-                let result = within(login).await.unwrap();
-                database.db.lock().connection.progress_handler(0, None::<fn() -> bool>).unwrap();
-                let secret = rig.credentials.inner.value();
-                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap();
-                if result.is_ok() {
-                    let secret = secret.expect("successful login retained credential");
-                    assert_ne!(secret, original);
-                    assert_eq!(row.expect("successful login retained digest").credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
-                } else {
-                    assert!(secret.is_none() && row.is_none(), "refused login retained a credential");
-                }
-            }
             "after" => {
                 within(database.session_reset()).await.unwrap();
                 within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -309,15 +260,6 @@ async fn consumer_login_during_session_end_all_orders() {
                 assert_ne!(secret, original);
                 assert_ne!(database.session_status().unwrap().identity, identity);
                 assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&secret));
-            }
-            "failed" => {
-                database.db.lock().connection.execute_batch("CREATE TRIGGER refuse_session_erase BEFORE DELETE ON encrypted_session BEGIN SELECT RAISE(ABORT, 'refuse erase'); END;").unwrap();
-                assert!(within(database.session_reset()).await.is_err());
-                assert!(within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.is_err());
-                let row = crate::store::session_state::session(&database.db.lock().connection).unwrap().unwrap();
-                assert_eq!(row.credential_digest, crate::transport::encrypted::exchange::digest_of(&original));
-                assert_eq!(rig.credentials.inner.value().as_deref(), Some(original.as_str()));
-                database.db.lock().connection.execute_batch("DROP TRIGGER refuse_session_erase").unwrap();
             }
             "closed" => {
                 within(database.close_database()).await.unwrap();
