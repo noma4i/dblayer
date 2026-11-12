@@ -423,9 +423,7 @@ fn xfer_register_other() {
 fn xfer_waiting_declaration_other() {
     let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY)), ("retry", twin.retry(KEY, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-    }
+    refuses_calls(&mut twin, KEY);
     let mut inputs = twin.stray_results(1);
     inputs.extend([
         TransferInput::Online(Online(true)),

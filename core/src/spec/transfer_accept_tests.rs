@@ -25,13 +25,6 @@ fn copying_batch(twin: &mut Twin, keys: &[&str]) -> (Vec<TransferId>, u64) {
     (ids, reply)
 }
 
-fn refuses_calls(twin: &mut Twin, key: &str) {
-    for (name, (reply, out)) in [("cancel", twin.cancel(key)), ("discard", twin.discard(key)), ("retry", twin.retry(key, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-        assert_eq!(out.writes(), 0, "{name}");
-    }
-}
-
 #[test]
 fn xfer_accept_while_restoring() {
     let mut twin = Twin::bare(1);
@@ -387,12 +380,4 @@ fn xfer_persisting_copy_rejected() {
     twin.copy_done(ids[1]);
     let out = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!(out.removed().len(), 2, "the whole batch is removed");
-}
-
-#[test]
-fn xfer_persisting_copy_refuses() {
-    let mut twin = Twin::new();
-    let id = twin.persisting_copy(KEY, 2);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingCopy);
 }

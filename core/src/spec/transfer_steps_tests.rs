@@ -12,12 +12,6 @@ use crate::transport::NetworkPurpose;
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn refuses_calls(twin: &mut Twin, key: &str) {
-    for (name, (reply, out)) in [("cancel", twin.cancel(key)), ("discard", twin.discard(key)), ("retry", twin.retry(key, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-    }
-}
-
 /// `Ready{Part(1)}` of a transfer with `parts` parts: the network is down.
 fn ready(parts: u32) -> (Twin, TransferId) {
     let mut twin = Twin::offline();
@@ -660,14 +654,6 @@ fn xfer_persisting_complete_committed() {
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.submits(), out.shows()), (TransferStage::Mutating, 1, vec![Shown::Uploading { progress: 100 }]));
     assert!(matches!(&out.outbox[0], crate::owners::write::outbox::OutboxInput::SubmitReserved { op, .. } if op.origin == (crate::owners::write::outbox::OpSource::Transfer { transfer_id: id, cycle_id: 1 })));
-}
-
-#[test]
-fn xfer_persisting_complete_refuses() {
-    let mut twin = Twin::new();
-    let id = twin.persisting_complete(KEY);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingComplete);
 }
 
 #[test]

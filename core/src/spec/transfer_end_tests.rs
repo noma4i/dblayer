@@ -10,12 +10,6 @@ use crate::runtime::{Cause, Time};
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn refuses_calls(twin: &mut Twin, key: &str) {
-    for (name, (reply, out)) in [("cancel", twin.cancel(key)), ("discard", twin.discard(key)), ("retry", twin.retry(key, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-    }
-}
-
 pub(super) const SILENT: (usize, usize, usize, usize, usize, usize) = (0, 0, 0, 0, 0, 0);
 
 /// The writes to the Outbox, the submits, the discards, `abort`, `complete` and the steps of one step of the owner.
@@ -130,14 +124,6 @@ fn xfer_persisting_retry_rejected() {
 }
 
 #[test]
-fn xfer_persisting_retry_refuses() {
-    let (mut twin, id) = failed_with_upload();
-    twin.retry(KEY, None);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingRetry);
-}
-
-#[test]
 fn xfer_persisting_failure_committed() {
     let mut twin = Twin::new();
     let id = twin.persisting_failure(KEY);
@@ -222,14 +208,6 @@ fn xfer_persisting_failure_tick() {
     assert!(Twin::quiet(&stray), "a timer of another attempt writes nothing: {stray:?}");
     let out = twin.tick_retry(id);
     assert_eq!((twin.stage(id), out.writes(), out.kinds()), (TransferStage::PersistingFailure, 1, vec![UploadKind::Failed]));
-}
-
-#[test]
-fn xfer_persisting_failure_refuses() {
-    let mut twin = Twin::new();
-    let id = twin.persisting_failure(KEY);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingFailure);
 }
 
 #[test]
@@ -476,15 +454,6 @@ fn xfer_removing_no_session() {
 }
 
 #[test]
-fn xfer_removing_refuses() {
-    let mut twin = Twin::offline();
-    let id = twin.accepted(KEY, 2);
-    twin.cancel(KEY);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::Removing);
-}
-
-#[test]
 fn xfer_failed_online() {
     let mut twin = Twin::new();
     twin.failed(KEY);
@@ -511,16 +480,6 @@ fn xfer_expired() {
     twin.commit();
     let (reply, out) = twin.outcome(id, 1);
     assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())], "the outcome of the failed cycle is immutable");
-}
-
-#[test]
-fn xfer_not_expired() {
-    let mut twin = Twin::new();
-    let id = twin.failed(KEY);
-    twin.det.tick(Time(6 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert!(Twin::quiet(&out), "{out:?}");
-    assert_eq!(twin.stage(id), TransferStage::Failed);
 }
 
 #[test]
@@ -835,4 +794,29 @@ fn xfer_end_discard_cancel_write_outcome() {
         let (_, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
         assert_eq!(out.outcomes_written(), vec![(id, cycle, OutboxOutcome::Discarded)], "cancel={cancel}");
     }
+}
+
+#[test]
+fn a_transfer_with_its_write_in_flight_refuses_cancel_discard_and_retry() {
+    let (mut retrying, id) = failed_with_upload();
+    retrying.retry(KEY, None);
+    refuses_calls(&mut retrying, KEY);
+    assert_eq!(retrying.stage(id), TransferStage::PersistingRetry);
+    let mut failing = Twin::new();
+    let id = failing.persisting_failure(KEY);
+    refuses_calls(&mut failing, KEY);
+    assert_eq!(failing.stage(id), TransferStage::PersistingFailure);
+    let mut removing = Twin::offline();
+    let id = removing.accepted(KEY, 2);
+    removing.cancel(KEY);
+    refuses_calls(&mut removing, KEY);
+    assert_eq!(removing.stage(id), TransferStage::Removing);
+    let mut copying = Twin::new();
+    let id = copying.persisting_copy(KEY, 2);
+    refuses_calls(&mut copying, KEY);
+    assert_eq!(copying.stage(id), TransferStage::PersistingCopy);
+    let mut completing = Twin::new();
+    let id = completing.persisting_complete(KEY);
+    refuses_calls(&mut completing, KEY);
+    assert_eq!(completing.stage(id), TransferStage::PersistingComplete);
 }

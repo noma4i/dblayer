@@ -115,10 +115,7 @@ fn xfer_reserving_end() {
 fn xfer_reserving_signals() {
     let mut twin = Twin::new();
     let (id, ..) = reserving(&mut twin);
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY)), ("retry", twin.retry(KEY, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-        assert_eq!(out.writes(), 0, "{name}");
-    }
+    refuses_calls(&mut twin, KEY);
     twin.ignores(id, vec![TransferInput::Online(Online(false)), TransferInput::Online(Online(true)), TransferInput::PowerSaving(true), TransferInput::PowerSaving(false), TransferInput::SlotFreed]);
     assert!(twin.state().online == Some(true) && !twin.state().saving, "the fields follow the signals");
 }
