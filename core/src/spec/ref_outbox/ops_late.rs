@@ -40,7 +40,13 @@ pub fn landing(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_landing_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
-        Input::Rejected { reason: Reason::Invalid, .. } => { row(e, "out_landing_invalid"); mark_failed(op, ErrKind::Internal, e); }
+        Input::Rejected { reason: Reason::Invalid, .. } if op.rowless => undefined(e, "out_landing_invalid", "a repeated Invalid of the batch without rows is impossible"),
+        Input::Rejected { reason: Reason::Invalid, .. } => {
+            row(e, "out_landing_invalid");
+            op.rowless = true;
+            op.land = LandFacts { refetch: true, ..LandFacts::default() };
+            e.push(Effect::Store { op: op.id, what: "Commit{RemoveIntent,DropEffects,RemoveAnswer}" });
+        }
         Input::Tick { cycle_id, .. } if *cycle_id == op.cycle_id => { row(e, "out_landing_tick"); e.push(Effect::Store { op: op.id, what: "Commit{Land,basis=generation}" }); }
         Input::Tick { .. } => foreign(e),
         Input::Discard { reply_to, .. } => { row(e, "out_landing_discard"); in_flight(op, *reply_to, e); }
@@ -59,6 +65,7 @@ pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) 
                 Cause::Refusal | Cause::Expired => (Outcome::Rejected, "out_rollback_committed"),
             };
             row(e, id);
+            if op.rowless { e.push(Effect::Store { op: op.id, what: "Stale{families}" }); }
             release_if_owned(op, e);
             for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, "Ok"); }
             if op.cause != Cause::DiscardRestoreFailed { transfer_outcome(op, o, e); }
@@ -79,9 +86,15 @@ pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) 
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_rollback_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
+        Input::Rejected { reason: Reason::Invalid, .. } if matches!(op.cause, Cause::Refusal | Cause::Expired) && op.rowless => undefined(e, "out_rollback_invalid_server_outcome", "a repeated Invalid of the batch without rows is impossible"),
+        Input::Rejected { reason: Reason::Invalid, .. } if matches!(op.cause, Cause::Refusal | Cause::Expired) => {
+            row(e, "out_rollback_invalid_server_outcome");
+            op.rowless = true;
+            e.push(Effect::Store { op: op.id, what: "Commit{RemoveIntent,DropEffects,RemoveAnswer}" });
+        }
         Input::Rejected { reason: Reason::Invalid, .. } => {
             row(e, "out_rollback_invalid");
-            for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, "Err(Internal)"); }
+            for w in std::mem::take(&mut op.discard_waiters) { reply(e, w, op.id, "Err(Invalid)"); }
             mark_failed(op, ErrKind::Internal, e);
         }
         Input::Tick { cycle_id, .. } if *cycle_id == op.cycle_id => { row(e, "out_rollback_tick"); e.push(Effect::Store { op: op.id, what: "Commit{Rollback}" }); }

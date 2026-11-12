@@ -240,6 +240,11 @@ pub fn sending(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             }
         }
         Input::Tick { .. } => foreign(e),
+        Input::Online(false) if op.waiting_retry => {
+            row(e, "out_sending_retry_offline_requeues");
+            e.push(Effect::Schedule { op: op.id, what: "Unschedule Tick" });
+            requeue(op, e);
+        }
         Input::Online(false) => row(e, "out_sending_offline"),
         Input::Online(true) => row(e, "out_sending_online"),
         Input::Discard { reply_to, .. } => { row(e, "out_sending_discard"); in_flight(op, *reply_to, e); }

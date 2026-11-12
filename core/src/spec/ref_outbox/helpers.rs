@@ -121,7 +121,7 @@ pub fn blank_op(id: OpId, spec: &OpSpec) -> Op {
     Op {
         id, model: spec.model.clone(), row_id: spec.row_id.clone(), action: spec.action.clone(), expires_after: spec.expires_after,
         created_at: spec.created_at, attempts: spec.attempts, cycle_id: 1, request_id: 0, origin: spec.origin, stage: Stage::Submitting,
-        waiting_retry: false, keep: spec.keep, effects_empty: spec.effects_empty, destroy: spec.destroy, response_ignore: spec.response_ignore,
+        waiting_retry: false, rowless: false, keep: spec.keep, effects_empty: spec.effects_empty, destroy: spec.destroy, response_ignore: spec.response_ignore,
         batch: spec.batch, error: None, cause: Cause::Refusal, deferred: false, restored: false, ever_sent: false, cycle_sent: false,
         pending_owned: false, release_sent: false, submit_reply: false, retry_waiter: 0, swap: None, discard_waiters: Vec::new(), outcome_waiters: 0,
         item: None, land: LandFacts::default(), outcome: None, cancels: None,

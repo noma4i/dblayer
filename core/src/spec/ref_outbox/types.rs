@@ -181,6 +181,7 @@ pub struct Op {
     pub origin: OpOrigin,
     pub stage: Stage,
     pub waiting_retry: bool,
+    pub rowless: bool,
     pub keep: bool,
     pub effects_empty: bool,
     pub destroy: bool,
