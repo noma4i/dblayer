@@ -92,6 +92,7 @@ impl TransferState {
         }
         if row.held {
             let id = self.insert_restored(&row, TransferStage::Ready);
+            if row.copying { return self.restore_copy(id, fx); }
             self.delete_prepare_files(id, fx);
             return self.discard_held(id, fx);
         }
