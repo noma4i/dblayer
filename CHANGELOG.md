@@ -19,6 +19,7 @@
 
 - Touch the parents of a changed row once per batch up the `touch: true` links.
 - Keep the queue order of restored operations, holding the pair of the earlier one.
+- Send a prepared staged file in parts, also after a change of session.
 
 ## 6.30.0 - 2026-11-13
 

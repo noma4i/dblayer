@@ -42,7 +42,6 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.
-- Start a file with `scope.stage(Model, action, request)` when the user picks it and the row does not exist yet, then call `staged.commit(values, variables)` or `staged.discard()`. Remove the own upload of the app that waits for the form. See [files](files.md#upload-before-the-final-mutation).
 - Pass `prepare` settings in the source to recompress a video or an image, and remove the recompression of the app before an upload. See [files](files.md#source-preparation).
 
 ## 6. Models in `.dbl`
@@ -101,6 +100,20 @@ try FileManager.default.removeItem(at: url)
 ```kotlin
 val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
 file.delete()
+```
+
+- A file the user picks before the row exists goes up with `stage`. Call `scope.stage(Model, action, request)` when the file is chosen, `scope.uploadStatus(staged)` for its status, `staged.commit(values, variables)` when the form is published, and `staged.discard()` when it closes without publishing. Remove the own upload of the app that waits for the form, and the own staging files. See [files](files.md#upload-before-the-final-mutation).
+
+```swift
+let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: path, prepare: prepare))
+let receipt = try await staged.commit(values: ["text": .string("hello")], variables: [:])
+let removed = try await staged.discard()
+```
+
+```kotlin
+val staged = scope.stage(Moment, "upload_clip", UploadRequest(path, prepare = prepare))
+val receipt = staged.commit(buildJsonObject { put("text", "hello") })
+val removed = staged.discard()
 ```
 
 - `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
