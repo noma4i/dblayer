@@ -75,3 +75,40 @@ pub(super) async fn over_images<T: Send + 'static, F, Fut>(capture: &Capture, fi
     for run in runs { results.push(bound(run).await.unwrap()); }
     results
 }
+
+/// A fresh process on the image: its own server double, the credential the killed process had saved.
+pub(super) async fn reopen(image: &Path, secret: &str, operations: &[(&str, &str)]) -> (super::upload_stand::Stand, std::sync::Arc<crate::ffi::Database>) {
+    let mut fresh = super::upload_stand::Stand::new();
+    fresh.rig.credentials = std::sync::Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default());
+    crate::ffi::CredentialStore::set(fresh.rig.credentials.as_ref(), secret.to_string()).unwrap();
+    let database = fresh.open(Some(image), operations).await;
+    (fresh, database)
+}
+
+/// The operations the image saved: (all, with a saved server answer).
+pub(super) fn saved_work(image: &Path) -> (i64, i64) {
+    let connection = rusqlite::Connection::open(image).unwrap();
+    let count = |table: &str| connection.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap();
+    (count("op"), count("encrypted_answer"))
+}
+
+/// The length of the operation queue as the reader sees it now.
+pub(super) async fn queue_now(database: &crate::ffi::Database) -> usize {
+    let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::Operations);
+    match bound(stream.pull_next()).await {
+        Some(crate::ffi::ReadValue::Operations { items, .. }) => items.len(),
+        other => panic!("the operation queue ended: {other:?}"),
+    }
+}
+
+/// Waits for the queue event that shows it empty.
+pub(super) async fn drained(database: &crate::ffi::Database) {
+    let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::Operations);
+    loop {
+        match bound(stream.pull_next()).await {
+            Some(crate::ffi::ReadValue::Operations { items, .. }) if items.is_empty() => return,
+            Some(crate::ffi::ReadValue::Operations { .. }) => {}
+            other => panic!("the operation queue ended: {other:?}"),
+        }
+    }
+}

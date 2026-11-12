@@ -85,3 +85,4 @@ mod write_reds_tests;
 mod crash_image_support;
 mod crash_image_session_tests;
 mod crash_image_row_tests;
+mod crash_image_update_tests;
