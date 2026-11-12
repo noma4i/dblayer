@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 6.28.0 - 2026-11-13
 
 ### Changed
 
 - Declare the fields of `sets:` as `derived: true`, they take their values from the children only.
 - Name the child fields of `newer:` as a list.
+
+### Fixed
+
+- A stale answer of the parent no longer moves its `sets:` fields back.
 
 ### Removed
 
