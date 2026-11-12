@@ -97,6 +97,9 @@ fn add_chat_create(models: &mut serde_json::Value) {
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_created_on_the_device_keeps_its_own_activity_time() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| { add_chat(models); add_chat_create(models); })).await;
+    let mut operations: Vec<serde_json::Value> = serde_json::from_str(&super::rig_models::plain_operations()).unwrap();
+    operations.push(json!({"name": "CreateChat", "document": "mutation CreateChat($name: String!) { createChat(name: $name) { id name } }"}));
+    rig.database.register_operations(json!(operations).to_string()).await.unwrap();
     let _answer = rig.world.hold_next("CreateChat");
     let epoch = rig.database.session_epoch();
 
