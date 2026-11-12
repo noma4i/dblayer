@@ -38,7 +38,6 @@ struct Inner {
 pub struct Mock {
     inner: Mutex<Inner>,
     peer: CablePeer,
-    arrived: tokio::sync::Notify,
 }
 
 fn deliver<T>(sender: oneshot::Sender<T>, value: T) -> bool {
@@ -70,7 +69,7 @@ impl Mock {
     pub fn new() -> Arc<Self> {
         let contract = Arc::new(Mutex::new(CableContract { answer_ping: true, ..Default::default() }));
         let peer = CablePeer::new(crate::transport::encrypted::tests::protocol_tests::config()).with_contract(contract, Arc::new(crate::runtime::ManualClock::new(std::time::Duration::ZERO)));
-        Arc::new(Self { inner: Mutex::new(Inner::default()), peer, arrived: tokio::sync::Notify::new() })
+        Arc::new(Self { inner: Mutex::new(Inner::default()), peer })
     }
 
     fn record(&self, kind: &'static str, purpose: &'static str, hold: impl FnOnce(&mut Inner, String)) {
@@ -80,21 +79,12 @@ impl Mock {
         inner.seen.push(Seen { id: id.clone(), kind, purpose, announced: false });
         hold(&mut inner, id);
         drop(inner);
-        self.arrived.notify_waiters();
     }
 
     /// Every request that reached the mock in arrival order with its decrypted body (`Null` when it has none).
     pub fn sent(&self) -> Vec<(String, serde_json::Value)> {
         let inner = locked(self);
         inner.seen.iter().map(|seen| (seen.id.clone(), inner.bodies.get(&seen.id).cloned().unwrap_or(serde_json::Value::Null))).collect()
-    }
-
-    /// Notified whenever a request arrives.
-    pub fn arrived(&self) -> &tokio::sync::Notify { &self.arrived }
-
-    /// How many requests arrived. The runner waits until this number and the other counters stop moving.
-    pub fn count(&self) -> usize {
-        locked(self).seen.len()
     }
 
     /// The requests that arrived since the last call, in arrival order, as `request` observations.
