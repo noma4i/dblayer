@@ -100,8 +100,9 @@ impl OutboxState {
                 for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
                     self.swap_row(op_id, &temp, &real);
                 }
-                if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {
-                    fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
+                if let Some(operation) = self.ops.get(&op_id) {
+                    let families = Self::stale_families_of(operation);
+                    if !families.is_empty() { fx.push(Effect::Run(OutboxEffect::Stale { families, revision })); }
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 let row_id = self.ops.get(&op_id).map(|operation| operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()));
@@ -137,6 +138,9 @@ impl OutboxState {
                         for reply in Self::take_waiters(&mut self.discard_waiters, id) { Self::reply(fx, reply, OutboxAnswer::Ok); }
                         self.finish(now, id, OutboxOutcome::Discarded, true, fx);
                     }
+                }
+                if let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.rowless) {
+                    fx.push(Effect::Run(OutboxEffect::Stale { families: Self::stale_families_of(operation), revision }));
                 }
                 let created = Self::created_temps(&self.ops[&op_id]);
                 self.ended_creates.extend(created);
@@ -357,6 +361,19 @@ impl OutboxState {
                 }
             },
         }
+    }
+
+    /// The windows that owe a reread once a write landed: the refetch pairs of the answer and, after a write without rows, every window of the models the operation names (relation `""` = the whole model).
+    fn stale_families_of(operation: &QueuedOperation) -> Vec<(String, String)> {
+        let mut families = operation.stale.clone();
+        if !operation.rowless { return families; }
+        let effects = &operation.op.effects;
+        let models = std::iter::once(&operation.op.model).chain(effects.rows.iter().map(|row| &row.model)).chain(effects.members.iter().map(|row| &row.model)).chain(effects.tombstones.iter().map(|row| &row.model)).chain(effects.touches.iter().map(|row| &row.model));
+        for model in models {
+            let family = (model.clone(), String::new());
+            if !families.contains(&family) { families.push(family); }
+        }
+        families
     }
 
     /// The Store refused the landing or the rollback of a server outcome as invalid data: the same outcome lands by a batch without rows (R14, P-OUT-60). A second `Invalid` of that batch cannot happen (P-DATA-98).
