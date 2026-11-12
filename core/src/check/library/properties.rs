@@ -71,6 +71,8 @@ struct Walk {
     held: Vec<(String, String)>,
     pending: Vec<String>,
     streaks: HashMap<String, (u32, u32)>,
+    /// Per operation: the load that waits out a retry pause is a first-page load.
+    retry_first_page: HashMap<String, bool>,
     windows: HashMap<String, Window>,
     streams: HashMap<String, Interest>,
     /// Login calls not finished yet: the second one queues behind the first (library.md section 7 `login`) and sends its own request after a refusal of the first.
@@ -124,7 +126,7 @@ fn sent_first_page(steps: &[Step], id: &str) -> bool {
     steps.iter().flat_map(|step| kinds(&step.observed, "sent")).any(|item| item.value["id"] == id && item.value["variables"].get("after").is_none())
 }
 
-/// After a network return: per watched window the number of first-page requests the rule asks for. A window is reread once when it is not fresh or a stream of it is declared to reload on connect.
+/// After a network return: per watched window the number of first-page requests the rule asks for. A window is reread once when it is not fresh or a stream of it is declared to reload on connect. A window whose load waits out a retry pause restarts that load instead, one first-page request when the load is a first-page load (library.md section 7 `Online(true)`).
 fn reread_after_return(walk: &Walk, fresh_now: &HashMap<String, bool>) -> Vec<(&'static str, usize)> {
     let mut watched: Vec<&'static str> = walk.streams.values().map(|interest| interest.operation).collect();
     watched.sort_unstable();
@@ -135,7 +137,9 @@ fn reread_after_return(walk: &Walk, fresh_now: &HashMap<String, bool>) -> Vec<(&
         .map(|operation| {
             let declared = walk.streams.values().any(|interest| interest.operation == operation && interest.on_connect);
             let is_fresh = fresh_now.get(operation).copied().unwrap_or(false);
-            (operation, usize::from(declared || !is_fresh))
+            let restarting = walk.streaks.get(operation).is_some_and(|(network, server)| (*network > 0 && *network < NETWORK_ATTEMPTS) || (*server > 0 && *server < SERVER_ATTEMPTS));
+            let expected = if restarting { walk.retry_first_page.get(operation).copied().unwrap_or(false) } else { declared || !is_fresh };
+            (operation, usize::from(expected))
         })
         .collect()
 }
@@ -203,6 +207,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             replied_operation = Some(operation.clone());
             let first_page = sent_first_page(steps, id);
             let how = replied.value["how"].as_str().unwrap_or("");
+            if matches!(how, "temporary" | "drop" | "server") {
+                walk.retry_first_page.insert(operation.clone(), first_page);
+            }
             let streak = walk.streaks.entry(operation.clone()).or_default();
             match how {
                 "temporary" | "drop" => streak.0 += 1,
