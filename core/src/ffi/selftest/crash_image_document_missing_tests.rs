@@ -134,3 +134,40 @@ async fn sess_held_pair_not_consumed_ends_the_call() {
     bound(reopened.close_database()).await.unwrap();
     assert_eq!(pending_rows(&image), 0, "no pair is left");
 }
+
+const CREATED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","text":"first","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+const UPDATED: &str = r#"{"data":{"updateMoment":{"__typename":"Moment","id":"m77","uuid":"u","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+const UPDATE_MOMENT: (&str, &str) = ("UpdateMoment", "mutation UpdateMoment { updateMoment { id uuid text likedByMe media createdAt } }");
+
+/// Two updates of one row wait in the queue while the first one's pair is held: after a restart the held pair goes out again, then the second update, and the queue ends with no pair left.
+#[tokio::test(flavor = "multi_thread")]
+async fn sess_held_pair_author_moves_it_after_restart() {
+    let stand = Stand::new();
+    let directory = tempfile::tempdir().unwrap();
+    let live = directory.path().join("live.sqlite");
+    let operations = [super::upload_batch_shift_tests::OPERATIONS[0], super::upload_batch_shift_tests::OPERATIONS[1], super::upload_batch_shift_tests::OPERATIONS[2], CREATE_MOMENT, UPDATE_MOMENT];
+    let database = stand.open(Some(&live), &operations).await;
+    let secret = stand.rig.credentials.inner.value().unwrap();
+    let epoch = database.session_epoch();
+    stand.script.data("CreateMoment", CREATED);
+    let created = bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
+    bound(database.confirmed(created, false)).await.unwrap();
+    drained(&database).await;
+    let hold = Arc::new(Hold::default());
+    stand.script.enqueue("UpdateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
+    bound(database.update(epoch, "Moment".into(), "m77".into(), r#"{"text":"edited"}"#.into(), "{}".into())).await.unwrap();
+    hold.entered().await;
+    bound(database.update(epoch, "Moment".into(), "m77".into(), r#"{"text":"edited again"}"#.into(), "{}".into())).await.unwrap();
+    let image = directory.path().join("image.sqlite");
+    copy_image(&live, &image);
+    assert!(saved_pair(&image).is_some(), "the image holds the pair of the first update");
+    database.close_now();
+    let (fresh, reopened, clock) = reopen_timed(&image, &secret, &operations, |fresh| {
+        fresh.script.data("UpdateMoment", UPDATED);
+        fresh.script.data("UpdateMoment", UPDATED);
+    }, false).await;
+    advancing(&clock, drained(&reopened)).await;
+    assert_eq!(fresh.script.count("UpdateMoment"), 2, "both updates go out");
+    bound(reopened.close_database()).await.unwrap();
+    assert_eq!(pending_rows(&image), 0, "no pair is left");
+}
