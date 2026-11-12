@@ -143,6 +143,8 @@ pub fn chats_spec() -> ModelSpec {
             FieldSpec::scalar("title", ScalarKind::Str).optional(),
             FieldSpec::scalar("lastMessageId", ScalarKind::Id).nullable().optional().indexed(),
             FieldSpec::scalar("lastMessageAt", ScalarKind::Date).nullable().optional(),
+            FieldSpec::scalar("lastSequenceNumber", ScalarKind::Int).nullable().optional(),
+            FieldSpec::scalar("lastMessageBody", ScalarKind::Str).nullable().optional(),
         ],
     );
     let mut messages = AssociationSpec::new("messages", AssociationKind::HasMany, "messages", "chatId");
@@ -160,14 +162,15 @@ pub fn chat_messages_spec() -> ModelSpec {
             FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
             FieldSpec::scalar("body", ScalarKind::Str).optional().indexed(),
             FieldSpec::scalar("createdAt", ScalarKind::Date).optional(),
+            FieldSpec::scalar("sequenceNumber", ScalarKind::Int).nullable().optional(),
             FieldSpec::array("reactions").optional(),
         ],
     );
     spec.actions.push(ActionDeclaration::new("react", RootShape::Upsert));
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.touches_parent = true;
-    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = vec![Newer { child: "createdAt".to_string(), parent: "lastMessageAt".to_string() }];
+    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt"), ("lastSequenceNumber", "sequenceNumber"), ("lastMessageBody", "body")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
+    chat.newer = [("sequenceNumber", "lastSequenceNumber"), ("createdAt", "lastMessageAt")].map(|(child, parent)| Newer { child: child.to_string(), parent: parent.to_string() }).into();
     spec.associations.push(chat);
     spec
 }
@@ -229,7 +232,7 @@ impl Store {
 }
 
 pub fn posts_spec() -> ModelSpec {
-    use crate::schema::{Coverage, RelationSpec, RemoteShape, RemoteSpec};
+    use crate::schema::{Coverage, RelationSpec, RemoteShape};
     let mut spec = ModelSpec::new(
         "posts",
         vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional(), FieldSpec::scalar("groupId", ScalarKind::Str).nullable().indexed()],
@@ -241,11 +244,7 @@ pub fn posts_spec() -> ModelSpec {
             relation.is_global = false;
             relation.by_columns = vec!["groupId".into()];
         }
-        relation.remote = Some(RemoteSpec {
-            operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete },
-            stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: false,
-            page_size: None, variables: Default::default(), root: None, total_from: None,
-        });
+        relation.remote = Some(crate::schema_fixtures::remote("Feed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
         relation
     };
     spec.relations.extend([window("pager", false, false), window("evt", true, false), window("cols", true, true)]);
