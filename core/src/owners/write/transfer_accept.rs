@@ -60,6 +60,7 @@ impl TransferState {
         let BatchItem { key, held, fields, urgent, source, prepare, mutation, steps } = item;
         let transfer = Transfer {
             held,
+            multipart_forced: held,
             commit_reply: None,
             commit: None,
             prep: None,

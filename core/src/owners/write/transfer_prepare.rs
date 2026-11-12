@@ -203,7 +203,7 @@ impl TransferState {
             transfer.from_cache = true;
             transfer.signed_id = Some(blob_id);
         }
-        let (parts, multipart) = sizing.of(size, transfer.held);
+        let (parts, multipart) = sizing.of(size, transfer.multipart_forced);
         if let Some(source) = transfer.source.as_mut() { source.parts = parts; }
         let (name, mime) = transfer.prep.as_ref().map_or((None, None), |prep| (prep.name.clone(), prep.mime.clone()));
         if let Some(steps) = transfer.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()) {

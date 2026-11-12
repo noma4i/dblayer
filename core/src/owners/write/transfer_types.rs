@@ -490,6 +490,8 @@ pub struct PrepareRun {
 #[derive(Clone, Debug)]
 pub struct Transfer {
     pub held: bool,
+    /// The file was staged: it goes multipart whatever its size, also after `Commit` (D-372).
+    pub multipart_forced: bool,
     pub commit_reply: Option<ReplyId>,
     pub commit: Option<CommitPlan>,
     pub prep: Option<PrepareRun>,
