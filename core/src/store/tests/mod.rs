@@ -4,6 +4,8 @@ mod atomic_tests;
 mod follow_validate_tests;
 mod cells_tests;
 mod data_sets_tests;
+mod snapshot_world_tests;
+mod snapshot_prop_tests;
 mod data_cells_tests;
 mod data_inv_tests;
 mod data_orders_tests;

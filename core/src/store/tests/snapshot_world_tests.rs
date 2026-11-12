@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -66,9 +66,9 @@ fn rows(seed: u64) -> Vec<Row> {
     let post = |id: &'static str, group: &str| Row { model: "posts", id, values: object(json!({"id": id, "text": id, "groupId": group})) };
     vec![
         Row { model: "chats", id: "c1", values: object(json!({"id": "c1", "title": "t", "lastMessageId": pointer, "lastMessageAt": at})) },
-        message("m1", 1, json!(["x"])),
+        message("m1", 1, json!([{}])),
         message("m2", 5, json!([])),
-        message("m3", 3, json!(["y", "z"])),
+        message("m3", 3, json!([{}, {}])),
         post("p1", "g1"),
         post("p2", "g2"),
         post("p3", "g1"),
@@ -129,7 +129,6 @@ pub(super) struct World {
     seed: u64,
     which: &'static str,
     alphabet: Vec<Input>,
-    canonical: OnceLock<Value>,
 }
 
 fn open() -> Arc<Store> {
@@ -236,35 +235,48 @@ impl Lander {
 }
 
 impl World {
-    fn canonical(&self) -> &Value {
-        self.canonical.get_or_init(|| {
-            let mut lander = Lander { store: open(), batch: 0 };
-            self.alphabet.iter().for_each(|input| lander.deliver(self.seed, input));
-            dump(&lander.store, false, self.case.order)
+    fn informative(&self, landed: &BTreeSet<usize>) -> bool {
+        let full = |input: &Input| input.args.get("fields").and_then(Value::as_array).is_some_and(|fields| fields.len() == optional(input.text("model").unwrap()).len());
+        self.alphabet.iter().filter(|input| input.text("model").is_some() && input.text("path") != Some("delete")).all(|row| {
+            landed.iter().any(|index| {
+                let seen = &self.alphabet[*index];
+                seen.text("model") == row.text("model") && seen.text("id") == row.text("id") && full(seen)
+            })
         })
+    }
+
+    fn canonical(&self, landed: &BTreeSet<usize>) -> Value {
+        let mut lander = Lander { store: open(), batch: 0 };
+        landed.iter().for_each(|index| lander.deliver(self.seed, &self.alphabet[*index]));
+        dump(&lander.store, false, self.case.order)
     }
 }
 
 struct Landing {
     world: Arc<World>,
     lander: Lander,
-    seen: BTreeSet<String>,
+    landed: BTreeSet<usize>,
+    canonical: BTreeMap<BTreeSet<usize>, Value>,
 }
 
 #[async_trait]
 impl Sut for Landing {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
         self.lander.deliver(self.world.seed, input);
-        self.seen.insert(input.to_string());
-        if self.seen.len() < self.world.alphabet.len() {
-            return vec![Observation::new("seen", json!(self.seen.len()))];
-        }
+        let index = self.world.alphabet.iter().position(|known| known == input).unwrap();
+        let repeated = !self.landed.insert(index);
+        let world = self.world.clone();
+        let landed = self.landed.clone();
         let store = &self.lander.store;
-        vec![
+        let mut observations = vec![
             Observation::new("state", dump(store, false, self.world.case.order)),
             Observation::new("revs", dump(store, true, true)),
-            Observation::new("canonical", self.world.canonical().clone()),
-        ]
+            Observation::new("repeated", json!(repeated)),
+        ];
+        if world.informative(&landed) {
+            observations.push(Observation::new("canonical", self.canonical.entry(landed.clone()).or_insert_with(|| world.canonical(&landed)).clone()));
+        }
+        observations
     }
 }
 
@@ -272,7 +284,7 @@ pub(super) struct SnapshotOwner(pub Arc<World>);
 
 impl SnapshotOwner {
     pub(super) fn new(case: Case, seed: u64, which: &'static str) -> Self {
-        Self(Arc::new(World { case, seed, which, alphabet: alphabet(case, seed), canonical: OnceLock::new() }))
+        Self(Arc::new(World { case, seed, which, alphabet: alphabet(case, seed) }))
     }
 }
 
@@ -291,7 +303,7 @@ impl Owner for SnapshotOwner {
     }
 
     async fn real(&self) -> Box<dyn Sut> {
-        Box::new(Landing { world: self.0.clone(), lander: Lander { store: open(), batch: 0 }, seen: BTreeSet::new() })
+        Box::new(Landing { world: self.0.clone(), lander: Lander { store: open(), batch: 0 }, landed: BTreeSet::new(), canonical: BTreeMap::new() })
     }
 
     fn properties(&self) -> Vec<Property> {
@@ -305,14 +317,16 @@ fn observed<'a>(step: &'a Step, kind: &str) -> Option<&'a Value> {
 
 fn lands(steps: &[Step]) -> Result<(), String> {
     let last = steps.last().unwrap();
-    let (Some(state), Some(canonical)) = (observed(last, "state"), observed(last, "canonical")) else { return Ok(()) };
-    differ(canonical, state, "canonical", "got")
+    let Some(canonical) = observed(last, "canonical") else { return Ok(()) };
+    differ(canonical, observed(last, "state").unwrap(), "canonical", "got")
 }
 
 fn repeat(steps: &[Step]) -> Result<(), String> {
     let [.., before, last] = steps else { return Ok(()) };
-    let (Some(was), Some(now)) = (observed(before, "revs"), observed(last, "revs")) else { return Ok(()) };
-    differ(was, now, "before", "after")
+    if observed(last, "repeated") != Some(&json!(true)) {
+        return Ok(());
+    }
+    differ(observed(before, "revs").unwrap(), observed(last, "revs").unwrap(), "before", "after")
 }
 
 fn differ(want: &Value, got: &Value, want_name: &str, got_name: &str) -> Result<(), String> {
