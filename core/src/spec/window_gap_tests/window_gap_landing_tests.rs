@@ -1,33 +1,45 @@
 use super::*;
 
 
-/// A refused landing: NoSession and Closed end the window, Storage and Invalid fail the phase, a stale generation leaves an unwatched window not fresh.
+/// A refused landing: NoSession and Closed end the window, Storage and Invalid fail the phase and reach the stream as Invalid without a new request, a stale generation leaves an unwatched window not fresh.
 #[test]
 fn win_landing_refusal_by_reason() {
     {
-        let mut twin = landing();
-        twin.step(Input::InterestMinus { id: 1 });
-        assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Idle));
-        assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
-    }
-    {
-        for reason in [Reject::NoSession, Reject::Closed] {
+        {
             let mut twin = landing();
-            assert!(twin.step(Input::Rejected { request: 1, reason }).is_empty());
-            assert_eq!(twin.stage(), Some(WindowStage::Ended));
-        }
-    }
-    {
-        for reason in [Reject::Storage, Reject::Invalid] {
-            let mut twin = landing();
-            twin.watch();
-            assert_eq!(twin.step(Input::Rejected { request: 1, reason }), [Effect::WindowState]);
+            twin.step(Input::InterestMinus { id: 1 });
+            assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
             assert_eq!(twin.stage(), Some(WindowStage::Idle));
-            assert_eq!(twin.phase(), Phase::Failed);
+            assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
         }
+        {
+            for reason in [Reject::NoSession, Reject::Closed] {
+                let mut twin = landing();
+                assert!(twin.step(Input::Rejected { request: 1, reason }).is_empty());
+                assert_eq!(twin.stage(), Some(WindowStage::Ended));
+            }
+        }
+        {
+            for reason in [Reject::Storage, Reject::Invalid] {
+                let mut twin = landing();
+                twin.watch();
+                assert_eq!(twin.step(Input::Rejected { request: 1, reason }), [Effect::WindowState]);
+                assert_eq!(twin.stage(), Some(WindowStage::Idle));
+                assert_eq!(twin.phase(), Phase::Failed);
+            }
+        }
+    }
+    {
+        let mut twin = landing();
+        twin.watch();
+        assert_eq!(twin.step(Input::Rejected { request: 1, reason: Reject::Invalid }), [Effect::WindowState]);
+        assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Failed));
+        assert!(matches!(twin.load_state().error, Some(crate::ffi::DbError::Invalid { .. })), "{:?}", twin.load_state().error);
+        assert_eq!(requests(&twin.step(Input::Retry { request: 1 })), 0, "the request does not go out again");
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
     }
 }
+
 
 
 
@@ -347,13 +359,3 @@ pub(super) fn open_requests(events: &[Seen]) -> usize {
     worst
 }
 
-#[test]
-fn win_invalid_landing_reaches_the_stream() {
-    let mut twin = landing();
-    twin.watch();
-    assert_eq!(twin.step(Input::Rejected { request: 1, reason: Reject::Invalid }), [Effect::WindowState]);
-    assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Failed));
-    assert!(matches!(twin.load_state().error, Some(crate::ffi::DbError::Invalid { .. })), "{:?}", twin.load_state().error);
-    assert_eq!(requests(&twin.step(Input::Retry { request: 1 })), 0, "the request does not go out again");
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-}
