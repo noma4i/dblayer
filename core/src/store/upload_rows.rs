@@ -45,6 +45,7 @@ pub(crate) struct UploadRaw {
     staged: bool,
     failed_at: Option<i64>,
     blob_created_at: Option<i64>,
+    prepare: Option<crate::ffi::upload_wire::WirePrepare>,
 }
 
 impl UploadRaw {
@@ -61,6 +62,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
         let (key, etag) = found?;
         parts.entry(key).or_default().push(etag);
     }
+    let mut prepares = super::prepare_rows::read_prepares(connection)?;
     let mut statement = connection.prepare(
         include_str!("sql/upload_rows/upload_rows_select_sync_upload.sql"),
     )?;
@@ -86,6 +88,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             on_failure: row.get(17)?,
             steps_path: row.get(18)?,
             steps_body: row.get(19)?,
+            prepare: prepares.remove(&row.get::<_, i64>(20)?),
             transfer_id: row.get(20)?,
             cycle_id: row.get(21)?,
             signed_id: row.get(22)?,
@@ -120,7 +123,7 @@ impl Store {
             etags: Vec::new(), completed: false, signed_id: None, failed: None, aborted: false, op_id: number("op_id"), copying: false,
             file_present, created_at: Time(number("created_at").unwrap_or(0)), place: Location::Directory, size: number("size").unwrap_or(0),
             sha256: text("sha256").unwrap_or_default(), cycle_id: number("cycle_id").unwrap_or(1).max(1), has_intent: false, has_operation: false,
-            mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, restore_failed: Some(row.reason.clone()),
+            mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, restore_failed: Some(row.reason.clone()), prepare: None,
             restore_element: Some((row.key.clone(), holder)), pending_step: None, saved_answer: None,
         }))
     }
@@ -189,6 +192,7 @@ impl Store {
                 effects: IntentEffects::default(),
                 expires_after: None,
             },
+            prepare: raw.prepare,
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
             restore_failed: None,
             restore_element: None,

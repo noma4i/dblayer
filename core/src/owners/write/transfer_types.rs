@@ -426,6 +426,7 @@ pub struct Transfer {
     pub key: Key,
     pub seq: u64,
     pub source: Option<Source>,
+    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub batch_id: Option<BatchId>,
     pub epoch: Epoch,
     pub stage: TransferStage,

@@ -123,7 +123,7 @@ impl World {
     }
 
     fn accept_input(&self, key: &str, path: PathBuf, parts: u32) -> TransferInput {
-        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: String::new() }) }), reply: 1 }
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), prepare: None, mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: String::new() }) }), reply: 1 }
     }
 
     fn post(&mut self, input: TransferInput) {

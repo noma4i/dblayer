@@ -22,7 +22,7 @@ fn upload(index: u64, confirmed: u32) -> UploadRow {
         size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
         on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),
         transfer_id: index + 1, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None,
-        op_id: Some(100 + index), etags: vec![Some("etag".into()); confirmed as usize],
+        op_id: Some(100 + index), etags: vec![Some("etag".into()); confirmed as usize], prepare: None,
     }
 }
 

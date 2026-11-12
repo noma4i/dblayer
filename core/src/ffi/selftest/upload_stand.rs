@@ -15,7 +15,7 @@ use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
+use crate::ffi::{Preparer, ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
 use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
@@ -228,10 +228,16 @@ pub(super) struct Stand {
     pub(super) puts: Arc<Puts>,
     root: Option<Option<&'static str>>,
     keep_moment: bool,
+    preparer: Option<Arc<dyn Preparer>>,
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None } }
+
+    pub(super) fn with_preparer(mut self, preparer: Arc<dyn Preparer>) -> Self {
+        self.preparer = Some(preparer);
+        self
+    }
 
     pub(super) fn keep_moment(mut self) -> Self { self.keep_moment = true; self }
 
@@ -266,7 +272,7 @@ impl Stand {
     pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
         let restored = self.rig.credentials.inner.value().is_some();
         let models = self.models();
-        let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+        let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
         let database = match clock {
             Some(clock) => Database::open_with_clock(config, crate::ffi::specs(models), ports, clock).await,

@@ -228,7 +228,7 @@ pub enum StoreOp {
     WindowMarker { landed_at: Option<i64>, key: String, model: String, marker: crate::store::WindowMarker },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreBatch {
     pub author: BatchAuthor,
     pub id: BatchId,
@@ -312,7 +312,7 @@ pub struct WriteDone {
     pub refused: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StoreEffect {
     /// Create the tables (boot of a new database) or rebuild the cache tables (format change).
     Prepare { format_change: bool },
