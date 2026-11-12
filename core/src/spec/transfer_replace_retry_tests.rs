@@ -150,6 +150,31 @@ fn xfer_removing_confirmed_epoch_ended() {
 
 #[test]
 fn xfer_removing_invalid_group_continues() {
+    let mut twin = Twin::with_slots(4);
+    let ids = twin.accepted_items(vec![item(KEY, 1), item(OTHER, 1), item(THIRD, 1)], crate::owners::write::transfer_types::Joint { minimum: 3, ..joint() });
+    for _ in &ids {
+        assert_eq!(twin.commit().steps().len(), 1);
+    }
+    for id in &ids[..2] {
+        twin.step_ok(*id, 1, None);
+        twin.commit();
+        twin.commit();
+        twin.completed(*id);
+        twin.commit();
+    }
+    twin.cancel(THIRD);
+    twin.commit();
+    twin.commit();
+    assert_eq!(twin.stage(ids[0]), TransferStage::Mutating, "the group went on as singles");
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
+    assert_eq!(twin.stage(ids[0]), TransferStage::Removing);
+    twin.reject(RejectReason::Invalid("bad row".into()));
+    assert_eq!(twin.stage(ids[0]), TransferStage::Done);
+    assert_eq!(twin.stage(ids[1]), TransferStage::PersistingBatchIntent);
+}
+
+#[test]
+fn xfer_batch_member_cancel_invalid_returns_the_member() {
     let (mut twin, ids) = uploading_group(&[KEY, OTHER, THIRD]);
     for id in &ids[..2] {
         twin.step_ok(*id, 1, None);
@@ -158,11 +183,10 @@ fn xfer_removing_invalid_group_continues() {
         twin.completed(*id);
         twin.commit();
     }
-    assert_eq!((twin.stage(ids[0]), twin.stage(ids[1]), twin.stage(ids[2])), (TransferStage::BatchReady, TransferStage::BatchReady, TransferStage::Uploading));
-    let (_, cancel) = twin.cancel(THIRD);
-    assert_eq!(cancel.removed(), vec![THIRD.to_string()]);
+    let (reply, cancel) = twin.cancel(KEY);
+    assert_eq!(cancel.removed(), vec![KEY.to_string()]);
     let out = twin.reject(RejectReason::Invalid("bad row".into()));
-    assert_eq!(out.writes(), 1, "the rest of the batch goes on in the same step: the write of its intent");
-    let stages: Vec<TransferStage> = ids[..2].iter().map(|id| twin.stage(*id)).collect();
-    assert_eq!(stages, vec![TransferStage::PersistingBatchIntent; 2]);
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Invalid("bad row".into()))));
+    assert_eq!(twin.stage(ids[0]), TransferStage::BatchReady, "the member is back in its stage");
+    assert_eq!(twin.stage(ids[1]), TransferStage::BatchReady, "the batch waits");
 }
