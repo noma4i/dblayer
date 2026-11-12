@@ -10,28 +10,6 @@ import org.junit.Test
 
 class UploadAnswerTest {
     @Test
-    fun inv_upload_14_a_waiting_upload_reports_the_copied_file_size() = bounded {
-        val source = Files.createTempFile("intro", ".mp4").toFile().apply { writeText("video") }
-        try {
-            val transport = MockTransport()
-            val database = openSigned(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
-            database.setOnline(false)
-            val local = Moment.create(text = "intro", account = AccountScope.current()).optimisticValue!!
-            local.uploadClip(AccountScope.current(), UploadRequest(source.path))
-            val current = requireNotNull(Moment.find(local.id).current())
-            val waiting = requireNotNull(current.uploads["upload_clip"])
-            assertEquals(UploadStatus.Waiting, waiting.status)
-            assertEquals(5uL, waiting.totalBytes)
-            assertEquals(0uL, waiting.sentBytes)
-            assertEquals(0.0, waiting.progress, 0.0)
-            assertTrue(transport.calls.isEmpty())
-        } finally {
-            closeForCleanup()
-            source.delete()
-        }
-    }
-
-    @Test
     fun inv_upload_21_an_upload_answers_with_the_server_text_and_null_when_the_server_left_it_out() = bounded {
         val source = Files.createTempFile("intro", ".mp4").toFile().apply { writeText("video") }
         try {

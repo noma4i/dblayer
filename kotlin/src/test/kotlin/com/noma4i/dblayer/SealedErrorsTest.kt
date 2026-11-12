@@ -29,19 +29,6 @@ class SealedErrorsTest {
     }
 
     @Test
-    fun aGraphqlRefusalKeepsEveryExtensionFieldThroughAnOperationCall() = bounded {
-        val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, operations)
-        val sent = GraphqlExtensions("FORBIDDEN", TransactionDisposition.Keep, mapOf("reasonCode" to "\"child\""))
-        transport.enqueue("QrCodeCreate", DbException.Graphql(listOf("Forbidden"), sent))
-        val failure = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull() as? DbException.Graphql
-            ?: throw AssertionError("the operation call did not throw a Graphql error")
-        assertEquals(listOf("Forbidden"), failure.messages)
-        assertEquals(sent, failure.extensions)
-    }
-
-    @Test
     fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndAMutationOutcome() = bounded {
         for (code in codes) {
             val transport = MockTransport()

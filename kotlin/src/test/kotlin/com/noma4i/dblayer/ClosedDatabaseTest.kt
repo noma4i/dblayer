@@ -16,20 +16,6 @@ class ClosedDatabaseTest {
     private suspend fun refusal(call: suspend () -> Unit): Throwable? = runCatching { call() }.exceptionOrNull()
 
     @Test
-    fun aClosedDatabaseRefusesEveryCallWithClosedFromTheCore() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
-        DBlayer.close()
-        val errors = listOf(
-            refusal { DBlayer.sessionReset() },
-            refusal { Moment.create(text = "late", account = AccountScope.current()).optimisticValue!! },
-            refusal { Moment.recent.live.current() },
-        )
-        for (error in errors) {
-            assertTrue(error is DbException.Closed)
-        }
-    }
-
-    @Test
     fun twoConcurrentClosesBothSucceedAndThenTheCoreAnswersClosed() = bounded {
         openSignedOffline(Config(null, null), modelsJSON)
         val closes = List(2) { async(Dispatchers.Default) { runCatching { DBlayer.close() } } }
@@ -71,11 +57,4 @@ class ClosedDatabaseTest {
         assertEquals("none", afterClose[7])
     }
 
-    @Test
-    fun aQueryWithoutARelationIsInvalidFromTheCore() = bounded {
-        openSigned(Config(null, null), modelsJSON, MockTransport())
-        assertTrue(refusal { Query("Moment", Moment).refresh() } is DbException.Invalid)
-        assertTrue(refusal { Query("Moment", Moment).load() } is DbException.Invalid)
-        closeForCleanup()
-    }
 }

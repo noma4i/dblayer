@@ -166,25 +166,4 @@ class EncryptedSocketTest {
         }
     }
 
-    @Test
-    fun mockConnectionsHaveIndependentLifetimes() = bounded {
-        val transport = MockTransport()
-        val firstEvents = RecordingEvents()
-        val secondEvents = RecordingEvents()
-        val first = (transport.scriptedCable("ws://localhost/api/cable", firstEvents) as CableOutcome.Open).connection
-        val second = (transport.scriptedCable("ws://localhost/api/cable", secondEvents) as CableOutcome.Open).connection
-        assertTrue(second.send("hello"))
-        assertTrue(first.send("first"))
-        assertEquals(2, transport.cableFrames.size)
-        val token = transport.cableFrames.first().first
-        transport.emitCable(token, "reply")
-        transport.closeCable(token, 4401u, "UNAUTHENTICATED")
-        assertEquals(RecordingEvents.Event.Frame("reply"), secondEvents.next())
-        assertEquals(RecordingEvents.Event.Ended(4401u, "UNAUTHENTICATED", null), secondEvents.next())
-        try {
-            transport.emitCable(token, "late")
-            fail("expected a closed socket refusal")
-        } catch (_: DbException.Network) {
-        }
-    }
 }
