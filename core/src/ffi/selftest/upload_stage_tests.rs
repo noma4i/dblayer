@@ -175,3 +175,26 @@ async fn crash_image_held() {
     assert!(cuts.contains(&0) && cuts.contains(&1), "the cuts hold images before and after the multipart exists: {cuts:?}");
     database.close_now();
 }
+
+/// A second `commit_staged` of the same key is `Invalid`: the row stays one and the final mutation goes once.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_stage_commit_twice() {
+    let stand = Stand::new();
+    let database = stand.open(None, &OPERATIONS).await;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("clip");
+    std::fs::write(&path, b"data").unwrap();
+    answers(&stand);
+    stand.script.data("CompleteMultipart", COMPLETE);
+    stand.script.data("CreateMoment", LANDED);
+    let staged = staged(&database, &path).await;
+    held(&stand, &database, 1).await;
+    let commit = |text: &str| database.commit_staged(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into(), format!(r#"{{"text":"{text}"}}"#), "{}".into());
+    bound(commit("first")).await.unwrap();
+    let second = bound(commit("second")).await;
+    assert!(matches!(second, Err(crate::ffi::DbError::Invalid { .. })), "{second:?}");
+    let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).unwrap().expect("the row of the first commit");
+    assert!(format!("{:?}", shown.cells).contains("first"));
+    crate::test_wait::settled(&database, "the final mutation went", || stand.script.count("CreateMoment") == 1).await;
+    assert_eq!(stand.script.count("CreateMoment"), 1);
+}
