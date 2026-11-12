@@ -189,3 +189,19 @@ fn data_sets_destroy_takes_the_first_by_the_order() {
         assert_eq!(chat(&db), json!(["m2", 5]), "written as {ids:?}: the same child a landing of both would point at");
     }
 }
+
+/// P-DATA-59: a destroy of the pointed child reads a number of children that does not grow with their count.
+#[test]
+fn data_sets_destroy_reads_a_bounded_number_of_children() {
+    let read = |count: i64| {
+        let db = open();
+        let rows = (1..=count).map(|at| message(&format!("m{at}"), at)).collect();
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows }]);
+        let before = db.counters().pointer_rows_read;
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec![format!("m{count}")] }]);
+        assert_eq!(chat(&db), json!([format!("m{}", count - 1), count - 1]), "{count} children");
+        db.counters().pointer_rows_read - before
+    };
+    let (many, few) = (read(200), read(20));
+    assert!(few > 0 && many == few, "the rows read by the destroy do not depend on the number of children: {few} for 20, {many} for 200");
+}
