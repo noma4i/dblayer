@@ -1,7 +1,7 @@
 use super::*;
 use crate::store::ddl::{create_model_tables, migrate_core};
 use crate::identity::ListKey;
-use crate::schema::{FieldSpec, ModelSpec};
+use crate::schema::{FieldSpec, ModelSpec, RelationSpec, Sort, SortField};
 use crate::value::{null_compare, null_equals, null_is_in, null_is_not_in, null_not_equals, ScalarKind, SortDirection};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
@@ -249,4 +249,31 @@ fn data_order_nulls() {
     assert_eq!(ordered("desc"), ["p5", "p1", "p4", "p2", "p3", "p6"], "desc puts null last");
     assert_eq!(ordered("asc_nulls_last"), ["p2", "p4", "p1", "p5", "p3", "p6"]);
     assert_eq!(ordered("desc_nulls_first"), ["p3", "p6", "p5", "p1", "p4", "p2"]);
+}
+
+#[test]
+fn data_order_ties_and_the_id_field_follow_the_id_order() {
+    let connection = database();
+    for id in ["a2", "10", "007", "9"] {
+        put(&connection, sample(id, json!("active"), json!(20), json!(true), json!("chat"), "2024-01-01"));
+    }
+    let ordered = |field: &str, direction: SortDirection| query_ids(&connection, &Query::new("people").ordered(vec![Order::new(field, direction)]));
+    assert_eq!(ordered("age", SortDirection::Asc), ["9", "10", "007", "a2"], "equal keys go in the id order");
+    assert_eq!(ordered("id", SortDirection::Asc), ["9", "10", "007", "a2"]);
+    assert_eq!(ordered("id", SortDirection::Desc), ["a2", "007", "10", "9"]);
+}
+
+#[test]
+fn sorted_relation_read_walks_its_index_without_sorting() {
+    let model = ModelSpec {
+        relations: vec![RelationSpec { sort: Sort::Fields(vec![SortField { column: "position".into(), direction: SortDirection::Desc }]), ..RelationSpec::global("recent") }],
+        ..ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("position", ScalarKind::Int)])
+    };
+    let connection = Connection::open_in_memory().unwrap();
+    migrate_core(&connection).unwrap();
+    create_model_tables(&connection, std::slice::from_ref(&model)).unwrap();
+    let statement = compile_keys(&Query::new("Note").ordered(vec![Order::new("position", SortDirection::Desc)]).limited(5), &model).unwrap();
+    let mut prepared = connection.prepare(&format!("EXPLAIN QUERY PLAN {}", statement.sql)).unwrap();
+    let details: Vec<String> = prepared.query_map(rusqlite::params_from_iter(statement.bindings.iter()), |row| row.get::<_, String>(3)).unwrap().map(Result::unwrap).collect();
+    assert!(details.iter().all(|detail| !detail.contains("TEMP B-TREE")), "{details:?}");
 }

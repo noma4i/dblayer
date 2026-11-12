@@ -78,19 +78,6 @@ fn index_names_distinguish_column_names_from_sort_terms() {
 }
 
 #[test]
-fn inv_order_02_a_sorted_relation_index_carries_the_temp_row_flag_before_the_id() {
-    let model = ModelSpec {
-        relations: vec![RelationSpec { sort: Sort::Fields(vec![SortField { column: "position".into(), direction: SortDirection::Desc }]), ..RelationSpec::global("recent") }],
-        ..ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("position", ScalarKind::Int)])
-    };
-    let statements = create_index_statements(&model);
-    assert!(statements.iter().any(|sql| sql.ends_with("(\"position\" DESC, (substr(\"id\", 1, 5) <> 'temp-'), \"id\")")), "{statements:?}");
-    let connection = Connection::open_in_memory().unwrap();
-    connection.execute_batch(&create_table_statement(&model)).unwrap();
-    for sql in &statements { connection.execute_batch(sql).unwrap(); }
-}
-
-#[test]
 fn create_indexes_remove_duplicate_and_prefix_indexes() {
     let model = ModelSpec { indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]; 2], ..messages() };
     let statements = create_index_statements(&model);
