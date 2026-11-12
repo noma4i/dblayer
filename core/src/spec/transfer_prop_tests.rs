@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use super::transfer_end_tests::{server_silence, SILENT};
 use super::transfer_harness::*;
 use crate::store::files::Location;
 use crate::owners::contract::RejectReason;
@@ -496,12 +497,56 @@ fn xfer_prop_confirmed_outcome_survives_store_refusal() {
                 let flap = [twin.online(false), twin.online(true), twin.tick_retry(id)];
                 assert_eq!((twin.stage(id), refused.all_replies(), refused.outbox.len(), refused.deletes(), refused.shows().len()), (TransferStage::Removing, 0, 0, 0, 0), "{confirmed} {round}/{refusals}");
                 assert_eq!((flap[2].writes(), flap[2].removed().len(), flap[2].submits(), flap[2].outbox_discards()), (1, 1, 0, 0), "{confirmed} {round}/{refusals}");
+                for out in [&refused, &flap[0], &flap[1], &flap[2]] {
+                    assert_eq!(server_silence(out), SILENT, "{confirmed} {round}/{refusals}: the server hears nothing again");
+                }
             }
             let done = twin.commit();
+            assert_eq!(server_silence(&done), SILENT, "{confirmed} {refusals}: nothing goes to the server after the write");
             assert_eq!(twin.stage(id), TransferStage::Done, "{confirmed} {refusals}");
             let (reply, out) = twin.outcome(id, 1);
             assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(verdict, None)], "{confirmed} {refusals}: not Failed");
             if let Some(waiter) = waiter { assert_eq!(done.replies(waiter), vec![TransferAnswer::Ok], "{refusals}"); }
         }
+    }
+}
+
+fn pause_range(refusals: u32) -> (std::time::Duration, std::time::Duration) {
+    let ceiling = std::time::Duration::from_secs(1 << (refusals - 1).min(4)).min(std::time::Duration::from_secs(15));
+    (ceiling / 2, ceiling)
+}
+
+#[test]
+fn xfer_prop_storage_pause_resets_on_committed() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 1);
+    twin.step_ok(id, 1, None);
+    let first = twin.reject(storage()).schedules[0].0;
+    twin.tick_retry(id);
+    twin.commit();
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Completing);
+    twin.completed(id);
+    let second = twin.reject(storage()).schedules[0].0;
+    let (low, high) = pause_range(1);
+    assert!((low..=high).contains(&first), "{first:?}");
+    assert!((low..=high).contains(&second), "a `Committed` between the refusals resets the count: {second:?}");
+}
+
+#[test]
+fn xfer_prop_storage_pause_grows_to_the_ceiling() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.hold_shown = true;
+    let batch = twin.online(false).shown_batches()[0];
+    let (low, high) = pause_range(1);
+    let shown = twin.reject_shown(batch).schedules[0].0;
+    assert!((low..=high).contains(&shown), "{shown:?}");
+    twin.online(true);
+    for refusals in 2..=12 {
+        let pause = twin.reject(storage()).schedules[0].0;
+        let (low, high) = pause_range(refusals);
+        assert!((low..=high).contains(&pause), "refusal {refusals} of other kinds in a row: {pause:?} outside {low:?}..{high:?}");
+        twin.tick_retry(id);
     }
 }
