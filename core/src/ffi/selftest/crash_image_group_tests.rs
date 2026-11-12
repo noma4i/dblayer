@@ -40,9 +40,9 @@ async fn a_file_cut_at_any_commit_of_a_group_upload_reopens_with_the_group_finis
             fresh.rig.credentials = std::sync::Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default());
             crate::ffi::CredentialStore::set(fresh.rig.credentials.as_ref(), secret.clone()).unwrap();
             let clock = crate::ffi::TestClock::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
-            let reopened = fresh.open_with(Some(&image), &OPERATIONS, Some(clock.clone())).await;
             for blob_index in 0..3 { fresh.script.data("CreateBlob", &blob(blob_index)); }
             fresh.script.data("CreateAssets", ASSETS);
+            let reopened = fresh.open_with(Some(&image), &OPERATIONS, Some(clock.clone())).await;
             drained(&reopened).await;
             let whole = landed(&reopened);
             assert!(whole == 0 || whole == 3, "cut {index}: the batch lands whole or not at all: {whole}");

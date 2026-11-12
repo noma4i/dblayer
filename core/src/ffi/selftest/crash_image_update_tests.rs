@@ -38,8 +38,9 @@ async fn a_file_cut_at_any_commit_of_a_row_update_finishes_it_once_or_finds_it_n
             let (secret, operations, before, after) = (secret.clone(), operations, before.clone(), after.clone());
             async move {
                 let (saved, answered) = saved_work(&image);
-                let (fresh, reopened) = reopen(&image, &secret, &operations).await;
-                let held = fresh.script.hold("UpdateMoment", reply);
+                let mut held_slot = None;
+                let (fresh, reopened) = reopen(&image, &secret, &operations, |fresh| { held_slot = Some(fresh.script.hold("UpdateMoment", reply)); }).await;
+                let held = held_slot.take().unwrap();
                 let epoch = reopened.session_epoch();
                 crate::test_wait::settled(&reopened, "opened", || true).await;
                 if answered == 0 { assert_eq!(queue_now(&reopened).await as i64, saved, "cut {index}: the open keeps the saved operation until it is answered"); }

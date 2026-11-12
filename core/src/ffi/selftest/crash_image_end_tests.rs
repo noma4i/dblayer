@@ -30,8 +30,9 @@ async fn a_file_cut_at_any_commit_of_the_end_of_a_session_opens_whole_or_ended()
     let ended = over_images(&capture, &files, |index, image| {
         let (secret, temporary) = (secret.clone(), temporary.clone());
         async move {
-            let (fresh, reopened) = reopen(&image, &secret, &operations).await;
-            let held = fresh.script.hold("CreateMoment", LANDED);
+            let mut held_slot = None;
+            let (fresh, reopened) = reopen(&image, &secret, &operations, |fresh| { held_slot = Some(fresh.script.hold("CreateMoment", LANDED)); }).await;
+            let held = held_slot.take().unwrap();
             crate::test_wait::settled(&reopened, "opened", || true).await;
             let status = reopened.session_status().unwrap();
             let epoch = reopened.session_epoch();

@@ -52,8 +52,7 @@ async fn a_file_cut_at_any_commit_of_a_multipart_upload_reopens_with_the_upload_
         async move {
             let (saved, _) = saved_work(&image);
             let confirmed = confirmed_parts(&image);
-            let (fresh, reopened) = reopen(&image, &secret, &operations).await;
-            script(&fresh);
+            let (fresh, reopened) = reopen(&image, &secret, &operations, script).await;
             if saved > 0 { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
             let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some();
             assert!(landed || saved == 0, "cut {index}: a saved upload is finished");

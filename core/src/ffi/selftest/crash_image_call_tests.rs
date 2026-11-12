@@ -38,7 +38,7 @@ async fn a_file_cut_during_an_interactive_call_hands_its_answer_over_once() {
 
     rusqlite::Connection::open(&pending).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let base = Capture::begin(&pending);
-    let (resumed_stand, resumed) = reopen(&pending, &secret, &OPERATIONS).await;
+    let (resumed_stand, resumed) = reopen(&pending, &secret, &OPERATIONS, |_| {}).await;
     bound(crate::ffi::settled(&resumed)).await.unwrap();
     assert_eq!(resumed_stand.rig.server.seen().iter().filter(|request| request["requestId"] == pair.as_str()).count(), 1, "the resumed process resends the pair");
     let (capture, files) = base.end(&pending);
@@ -47,7 +47,7 @@ async fn a_file_cut_during_an_interactive_call_hands_its_answer_over_once() {
         let (secret, pair, answer) = (secret.clone(), pair.clone(), answer.clone());
         async move {
             let saved = saved_pair(&image);
-            let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS).await;
+            let (fresh, reopened) = reopen(&image, &secret, &OPERATIONS, |_| {}).await;
             bound(crate::ffi::settled(&reopened)).await.unwrap();
             let sent: Vec<_> = fresh.rig.server.seen().into_iter().filter(|request| request["requestId"] == pair.as_str()).collect();
             assert_eq!(sent.len(), usize::from(saved.is_some()), "cut {index}: the pair goes out again only when no answer was saved");

@@ -83,10 +83,11 @@ pub(super) async fn over_images<T: Send + 'static, F, Fut>(capture: &Capture, fi
 }
 
 /// A fresh process on the image: its own server double, the credential the killed process had saved.
-pub(super) async fn reopen(image: &Path, secret: &str, operations: &[(&str, &str)]) -> (super::upload_stand::Stand, std::sync::Arc<crate::ffi::Database>) {
+pub(super) async fn reopen(image: &Path, secret: &str, operations: &[(&str, &str)], prepare: impl FnOnce(&super::upload_stand::Stand)) -> (super::upload_stand::Stand, std::sync::Arc<crate::ffi::Database>) {
     let mut fresh = super::upload_stand::Stand::new();
     fresh.rig.credentials = std::sync::Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default());
     crate::ffi::CredentialStore::set(fresh.rig.credentials.as_ref(), secret.to_string()).unwrap();
+    prepare(&fresh);
     let database = fresh.open(Some(image), operations).await;
     (fresh, database)
 }

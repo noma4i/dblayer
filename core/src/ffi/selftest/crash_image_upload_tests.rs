@@ -62,9 +62,10 @@ async fn a_file_cut_at_any_commit_of_a_single_upload_finishes_it_once_or_keeps_i
             let (secret, temporary) = (secret.clone(), temporary.clone());
             async move {
                 let (saved, _) = saved_work(&image);
-                let (fresh, reopened) = reopen(&image, &secret, &operations).await;
-                fresh.script.data("CreateBlob", BLOB);
-                fresh.script.data("CreateMoment", LANDED);
+                let (fresh, reopened) = reopen(&image, &secret, &operations, |fresh| {
+                    fresh.script.data("CreateBlob", BLOB);
+                    fresh.script.data("CreateMoment", LANDED);
+                }).await;
                 crate::test_wait::settled(&reopened, "opened", || true).await;
                 if status(&reopened, &temporary) == Some(WireUploadStatus::Failed) {
                     assert_eq!(fresh.script.names().len(), 0, "cut {index}: a refusal that was kept sends nothing until the retry");
