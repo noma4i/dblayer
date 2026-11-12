@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::transfer::{Source, Steps};
-use super::transfer_executor::{Link, LinkPut, StepCodec, StepDone, StepEnd};
+use super::transfer::{PutMode, Source, Steps};
+use super::transfer_executor::{Link, StepCodec, StepDone, StepEnd};
 use crate::owners::life::OperationLookup;
 use crate::owners::read::codec::root_value;
 use crate::transport::{CancelToken, GraphQLRequest, PutFile, PutRequest, RequestOwner, Response, TransferIdentity, TransferStep, TransportError};
@@ -117,7 +117,7 @@ impl UploadCodec {
                 (created.clone(), Some(created.text()))
             }
         };
-        if matches!(link.put, LinkPut::InitOnly) {
+        if matches!(link.put, PutMode::InitOnly) {
             return Ok(StepDone { upload_id: minted, etag: None, end: StepEnd::Initiated });
         }
         let Held::Multipart { key: blob_key, id } = blob else { return Err(rejected("the upload id is not a multipart id")) };
@@ -125,7 +125,7 @@ impl UploadCodec {
         let target = data.data.get("parts").and_then(Value::as_array).into_iter().flatten().find(|item| item.get("partNumber").and_then(Value::as_u64) == Some(u64::from(part))).ok_or_else(|| TransportError::Decode("the presign answer misses the part".into()))?;
         let url = target.get("url").and_then(Value::as_str).ok_or_else(|| TransportError::Decode("the presign answer has no url".into()))?;
         let headers = parse_headers(target.get("headers")).map_err(TransportError::Decode)?;
-        if matches!(link.put, LinkPut::Detached { .. }) {
+        if matches!(link.put, PutMode::Detached { .. }) {
             let request = PutRequest { url: url.to_string(), headers, file: PutFile { path: source.path.clone(), offset: 0, length: total }, identity: TransferIdentity { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: body.item.clone(), step: TransferStep::Part { number: part } }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
             link.start_put(request)?;
             return Ok(StepDone { upload_id: minted, etag: None, end: StepEnd::Started });

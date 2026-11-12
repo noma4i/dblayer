@@ -11,7 +11,7 @@ pub struct UploadConfig {
     pub presign_ttl: Duration,
     pub tick: Duration,
     pub failed_ttl: Duration,
-    /// The platform runs a PUT outside the process (`OpenPorts.detached_put`).
+    /// The platform runs a PUT outside the process (`OpenPorts.put_executor`).
     pub detached_put: bool,
 }
 

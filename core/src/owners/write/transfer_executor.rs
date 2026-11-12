@@ -16,7 +16,7 @@ use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
-use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutIdentity, PutRequest, PutReply, Response, RetryClass, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutReply, Response, RetryClass, TransportError};
 
 /// The requests of one step. Every request goes out with `NetworkPurpose::Transfer` and stops with the step.
 pub struct Link {
@@ -34,15 +34,8 @@ pub struct Link {
     /// Called once the PUT is about to be sent: the owner of the transfer starts the timer of the step.
     started: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Who runs the PUT of the step and where its system task starts.
-    pub(crate) put: LinkPut,
-}
-
-/// The PUT of a step outside the process: the platform executor and the identity of the task.
-#[derive(Clone)]
-pub(crate) enum LinkPut {
-    Live,
-    InitOnly,
-    Detached { executor: Arc<dyn crate::ffi::PutExecutor>, identity: PutIdentity },
+    pub(crate) put: PutMode,
+    executor: Option<Arc<dyn crate::ffi::PutExecutor>>,
 }
 
 impl Drop for Link {
@@ -51,7 +44,7 @@ impl Drop for Link {
 
 impl Link {
     #[cfg(test)]
-    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: LinkPut::Live } }
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: PutMode::Live, executor: None } }
 
     /// `step` names the request: its id is the function of the step, so a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
@@ -94,7 +87,7 @@ impl Link {
 
     /// Hands the PUT to the platform executor and returns: the outcome comes back as `PutEnded`. The cancel of the step and the end of the epoch stop it before the hand-over.
     pub(crate) fn start_put(&self, request: PutRequest) -> Result<(), TransportError> {
-        let LinkPut::Detached { executor, identity } = &self.put else { return Err(TransportError::Invalid("the step has no executor outside the process".into())) };
+        let (PutMode::Detached { identity }, Some(executor)) = (&self.put, &self.executor) else { return Err(TransportError::Invalid("the step has no executor outside the process".into())) };
         if self.cancel.is_cancelled() || self.epoch.is_some_and(|epoch| !self.gate.admits(epoch)) { return Err(TransportError::Interrupted("the step ended before the upload started".into())); }
         let target = crate::ffi::PutTarget { url: request.url, headers: crate::transport::merge_headers(std::collections::HashMap::new(), request.headers.into_iter().collect()), connect_ms: crate::transport::CONNECT_TIMEOUT_MS, request_ms: crate::transport::REQUEST_TIMEOUT_MS, response_limit: crate::transport::MAX_PUT_RESPONSE_BYTES };
         crate::lock::effect(|| executor.start_put(*identity, target, request.file));
@@ -336,7 +329,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: LinkPut::Live })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: PutMode::Live, executor: None })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
@@ -368,10 +361,9 @@ impl TransferExecutor {
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
         let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded, put } = ask;
-        let put = match (put, &self.put) {
-            (PutMode::Detached { identity }, Some(executor)) => LinkPut::Detached { executor: executor.clone(), identity },
-            (PutMode::InitOnly, Some(_)) => LinkPut::InitOnly,
-            _ => LinkPut::Live,
+        let (put, executor) = match &self.put {
+            Some(executor) => (put, Some(executor.clone())),
+            None => (PutMode::Live, None),
         };
         let source = self.local(transfer_id, source);
         let (progress, started) = (back.clone(), back.clone());
@@ -384,6 +376,7 @@ impl TransferExecutor {
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
                 link.put = put;
+                link.executor = executor;
                 link.identity = (transfer_id, cycle_id, part.unwrap_or(0));
                 link.seeded = seeded_response(seeded);
                 link.started = Some(Arc::new(move || started.reply(stamp, TransferInput::PutStarted { transfer_id, attempt_id })));

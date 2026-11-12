@@ -178,7 +178,6 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        ports.check_detached_put()?;
         let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, put_executor, .. } = ports;
         blocking(move || {
             let database = match encrypted {

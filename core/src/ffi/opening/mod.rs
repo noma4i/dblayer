@@ -40,10 +40,7 @@ pub struct OpenPorts {
     /// Test stands set it: the database accepts a registration that leaves out an operation the library sends by itself. The `open` of an app never sets it.
     #[uniffi(default = false)]
     pub partial_operations: bool,
-    /// The platform runs the PUT of a file outside the process (iOS: a background `URLSession`): it needs `put_executor`.
-    #[uniffi(default = false)]
-    pub detached_put: bool,
-    /// The executor of the PUTs outside the process: `StartPut`, `CancelPut` and `ResumePuts` go to it.
+    /// The executor of the PUTs outside the process (iOS: a background `URLSession`): its presence is the capability. `StartPut`, `CancelPut` and `ResumePuts` go to it.
     #[uniffi(default = None)]
     pub put_executor: Option<Arc<dyn PutExecutor>>,
 }
@@ -72,13 +69,6 @@ impl OpenPorts {
             self.http = self.executor.clone().map(|executor| Arc::new(ExecutorHttp(executor)) as Arc<dyn EncryptedHttp>);
         }
         self
-    }
-
-    pub(super) fn check_detached_put(&self) -> Result<(), DbError> {
-        if self.detached_put != self.put_executor.is_some() {
-            return Err(DbError::Config { code: super::ConfigCode::InvalidRequest, detail: "detached_put and put_executor go together".into() });
-        }
-        Ok(())
     }
 
     fn check_data_sync(&self) -> Result<(), DbError> {
