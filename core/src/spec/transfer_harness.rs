@@ -57,6 +57,8 @@ pub(super) struct Out {
     pub rounds: Vec<RoundsInput>,
     pub timers: usize,
     pub schedules: Vec<(std::time::Duration, String)>,
+    /// The ids of the timers set, in the order of `schedules`.
+    pub timer_ids: Vec<crate::runtime::ScheduleId>,
     pub cancels: usize,
 }
 
@@ -290,9 +292,10 @@ impl Twin {
         for emitted in take(&self.log) {
             match emitted {
                 Emitted::Run(run) => out.runs.push(run),
-                Emitted::Schedule { after, input, .. } => {
+                Emitted::Schedule { id, after, input } => {
                     out.timers += 1;
                     out.schedules.push((after, input));
+                    out.timer_ids.push(id);
                 }
                 Emitted::Cancel(_) => out.cancels += 1,
                 Emitted::Send { .. } | Emitted::Broadcast(_) => {}
@@ -338,6 +341,7 @@ impl Twin {
             out.rounds.extend(next.rounds);
             out.timers += next.timers;
             out.schedules.extend(next.schedules);
+            out.timer_ids.extend(next.timer_ids);
             out.cancels += next.cancels;
         }
         out

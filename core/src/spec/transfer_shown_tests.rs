@@ -1,7 +1,7 @@
 //! Owner-level tests of the owner `Transfer`: the shown value of a transfer reaches `sync_upload` (D-226).
 
 use super::transfer_harness::*;
-use crate::owners::write::transfer::{Shown, TransferInput};
+use crate::owners::write::transfer::{Shown, TransferInput, TransferStage, TransferTick};
 
 const KEY: &str = "Moment:r1:upload";
 
@@ -58,8 +58,10 @@ fn xfer_show_storage_refusal_is_written_again() {
     twin.hold_shown = true;
     let out = twin.online(false);
     let rejected = twin.reject_shown(out.shown_batches()[0]);
-    assert_eq!((rejected.shows(), rejected.shown.len(), rejected.timers), (Vec::new(), 0, 1), "the refused value is not published and one retry is scheduled: {rejected:?}");
-    let again = twin.tick_retry(id);
+    let due = TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } };
+    assert_eq!((rejected.shows(), rejected.shown.len(), rejected.schedules.iter().map(|(_, input)| input.clone()).collect::<Vec<_>>()), (Vec::new(), 0, vec![format!("{due:?}")]), "the refused value is not published and one retry of the value is scheduled: {rejected:?}");
+    assert!(twin.tick_retry(id).shown.is_empty(), "the retry tick of the step does not write the value");
+    let again = twin.post(due);
     assert_eq!((again.stored_shows(), again.shows()), (out.stored_shows(), Vec::new()), "the retry writes the same value, nothing is published before Committed: {again:?}");
     let committed = twin.commit_shown(again.shown_batches()[0]);
     assert_eq!(committed.shows(), live(out.stored_shows()), "Committed of the retry publishes the value");
@@ -105,5 +107,37 @@ fn xfer_round_error_refusal_is_quiet() {
         assert!(Twin::quiet(&refused) && refused.shown.is_empty(), "{reason:?}: {refused:?}");
         let cleared = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: None });
         assert_eq!(cleared.round_errors(), vec![(KEY.to_string(), None)], "{reason:?}: the next round status is written");
+    }
+}
+
+/// P-XFER-50: the retry of a refused shown value has its own timer: the timeout of the running step stays armed and no timer is cancelled.
+#[test]
+fn xfer_show_retry_keeps_the_step_timers() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    twin.online(true);
+    let started = twin.commit();
+    let step_timers: Vec<_> = started.schedules.iter().zip(&started.timer_ids).filter(|((_, input), _)| input.contains("PutTimeout")).map(|(_, id)| *id).collect();
+    assert_eq!((twin.stage(id), step_timers.len()), (TransferStage::Uploading, 1), "the step runs with its timeout armed: {started:?}");
+    twin.hold_shown = true;
+    let denied = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: Some("denied".into()) });
+    let rejected = twin.reject_shown(denied.shown_batches()[0]);
+    assert_eq!((rejected.timer_ids.len(), rejected.cancels), (1, 0), "one timer of the value, none cancelled: {rejected:?}");
+    assert!(!step_timers.contains(&rejected.timer_ids[0]), "the timer of the value does not replace the timeout of the step");
+    let again = twin.post(TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } });
+    assert_eq!((again.stored_shows(), again.batches.len(), again.steps().len(), again.timers, twin.stage(id)), (denied.stored_shows(), 0, 0, 0, TransferStage::Uploading), "the tick of the value writes the value and nothing else: {again:?}");
+}
+
+/// P-XFER-50: the tick of the shown value with no value waiting for its write does nothing in any stage.
+#[test]
+fn xfer_show_tick_without_a_waiting_value_is_quiet() {
+    let reach: [(&str, fn(&mut Twin) -> u64); 5] = [("uploading", |twin| twin.uploading(KEY, 3)), ("persisting failure", |twin| twin.persisting_failure(KEY)), ("failed", |twin| twin.failed(KEY)), ("completing", |twin| twin.completing(KEY)), ("mutating", |twin| twin.mutating(KEY))];
+    for (name, arrive) in reach {
+        let mut twin = Twin::new();
+        let id = arrive(&mut twin);
+        let stage = twin.stage(id);
+        let out = twin.post(TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } });
+        assert!(Twin::quiet(&out) && out.shown.is_empty() && twin.stage(id) == stage, "{name}: {out:?}");
     }
 }
