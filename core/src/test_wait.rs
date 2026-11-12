@@ -305,3 +305,18 @@ pub(crate) fn orders_of<T: Copy + PartialEq>(events: &[T], before: &[(T, T)]) ->
     let at = |order: &[T], event: T| order.iter().position(|found| *found == event);
     permutations(events).into_iter().filter(|order| before.iter().all(|(first, second)| at(order, *first) < at(order, *second))).collect()
 }
+
+/// Runs `body` once per variant in a child process that executes only the test `name` of `module`: a process-wide source keeps its value, so a test of "no value yet" or of "no wake-up" cannot share a process with other tests.
+#[track_caller]
+pub(crate) fn in_own_process(module: &str, name: &str, variants: &[&str], body: impl Fn(&str)) {
+    if let Ok(variant) = std::env::var("DBL_OWN_PROCESS") {
+        body(&variant);
+        return;
+    }
+    let path = format!("{}::{name}", module.split_once("::").map_or(module, |(_, rest)| rest));
+    for variant in variants {
+        let out = std::process::Command::new(std::env::current_exe().expect("the test binary")).args(["--exact", &path, "--test-threads=1"]).env("DBL_OWN_PROCESS", variant).output().expect("the child process starts");
+        let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && stdout.contains("1 passed"), "{path} [{variant}] failed in its own process:\n{stdout}\n{stderr}");
+    }
+}

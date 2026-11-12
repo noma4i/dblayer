@@ -270,3 +270,24 @@ fn matrix_owner_state_input_network() {
     state_input_pairs(&mut matrix, "reference ref_network", vec![("fresh", Twin::new), ("online", online), ("offline", offline), ("power saving", saving), ("foreground", foreground), ("closed", closed)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
     matrix.finish();
 }
+
+/// Requirement (P-NET-13): the public status and the `online` of the `Network` owner are the same value, the input is one. Observable: the owner value of the reference and `NetworkStatus::current`. Assert: after every `SetOnline` of a random trace both are equal; the status runs in its own process because it lives once per process.
+#[test]
+fn net_prop_status_equals_the_owner_value() {
+    crate::test_wait::in_own_process(module_path!(), "net_prop_status_equals_the_owner_value", &["trace"], |_| {
+        let sink = crate::ffi::OnlineSink::of_connectivity(crate::transport::Connectivity::new(false));
+        let status = crate::ffi::NetworkStatus::new();
+        for seed in 1..=40 {
+            let mut twin = Twin::new();
+            for input in random_inputs(seed, 30) {
+                if input == Input::Closing { break; }
+                let platform_value = if let Input::SetOnline(online) = input { Some(online) } else { None };
+                twin.feed(input);
+                if let Some(online) = platform_value {
+                    sink.set_online(online);
+                    assert_eq!(status.current(), twin.reference.online(), "seed {seed}: the public value equals the owner value after SetOnline({online})");
+                }
+            }
+        }
+    });
+}
