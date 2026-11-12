@@ -518,6 +518,50 @@ fn xfer_minted_debt_ends_with_its_upload() {
     }
 }
 
+/// xfer_minted_write_interrupted_after_complete (P-XFER-49): the write of the minted id is still in flight when complete is confirmed. A NoSession or Closed refusal of that write leaves no orphan of the complete upload.
+#[test]
+fn xfer_minted_write_interrupted_after_complete() {
+    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 1);
+        assert_eq!(minted(&mut twin, id, "u1").writes(), 1, "{reason:?}: the write of the minted id is in flight");
+        let mut later: std::collections::VecDeque<_> = twin.step_ok(id, 1, None).batches.into_iter().map(|batch| batch.id).collect();
+        while let Some(batch) = later.pop_front() {
+            later.extend(twin.commit_shown(batch).batches.into_iter().map(|batch| batch.id));
+        }
+        assert_eq!(twin.stage(id), TransferStage::Completing, "{reason:?}");
+        twin.completed(id);
+        assert_eq!(twin.stage(id), TransferStage::PersistingComplete, "{reason:?}");
+        let refused = twin.reject(reason.clone());
+        assert_eq!((refused.orphans_written(), refused.orphan_aborts()), (Vec::new(), Vec::<String>::new()), "{reason:?}: a complete upload leaves no orphan: {refused:?}");
+    }
+}
+
+/// xfer_minted_debt_ends_with_a_durable_row (P-XFER-49): the write of the minted id was refused, then a later write of the row of the transfer carries the id and is committed. The id is durable: the tick writes nothing and the close writes no orphan of the live upload.
+#[test]
+fn xfer_minted_debt_ends_with_a_durable_row() {
+    for closing in [false, true] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        minted(&mut twin, id, "u1");
+        let refused = twin.reject(RejectReason::Storage("disk".into()));
+        assert_eq!(refused.timers, 1, "the debt is scheduled");
+        let attempt_id = twin.state().minted_attempt("u1").expect("the write of the minted id is owed");
+        let part = twin.step_ok(id, 1, None);
+        assert_eq!(part.rows().iter().map(|(row, _)| row.upload_id.clone()).collect::<Vec<_>>(), vec![Some("u1".to_string())], "the row of the confirmed part carries the minted id: {part:?}");
+        while twin.has_pending() {
+            twin.commit();
+        }
+        let after = if closing {
+            twin.end_epoch_by(crate::runtime::Cause::Close)
+        } else {
+            twin.det.tick(crate::runtime::Time(1));
+            twin.post(TransferInput::Tick { kind: crate::owners::write::transfer::TransferTick::Minted { upload_id: "u1".into(), attempt_id } })
+        };
+        assert_eq!((after.writes(), after.orphans_written()), (0, Vec::new()), "closing {closing}: the id is durable in the row of the transfer: {after:?}");
+    }
+}
+
 /// xfer_minted_write_committed (P-XFER-41, D-192): the id of a removed transfer is aborted only after its orphan record is durable. A refused write is repeated, and the abort comes after Committed of the repeat.
 #[test]
 fn xfer_minted_write_committed() {
