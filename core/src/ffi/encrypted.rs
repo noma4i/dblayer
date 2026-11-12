@@ -152,13 +152,14 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Rejected(crate::owners::contract::RejectReason::NoSession) => super::cause_error(&super::EndCause::SessionEnded),
         Failed::Rejected(crate::owners::contract::RejectReason::Closed) => super::command::closed(),
         Failed::Rejected(reason @ crate::owners::contract::RejectReason::StaleGeneration { .. }) => DbError::Internal { detail: format!("the request was refused by the store: {reason:?}") },
-        Failed::Rejected(crate::owners::contract::RejectReason::Invalid(detail)) => DbError::Internal { detail: format!("the request was refused by the store: {detail}") },
+        Failed::Rejected(crate::owners::contract::RejectReason::Invalid(detail)) => DbError::Invalid { detail },
         Failed::Session { code, body } => DbError::from(core::TransportError::Session { code, detail: body }),
         Failed::Graphql { code, body } => DbError::from(core::TransportError::graphql_answer(code, body)),
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Storage { detail },
         Failed::NoSession => super::cause_error(&super::EndCause::SessionEnded),
         Failed::Interrupted => DbError::Interrupted { detail: "the call ended".into() },
+        Failed::NotSent => DbError::Network { detail: "the request was not sent".into() },
         Failed::Closed => super::command::closed(),
     }
 }

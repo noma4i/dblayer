@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, resume_taking: None, resume_saving: None, resume_landing_saved: false, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
+        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, resume_taking: None, resume_saving: None, resume_landing_saved: false, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, write_failures: 0, write_in_flight: false, write_session: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -140,6 +140,8 @@ impl SessionState {
 
     pub(super) fn persist(&mut self, pending: PendingCall, session: Option<Digest>, fx: &mut Vec<SessionEffect>) {
         let batch = self.batch();
+        self.write_in_flight = true;
+        self.write_session = session;
         fx.push(SessionEffect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session });
         self.phase = SessionPhase::Persisting { pending, batch };
     }
@@ -258,6 +260,7 @@ impl SessionState {
 
     pub(super) fn land(&mut self, pending: PendingCall, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, fx: &mut Vec<SessionEffect>) {
         let batch = self.batch();
+        self.write_in_flight = true;
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
         let erase_session = server_ended || login_failed(&pending, &answer, server_ended);
         self.resume_landing_saved = self.restored_active == Some(pending.request_id) && (self.resume_waiters.is_empty() || pending.class == OperationClass::Login) && !server_ended;
@@ -266,8 +269,17 @@ impl SessionState {
         self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
-    pub(super) fn land_again(&mut self, pending: PendingCall, landed: Landed, fx: &mut Vec<SessionEffect>) {
-        self.land(pending, landed.answer, landed.identity, landed.sequence, landed.server_ended, fx);
+    /// The store refused the write of the pair or the landing with `Storage`: the same write repeats on the `Tick` of this timer.
+    pub(super) fn write_refused(&mut self, fx: &mut Vec<SessionEffect>) {
+        self.write_failures += 1;
+        self.write_in_flight = false;
+        fx.push(SessionEffect::ScheduleTick { attempts: self.write_failures });
+    }
+
+    /// The store gave an outcome of the write other than `Storage`.
+    pub(super) fn write_settled(&mut self) {
+        self.write_failures = 0;
+        self.write_in_flight = false;
     }
 
     pub(super) fn clearing(&mut self, call: Option<Queued>, reason: Option<SessionAnswer>, after: AfterClear, fx: &mut Vec<SessionEffect>) {

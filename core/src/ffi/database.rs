@@ -443,7 +443,7 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         CallError::Invalid => DbError::Invalid { detail: "the operation is not registered".into() },
         CallError::Offline => DbError::Offline { detail: "the operation needs the network".into() },
-        CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
+        CallError::Network | CallError::NotSent => DbError::Network { detail: "the request did not reach the server".into() },
         CallError::Graphql { messages, extensions } => DbError::Graphql { messages, extensions },
         CallError::Session { code, detail } => DbError::Session { code, detail },
         CallError::Http { status, detail } => DbError::Http { status, detail },

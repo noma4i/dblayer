@@ -46,6 +46,8 @@ pub enum SessionError {
     /// The answer was above the limit of the transport: a sent request has an unknown outcome and repeats with its pair.
     ResponseTooLarge { limit: u64 },
     Interrupted,
+    /// The request of a `Mutate` was taken back before its pair existed: it was not sent and will not be.
+    NotSent,
     NoSession,
     Closed,
 }
@@ -158,7 +160,7 @@ pub enum AttemptPhase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Block {
-    Storage,
+    Invalid,
     SequenceConflict,
     StateLost,
 }
@@ -189,17 +191,8 @@ pub enum SessionPhase {
     Persisting { pending: PendingCall, batch: BatchId },
     Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase },
     Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
-    Blocked { pending: Option<PendingCall>, reason: Block, landing: Option<Landed> },
+    Blocked { pending: Option<PendingCall>, reason: Block },
     Closed,
-}
-
-/// The answer of a landing that the store refused: the same batch commits again.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Landed {
-    pub answer: SessionAnswer,
-    pub identity: Option<Digest>,
-    pub sequence: Option<u64>,
-    pub server_ended: bool,
 }
 
 /// What the author of a `Mutate` hears: `Transport{req_id, Response(body) / Error{class, X} / Dropped}`.
@@ -222,7 +215,7 @@ pub enum SessionEffect {
     CommitResumeAnswer { batch: BatchId, epoch: Epoch, answer: Option<SessionAnswer> },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
-    /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Backoff` (R5b).
+    /// `Schedule Tick` by the Backoff of Http for the number `attempts`: the attempt of a send, or the count of `Storage` refusals in a row of a write (P-DATA-102). `step` turns it into the Runtime effect `Backoff` (R5b).
     ScheduleTick { attempts: u64 },
     GenerateCredential { secret_op_id: SecretOpId },
     StoreSecret { credential: Digest, secret_op_id: SecretOpId },
@@ -323,6 +316,11 @@ pub struct SessionState {
     resume_published: Option<String>,
     resume_clearing: Option<SessionAnswer>,
     failed_batch: Option<BatchId>,
+    /// `Storage` refusals in a row of the pair or the landing write: any other outcome of the write resets it.
+    write_failures: u64,
+    write_in_flight: bool,
+    /// The `Session{digest}` that the first sign-in writes with its pair: the repeat carries it again.
+    write_session: Option<Digest>,
     detach_error: Option<SessionError>,
     operations: Vec<SessionOperation>,
     next_request: RequestId,
@@ -356,7 +354,7 @@ fn reply(fx: &mut Vec<SessionEffect>, id: ReplyId, answer: SessionAnswer) { fx.p
 
 fn blocked_error(reason: Block) -> SessionError {
     match reason {
-        Block::Storage => SessionError::Storage("the stored request is not confirmed".into()),
+        Block::Invalid => SessionError::Invalid,
         Block::SequenceConflict => SessionError::SequenceConflict,
         Block::StateLost => SessionError::StateLost,
     }

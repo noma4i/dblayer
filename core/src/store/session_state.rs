@@ -228,7 +228,7 @@ fn encode_resume(answer: &crate::owners::session::SessionAnswer) -> rusqlite::Re
         Err(SessionError::StateLost) => ("state_lost", None),
         Err(SessionError::SequenceConflict) => ("sequence_conflict", None),
         Err(SessionError::Network) => ("network", None),
-        Err(SessionError::Interrupted) => ("interrupted", None),
+        Err(SessionError::Interrupted | SessionError::NotSent) => ("interrupted", None),
         Err(SessionError::NoSession) => ("no_session", None),
         Err(SessionError::Closed) => ("closed", None),
     };

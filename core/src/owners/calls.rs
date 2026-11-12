@@ -1,6 +1,6 @@
 //! Owner `Calls`: the arbitrary operation `run`, one transport request per call, no cache and no Store write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use super::contract::{Drained, Online, RequestId};
@@ -25,6 +25,8 @@ pub enum CallError {
     /// A query the server refused with a session code: the call ends, the session stays.
     Session { code: crate::transport::SessionCode, detail: String },
     Dropped,
+    /// Session took the request back before its pair existed: Calls answers `Network` for it.
+    NotSent,
     InvalidResponse,
     Interrupted,
     SessionEnded,
@@ -113,6 +115,8 @@ pub struct CallsState {
     /// `Run` calls that came before the addressed snapshot of the epoch.
     awaiting: BTreeMap<ReplyId, (CallId, String, String, CallDefinition, u64)>,
     awaiting_by_id: BTreeMap<CallId, ReplyId>,
+    /// Mutate calls whose `Deadline` found no answer of Session yet: `Release` is out and the verdict comes from the answer to it.
+    releasing: BTreeSet<CallId>,
     next: u64,
     drained: bool,
 }
@@ -140,7 +144,7 @@ fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::Ret
 
 impl CallsState {
     pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), CallDefinition { kind: *kind, document: String::new(), root: String::new() })).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), CallDefinition { kind: *kind, document: String::new(), root: String::new() })).collect(), generation: 0, calls: BTreeMap::new(), by_reply: BTreeMap::new(), attempts: BTreeMap::new(), awaiting: BTreeMap::new(), awaiting_by_id: BTreeMap::new(), releasing: BTreeSet::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
@@ -150,6 +154,7 @@ impl CallsState {
     fn finish(&mut self, call_id: CallId, answer: CallAnswer, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
         if let Some((phase, reply)) = self.calls.get_mut(&call_id) {
             *phase = CallPhase::Done;
+            self.releasing.remove(&call_id);
             self.by_reply.remove(reply);
             self.attempts.remove(&call_id);
             finished.push(call_id);
@@ -258,6 +263,11 @@ impl StateOwner for Calls {
                 if let (Some(policy), Err(error)) = (retry, &answer) { state.retry(call_id, error.clone(), policy, &mut fx, &mut scheduled, &mut finished); }
                 else { state.finish(call_id, answer, &mut fx, &mut finished); }
             }
+            CallsInput::TransportError { call_id, error } if state.sending(call_id) && state.releasing.contains(&call_id) => {
+                let answer = if error == CallError::NotSent { CallError::Network } else { CallError::Dropped };
+                state.finish(call_id, Err(answer), &mut fx, &mut finished);
+            }
+            CallsInput::Dropped { call_id } if state.sending(call_id) && state.releasing.contains(&call_id) => state.finish(call_id, Err(CallError::Dropped), &mut fx, &mut finished),
             CallsInput::TransportError { call_id, error } if state.sending(call_id) => {
                 let policy = match state.phase(call_id) { Some(CallPhase::Sending { kind, .. }) => retry_policy(&error, kind), _ => None };
                 if let Some(policy) = policy {
@@ -268,12 +278,18 @@ impl StateOwner for Calls {
                 let policy = if matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) { crate::runtime::RetryPolicy::Http } else { crate::runtime::RetryPolicy::QueryNetwork };
                 state.retry(call_id, CallError::Dropped, policy, &mut fx, &mut scheduled, &mut finished);
             }
-            CallsInput::Deadline { call_id } if state.sending(call_id) => {
+            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing.contains(&call_id) && matches!(state.phase(call_id), Some(CallPhase::Sending { kind: CallKind::Mutate, .. })) => {
+                let Some(CallPhase::Sending { request_id, .. }) = state.phase(call_id) else { return Vec::new() };
+                if state.attempts.get(&call_id).is_some_and(|attempt| attempt.attempt > 1) {
+                    state.finish(call_id, Err(CallError::Dropped), &mut fx, &mut finished);
+                } else { state.releasing.insert(call_id); }
+                fx.push(CallsEffect::Release { request_id });
+            }
+            CallsInput::Deadline { call_id } if state.sending(call_id) && !state.releasing.contains(&call_id) => {
                 let phase = state.phase(call_id);
                 let error = state.attempts.get(&call_id).and_then(|attempt| attempt.last.clone()).filter(|error| *error != CallError::Dropped).unwrap_or(CallError::Network);
                 state.finish(call_id, Err(error), &mut fx, &mut finished);
                 if let Some(CallPhase::Sending { request_id, kind: CallKind::Query, .. }) = phase { fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }); }
-                if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = phase { fx.push(CallsEffect::Release { request_id }); }
             }
             CallsInput::Deadline { call_id } if state.awaiting_by_id.contains_key(&call_id) => {
                 if let Some(reply) = state.awaiting_by_id.remove(&call_id) {

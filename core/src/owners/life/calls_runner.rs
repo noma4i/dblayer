@@ -62,6 +62,7 @@ pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> 
             Err(error) => calls_input(call_id, root, Err(TransportError::Decode(error.to_string()))),
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
+        AuthorOutcome::Error { error: crate::owners::session::SessionError::NotSent, .. } => CallsInput::TransportError { call_id, error: CallError::NotSent },
         AuthorOutcome::Error { error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true, .. } => CallsInput::TransportError { call_id, error: CallError::Failed(crate::ffi::DbError::ResponseTooLarge { limit }) },
         AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, pending_retained: true, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: call_error(crate::ffi::session_failure(error)) },
@@ -155,7 +156,7 @@ impl EffectRunner<Calls> for CallsRunner {
                 }
             },
             CallsEffect::Release { request_id } => {
-                self.forget(request_id);
+                self.running.remove(&request_id);
                 self.wiring.to_session(SessionInput::Release { req_id: request_id });
             }
             CallsEffect::Reply { id, answer } => {
