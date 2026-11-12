@@ -266,6 +266,9 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     /** The status of the transfer of `uploads[action]` of a row. */
     fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob(row.modelName, row.id, action))
 
+    /** The status of the transfer of a staged upload, before and after its [StagedUpload.commit]. */
+    fun uploadStatus(staged: StagedUpload<*>): ValueStream = database.openValueStream(epoch, ReadRequest.Blob(staged.modelName, staged.id, staged.action))
+
     /** The operations that wait for the server, are on their way or were refused. */
     fun operations(): Flow<OperationQueueItem> = database.openValueStream(epoch, ReadRequest.Operations).operationLists()
 
@@ -291,6 +294,12 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
 
     /** Sends the file of an existing record through its declared upload action. */
     suspend fun <Model : DBModel> upload(row: Model, action: String, request: UploadRequest, decoder: ModelDecoder<Model>): MutationReceipt<Model> = upload(decoder, row.id, action, request)
+
+    /** Sends the file before its row exists. [StagedUpload.commit] creates the row and sends the final mutation, [StagedUpload.discard] removes the transfer. */
+    suspend fun <Model : DBModel> stage(decoder: ModelDecoder<Model>, action: String, request: UploadRequest): StagedUpload<Model> {
+        val staged = offCaller { database.stage(epoch, decoder.modelName, action, request.wire()) }
+        return StagedUpload(database, epoch, decoder, staged.rowId, action)
+    }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): OperationReceipt<Model> =
         offCaller { OperationReceipt(database, decoder, database.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }

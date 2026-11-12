@@ -24,6 +24,18 @@ data class UploadRequest(
 
 suspend fun DBModel.cancelUpload(action: String, account: AccountScope? = null): Boolean = onAccount(account) { database, epoch -> database.cancelUpload(epoch, modelName, id, action) }
 
+/** A file sent before its row exists. [id] is the id of the row [commit] creates. */
+class StagedUpload<Model : DBModel> internal constructor(private val database: Database, private val epoch: ULong, private val decoder: ModelDecoder<Model>, val id: String, val action: String) {
+    internal val modelName: String get() = decoder.modelName
+
+    /** Creates the row with [values] and sends the final mutation with [variables]. A second call throws `Invalid`. */
+    suspend fun commit(values: JsonObject, variables: JsonObject = JsonObject(emptyMap())): MutationReceipt<Model> =
+        MutationReceipt(database, decoder, offCaller { database.commitStaged(epoch, decoder.modelName, id, action, values.jsonText(), variables.jsonText()) })
+
+    /** Removes the transfer and its files. Returns the value of the core. */
+    suspend fun discard(): Boolean = offCaller { database.cancelUpload(epoch, decoder.modelName, id, action) }
+}
+
 data class UploadItem(
     val values: JsonObject,
     val path: String?,
