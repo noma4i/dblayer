@@ -202,7 +202,7 @@ impl Lander {
     fn commit(&mut self, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
         self.batch += 1;
         let batch = StoreBatch { author, id: self.batch, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
-        self.store.write_batch(&batch, self.store.files(), self.store.pointer_guards(), None).unwrap();
+        self.store.write_batch(&batch, self.store.files(), None).unwrap();
     }
 
     fn window(&mut self, source: RowSource, key: WindowKey, roots: Vec<RowValue>, related: Vec<(String, RowValue)>) {

@@ -28,7 +28,7 @@ fn login_after_epoch_end(persist_first: bool) {
         let batch = login_batch(10, false);
         let effects = twin.send(StoreInput::Commit(batch.clone()));
         assert!(matches!(effects.as_slice(), [StoreEffect::Write { .. }]));
-        let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        let written = db.write_batch(&batch, db.files(), None).unwrap();
         let revision = written.revision;
         let effects = twin.send(StoreInput::Written { author: BatchAuthor::Session, batch: 10, result: Ok(WriteDone { revision, notice: written.notice, ..WriteDone::default() }) });
         assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { batch: 10, reply: StoreReply::Committed { .. }, .. })));

@@ -204,7 +204,7 @@ fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction()
     store.save_window(&window(&items)).unwrap();
     let write = |models: Vec<String>, keys: Vec<String>| {
         let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys }] };
-        store.write_batch(&batch, store.files(), store.pointer_guards(), None).unwrap();
+        store.write_batch(&batch, store.files(), None).unwrap();
     };
     write(vec!["messages".into()], Vec::new());
     assert_eq!(store.stale_window_keys().unwrap(), vec![messages.clone()], "a model marks the windows of its lists");

@@ -605,10 +605,10 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     }
     let answers = |db: &Store| session_state::answers(&db.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
-    let refused = db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), db.pointer_guards(), None);
+    let refused = db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), None);
     assert!(matches!(refused, Err(crate::store::StoreError::Json(_))), "{:?}", refused.as_ref().err());
     assert_eq!(answers(&db), 1);
-    db.write_batch(&batch(Vec::new()), db.files(), db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch(Vec::new()), db.files(), None).unwrap();
     assert_eq!(answers(&db), 0);
 }
 

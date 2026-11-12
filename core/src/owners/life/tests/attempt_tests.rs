@@ -21,6 +21,6 @@ fn the_attempt_counter_is_stored_with_the_operation() {
     db.write_queue_ops(&[StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]).unwrap();
     assert_eq!(attempts_of(&db, 1), 1);
     let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Attempt { op_id: 1, attempts: 3, cycle_id: 2, cause: None }] };
-    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch, db.files(), None).unwrap();
     assert_eq!(attempts_of(&db, 1), 3);
 }

@@ -73,7 +73,7 @@ fn dlv_alias_restart_model_isolation() {
     for (op_id, model, value) in [(1, "moments", json!({"id":"temp-1", "userId":"u1"})), (2, "users", json!({"id":"temp-1"}))] {
         let effects = IntentEffects { rows: vec![EffectRow { model: model.into(), row_id: "temp-1".into(), values: value.to_string() }], ..Default::default() };
         let batch = StoreBatch { author: BatchAuthor::Outbox, id: op_id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: model.into(), row_id: "temp-1".into(), action: "create".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api }] };
-        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        db.write_batch(&batch, db.files(), None).unwrap();
     }
     drop(db);
 
@@ -88,7 +88,7 @@ fn dlv_alias_restart_model_isolation() {
         rows: vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], intents: 0, credential: None,
         ops: vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }],
     };
-    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch, db.files(), None).unwrap();
     assert_eq!(db.resolve("moments", &temp).unwrap().as_str(), "real-1");
     assert_eq!(db.resolve("users", &temp).unwrap().as_str(), "temp-1");
     assert!(db.read(&["users"], |reader| reader.point("users", "temp-1")).unwrap().is_some());

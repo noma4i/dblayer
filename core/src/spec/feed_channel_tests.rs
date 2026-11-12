@@ -211,7 +211,7 @@ fn feed_dropped_stale_survives_crash() {
     rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "B".into() });
     let batches = take(&rig.store_batches);
     let batch = batches.iter().find(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::MarkStale { models, .. } if models.iter().any(|model| model == "Chat")))).expect("channel loss must commit the stale debt");
-    store.write_batch(batch, store.files(), store.pointer_guards(), None).unwrap();
+    store.write_batch(batch, store.files(), None).unwrap();
     drop(store);
     let reopened = crate::store::Store::open_models(Some(&path), models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(reopened.window_freshness(&key).unwrap().unwrap().stale_since.is_some(), "the stale debt must survive reopen");

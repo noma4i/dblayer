@@ -5,7 +5,7 @@ use crate::owners::store::{RowValue, StoreBatch, StoreOp};
 
 fn write(database: &std::sync::Arc<crate::store::Store>, ops: Vec<StoreOp>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
     let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
-    database.write_batch(&batch, database.files(), database.pointer_guards(), None)
+    database.write_batch(&batch, database.files(), None)
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn store_prop_expiry_any_author() {
             _ => unreachable!(),
         };
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
-        let result = database.write_batch(&batch, database.files(), database.pointer_guards(), None).unwrap();
+        let result = database.write_batch(&batch, database.files(), None).unwrap();
         assert_eq!(result.expiring.len(), 1, "{author:?}");
         assert_eq!((result.expiring[0].row_id.as_str(), result.expiring[0].expires_after), ("p1", 30_000));
         if let Some(old) = previous {
@@ -65,9 +65,9 @@ fn store_response_row_without_its_membership_field_is_written() {
     for (case, stored, row, want) in cases {
         let database = Store::open_models(None, vec![docs_with_list()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
         if let Some(stored) = stored {
-            database.write_batch(&response(1, stored), database.files(), database.pointer_guards(), None).unwrap();
+            database.write_batch(&response(1, stored), database.files(), None).unwrap();
         }
-        let written = database.write_batch(&response(2, row), database.files(), database.pointer_guards(), None);
+        let written = database.write_batch(&response(2, row), database.files(), None);
         let refused = written.as_ref().err().map(|error| error.reject_reason());
         let after = database.read(&["docs"], |reader| Ok(reader.point("docs", "x")?.filter(|row| row.get("text") == Some(&serde_json::json!("new"))).map(|row| row.get("lists").cloned().unwrap_or(serde_json::json!([]))))).unwrap();
         if (refused.clone(), after.clone()) != (None, Some(want.clone())) {
@@ -91,7 +91,7 @@ fn store_bad_event_rolls_back_alone() {
         let good = |id: &str| ("docs".to_string(), serde_json::json!({"op":"upsert", "id":id, "row":{"id":id, "text":id, "lists":["a"]}, "observe":true}).to_string());
         let rows = vec![good("a"), ("docs".to_string(), bad.to_string()), good("b")];
         let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops: Vec::new() };
-        let written = database.write_batch(&batch, database.files(), database.pointer_guards(), None).unwrap();
+        let written = database.write_batch(&batch, database.files(), None).unwrap();
         assert_eq!(written.refused, vec![1], "{case}: the bad event is refused alone");
         let after = |at: usize| serde_json::from_str::<serde_json::Value>(&written.observed[at]).unwrap()["after"]["text"].clone();
         assert_eq!((after(0), after(2)), (serde_json::json!("a"), serde_json::json!("b")), "{case}: the events around it are observed with their rows");
@@ -111,7 +111,7 @@ fn store_prop_overlay_snapshot() {
     let before = database.revision_seq().unwrap();
     let event = |payload: serde_json::Value| StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), payload.to_string())], intents: 0, credential: None, ops: Vec::new() };
     let ephemeral = event(serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}));
-    let first = database.write_batch(&ephemeral, database.files(), database.pointer_guards(), None).unwrap();
+    let first = database.write_batch(&ephemeral, database.files(), None).unwrap();
     assert_eq!(first.revision, before as u64);
     assert!(first.notice.position > 0);
     database.read(&["moments"], |reader| {
@@ -120,7 +120,7 @@ fn store_prop_overlay_snapshot() {
         Ok(())
     }).unwrap();
     let mixed = event(serde_json::json!({"op":"upsert","id":"m1","row":{"id":"m1","text":"two"},"set":{"typing":false}}));
-    let second = database.write_batch(&mixed, database.files(), database.pointer_guards(), None).unwrap();
+    let second = database.write_batch(&mixed, database.files(), None).unwrap();
     assert_eq!((second.revision, second.notice.position), (before as u64 + 1, 0));
     database.read(&["moments"], |reader| {
         let row = reader.point("moments", "m1")?.unwrap();
@@ -138,7 +138,7 @@ fn store_overlay_survives_failed_sql_commits() {
     let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"before"}"#.into() }] }]).unwrap();
     let event = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };
-    database.write_batch(&event, database.files(), database.pointer_guards(), None).unwrap();
+    database.write_batch(&event, database.files(), None).unwrap();
     let before = database.revision_seq().unwrap();
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let reached = attempts.clone();
@@ -306,8 +306,8 @@ fn out_ephemeral_reset_by_position() {
     let typing = |database: &Store| database.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.unwrap().get("typing").cloned())).unwrap();
     let set = || StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };
     let started = u64::try_from(database.lock().now_ms()).unwrap();
-    let first = database.write_batch(&set(), database.files(), database.pointer_guards(), None).unwrap();
-    let second = database.write_batch(&set(), database.files(), database.pointer_guards(), None).unwrap();
+    let first = database.write_batch(&set(), database.files(), None).unwrap();
+    let second = database.write_batch(&set(), database.files(), None).unwrap();
     let (old, current) = (first.resets[0].clone(), second.resets[0].clone());
     assert!(old.deadline >= started + 5000 && old.field == "typing");
     assert_ne!(old.position, current.position);

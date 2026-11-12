@@ -93,7 +93,7 @@ fn store_commit_control_restart() {
         store.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
         store.mark_ready();
         let first = batch(1, vec![StoreOp::UploadOrphan { upload_id: "u1".into(), key: "Moment:r1:upload".into() }]);
-        store.write_batch(&first, store.files(), store.pointer_guards(), None).unwrap();
+        store.write_batch(&first, store.files(), None).unwrap();
     }
     let reopened = crate::store::Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     reopened.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
@@ -101,6 +101,6 @@ fn store_commit_control_restart() {
     assert_eq!(reopened.read_restore().unwrap().orphans, vec![("u1".to_string(), "Moment:r1:upload".to_string())], "the debt of the abort survives the restart with its key");
 
     let removal = batch(2, vec![StoreOp::RemoveOrphan { upload_id: "u1".into() }]);
-    reopened.write_batch(&removal, reopened.files(), reopened.pointer_guards(), None).unwrap();
+    reopened.write_batch(&removal, reopened.files(), None).unwrap();
     assert!(reopened.read_restore().unwrap().orphans.is_empty(), "RemoveOrphan of the same stamp clears the debt");
 }

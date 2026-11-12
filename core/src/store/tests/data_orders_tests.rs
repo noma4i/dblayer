@@ -122,7 +122,7 @@ fn data_orders_ephemeral_write_row_and_clock() {
                 Clock => {
                     let reset = written.as_ref().unwrap().resets[0].clone();
                     let before = db.revision_seq().unwrap();
-                    let batch = db.write_batch(&reset_batch(&reset), db.files(), db.pointer_guards(), None).unwrap();
+                    let batch = db.write_batch(&reset_batch(&reset), db.files(), None).unwrap();
                     assert_eq!(db.revision_seq().unwrap(), before, "{order:?}: a reset is no database revision");
                     positions.push((batch.revision, batch.notice.position));
                     clocked = true;
@@ -153,7 +153,7 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
                     Remove => {
                         let delete = json!({"op": "delete", "id": "m1"}).to_string();
                         let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
-                        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+                        db.write_batch(&batch, db.files(), None).unwrap();
                     }
                     Return => put(&db, "moments", json!({"id": "m1", "userId": "u1"})),
                 }

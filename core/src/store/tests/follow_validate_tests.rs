@@ -56,7 +56,7 @@ fn store_follow_ops_are_validated() {
 
     let nodes = open(false);
     let batch = nodes_batch(&nodes, &[("m1", "first"), ("m1", "last")]);
-    let outcome = nodes.write_batch(&batch, nodes.files(), nodes.pointer_guards(), None);
+    let outcome = nodes.write_batch(&batch, nodes.files(), None);
     let stored = text(&nodes, "SELECT text FROM row_moments WHERE id = 'm1'");
     if outcome.is_err() { failures.push(format!("nodes repeated root: expected Ok, got {:?}", outcome.map(|_| ()))); }
     if count(&nodes, "SELECT COUNT(*) FROM row_moments") != 1 { failures.push("nodes repeated root: expected 1 row".into()); }

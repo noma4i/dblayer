@@ -265,7 +265,7 @@ fn created_window_membership_uses_the_committed_window() {
     let key = WindowKey::relation("Moment", "created", &Default::default());
     let commit = |author, ops| {
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
-        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        db.write_batch(&batch, db.files(), None).unwrap();
     };
     commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
         key: key.name, model: key.model, page: 1, replace_all: false, cursor: None,
@@ -302,7 +302,7 @@ fn data_matches_window() {
     let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let commit = |author, ops| {
         let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
-        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        db.write_batch(&batch, db.files(), None).unwrap();
     };
     for minimum in [5, 10] {
         let key = WindowKey::relation("Moment", "selected", json!({"minimum":minimum}).as_object().unwrap());
@@ -324,7 +324,7 @@ fn data_matches_window() {
     assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, false]);
     let event = json!({"op":"upsert", "id":"m1", "row":{"id":"m1", "score":12}}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
-    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch, db.files(), None).unwrap();
     assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
 }
 
@@ -353,7 +353,7 @@ fn data_membership_window_leave() {
         let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
         let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
-        db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+        db.write_batch(&batch, db.files(), None).unwrap();
         assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
     }
 }
@@ -395,7 +395,7 @@ mod by_source {
         pub(super) fn commit(&self, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
             self.batch.set(self.batch.get() + 1);
             let batch = StoreBatch { author, id: self.batch.get(), stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
-            self.db.write_batch(&batch, self.db.files(), self.db.pointer_guards(), None).unwrap();
+            self.db.write_batch(&batch, self.db.files(), None).unwrap();
         }
 
         pub(super) fn page(&self, name: &str, params: &serde_json::Map<String, Value>, roots: Vec<Value>) {

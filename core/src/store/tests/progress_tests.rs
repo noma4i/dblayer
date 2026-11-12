@@ -11,7 +11,7 @@ use crate::store::Store;
 
 fn write(db: &Store, author: BatchAuthor, ops: Vec<StoreOp>) {
     let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
-    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch, db.files(), None).unwrap();
 }
 
 fn upload(index: u64, confirmed: u32) -> UploadRow {
