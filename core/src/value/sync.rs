@@ -51,11 +51,26 @@ pub enum FailureKind {
     Refused,
     /// A queued operation waited longer than its `expires_after`.
     Expired,
+    /// The prepare step of an upload source failed: the reason says whether the device cannot decode the source.
+    PrepareFailed { reason: PrepareReason },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrepareReason {
+    Failed,
+    DeviceCannotDecode,
+}
+
+impl PrepareReason {
+    pub fn name(self) -> &'static str {
+        match self { Self::Failed => "failed", Self::DeviceCannotDecode => "device_cannot_decode" }
+    }
 }
 
 const SESSION_PREFIX: &str = "session:";
 const TOO_LARGE_PREFIX: &str = "request_too_large:";
 const RESPONSE_TOO_LARGE_PREFIX: &str = "response_too_large:";
+const PREPARE_FAILED_PREFIX: &str = "prepare_failed:";
 
 impl FailureKind {
     /// The cause of a failed attempt as the columns of the operation: its kind and its number.
@@ -81,6 +96,7 @@ impl FailureKind {
             FailureKind::Protocol => "protocol".into(),
             FailureKind::Refused => "refused".into(),
             FailureKind::Expired => "expired".into(),
+            FailureKind::PrepareFailed { reason } => format!("{PREPARE_FAILED_PREFIX}{}", reason.name()),
         }
     }
 
@@ -95,7 +111,7 @@ impl FailureKind {
             "protocol" => Some(FailureKind::Protocol),
             "refused" => Some(FailureKind::Refused),
             "expired" => Some(FailureKind::Expired),
-            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(RESPONSE_TOO_LARGE_PREFIX).and_then(|limit| limit.parse().ok()).map(|limit| FailureKind::ResponseTooLarge { limit })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
+            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(RESPONSE_TOO_LARGE_PREFIX).and_then(|limit| limit.parse().ok()).map(|limit| FailureKind::ResponseTooLarge { limit })).or_else(|| text.strip_prefix(PREPARE_FAILED_PREFIX).and_then(|reason| match reason { "failed" => Some(PrepareReason::Failed), "device_cannot_decode" => Some(PrepareReason::DeviceCannotDecode), _ => None }).map(|reason| FailureKind::PrepareFailed { reason })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }
 }

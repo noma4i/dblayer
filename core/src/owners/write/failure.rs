@@ -38,6 +38,9 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
     text(&OperationFailure::new(kind, code.map_or_else(|| format!("{error:?}"), |code| code.name().to_string())))
 }
 
+/// The prepare step failed: the reason is typed, the message is the text of the platform.
+pub fn of_prepare(reason: crate::value::sync::PrepareReason, message: String) -> String { text(&OperationFailure::new(FailureKind::PrepareFailed { reason }, message)) }
+
 /// The server refused with GraphQL errors.
 pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> String {
     text(&OperationFailure { kind: FailureKind::Rejected, message, extensions })
