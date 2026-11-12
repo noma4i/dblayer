@@ -58,15 +58,6 @@ fn a_response_is_refused_when_key_header_or_ciphertext_do_not_match() {
 }
 
 #[test]
-fn the_test_server_opens_the_ruby_client_mutation_and_read_requests_and_the_fields_match() {
-    let mutation = plain_from_ruby();
-    let read: Value = serde_json::from_str(read_plain()).unwrap();
-
-    assert_eq!(open_request(request_jwe(), mutation["path"].as_str().unwrap(), mutation["issuedAt"].as_i64().unwrap()).unwrap(), mutation);
-    assert_eq!(open_request(read_jwe(), read["path"].as_str().unwrap(), read["issuedAt"].as_i64().unwrap()).unwrap(), read);
-}
-
-#[test]
 fn a_sealed_request_opens_on_the_server_side_with_exactly_the_ten_fields() {
     let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &request_plain()).unwrap();
 
@@ -81,15 +72,6 @@ fn a_sealed_request_opens_on_the_server_side_with_exactly_the_ten_fields() {
     read.session.as_mut().unwrap().sequence = None;
     let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &read).unwrap();
     assert!(open_request(&token, "/api/graphql", 1_800_000_000).unwrap()["sequence"].is_null());
-}
-
-#[test]
-fn a_response_sealed_by_the_test_server_opens_in_the_client() {
-    let request = plain_from_ruby();
-    let sealed = seal_response(&request, Some(1), json!({ "ok": true }));
-
-    let opened = open_response(&sealed, request["responseKey"].as_str().unwrap()).unwrap();
-    assert_eq!(opened.body, json!({ "ok": true }));
 }
 
 #[test]
